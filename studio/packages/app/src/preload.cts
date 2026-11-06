@@ -8,6 +8,7 @@ type Passage = { itemId: string; start: number; end: number; quote: string };
 electron.contextBridge.exposeInMainWorld("amo", {
   host: (): Promise<{ url: string; token: string } | null> => electron.ipcRenderer.invoke("amo:host"),
   pickDirectory: (start?: string | null): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-directory", start ?? undefined),
+  pickGitEditor: (): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-git-editor"),
   /** Studio's own folder picker (2026-10-25): this machine's disks only; each call answers { ok, value } or { ok, error }. */
   folders: {
     drives: (refresh?: boolean): Promise<unknown> => electron.ipcRenderer.invoke("amo:folders-drives", refresh === true),

@@ -22,6 +22,7 @@ import { defaultFolder, setDefaultFolder } from "../lib/profiles.js";
 import { BotArt, MascotArt, ReaderArt } from "../focus/PixelBot.js";
 import { PET_SKINS, usePetSkin, writePetSkin, type PetSkin } from "../focus/petSkin.js";
 import { pickDirectory } from "../folders/FolderPicker.js";
+import { GitEditorPage } from "./GitEditorPage.js";
 
 /** The pages of 设置, one per area, in the left column. */
 const PAGES = [
@@ -31,6 +32,7 @@ const PAGES = [
   { id: "quota", label: "额度" },
   { id: "stats", label: "统计" },
   { id: "common", label: "项目与目录" },
+  { id: "git-editor", label: "Git 编辑器" },
   { id: "features", label: "功能" },
   { id: "mcp", label: "MCP" },
   { id: "experimental", label: "测试功能" },
@@ -234,6 +236,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
             {page === "stats" && <StatsPage link={link} />}
 
             {page === "common" && <DefaultFolderSection />}
+            {page === "git-editor" && <GitEditorPage link={link} />}
             {page === "common" && (
               <section className="settings-section" aria-label="公共目录">
                 <span className="settings-heading">公共目录</span>

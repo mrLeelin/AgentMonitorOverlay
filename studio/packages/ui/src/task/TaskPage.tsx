@@ -381,6 +381,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             disabled={!!task.archivedAt || busy || !!copy}
             onStatus={setStatusAt}
             onTopic={() => setPicking("topic")}
+            onGitOpen={() => void run(() => call(link, "POST /api/workspaces/:id/git/open", { id: task.workspaceId }))}
           />
         </div>
         <div className="task-head-actions">

@@ -28,6 +28,26 @@ export interface OpenInResult {
   dryRun: boolean;
 }
 
+export interface GitEditor {
+  name: string;
+  path: string;
+}
+
+/** Installed clients are candidates, not proof of which client the person normally uses. */
+export interface GitEditorState {
+  /** null selects the first detected client. */
+  configuredPath: string | null;
+  detected: GitEditor[];
+  selected: GitEditor | null;
+}
+
+export interface GitEditorOpenResult {
+  /** The repository or worktree root, including when the project is a subfolder. */
+  path: string;
+  editor: string;
+  dryRun: boolean;
+}
+
 /** Largest file a quick look reads. */
 export const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -85,6 +105,9 @@ export interface PageBase {
 
 /** Files outside Studio (stage 12, S12-0): open in an editor or the file manager, quick looks. */
 export interface OpenInRoutes {
+  "GET /api/git-editor": { req: void; res: GitEditorState };
+  "PUT /api/git-editor": { req: { path: string | null }; res: GitEditorState };
+  "POST /api/workspaces/:id/git/open": { req: void; res: GitEditorOpenResult };
   /** Which editors this machine has. */
   "GET /api/open-in/apps": { req: void; res: OpenInApps };
   /** Opens an existing file or folder (404 when it does not exist). */

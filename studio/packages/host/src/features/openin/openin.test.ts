@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelProfile, OpenInResult, TextFile, Workspace } from "@amo-studio/protocol";
+import type { GitEditorOpenResult, GitEditorState, ModelProfile, OpenInResult, TextFile, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
@@ -10,6 +11,8 @@ import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
 import { startHostServer, type HostServer } from "../../http/server.js";
 import { cliScript, decode } from "./service.js";
+import { gitEditorArgs, startGitEditor } from "./git-editor.js";
+import * as gitEditors from "./git-editor.js";
 
 // Opening files outside Studio and reading them for a quick look (stage 12, S12-0). Test mode only records launches.
 
@@ -58,6 +61,80 @@ function makeProject(): string {
 }
 
 describe("open in", () => {
+  it("chooses an installed client in automatic mode and explains when none is found", async () => {
+    const detect = vi.spyOn(gitEditors, "detectGitEditors");
+    try {
+      const editor = join(root, "Fork.exe");
+      writeFileSync(editor, "");
+      detect.mockResolvedValue([{ name: "Fork", path: editor }]);
+      expect((await api<GitEditorState>("GET", "/api/git-editor")).data).toEqual({ configuredPath: null, detected: [{ name: "Fork", path: editor }], selected: { name: "Fork", path: editor } });
+      detect.mockResolvedValue([]);
+      const ws = (await api<Workspace>("POST", "/api/workspaces", { path: makeProject() })).data;
+      const unavailable = await api<{ error: { message: string } }>("POST", `/api/workspaces/${ws.id}/git/open`);
+      expect(unavailable.status).toBe(400);
+      expect(unavailable.data.error.message).toContain("请先到设置");
+      expect(service.openIn.launches).toEqual([]);
+    } finally {
+      detect.mockRestore();
+    }
+  });
+
+  it("saves a custom Git client and opens the repository root for a project subfolder without launching it", async () => {
+    const dir = makeProject();
+    execFileSync("git", ["init", dir], { windowsHide: true, stdio: "ignore" });
+    const editor = join(root, "custom editor.exe");
+    writeFileSync(editor, "test executable placeholder");
+    const saved = await api<GitEditorState>("PUT", "/api/git-editor", { path: editor });
+    expect(saved.status).toBe(200);
+    expect(saved.data.configuredPath).toBe(editor);
+    expect(saved.data.selected).toEqual({ name: "custom editor", path: editor });
+    expect((await api<GitEditorState>("GET", "/api/git-editor")).data.configuredPath).toBe(editor);
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: join(dir, "Assets") })).data;
+    const opened = await api<GitEditorOpenResult>("POST", `/api/workspaces/${ws.id}/git/open`);
+    expect(opened.status).toBe(200);
+    expect(opened.data).toEqual({ path: dir, editor: "custom editor", dryRun: true });
+    expect(service.openIn.launches.at(-1)).toEqual({ command: editor, args: [dir] });
+    expect((await api<GitEditorState>("PUT", "/api/git-editor", { path: null })).data.configuredPath).toBeNull();
+  });
+
+  it("keeps a linked worktree as the repository target", async () => {
+    const main = makeProject();
+    execFileSync("git", ["init", main], { windowsHide: true, stdio: "ignore" });
+    execFileSync("git", ["-C", main, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], { windowsHide: true, stdio: "ignore" });
+    const worktree = join(root, "worktree with spaces");
+    execFileSync("git", ["-C", main, "worktree", "add", "--detach", worktree], { windowsHide: true, stdio: "ignore" });
+    const editor = join(root, "Fork.exe");
+    writeFileSync(editor, "");
+    await api("PUT", "/api/git-editor", { path: editor });
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: worktree })).data;
+    const opened = await api<GitEditorOpenResult>("POST", `/api/workspaces/${ws.id}/git/open`);
+    expect(opened.data.path).toBe(worktree);
+    expect(service.openIn.launches.at(-1)).toEqual({ command: editor, args: [worktree] });
+  });
+
+  it("rejects commands, missing programs and non-repositories, retaining a valid saved choice", async () => {
+    const editor = join(root, "Fork.exe");
+    writeFileSync(editor, "");
+    await api("PUT", "/api/git-editor", { path: editor });
+    for (const path of ["Fork.exe", join(root, "absent.exe"), `${editor} --option`, root, 42]) expect((await api("PUT", "/api/git-editor", { path })).status).toBe(400);
+    expect((await api("PUT", "/api/git-editor", {})).status).toBe(400);
+    expect((await api<GitEditorState>("GET", "/api/git-editor")).data.configuredPath).toBe(editor);
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: makeProject() })).data;
+    expect((await api("POST", `/api/workspaces/${ws.id}/git/open`)).status).toBe(400);
+    unlinkSync(editor);
+    expect((await api("POST", `/api/workspaces/${ws.id}/git/open`)).status).toBe(400);
+    expect(service.openIn.launches).toEqual([]);
+  });
+
+  it("passes client-specific repository arguments and reports OS launch failures", async () => {
+    const repo = join(root, "repository with spaces & symbols");
+    expect(gitEditorArgs(join(root, "Fork.exe"), repo)).toEqual([repo]);
+    expect(gitEditorArgs(join(root, "SourceTree.exe"), repo)).toEqual([repo]);
+    expect(gitEditorArgs(join(root, "GitHubDesktop.exe"), repo)).toEqual([`--cli-open=${repo}`]);
+    expect(gitEditorArgs(join(root, "gitkraken.exe"), repo)).toEqual(["--path", repo]);
+    await expect(startGitEditor(join(root, "missing.exe"), [repo], root)).rejects.toThrow("Git 编辑器启动失败");
+  });
+
   it("opens project files in Explorer and the default program (recorded in test mode)", async () => {
     const ws = (await api<Workspace>("POST", "/api/workspaces", { path: makeProject() })).data;
     const r = await api<OpenInResult>("POST", "/api/open-in", { path: "Assets/Player.cs", workspaceId: ws.id, app: "explorer" });

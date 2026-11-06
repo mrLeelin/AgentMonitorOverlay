@@ -516,6 +516,11 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
   });
   // Studio's own folder picker lists, makes and renames folders through these (folders.ts, 2026-10-25).
   installFolderIpc();
+  ipcMain.handle("amo:pick-git-editor", async () => {
+    if (testMode) return (globalThis as { __amoPickGitEditor?: string | null }).__amoPickGitEditor ?? null;
+    const result = await dialog.showOpenDialog({ title: "选择 Git 编辑器", properties: ["openFile"], filters: [{ name: "程序", extensions: ["exe"] }] });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
   // The system dialog: only where Studio's own picker is not (every picker before 2026-10-25). From 设置 → 项目与目录 → 默认路径
   // (2026-10-17) when set. Tests read what it would start at and pick for it.
   ipcMain.handle("amo:pick-directory", async (_e, start?: unknown) => {

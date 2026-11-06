@@ -299,6 +299,21 @@
       "next": ["studio/packages/app/CHANGELOG.md"]
     },
     {
+      "id": "studio.gitEditor",
+      "label": "Git 编辑器与分支名跳转",
+      "aliases": ["Git 编辑器", "Fork", "Sourcetree", "GitHub Desktop", "GitKraken", "分支名", "外部 Git", "git-editor"],
+      "category": "host",
+      "purpose": "任务标题下的分支名打开该项目的 Git 仓库；设置 → Git 编辑器支持自动检测常见客户端和指定 exe。程序路径存在 Host 的 kv，程序由 Host 启动，Electron 只负责选择文件。",
+      "anchors": [
+        { "label": "设置页", "path": "studio/packages/ui/src/settings/GitEditorPage.tsx", "anchor": "export function GitEditorPage" },
+        { "label": "分支入口", "path": "studio/packages/ui/src/task/TaskHead.tsx", "anchor": "export function TaskMeta" },
+        { "label": "外部程序后端", "path": "studio/packages/host/src/features/openin/service.ts", "anchor": "export class OpenInFeature" },
+        { "label": "协议", "path": "studio/packages/protocol/src/openin.ts" }
+      ],
+      "related": ["studio.config", "studio.tasks", "studio.gitReview"],
+      "next": ["studio/e2e/studio/git-editor.spec.ts"]
+    },
+    {
       "id": "studio.settingsMisc",
       "label": "设置里的维护、统计、数据管理",
       "aliases": ["维护终端", "MaintenanceFeature", "统计", "StatsFeature", "数据管理", "DataFeature", "彻底删除"],

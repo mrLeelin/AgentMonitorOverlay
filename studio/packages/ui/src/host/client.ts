@@ -17,6 +17,7 @@ declare global {
       /** Native folder picker (Electron); absent in a plain browser. */
       /** Starts at `start` (设置 → 默认路径) when that folder exists. */
       pickDirectory?(start?: string | null): Promise<string | null>;
+      pickGitEditor?(): Promise<string | null>;
       /** Studio's own folder picker's calls (Electron, 2026-10-25): this machine's disks only. */
       folders?: {
         drives(refresh?: boolean): Promise<FolderResult<string[]>>;

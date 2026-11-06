@@ -28,6 +28,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "settings:quota-display", scope: "global", owner: "core/shared.ts", what: "设置 → 额度：各账号的额度显示在哪" },
   { key: "settings:quick-models", scope: "global", owner: "core/shared.ts", what: "设置 → 模型 → 快速选择" },
   { key: "settings:subsession-notes", scope: "global", owner: "core/shared.ts", what: "设置 → 子会话：人写的模型用法" },
+  { key: "settings:git-editor", scope: "global", owner: "features/openin/git-editor.ts", what: "设置 → Git 编辑器：手动指定的程序路径，空值为自动检测" },
   { key: "settings:project-groups", scope: "global", owner: "core/shared.ts", what: "左栏的项目分组" },
   { key: "settings:topic-groups", scope: "global", owner: "core/shared.ts", what: "左栏的专题分组" },
   { key: "settings:common-workspace", scope: "global", owner: "core/shared.ts", what: "结构 v2 以前的公共空间（只在迁移时读）" },

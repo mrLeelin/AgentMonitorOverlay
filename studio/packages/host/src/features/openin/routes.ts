@@ -8,6 +8,9 @@ const WHOLE_MAX = 32 * 1024 * 1024;
 /** The HTTP routes of this feature (see protocol/src/api.ts for each route's request and response). */
 export function openInRoutes(service: HostService): Route[] {
   return [
+    route("GET /api/git-editor", () => service.openIn.gitEditor()),
+    route("PUT /api/git-editor", ({ body }) => service.openIn.setGitEditor((body as { path?: unknown } | null)?.path)),
+    route("POST /api/workspaces/:id/git/open", ({ params }) => service.openIn.openGit(params.id)),
     route("GET /api/open-in/apps", () => service.openIn.apps()),
     route("POST /api/open-in", ({ body }) => service.openIn.open((body ?? {}) as never)),
     route("GET /api/fs/text", ({ query }) => service.openIn.readText(query.get("path"), query.get("workspaceId"))),

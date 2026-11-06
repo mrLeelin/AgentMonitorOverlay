@@ -215,6 +215,7 @@ export function TaskMeta({
   disabled,
   onStatus,
   onTopic,
+  onGitOpen,
 }: {
   task: Task;
   workspace: Workspace | undefined;
@@ -223,6 +224,7 @@ export function TaskMeta({
   disabled: boolean;
   onStatus(at: Anchor): void;
   onTopic(): void;
+  onGitOpen(): void;
 }) {
   const duty = dutyOfTask(useDuty(), task.id);
   const parts: ReactNode[] = [
@@ -253,10 +255,10 @@ export function TaskMeta({
     );
   if (branch)
     parts.push(
-      <span key="branch" className="meta-item static mono" title="当前分支" data-testid="task-branch">
+      <button key="branch" type="button" className="meta-item mono" title="用 Git 编辑器打开仓库；在设置 → Git 编辑器中选择程序" aria-label={`用 Git 编辑器打开仓库，当前分支：${branch}`} onClick={onGitOpen} data-testid="task-branch">
         {Icon.branch}
         {branch}
-      </span>,
+      </button>,
     );
   if (!task.remote) parts.push(
     <button key="topic" type="button" className="meta-item" disabled={disabled} aria-label={topic ? `专题：${topic.title}` : "专题：无"} title={topic ? [`专题：${topic.title}`, topic.description, "点击换专题；左栏右键专题可以改名字和说明"].filter(Boolean).join("\n") : "不在专题里；点击放进专题"} onClick={onTopic} data-testid="task-topic">

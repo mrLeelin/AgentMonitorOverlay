@@ -3,9 +3,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
-import { MAX_TEXT_FILE_BYTES, PAGE_ASSET_TYPES, PREVIEW_IMAGE_TYPES, type Id, type OpenInApp, type OpenInApps, type OpenInRequest, type OpenInResult, type PageBase, type TextFile } from "@amo-studio/protocol";
+import { MAX_TEXT_FILE_BYTES, PAGE_ASSET_TYPES, PREVIEW_IMAGE_TYPES, type GitEditorOpenResult, type GitEditorState, type Id, type OpenInApp, type OpenInApps, type OpenInRequest, type OpenInResult, type PageBase, type TextFile } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
+import { checkedGitEditorPath, detectGitEditors, GIT_EDITOR_KEY, gitEditorArgs, gitEditorName, gitRepositoryRoot, startGitEditor } from "./git-editor.js";
 
 const APPS: readonly OpenInApp[] = ["vscode", "explorer", "default"];
 /** Bytes looked at to tell a binary file (a NUL among them). */
@@ -42,6 +43,32 @@ export class OpenInFeature extends Feature {
 
   async apps(): Promise<OpenInApps> {
     return { vscode: (await this.findVsCode()) !== null };
+  }
+
+  async gitEditor(): Promise<GitEditorState> {
+    const configuredPath = this.store.getKv(GIT_EDITOR_KEY)?.value || null;
+    const detected = await detectGitEditors();
+    // Preserve a missing configured path in the form, so the person can repair it after uninstalling/moving it.
+    const selected = configuredPath ? { name: gitEditorName(configuredPath), path: configuredPath } : detected[0] ?? null;
+    return { configuredPath, detected, selected };
+  }
+
+  async setGitEditor(path: unknown): Promise<GitEditorState> {
+    const checked = checkedGitEditorPath(path);
+    this.store.setKv(GIT_EDITOR_KEY, checked ?? "");
+    return this.gitEditor();
+  }
+
+  async openGit(workspaceId: Id): Promise<GitEditorOpenResult> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const editor = (await this.gitEditor()).selected;
+    if (!editor) throw new HostError("bad_request", "没有检测到 Git 编辑器，请先到设置 → Git 编辑器选择程序");
+    checkedGitEditorPath(editor.path);
+    const path = await gitRepositoryRoot(workspace.path);
+    const args = gitEditorArgs(editor.path, path);
+    if (this.dryRun) this.launches.push({ command: editor.path, args });
+    else await startGitEditor(editor.path, args, path);
+    return { path, editor: editor.name, dryRun: this.dryRun };
   }
 
   async open(input: Partial<OpenInRequest>): Promise<OpenInResult> {
