@@ -318,7 +318,8 @@ export function App() {
           live={live}
           onScope={(s) => {
             setScope(s);
-            setView({ kind: "board" });
+            // 切专题只换画布内容；全部任务和项目仍打开看板。
+            setView({ kind: s.kind === "topic" && shown.kind === "canvas" ? "canvas" : "board" });
           }}
           onSettings={() => setSettingsOpen({ at: Date.now() })}
           // 全景 (11-04): from the left column, not a tab; a task opened from it counts as in it.

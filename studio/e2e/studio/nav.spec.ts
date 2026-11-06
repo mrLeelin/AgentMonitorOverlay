@@ -12,6 +12,59 @@ test.afterEach(async () => {
   studio = undefined;
 });
 
+test("switching topics keeps the selected canvas or board view", async () => {
+  studio = await launchStudio();
+  const { page } = studio;
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  for (const title of ["审查项目", "123"]) {
+    const topic = await studio.api<Topic>("POST", "/api/topics", { title });
+    const { task } = await studio.api<{ task: Task }>("POST", "/api/tasks", { title: `${title}的任务`, workspaceId: ws.id, topicId: topic.id });
+    await studio.api("PUT", `/api/tasks/${task.id}/canvas`, { onCanvas: true });
+  }
+  const canvasTab = page.getByRole("button", { name: "画布", exact: true });
+  const boardTab = page.getByRole("button", { name: "看板", exact: true });
+  const canvasCards = page.getByTestId("canvas-card");
+
+  await page.getByTestId("scope-topic-审查项目").click();
+  await canvasTab.click();
+  await expect(canvasCards).toHaveCount(1);
+  await expect(canvasCards).toContainText("审查项目的任务");
+
+  await page.getByTestId("scope-topic-123").click();
+  await expect(canvasTab).toHaveAttribute("aria-current", "page");
+  await expect(canvasCards).toHaveCount(1);
+  await expect(canvasCards).toContainText("123的任务");
+  await screenshot(studio.app, "studio", "topic-switch-keeps-canvas", page);
+
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(canvasTab).toHaveAttribute("aria-current", "page");
+  await expect(canvasCards).toContainText("审查项目的任务");
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect(canvasCards).toContainText("123的任务");
+  await page.reload();
+  await expect(canvasTab).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("scope-topic-123")).toHaveAttribute("aria-current", "true");
+  await expect(canvasCards).toContainText("123的任务");
+
+  await page.getByTestId("scope-topic-审查项目").click();
+  await expect(canvasTab).toHaveAttribute("aria-current", "page");
+  await expect(canvasCards).toContainText("审查项目的任务");
+
+  await boardTab.click();
+  await page.getByTestId("scope-topic-123").click();
+  await expect(boardTab).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("task-card")).toHaveCount(1);
+  await expect(page.getByTestId("task-card")).toContainText("123的任务");
+
+  // Only topics have their own canvases; the other scopes still open their boards.
+  await canvasTab.click();
+  await page.getByTestId("scope-ws-alpha").click();
+  await expect(boardTab).toHaveAttribute("aria-current", "page");
+  await canvasTab.click();
+  await page.getByTestId("scope-all").click();
+  await expect(boardTab).toHaveAttribute("aria-current", "page");
+});
+
 test("pin, fold and scroll the left column; open the usage footer", async () => {
   studio = await launchStudio();
   const { page } = studio;
