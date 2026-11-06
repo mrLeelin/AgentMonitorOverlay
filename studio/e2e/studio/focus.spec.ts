@@ -11,6 +11,64 @@ test.afterEach(async () => {
 
 const focusIgnore = (s: Studio) => s.app.evaluate(() => (globalThis as { __amoFocusIgnore?: boolean }).__amoFocusIgnore);
 
+test("Focus: the sun switches light and dark themes; settings stay on right-click", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  const opened = app.waitForEvent("window");
+  await page.getByRole("button", { name: /^Focus/ }).click();
+  const focus = await opened;
+  await expect(focus.getByTestId("focus-needs")).toHaveText("没有待处理");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await dialog.getByRole("radio", { name: "浅色", exact: true }).click();
+  await expect(focus.locator("html")).toHaveAttribute("data-theme", "light");
+  const theme = focus.locator(".focus-head .focus-icon").first();
+  const menu = focus.getByTestId("focus-menu");
+
+  // The picture's exact symptom: a left-click must change the theme, never open settings.
+  await theme.click();
+  await expect(focus.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(dialog.getByRole("radio", { name: "深色", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(menu).toHaveCount(0);
+  await expect(theme).toHaveAccessibleName("切换浅色／深色主题");
+  await screenshot(app, "studio", "focus-theme-dark", focus, "focus");
+  await theme.click();
+  await expect(focus.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(dialog.getByRole("radio", { name: "浅色", exact: true })).toHaveAttribute("aria-checked", "true");
+  await screenshot(app, "studio", "focus-theme-light", focus, "focus");
+
+  // Right-click still opens Focus settings and does not switch the theme.
+  await theme.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByTestId("focus-menu-lock")).toBeVisible();
+  await expect(focus.locator("html")).toHaveAttribute("data-theme", "light");
+  await focus.getByTestId("focus-menu-close").click();
+
+  // Both windows remember a choice made in Focus after reloading.
+  await theme.click();
+  await focus.reload();
+  await page.reload();
+  await expect(focus.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(focus.getByTestId("focus-needs")).toHaveText("没有待处理");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(dialog.getByRole("radio", { name: "深色", exact: true })).toHaveAttribute("aria-checked", "true");
+
+  // When following the system, switch from the colour actually displayed to the opposite explicit choice.
+  for (const system of ["dark", "light"] as const) {
+    await focus.emulateMedia({ colorScheme: system });
+    await dialog.getByRole("radio", { name: "跟随系统", exact: true }).click();
+    await expect(focus.locator("html")).not.toHaveAttribute("data-theme", /.+/);
+    await theme.click();
+    const next = system === "dark" ? "light" : "dark";
+    await expect(focus.locator("html")).toHaveAttribute("data-theme", next);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", next);
+    await expect(dialog.getByRole("radio", { name: next === "dark" ? "深色" : "浅色", exact: true })).toHaveAttribute("aria-checked", "true");
+  }
+});
+
 test("Focus lists what needs me, approves in place and opens the workbench", async () => {
   studio = await launchStudio();
   const { page, app } = studio;
@@ -154,7 +212,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   expect(panelOnly).toBeLessThan(380 * 560);
   expect(await focusIgnore(studio)).toBe(false);
 
-  // Right-click (or the gear): 「Focus 设置」, a box with ×; the window's shape grows to take it.
+  // Right-click: 「Focus 设置」, a box with ×; the window's shape grows to take it.
   await focus.getByTestId("focus-entry").click({ button: "right" });
   const menu = focus.getByTestId("focus-menu");
   await expect(menu).toBeVisible();
@@ -166,7 +224,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   await expect(menu).toHaveCount(0);
 
   // 移动位置: an action — the box closes and a drag frame covers the panel until 完成.
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await focus.getByTestId("focus-menu-move").click();
   await expect(menu).toHaveCount(0);
   await expect(focus.getByTestId("focus-move")).toBeVisible();
@@ -189,7 +247,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   await expect.poll(() => windowState(app, "focus")).toMatchObject({ focusable: false, anyFocused: false });
 
   // 锁定位置: a switch — the box stays open; shown in the head, moving is off; remembered after a reload.
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await focus.getByTestId("focus-menu-lock").click();
   await expect(menu).toBeVisible();
   await expect(focus.getByTestId("focus-menu-lock")).toHaveAttribute("aria-checked", "true");
@@ -198,7 +256,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   await expect(focus.getByTestId("focus-locked")).toBeVisible();
   await focus.reload();
   await expect(focus.getByTestId("focus-locked")).toBeVisible({ timeout: 30_000 });
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await expect(focus.getByTestId("focus-menu-lock")).toHaveAttribute("aria-checked", "true");
   await focus.getByTestId("focus-menu-lock").click();
   await expect(focus.getByTestId("focus-locked")).toHaveCount(0);
@@ -211,7 +269,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   await expect(focus.getByTestId("focus-passthrough")).toBeVisible();
   await expect.poll(() => focusIgnore(studio!)).toBe(true);
   await screenshot(app, "stage-14", "S14-K-focus-passthrough", focus, "focus");
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await focus.getByTestId("focus-menu-through").click();
   await expect(focus.getByTestId("focus-passthrough")).toHaveCount(0);
 
@@ -225,7 +283,7 @@ test("Focus: the robot dances until looked at; 「Focus 设置」 moves, locks, 
   expect(Math.abs(centred.x + centred.width / 2 - (centred.display.x + centred.display.width / 2))).toBeLessThanOrEqual(1);
   expect(Math.abs(centred.y + centred.height / 2 - (centred.display.y + centred.display.height / 2))).toBeLessThanOrEqual(1);
   expect(centred.width).toBeLessThanOrEqual(centred.display.width);
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
 
   // 隐藏 Focus: the window goes, the top bar button follows.
   const closed = focus.waitForEvent("close");
@@ -274,7 +332,7 @@ test("Focus: 「机器人动作测试」 plays the robot's moods; the angry one 
   await expect(focus.getByTestId("focus-needs")).toHaveText("没有待处理", { timeout: 30_000 });
   const flight = () => app.evaluate(() => (globalThis as { __amoBotFlight?: { flying: boolean; message: string } }).__amoBotFlight ?? { flying: false, message: "" });
 
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await focus.getByTestId("focus-menu-bot").click();
   const bot = focus.getByTestId("focus-bot");
   await expect(bot).toHaveClass(/alert/);
@@ -317,7 +375,7 @@ test("Focus 桌宠: the robot by default; 「看书的 Claude 娘」 picked in �
   await page.keyboard.press("Escape");
 
   // Focus follows at once: she pops up for 「机器人动作测试」, and she is the one who flies off angry.
-  await focus.getByTestId("focus-settings-toggle").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
   await focus.getByTestId("focus-menu-bot").click();
   const bot = focus.getByTestId("focus-bot");
   await expect(bot).toHaveClass(/skin-reader/);

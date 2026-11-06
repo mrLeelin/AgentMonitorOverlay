@@ -3,6 +3,7 @@ import { remoteHeldTasks, type Session, type StateSnapshot } from "@amo-studio/p
 import { useHostState } from "../host/useHostState.js";
 import { needsPerson } from "../lib/status.js";
 import { noteFocusJump } from "../lib/focusJump.js";
+import { toggleTheme } from "../lib/theme.js";
 import { hangsUnderOf, interruptedSince, noteSeen, runningSubs, subsByParent, unseenSessions, useSessionSeen, withGrants } from "../lib/sessionSeen.js";
 import { DecisionCard, useOpenDecisions } from "../collab/DecisionPanel.js";
 import { usePendingProposals } from "../planning/ProposalsPanel.js";
@@ -33,8 +34,9 @@ export { isToReview, latestSnippet, summary } from "./FocusEntry.js";
 // The Focus window: "what needs me right now". Lists sessions waiting for approval or review, newest first; one entry
 // opens to show its latest content, approvals can be granted in place, everything else goes back to the workbench.
 // S14-J: while something new needs the person the panel glows and a pixel robot dances above it until they look.
-// 2026-10-15: the window takes clicks wherever Focus draws (it tells the main process its shape); 「Focus 设置」 (the
-// gear, or a right-click) is a small box with × — 移动位置 / 锁定位置 / 点击穿透 / 收起 / 打开 Studio / 隐藏.
+// 2026-10-15: the window takes clicks wherever Focus draws (it tells the main process its shape); 「Focus 设置」 is a
+// small box with × — 移动位置 / 锁定位置 / 点击穿透 / 收起 / 打开 Studio / 隐藏.
+// 2026-11-06: the user chose the sun as a light/dark theme switch; Focus settings stay on right-click.
 // 2026-10-15 evening: also sessions whose reply ended (「回复完了」) or that failed since the person last looked at them
 // in the main window (lib/sessionSeen.ts); clicking one here counts as looking too.
 // Later that evening: two kinds only — 事 (approvals, questions, decisions, proposals, failures) and 完成待审核 (a reply
@@ -355,8 +357,8 @@ export function FocusApp() {
               {ICON.lock}
             </span>
           )}
-          <button type="button" className="focus-icon" aria-label="Focus 设置" title="Focus 设置（右键也能打开）" aria-expanded={pop} onClick={() => setPop(!pop)} data-testid="focus-settings-toggle">
-            {ICON.gear}
+          <button type="button" className="focus-icon" aria-label="切换浅色／深色主题" title="切换浅色／深色主题（右键打开 Focus 设置）" onClick={toggleTheme} data-testid="focus-theme-toggle">
+            {ICON.sun}
           </button>
           <button
             type="button"

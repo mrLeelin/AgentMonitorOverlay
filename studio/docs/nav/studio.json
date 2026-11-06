@@ -284,7 +284,7 @@
     {
       "id": "studio.config",
       "label": "设置、常用预设、功能开关",
-      "aliases": ["设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog"],
+      "aliases": ["设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色"],
       "category": "host",
       "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。",
       "anchors": [
@@ -292,6 +292,7 @@
         { "label": "开关和 kv 名", "path": "studio/packages/host/src/core/shared.ts", "anchor": "EXPERIMENTAL" },
         { "label": "给 agent 命令的环境（命令行适配）", "path": "studio/packages/host/src/runtime/agent-env.ts" },
         { "label": "设置窗口", "path": "studio/packages/ui/src/settings/SettingsDialog.tsx", "anchor": "export function SettingsDialog" },
+        { "label": "本机主题、保存和窗口同步", "path": "studio/packages/ui/src/lib/theme.ts", "anchor": "export function toggleTheme" },
         { "label": "读设置", "path": "studio/packages/ui/src/settings/useSettings.ts" }
       ],
       "related": ["studio.channels", "studio.settingsMisc", "ui.shell"],
@@ -473,9 +474,9 @@
     {
       "id": "ui.focus",
       "label": "Focus 窗口（浮窗）",
-      "aliases": ["Focus", "FocusApp", "置顶", "pin", "机器人", "bot", "等你"],
+      "aliases": ["Focus", "FocusApp", "置顶", "pin", "机器人", "bot", "等你", "太阳按钮", "主题切换"],
       "category": "ui",
-      "purpose": "常驻的小浮窗：哪些会话在跑、哪些在等人（审批、提问、确认），置顶一个任务，机器人形象。",
+      "purpose": "常驻的小浮窗：哪些会话在跑、哪些在等人（审批、提问、确认），置顶一个任务，机器人形象。顶栏太阳按钮切换浅色／深色主题；右键打开 Focus 设置。",
       "anchors": [
         { "label": "Focus 界面", "path": "studio/packages/ui/src/focus/FocusApp.tsx", "anchor": "export function FocusApp" },
         { "label": "进行中", "path": "studio/packages/ui/src/focus/FocusWorking.tsx" },

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { StateSnapshot, StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
-import { setThemePref, THEME_LABELS, themePref, type ThemePref } from "../lib/theme.js";
+import { setThemePref, THEME_LABELS, useThemePref, type ThemePref } from "../lib/theme.js";
 import { ModelsPage } from "./ModelsPage.js";
 import { SubsessionPage } from "./SubsessionPage.js";
 import { FeaturesSection } from "./FeaturesSection.js";
@@ -51,7 +51,7 @@ let lastPage: SettingsPage = "ui";
  */
 export function SettingsDialog({ link, state, settings, page: startPage, onClose, onOpenRemote }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void }) {
   const [page, setPage] = useState<SettingsPage>(startPage ?? lastPage);
-  const [theme, setTheme] = useState<ThemePref>(themePref);
+  const theme = useThemePref();
   const view = useTranscriptView();
   const jumpOnSend = useScrollOnSend();
   const chat = useChatSettings(link);
@@ -141,10 +141,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                         className="chip"
                         aria-checked={theme === p}
                         aria-pressed={theme === p}
-                        onClick={() => {
-                          setTheme(p);
-                          setThemePref(p);
-                        }}
+                        onClick={() => setThemePref(p)}
                       >
                         {THEME_LABELS[p]}
                       </button>
