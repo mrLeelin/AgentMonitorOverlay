@@ -139,7 +139,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     if (busy) return;
     if (resume && file) return setError("接续的会话不能放进待办：直接点「接续」，第一句话可以不写。");
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
-    if (!resume && !draft.text.trim()) return setError(file ? "写一句话再放进待办。" : "写一句话再开始。");
+    if (!resume && !draft.text.trim() && (file || attach.empty)) return setError(file ? "写一句话再放进待办。" : "写一句话或添加图片、文件再开始。");
     if (!file && !draft.pick.profileId) return setError("先选一个模型。");
     if (file && !attach.empty) return setError("放进待办不带图片和文件：先移除它们，或者直接开始。");
     // A 子会话设定 lives with the session it is sent to: a filed task has none yet (2026-11-05).

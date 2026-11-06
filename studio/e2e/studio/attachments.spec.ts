@@ -138,6 +138,58 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await expect(page.getByTestId("attach-thumb")).toHaveCount(0);
 });
 
+for (const start of ["button", "Enter"] as const) {
+  test(`starts a new task with only an image via ${start} (2026-11-06)`, async () => {
+    studio = await launchStudio();
+    const { page } = studio;
+    await page.getByRole("button", { name: "+ 新任务" }).click();
+    await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
+    const first = page.getByLabel("第一句话");
+    await first.fill(start === "button" ? "   " : "");
+    await pasteImage(page, "截图.png", first);
+    await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "ready");
+    await expect(page.getByTestId("draft-start")).toBeEnabled();
+    if (start === "button") await screenshot(studio.app, "studio", "newtask-image-only", page);
+    if (start === "button") await page.getByTestId("draft-start").click();
+    else await first.press("Enter");
+
+    await expect(page.getByTestId("task-title")).toBeVisible();
+    await expect(lastAgent(page)).toContainText("[images: 1]", { timeout: 30_000 });
+    const bubble = page.getByTestId("msg-user").first();
+    await expect(bubble.locator(".msg-text")).toHaveCount(0);
+    await expect(bubble.getByTestId("msg-images").locator("img")).toHaveCount(1);
+    if (start === "button") await screenshot(studio.app, "studio", "newtask-image-only-sent", page);
+    await page.getByRole("button", { name: "+ 新任务" }).click();
+    await expect(first).toHaveValue("");
+    await expect(page.getByTestId("attach-thumb")).toHaveCount(0);
+    // Empty input still cannot start, including after its last image is removed.
+    await pasteImage(page, "多余.png", first);
+    await page.getByRole("button", { name: "移除 多余.png" }).click();
+    await page.getByTestId("draft-start").click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByTestId("task-title")).toHaveCount(0);
+  });
+}
+
+test("an image-only new task waits for upload and refuses a failed image (2026-11-06)", async () => {
+  studio = await launchStudio();
+  const { page } = studio;
+  await page.getByRole("button", { name: "+ 新任务" }).click();
+  const upload = new Promise<import("@playwright/test").Route>((resolve) => {
+    void page.route("**/api/attachments?*", resolve);
+  });
+  await pasteImage(page, "截图.png", page.getByLabel("第一句话"));
+  const route = await upload;
+  await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "uploading");
+  await page.getByTestId("draft-start").click();
+  await expect(page.getByRole("alert")).toContainText("图片还在上传");
+  await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "internal", message: "upload rejected" } }) });
+  await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "failed");
+  await page.getByLabel("第一句话").press("Enter");
+  await expect(page.getByRole("alert")).toContainText("有图片上传失败");
+  await expect(page.getByTestId("task-title")).toHaveCount(0);
+});
+
 test("drops an image and a file from disk: thumbnail, file reference, both in the transcript", async () => {
   studio = await launchStudio();
   const { page } = studio;
