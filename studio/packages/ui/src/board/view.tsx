@@ -24,6 +24,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
             topics={state.topics}
             scope={scope}
             onOpen={(task) => setView({ kind: "task", taskId: task.id })}
+            onNew={() => setView({ kind: "new" })}
             onMove={(task, column) => void call(link, "PATCH /api/tasks/:id", { id: task.id }, { column }).catch(() => undefined)}
             onArchive={(tasks) =>
               void (async () => {

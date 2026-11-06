@@ -18,9 +18,9 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   /**
    * 进行中 ⇄ 待审阅 by the sessions (2026-10-26, the person asked for it; Studio moves the card, never an agent): when a
    * session of a 进行中 task stops moving and none of the task's sessions moves any more, the task goes to 待审阅; when a
-   * session of a 待审阅 task starts moving again (the person talks to it), the task goes back to 进行中. Only a session
-   * starting or stopping counts, so a card the person moved stays where it is until then; 待办 and 完成 are never
-   * touched, nor the scheduler's task.
+   * session of a 待审阅 or 完成 task starts moving again (the person talks to it), the task goes back to 进行中. Only a
+   * session starting or stopping counts, so a card the person moved stays where it is until then; 待办 is never
+   * touched, nor the scheduler's task. Completed work reopens when another turn starts (2026-11-06).
    */
   watchColumns(): void {
     for (const s of this.store.listSessions()) this.movingBefore.set(s.id, sessionMoving(s));
@@ -39,7 +39,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   private sessionStarted(taskId: Id): void {
     clearTimeout(this.settling.get(taskId));
     this.settling.delete(taskId);
-    if (this.followsSessions(taskId, "review")) this.updateTask(taskId, { column: "doing" });
+    if (this.followsSessions(taskId, "review") || this.followsSessions(taskId, "done")) this.updateTask(taskId, { column: "doing" });
   }
 
   private sessionStopped(taskId: Id): void {

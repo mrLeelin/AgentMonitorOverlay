@@ -177,7 +177,7 @@ test("A ticks a project and a model; B creates a task on A from its new-task pag
   await expect(templates.getByTestId("prompt-new")).toHaveCount(0);
   await screenshot(b.app, "studio", "remote-create-templates", b.page);
   await templates.getByTestId("prompt-ok").click();
-  await expect(text).toHaveValue("在 A 上看一遍");
+  await expect(text).toHaveText("在 A 上看一遍");
   await text.fill("在台式机上整理掉落表");
   await screenshot(b.app, "studio", "remote-create-page", b.page);
   await text.press("Enter");
@@ -215,10 +215,10 @@ test("安全: B is another account, so its task waits on A — B is told before 
   // A file goes along (2026-10-29 evening): picked here, sent before the task.
   const notes = join(b.workspace("B 的文件"), "掉落说明.txt");
   writeFileSync(notes, "Boss 掉率 5%");
-  await b.page.getByTestId("remote-draft-attach-input").setInputFiles(notes);
-  await expect(b.page.locator(".attach-tray")).toContainText("掉落说明.txt");
   const text = b.page.getByTestId("remote-draft-text");
   await text.fill("等台式机点头再跑");
+  await b.page.getByTestId("remote-draft-attach-input").setInputFiles(notes);
+  await expect(text.locator(".resource-file")).toContainText("掉落说明.txt");
   await text.press("Enter");
   await expect(b.page.getByTestId("remote-draft-waiting")).toContainText("已发给 A 台式机：要那边同意后才建任务、开跑");
   await screenshot(b.app, "studio", "remote-create-waiting", b.page);

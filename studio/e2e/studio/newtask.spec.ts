@@ -96,7 +96,7 @@ test("files a task into 待办 in the topic in scope, without starting a session
   await screenshot(studio.app, "studio", "filed-first-message", page);
   await page.getByTestId("new-session-toggle").click();
   await page.getByRole("button", { name: "开始新会话" }).click();
-  await expect(page.getByLabel("输入消息")).toHaveValue("Elite 掉落表补单元测试\n先补边界：0 掉落和满背包");
+  await expect(page.getByLabel("输入消息")).toHaveText("Elite 掉落表补单元测试\n先补边界：0 掉落和满背包");
   await expect.poll(async () => (await studio!.api<StateSnapshot>("GET", "/api/state")).tasks.find((t) => t.id === task.id)!.firstMessage).toBeUndefined();
 });
 
@@ -153,7 +153,7 @@ test("the topic comes first and picks its one preferred project; Ctrl N opens th
   const text = page.getByLabel("第一句话");
   await text.pressSequentially("校验掉落表 #1");
   await expect(page.getByTestId("suggest")).toHaveCount(0);
-  await expect(text).toHaveValue("校验掉落表 #1");
+  await expect(text).toHaveText("校验掉落表 #1");
   await screenshot(studio.app, "stage-10", "S10-draft-page", page);
   await screenshot(studio.app, "studio", "newtask-topic-first-light", page);
 
@@ -280,14 +280,14 @@ test("@ in the first sentence refers to a task (and its sessions) without changi
   await expect(suggest.getByText("找文件…")).toHaveCount(0);
   await screenshot(studio.app, "studio", "newtask-at-task-light", page);
   await text.press("Enter");
-  await expect(text).toHaveValue("按 @冰冻炮迭代复核 ");
+  await expect(text).toHaveText("按 @冰冻炮迭代复核 ");
   // The task's project was not picked by it.
   await expect(page.getByRole("group", { name: "项目" }).getByRole("button", { name: "不选" })).toHaveAttribute("aria-pressed", "true");
   // Projects are offered too; picking one keeps it in the text only.
   await text.pressSequentially("的结论改 @be");
   await expect(suggest.getByRole("option", { name: /beta/ })).toBeVisible();
   await text.press("Enter");
-  await expect(text).toHaveValue("按 @冰冻炮迭代复核 的结论改 @beta ");
+  await expect(text).toHaveText("按 @冰冻炮迭代复核 的结论改 @beta ");
   await expect(page.getByRole("group", { name: "项目" }).getByRole("button", { name: "不选" })).toHaveAttribute("aria-pressed", "true");
   await text.press("Enter");
 
@@ -315,12 +315,12 @@ test("@ 开子会话… on the new-task page: the setup goes with the first sent
   await dialog.getByTestId("subsession-extra").fill("只看日志，不改代码");
   await screenshot(studio.app, "studio", "newtask-subsession-dialog", page);
   await dialog.getByTestId("subsession-ok").click();
-  await expect(text).toHaveValue(/^先查原因 @子会话·.+·默认强度 $/);
-  const tag = (await text.inputValue()).slice("先查原因 @".length).trim();
+  await expect(text).toHaveText(/^先查原因 @子会话·.+·默认强度 $/);
+  const tag = (await text.textContent())!.slice("先查原因 @".length).trim();
   // Back to the board and in again: the pick is kept with the draft.
   await page.getByRole("button", { name: "返回看板" }).click();
   await page.getByRole("button", { name: "+ 新任务" }).click();
-  await expect(text).toHaveValue(`先查原因 @${tag} `);
+  await expect(text).toHaveText(`先查原因 @${tag} `);
   // A filed task has no session to keep it for: refused, saying so.
   await text.press("Control+Enter");
   await expect(page.getByRole("alert")).toContainText("放进待办不带子会话设定");

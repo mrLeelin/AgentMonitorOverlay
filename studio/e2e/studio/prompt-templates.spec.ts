@@ -51,7 +51,7 @@ test("prompt templates: write one, paste it into a session's composer, project-o
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await dialog.getByLabel("搜索模板").press("Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("先看这个 看一遍昨天的提交\n列出有风险的改动");
+  await expect(composer(page)).toHaveText("先看这个 看一遍昨天的提交\n列出有风险的改动");
   await expect(composer(page)).toBeFocused();
 
   // Edit and delete in the window.
@@ -67,7 +67,7 @@ test("prompt templates: write one, paste it into a session's composer, project-o
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("");
+  await expect(composer(page)).toHaveText("");
   const left = await studio.api<Array<{ title: string; workspaceId: string | null }>>("GET", "/api/prompt-templates");
   expect(left.map((t) => [t.title, t.workspaceId])).toEqual([["每日巡检", null], ["别的项目的", beta.id]]);
 });
@@ -85,5 +85,5 @@ test("prompt templates on the new-task page", async () => {
   const dialog = page.getByTestId("prompt-dialog");
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await dialog.getByTestId("prompt-ok").click();
-  await expect(first).toHaveValue("整理本周合进 master 的改动，按模块写成周报");
+  await expect(first).toHaveText("整理本周合进 master 的改动，按模块写成周报");
 });

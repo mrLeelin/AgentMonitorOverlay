@@ -77,7 +77,7 @@ export function useSlashCommands(input: {
     groups,
     highlight: hl,
     choose,
-    track: (el: HTMLTextAreaElement) => setCaret(el.selectionStart),
+    track: (el: { selectionStart: number | null }) => setCaret(el.selectionStart),
     /** The command a message runs, from the list as loaded (loading it first if it is not yet). */
     async match(message: string): Promise<{ command: SlashCommand; args: string } | null> {
       if (!message.startsWith("/")) return null;

@@ -49,7 +49,7 @@ test("after a long reply, ↑ goes back to where the turn's reply begins; anythi
   await expect(hint).toHaveCount(0);
   await expect.poll(() => replyStartOffset(page)).toBeGreaterThanOrEqual(0);
   expect(await replyStartOffset(page)).toBeLessThan(40);
-  await expect(composer(page)).toHaveValue("");
+  await expect(composer(page)).toHaveText("");
 
   // Next turn: typing something first puts the hint away, and ↑ is then the composer's own again.
   await composer(page).fill(LONG);
@@ -60,7 +60,7 @@ test("after a long reply, ↑ goes back to where the turn's reply begins; anythi
   const before = await scrollTop(page);
   await composer(page).press("ArrowUp");
   expect(await scrollTop(page)).toBe(before);
-  await expect(composer(page)).toHaveValue("a");
+  await expect(composer(page)).toHaveText("a");
 
   // A click on the hint itself goes back too.
   await composer(page).fill(LONG);

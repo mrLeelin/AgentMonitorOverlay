@@ -13,11 +13,12 @@ import { useScrollOnSend, useTranscriptView } from "../chat/prefs.js";
 import { IconArrowDown, IconArrowUp, IconStop } from "../chat/icons.js";
 import { sessionStats, type ApprovalItem } from "../chat/turns.js";
 import { useAttachments } from "../attach/useAttachments.js";
-import { AttachTray } from "../attach/AttachTray.js";
+import { AttachmentInput } from "../attach/AttachmentInput.js";
+import type { ResourceInputHandle } from "../attach/ResourceInput.js";
+import { resourceMessage } from "../attach/inlineResources.js";
 import { AttachLink } from "../attach/MessageAttachments.js";
 import { IconPaperclip } from "../attach/icons.js";
-import { withFileRefs } from "../attach/refs.js";
-import { MentionBackdrop, MentionList, useComposerMentions } from "../attach/useMentions.js";
+import { MentionList, useComposerMentions } from "../attach/useMentions.js";
 import { FileSelector } from "../attach/FileSelector.js";
 import { SubSessionDialog } from "../attach/SubSessionDialog.js";
 import { QuickCommitDialog } from "../attach/QuickCommitDialog.js";
@@ -149,11 +150,10 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     [sessionId, flushDraft],
   );
   const view = useTranscriptView();
-  const attach = useAttachments(link);
+  const input = useRef<ResourceInputHandle>(null);
+  const attach = useAttachments(link, { text: draft, insert: (text) => input.current?.insert(text) });
   // 找文件: the selector, opened with Ctrl+P or from the @ list (with what was typed after @).
   const [finding, setFinding] = useState<{ query: string } | null>(null);
-  // How far the composer's text is scrolled, for the @ colour layer behind it.
-  const [inputScroll, setInputScroll] = useState(0);
   const mentions = useComposerMentions({
     link,
     text: draft,
@@ -164,6 +164,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     onFile: (path) => attach.addFiles([path]),
     onFind: (query) => setFinding({ query }),
     onMark: (ref) => attach.addRefs([ref]),
+    inlineFiles: true,
     ...(projects ? { projects } : {}),
   });
   // `/` at the start: the command menu (stage 12, S12-E).
@@ -379,8 +380,18 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
   /** "要修改": text already typed goes at once; otherwise the composer collects it. */
   async function revise(feedback: string): Promise<boolean> {
     if (!session || !planReview) return false;
-    const failed = await sendRevision(link, session.id, planReview.id, feedback);
-    if (failed) return false;
+    if (attach.images.length) {
+      onError?.("计划的修改意见暂时不能带图片：请先移除图片，或取消修改后用普通消息发送。文字和文件会保留。");
+      return false;
+    }
+    const message = resourceMessage(feedback, []).text;
+    setDraft("");
+    const failed = await sendRevision(link, session.id, planReview.id, message);
+    if (failed) {
+      setDraft((d) => d.trim() ? d : feedback);
+      onError?.(failed);
+      return false;
+    }
     setRevising(null);
     return true;
   }
@@ -406,8 +417,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     const text = draft.trim();
     if (!canSend) return;
     if (isRevising) {
-      setDraft("");
-      if (!(await revise(text))) setDraft((d) => (d.trim() ? d : text));
+      await revise(text);
       return;
     }
     // A message that starts with a known command runs it; any other text (an unknown /name, a path) is a message.
@@ -423,25 +433,23 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     }
     // Clear at once so the next message can be typed while this one is on its way; put it back if sending failed
     // (and nothing new was typed meanwhile). Clearing after the request would wipe what was typed in between.
+    const setups = text ? mentions.setups(text) : [];
+    const { text: message, ids } = resourceMessage(text ? mentions.expand(text) : "", attach.images);
     setDraft("");
     const sent = attach.take();
     jumpToEnd();
-    const setups = text ? mentions.setups(text) : [];
-    const message = withFileRefs(text ? mentions.expand(text) : "", sent.refs);
-    const ids = sent.images.flatMap((i) => (i.id ? [i.id] : []));
     const givesWay = now && sendsNow;
     if (givesWay) askHalt("now");
     // 2026-11-05: a message sent right after 停止 never came back — no row, no error, the composer already empty. Slow:
     // the hint says it is on its way; given up on: its text comes back into the composer, saying why.
     const sid = session?.id ?? "";
     let settled = false;
-    let gaveUp = false;
+    const restoreDraft = (current: string) => current.includes(text) ? current : current.trim() ? `${text}\n\n${current}` : text;
     const slow = setTimeout(() => !settled && setSending(sid), SEND_SLOW_MS);
     const giveUp = setTimeout(() => {
       if (settled) return;
-      gaveUp = true;
       setSending((cur) => (cur === sid ? null : cur));
-      setDraft((d) => (d.trim() ? d : text));
+      setDraft(restoreDraft);
       onError?.(`发出去 ${SEND_GIVE_UP_MS / 1000} 秒了，Host 还没回应：文字放回了输入框。先看一眼对话里有没有这条，没有再发。`);
     }, SEND_GIVE_UP_MS);
     const ok = await onSend(message, ids, givesWay, setups);
@@ -452,7 +460,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     if (ok) attach.release(sent);
     else {
       if (givesWay) setHaltAsked((cur) => (cur?.kind === "now" ? null : cur));
-      if (!gaveUp) setDraft((d) => (d.trim() ? d : text));
+      setDraft(restoreDraft);
       attach.restore(sent);
     }
   }
@@ -462,9 +470,13 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     const back = unansweredPrompt(items);
     askHalt("stop");
     onInterrupt();
-    if (back) setDraft((d) => (d.trim() ? `${back}
+    if (back) {
+      const original = [...items].reverse().find((i) => i.type === "user" && i.text === back);
+      const restored = original?.type === "user" ? attach.restoreMessage(back, original.images ?? []) : back;
+      setDraft((d) => (d.trim() ? `${restored}
 
-${d}` : back));
+${d}` : restored));
+    }
   }
 
   // Ctrl+P anywhere on the session's page opens the file selector, Ctrl+Shift+P 快速提交 (10-26) — not while another
@@ -478,8 +490,7 @@ ${d}` : back));
       if (document.querySelector('[role="dialog"]')) return;
       e.preventDefault();
       if (!e.shiftKey) return setFinding({ query: "" });
-      const el = document.querySelector<HTMLTextAreaElement>(".chat-input textarea");
-      askCommit(el && document.activeElement === el ? el.selectionStart : (el?.value.length ?? 0));
+      askCommit(input.current?.selectionStart ?? draft.length);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -677,12 +688,11 @@ ${d}` : back));
               onRevise={() => {
                 const text = draft.trim();
                 if (text) {
-                  setDraft("");
-                  void revise(text).then((ok) => !ok && setDraft((d) => (d.trim() ? d : text)));
+                  void revise(text);
                   return;
                 }
                 setRevising(planReview.id);
-                requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus());
+                requestAnimationFrame(() => input.current?.focus());
               }}
               onCancelRevise={() => setRevising(null)}
             />
@@ -695,30 +705,26 @@ ${d}` : back));
               text={suggestion}
               onPick={(text) => {
                 setDraft(text);
-                requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus());
+                requestAnimationFrame(() => input.current?.focus());
               }}
             />
           )}
           {!archived && (
           <div className={`composer-card${readOnly ? " disabled" : ""}${dragging ? " dropping" : ""}`}>
-            <AttachTray attach={attach} disabled={readOnly} />
             {annotationRefs && annotationRefs.list.length > 0 && !isRevising && <AnnotationRefChips refs={annotationRefs} annotations={annotations} />}
-            <label className={mentions.names.length ? "chat-input marked" : "chat-input"}>
-              <span className="sr-only">输入消息</span>
-              <MentionBackdrop text={draft} names={mentions.names} scrollTop={inputScroll} />
-              <textarea
+            <div className="chat-input">
+              <AttachmentInput
+                key={sessionId ?? "empty"}
+                ref={input}
+                attach={attach}
+                aria-label="输入消息"
                 value={draft}
-                onScroll={(e) => setInputScroll(e.currentTarget.scrollTop)}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  mentions.track(e.target);
-                  slash.track(e.target);
+                onChange={setDraft}
+                onSelect={(selection) => {
+                  mentions.track(selection);
+                  slash.track(selection);
                 }}
-                onSelect={(e) => {
-                  mentions.track(e.currentTarget);
-                  slash.track(e.currentTarget);
-                }}
-                onPaste={readOnly ? undefined : attach.onPaste}
+                mentions={mentions.names}
                 disabled={readOnly}
                 rows={2}
                 placeholder={placeholder}
@@ -737,7 +743,7 @@ ${d}` : back));
                   }
                 }}
               />
-            </label>
+            </div>
             <MentionList mentions={mentions} />
             <SlashMenu slash={slash} />
             <div className="chat-bar">
@@ -806,7 +812,7 @@ ${d}` : back));
           onMark={(path) => markFileMessage(link, path, session?.id)}
           onClose={() => {
             setFinding(null);
-            requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus());
+            requestAnimationFrame(() => input.current?.focus());
           }}
         />
       )}
@@ -819,7 +825,7 @@ ${d}` : back));
           onDone={(body) => {
             const caret = mentions.finishTemplate(body);
             requestAnimationFrame(() => {
-              const el = document.querySelector<HTMLTextAreaElement>(".chat-input textarea");
+              const el = input.current;
               el?.focus();
               if (el && caret !== null) el.setSelectionRange(caret, caret);
             });
@@ -831,7 +837,7 @@ ${d}` : back));
           onDone={(push) => {
             const caret = mentions.finishCommit(push);
             requestAnimationFrame(() => {
-              const el = document.querySelector<HTMLTextAreaElement>(".chat-input textarea");
+              const el = input.current;
               el?.focus();
               if (el && caret !== null) el.setSelectionRange(caret, caret);
             });
@@ -847,7 +853,7 @@ ${d}` : back));
           onDone={(spec) => {
             const caret = mentions.finishSubsession(spec);
             requestAnimationFrame(() => {
-              const el = document.querySelector<HTMLTextAreaElement>(".chat-input textarea");
+              const el = input.current;
               el?.focus();
               if (el && caret !== null) el.setSelectionRange(caret, caret);
             });

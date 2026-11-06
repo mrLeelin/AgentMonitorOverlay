@@ -70,6 +70,10 @@ button.file-chip:hover { border-color: var(--border-strong); }
   border: 1px solid var(--chat-hairline); background: var(--panel);
 }
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; white-space: normal; }
+.msg-images.inline, .msg-files.inline { display: inline-flex; vertical-align: middle; margin: 2px 4px; }
+.msg-images.inline .msg-image img { max-width: 100px; max-height: 64px; }
+.msg-files.inline .file-chip { max-width: 280px; }
+.msg-url { vertical-align: middle; margin: 2px 4px; max-width: 260px; text-overflow: ellipsis; }
 .msg-user .file-chip { max-width: 100%; background: color-mix(in srgb, var(--panel) 55%, transparent); }
 
 /* ---- large view ----------------------------------------------------------------------------------------------- */

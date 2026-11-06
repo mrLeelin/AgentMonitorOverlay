@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type DragEvent, type MouseEvent } from "react";
 import { TASK_COLUMNS, taskProject, type RemoteState, type Session, type Task, type TaskColumn, type Topic, type Workspace } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { copyStatus, grantsOf, useRemote, type CopyStatus } from "../remote/remote.js";
@@ -9,6 +9,7 @@ import { ArchivedTasks } from "./ArchivedTasks.js";
 import { KindIcon } from "./KindIcon.js";
 import { setGroupByTopic, useGroupByTopic } from "./prefs.js";
 import { dutyOfTask, useDuty } from "../duty/duty.js";
+import { useBoardSelection } from "./useBoardSelection.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -44,6 +45,7 @@ interface BoardProps {
   topics: readonly Topic[];
   scope: Scope;
   onOpen(task: Task): void;
+  onNew?(): void;
   /** A card dropped on another column (the person moves cards; agents never do). */
   onMove?(task: Task, column: TaskColumn): void;
   /** Unread mail and open decisions per task id. */
@@ -58,12 +60,13 @@ interface BoardProps {
 }
 
 /** Four columns; the person moves cards (drag a card onto another column), agents never do. Cards carry no buttons. */
-export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
+export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
   const visible = tasks.filter((t) => inScope(t, scope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const [dragging, setDragging] = useState<Task | null>(null);
+  const [dragging, setDragging] = useState<readonly Task[]>([]);
   const [over, setOver] = useState<TaskColumn | null>(null);
+  const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? visible.filter((t) => !t.remote).map((t) => t.id) : []);
   const archive = (list: readonly Task[]) => {
     if (list.length) onArchive?.(list);
   };
@@ -82,13 +85,34 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onMo
       grouped={grouped}
       workspaces={workspaces}
       topics={topics}
-      onOpen={onOpen}
+      selected={selection.selected.has(task.id)}
+      onOpen={(t, event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+          if (!onMove || t.remote) return;
+          const next = new Set(selection.selected);
+          if (next.has(t.id)) next.delete(t.id);
+          else next.add(t.id);
+          selection.setSelected(next);
+        } else onOpen(t);
+      }}
       remote={remote}
       // A copy of a remote task has the column its own computer gives it.
       draggable={!!onMove && !task.remote}
-      onDragStart={() => setDragging(task)}
+      onDragStart={(event) => {
+        const moving = selection.selected.has(task.id) ? visible.filter((t) => selection.selected.has(t.id)) : [task];
+        selection.setSelected(new Set(moving.map((t) => t.id)));
+        setDragging(moving);
+        if (moving.length > 1) {
+          const badge = document.createElement("div");
+          badge.className = "board-drag-badge";
+          badge.textContent = `移动 ${moving.length} 个任务`;
+          document.body.append(badge);
+          event.dataTransfer.setDragImage(badge, 16, 16);
+          requestAnimationFrame(() => badge.remove());
+        }
+      }}
       onDragEnd={() => {
-        setDragging(null);
+        setDragging([]);
         setOver(null);
       }}
       mail={mail?.get(task.id) ?? 0}
@@ -98,7 +122,8 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onMo
   );
 
   return (
-    <section className={canGroup ? "board with-tools" : "board"} aria-label="看板">
+    <section ref={selection.board} className={canGroup ? "board with-tools" : "board"} aria-label="看板" onPointerDown={selection.onPointerDown} onPointerMove={selection.onPointerMove} onPointerUp={selection.onPointerUp} onPointerCancel={selection.onLostPointerCapture} onLostPointerCapture={selection.onLostPointerCapture}>
+      {selection.box && <div className="board-selection-box" data-testid="board-selection-box" style={{ left: selection.box.x, top: selection.box.y, width: selection.box.width, height: selection.box.height }} />}
       {canGroup && (
         <div className="board-tools">
           <label className="board-toggle" title="每一列里，任务按专题分组排列；没归专题的排在最后">
@@ -112,11 +137,11 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onMo
         const archivable = col === "done" && !!onArchive;
         return (
           <div
-            className={over === col && dragging && dragging.column !== col ? "column drop" : "column"}
+            className={over === col && dragging.some((t) => t.column !== col) ? "column drop" : "column"}
             key={col}
             data-testid={`column-${col}`}
             onDragOver={(e) => {
-              if (!dragging || !onMove) return;
+              if (!dragging.length || !onMove) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
               if (over !== col) setOver(col);
@@ -126,14 +151,19 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onMo
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (dragging && onMove && dragging.column !== col) onMove(dragging, col);
-              setDragging(null);
+              if (onMove) for (const task of visible) if (!task.remote && task.column !== col && dragging.some((t) => t.id === task.id)) onMove(task, col);
+              setDragging([]);
               setOver(null);
             }}
           >
             <div className="column-head">
               <span className="column-name">{COLUMN_NAMES[col]}</span>
               <span className="column-count">{cards.length}</span>
+              {onNew && (col === "todo" || col === "doing") && (
+                <button type="button" className="bar-btn column-new" aria-label={`${COLUMN_NAMES[col]}：新建任务`} title="新建任务" onClick={onNew}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+                </button>
+              )}
               {archivable && cards.length > 0 && (
                 <button type="button" className="bar-btn labeled soft-danger column-archive" title={`归档全部已完成（${cards.length}）：任务和它们的会话一起归档；在「已归档」里能打开、恢复`} onClick={() => archive(cards)} data-testid="archive-done-all">
                   <ArchiveIcon size={14} />
@@ -177,6 +207,7 @@ function TaskCard({
   workspaces,
   topics,
   onOpen,
+  selected = false,
   draggable = false,
   onDragStart,
   onDragEnd,
@@ -194,9 +225,10 @@ function TaskCard({
   grouped?: boolean;
   workspaces: readonly Workspace[];
   topics: readonly Topic[];
-  onOpen(t: Task): void;
+  onOpen(t: Task, event: MouseEvent<HTMLButtonElement>): void;
+  selected?: boolean;
   draggable?: boolean;
-  onDragStart?(): void;
+  onDragStart?(event: DragEvent<HTMLButtonElement>): void;
   onDragEnd?(): void;
   mail?: number;
   decisions?: number;
@@ -230,13 +262,14 @@ function TaskCard({
   return (
     <button
       type="button"
-      className={off ? "card remote-off" : "card"}
-      onClick={() => onOpen(task)}
+      className={`card${off ? " remote-off" : ""}${selected ? " selected" : ""}`}
+      aria-pressed={selected}
+      onClick={(event) => onOpen(task, event)}
       draggable={draggable}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", task.id);
-        onDragStart?.();
+        onDragStart?.(e);
       }}
       onDragEnd={onDragEnd}
       data-testid="task-card"

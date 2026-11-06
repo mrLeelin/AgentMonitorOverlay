@@ -179,7 +179,7 @@ test("A grants a task; B works in it, sees approvals A's Focus leaves to it, rid
   await expect(templates.getByTestId("prompt-preview")).toContainText("要改去那台电脑上改");
   await screenshot(b.app, "studio", "remote-b-templates", b.page);
   await templates.getByTestId("prompt-ok").click();
-  await expect(composer(b.page)).toHaveValue("在 A 上看一遍");
+  await expect(composer(b.page)).toHaveText("在 A 上看一遍");
   await composer(b.page).fill("");
 
   // 2026-10-30: B renames the task and the session; the names change on A too.
@@ -258,7 +258,7 @@ test("A grants a task; B works in it, sees approvals A's Focus leaves to it, rid
   // Back on the same port: B reconnects by itself and catches up; the draft is still there, unsent.
   server = await relay.startRelayServer({ store, host: "127.0.0.1", port, name: "测试组" });
   await expect(b.page.getByTestId("remote-banner")).toHaveAttribute("data-state", "online", { timeout: 60_000 });
-  await expect(composer(b.page)).toHaveValue("断线时写好的话");
+  await expect(composer(b.page)).toHaveText("断线时写好的话");
   await expect(b.page.getByRole("button", { name: "发送" })).toBeEnabled();
   await expect(b.page.getByTestId("msg-agent").filter({ hasText: "B 断线时 A 说的" })).toBeVisible({ timeout: 60_000 });
   await screenshot(b.app, "studio", "remote-b-caught-up", b.page);

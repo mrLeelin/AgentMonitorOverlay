@@ -5,6 +5,7 @@ import { mentionAt, withoutMention } from "../newtask/draft.js";
 import { pinnedFirst, usePins } from "../lib/pins.js";
 import { useFileMarks } from "../marks/useFileMarks.js";
 import type { FileRefItem } from "./refs.js";
+import { fileToken } from "./inlineResources.js";
 import { mentionGroups, mentionSpans, QUICK_COMMIT, subSessionName, subSessionSetups, withMentionRefs, type MentionGroup, type MentionOption, type MentionPick, type SubSessionSpec } from "./mentions.js";
 
 /**
@@ -34,6 +35,8 @@ export function useComposerMentions(input: {
   onFind(query: string): void;
   /** A marked file was picked (a plain file reference without this). */
   onMark?(ref: FileRefItem): void;
+  /** Rich composers keep the picked file at the @ position, instead of adding it to the old tray. */
+  inlineFiles?: boolean;
   /** Projects to offer. */
   projects?: readonly Workspace[];
   /** Projects even for a bare "@" (the new-task page); otherwise only once something is typed. */
@@ -126,6 +129,18 @@ export function useComposerMentions(input: {
   const choose = (option: MentionOption) => {
     if (!active) return;
     setHighlight(0);
+    if (input.inlineFiles && (option.kind === "file" || option.kind === "mark")) {
+      const mark = option.kind === "mark" ? marks?.find((m) => m.id === option.id) : null;
+      const ref: FileRefItem | null = mark
+        ? { path: mark.path, startLine: mark.startLine, endLine: mark.endLine, note: mark.note }
+        : option.kind === "file" && shownFiles ? { path: absolutePath(shownFiles.root, option.id) } : null;
+      if (ref) {
+        const inserted = `${fileToken(ref)} `;
+        setText(text.slice(0, active.start) + inserted + text.slice(active.end));
+        setCaret(active.start + inserted.length);
+        return;
+      }
+    }
     if (option.kind === "file" || option.kind === "find" || option.kind === "mark" || option.kind === "subsession" || option.kind === "commit" || option.kind === "template") {
       setText(withoutMention(text, active));
       setCaret(null);
@@ -203,7 +218,7 @@ export function useComposerMentions(input: {
     highlight: hl,
     choose,
     /** Keep the caret known (typing, clicking, arrow keys). */
-    track: (el: HTMLTextAreaElement | HTMLInputElement) => setCaret(el.selectionStart),
+    track: (el: { selectionStart: number | null }) => setCaret(el.selectionStart),
     /** Handles the list's keys; true when the key was used. */
     onKeyDown(e: KeyboardEvent): boolean {
       if (!flat.length) return false;

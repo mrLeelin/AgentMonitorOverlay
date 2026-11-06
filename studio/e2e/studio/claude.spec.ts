@@ -102,7 +102,7 @@ test("a Claude session: approve a command, queue a message, branch, follow a sub
   await expect(page.getByTestId("thread-head")).toContainText("helper");
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK-SUB: helper");
   await expect(composer).toBeDisabled();
-  await expect(composer).toHaveAttribute("placeholder", /子 agent 不能单独接收消息/);
+  await expect(composer).toHaveAttribute("aria-placeholder", /子 agent 不能单独接收消息/);
   await expect(page.getByRole("button", { name: "分支", exact: true })).toHaveCount(0);
   await screenshot(studio.app, "stage-4", "S4-04-claude-subagent", page);
 

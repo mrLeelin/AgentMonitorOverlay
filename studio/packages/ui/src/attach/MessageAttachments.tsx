@@ -14,13 +14,14 @@ import { FileLink } from "../files/FileLinks.js";
 /** The Host link, for loading attachment images in the transcript (provided by the conversation). */
 export const AttachLink = createContext<HostLink | null>(null);
 
-export function MessageImages({ images }: { images: readonly MessageImage[] }) {
+export function MessageImages({ images, inline = false }: { images: readonly MessageImage[]; inline?: boolean }) {
   const link = useContext(AttachLink);
   const [open, setOpen] = useState<string | null>(null);
   if (!images.length) return null;
   const src = (img: MessageImage) => (img.id && link ? attachmentUrl(link, img.id) : null);
+  const Container = inline ? "span" : "div";
   return (
-    <div className="msg-images" data-testid="msg-images">
+    <Container className={inline ? "msg-images inline" : "msg-images"} data-testid="msg-images">
       {images.map((img, i) => {
         const url = src(img);
         return url ? (
@@ -35,7 +36,7 @@ export function MessageImages({ images }: { images: readonly MessageImage[] }) {
         );
       })}
       {open && <Lightbox src={open} onClose={() => setOpen(null)} />}
-    </div>
+    </Container>
   );
 }
 
@@ -44,11 +45,12 @@ export function MessageImages({ images }: { images: readonly MessageImage[] }) {
  * conversation with file links (stage 12) a click opens the quick look at the marked line; otherwise, or while the
  * file is not found, a click copies the path.
  */
-export function MessageFiles({ files }: { files: readonly (string | FileRefItem)[] }) {
+export function MessageFiles({ files, inline = false }: { files: readonly (string | FileRefItem)[]; inline?: boolean }) {
   const [copied, setCopied] = useState<string | null>(null);
   if (!files.length) return null;
+  const Container = inline ? "span" : "div";
   return (
-    <div className="msg-files" data-testid="msg-files">
+    <Container className={inline ? "msg-files inline" : "msg-files"} data-testid="msg-files">
       {files.map((file) => {
         const ref = typeof file === "string" ? { path: file } : file;
         const path = ref.path;
@@ -59,7 +61,7 @@ export function MessageFiles({ files }: { files: readonly (string | FileRefItem)
             <IconFile />
             <span className="file-chip-name">{label}</span>
             {extra && ref.note && <span className="file-chip-note">{ref.note}</span>}
-            {extra && !ref.note && dirName(path) && <span className="file-chip-dir">{dirName(path)}</span>}
+            {extra && !inline && !ref.note && dirName(path) && <span className="file-chip-dir">{dirName(path)}</span>}
           </>
         );
         return (
@@ -89,7 +91,7 @@ export function MessageFiles({ files }: { files: readonly (string | FileRefItem)
           </FileLink>
         );
       })}
-    </div>
+    </Container>
   );
 }
 

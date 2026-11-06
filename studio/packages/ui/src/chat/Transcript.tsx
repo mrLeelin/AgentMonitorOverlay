@@ -10,6 +10,7 @@ import type { TranscriptView } from "./prefs.js";
 import { MessageFiles, MessageImages } from "../attach/MessageAttachments.js";
 import { splitFileRefItems } from "../attach/refs.js";
 import { mentionSpans, splitMentionRefs } from "../attach/mentions.js";
+import { inlineMessage } from "../attach/InlineMessage.js";
 
 /** The line under a message whose @ names were explained to the model (2026-11-05: sub-session setups named too). */
 function mentionBrief(blocks: string): string {
@@ -337,10 +338,15 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
   const { text: withRefs, refs } = splitFileRefItems(own);
   // Its @ names (快速提交 among them) coloured as in the composer; what the message told the model of them on hover.
   const { text, names, commit, blocks } = splitMentionRefs(withRefs);
+  const inline = inlineMessage(text, item.images ?? [], refs, (part) => names.size
+    ? mentionSpans(part, [...names.keys()]).map((p, i) => p.mention
+      ? <span key={i} className="mention-token" title={names.get(p.text.slice(1))} data-testid="msg-mention">{p.text}</span>
+      : p.text)
+    : part);
   return (
     <div className="msg-user-row">
       <div className="msg-user" data-testid="msg-user">
-        {item.images?.length ? <MessageImages images={item.images} /> : null}
+        {inline.images.length ? <MessageImages images={inline.images} /> : null}
         {annotations.length > 0 && (
           <span className="msg-anno-refs">
             {annotations.map((r) => (
@@ -352,20 +358,10 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
         )}
         {text && (
           <span className="msg-text">
-            {names.size
-              ? mentionSpans(text, [...names.keys()]).map((part, i) =>
-                  part.mention ? (
-                    <span key={i} className="mention-token" title={names.get(part.text.slice(1))} data-testid="msg-mention">
-                      {part.text}
-                    </span>
-                  ) : (
-                    part.text
-                  ),
-                )
-              : text}
+            {inline.parts}
           </span>
         )}
-        <MessageFiles files={refs} />
+        <MessageFiles files={inline.files} />
         {blocks && (
           <span className={commit ? "msg-role-update quick-commit" : "msg-role-update"} title={blocks} data-testid="msg-mention-brief">
             {commit ? `快速提交 · ${commit.push ? "提交、合并并推送" : "提交、合并，不推送"}` : mentionBrief(blocks)}

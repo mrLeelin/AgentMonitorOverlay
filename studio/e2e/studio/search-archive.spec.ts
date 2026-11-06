@@ -127,7 +127,7 @@ test("归档任务: a box says what was archived and returns to the canvas or bo
   await banner.getByRole("button", { name: "恢复任务" }).click();
   await expect(banner).toHaveCount(0);
   await expect(page.getByTestId("toast")).toContainText("任务已恢复");
-  await expect(page.locator(".chat-input textarea")).toBeEnabled();
+  await expect(page.getByLabel("输入消息")).toBeEditable();
 
   // Opened from the board: 返回看板, or 关闭 to stay on the read-only page.
   await page.getByRole("button", { name: "返回画布" }).click();
@@ -168,5 +168,5 @@ test("archived sessions: rows like the live ones, faded and marked; opened, a ba
   await banner.getByRole("button", { name: "恢复会话" }).click();
   await expect(banner).toHaveCount(0);
   await expect(page.getByTestId("session-row")).toHaveCount(2);
-  await expect(page.locator(".chat-input textarea")).toBeEnabled();
+  await expect(page.getByLabel("输入消息")).toBeEditable();
 });

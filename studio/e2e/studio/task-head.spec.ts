@@ -109,7 +109,7 @@ test("status, topic and project from the line under the title; the right column 
   await page.getByLabel("输入消息").fill("写到一半的话");
   await page.reload();
   await expect(page.getByTestId("note-count")).toBeVisible();
-  await expect(page.getByLabel("输入消息")).toHaveValue("写到一半的话");
+  await expect(page.getByLabel("输入消息")).toHaveText("写到一半的话");
 
   // The session bar: 追踪 (2026-11-03, 问题 #15), 分支 with the git-branch glyph, 归档 right of it on a red-tinted face
   // (2026-10-28), ⋯ (the openers outside Studio since 11-03, 书签); no 仅工作台.

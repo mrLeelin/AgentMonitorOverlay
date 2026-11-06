@@ -57,7 +57,7 @@ test("a DSH session: approval card, a message waits for the turn, no fork or ter
   await composer.fill("[[slow]]");
   await composer.press("Enter");
   await expect(page.getByRole("button", { name: "排队" })).toBeVisible({ timeout: 30_000 });
-  await expect(composer).toHaveAttribute("placeholder", /这一轮结束后发给它/);
+  await expect(composer).toHaveAttribute("aria-placeholder", /这一轮结束后发给它/);
   await composer.fill("顺便看看测试");
   await page.getByRole("button", { name: "排队" }).click();
   await expect(page.getByTestId("msg-user").filter({ hasText: "顺便看看测试" })).toBeVisible();

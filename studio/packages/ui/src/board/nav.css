@@ -13,12 +13,18 @@
 .nav-rule { flex: 1; height: 1px; background: var(--border); }
 .nav-row .nav-kind { flex: none; margin-right: -2px; fill: none; stroke: var(--text-faint); stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
 .nav-row .name { flex: 1; }
+.nav-scope-row { padding-right: 30px; }
+/* Keep status beside the name, even when the name needs an ellipsis; reserve the right edge for pinning. */
+.nav-entry-name { display: flex; align-items: center; align-self: stretch; gap: 6px; flex: 1; min-width: 0; }
+.nav-entry-name .name { flex: 0 1 auto; line-height: 20px; }
+/* Small indicators use bright colours independently of the themes' darker status text. */
+.nav-task-dot { display: block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: #7dffac; }
+.nav-task-dot[data-status="review"] { background: #ffe66d; }
 /* The + sits in the counts' column (2026-10-15, R1: counts, pins and + make one right edge). */
 .nav-head { padding-right: 4px; }
 .nav-add { width: 22px; height: 22px; border: none; border-radius: var(--r-s); background: transparent; color: var(--text-dim); font-size: 15px; line-height: 1; cursor: pointer; }
 .nav-add:hover { background: var(--chip); color: var(--text); }
-/* One right edge (R1): every count lines up with 全部任务's; a pinned entry shows a small pin before its count, and
-   hovering an entry puts the pin button where its count was. */
+/* Pin buttons share the right edge; task status stays beside each entry's name. */
 .nav-item { position: relative; }
 .nav-row[draggable="true"], .nav-head[draggable="true"] { cursor: grab; }
 .nav-row[draggable="true"]:active, .nav-head[draggable="true"]:active { cursor: grabbing; }

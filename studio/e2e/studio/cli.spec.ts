@@ -54,7 +54,7 @@ test("Codex: the / menu, compaction, review mode and retries", async () => {
   await expect(menu.locator(".suggest-h")).toHaveText(["Studio", "命令", "Skills"]);
   await expect(menu.getByRole("option").first()).toContainText("/compact");
   await expect(menu.getByRole("option", { name: /\/review/ }).first()).toContainText("Git Review");
-  await expect(menu.getByRole("option", { name: /\/code-review/ })).toContainText("让 Codex 审查改动");
+  await expect(menu.locator('[data-group="runtime"]').filter({ hasText: "/code-review" })).toContainText("让 Codex 审查改动");
   await screenshot(app, "stage-12", "S12-E-slash-menu", page);
 
   // Filtering, keys: ↓ moves, Esc closes and keeps the text.
@@ -65,13 +65,13 @@ test("Codex: the / menu, compaction, review mode and retries", async () => {
   await expect(menu.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
   await composer.press("Escape");
   await expect(menu).toHaveCount(0);
-  await expect(composer).toHaveValue("/re");
+  await expect(composer).toHaveText("/re");
 
   // /compact from the menu: Codex compacts in a turn of its own; the row says how large the context was.
   await composer.fill("/comp");
   await expect(menu.getByRole("option").first()).toContainText("/compact");
   await composer.press("Enter");
-  await expect(composer).toHaveValue("");
+  await expect(composer).toHaveText("");
   const compaction = page.getByTestId("compaction");
   await expect(compaction).toHaveAttribute("data-state", "completed", { timeout: 60_000 });
   await expect(compaction).toContainText(/上下文已压缩（之前约 [\d.]+k? tok）/);
@@ -98,7 +98,7 @@ test("Codex: the / menu, compaction, review mode and retries", async () => {
   // Studio's /review opens the project's Git Review window.
   await send(page, "/review");
   await expect.poll(() => app.windows().some((w) => w.url().includes("#review")), { timeout: 20_000 }).toBe(true);
-  await expect(composer).toHaveValue("");
+  await expect(composer).toHaveText("");
 });
 
 test("Claude: commands, a background command, retries, notices, images and suggestions", async () => {
@@ -122,7 +122,7 @@ test("Claude: commands, a background command, retries, notices, images and sugge
   await screenshot(app, "stage-12", "S12-E-suggestion", page);
   await chips.getByRole("button", { name: MOCK_SUGGESTION }).click();
   const composer = page.getByLabel("输入消息");
-  await expect(composer).toHaveValue(MOCK_SUGGESTION);
+  await expect(composer).toHaveText(MOCK_SUGGESTION);
   await expect(chips).toHaveCount(0);
 
   // The / menu lists Claude Code's commands and skills (no /clear or /model: Studio keeps those).

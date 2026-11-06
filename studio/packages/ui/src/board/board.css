@@ -5,6 +5,7 @@
 .column-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px 6px; border-bottom: 2px solid var(--border-strong); font-family: var(--font-display); font-size: var(--fs-title); }
 .column-name { font-weight: 700; }
 .column-count { color: var(--text-faint); font-family: var(--font-code); font-size: var(--fs-cap); }
+.column-head .column-new { margin-left: auto; align-self: center; height: var(--ctl-s); min-width: var(--ctl-s); padding: 0; }
 /* 全部归档 at the right of 完成 (2026-10-28); a topic group's own 归档 shows when the pointer is on the group. */
 .column-archive { margin-left: auto; align-self: center; height: var(--ctl-s); font-family: var(--font-ui); }
 .topic-group-head .group-archive { height: 22px; min-width: 22px; padding: 0 4px; visibility: hidden; }
@@ -12,6 +13,10 @@
 .topic-group:hover .group-archive, .group-archive:focus-visible { visibility: visible; }
 .card { text-align: left; padding: 12px 14px; border-radius: var(--r-l); border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; display: flex; flex-direction: column; gap: 8px; font: inherit; }
 .card:hover { border-color: var(--border-strong); }
+.board { position: relative; user-select: none; }
+.board .card.selected { border-color: var(--primary); background: var(--selected); box-shadow: 0 0 0 1px var(--primary); }
+.board-selection-box { position: absolute; z-index: 40; pointer-events: none; border: 1px solid var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.board-drag-badge { position: fixed; top: 0; left: 0; z-index: 10000; padding: 12px 18px; border: 1px solid var(--primary); border-radius: var(--r-l); background: var(--panel); color: var(--text); font: inherit; pointer-events: none; }
 .card-title { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-title); line-height: 1.35; overflow-wrap: anywhere; }
 .card-status { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-dim); }
 .card-meta { font-size: var(--fs-cap); color: var(--text-faint); }

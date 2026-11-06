@@ -50,7 +50,7 @@ test("selection bar: annotate, quote into the composer, copy; no right-click men
   // 引用
   await selectAndRelease(reply, "先修正概率");
   await bar.getByRole("button", { name: "引用" }).click();
-  await expect(page.getByLabel("输入消息")).toHaveValue("> 先修正概率\n\n");
+  await expect(page.getByLabel("输入消息")).toHaveText("> 先修正概率\n\n");
 
   // 复制: the bar stays and says so a moment.
   await selectAndRelease(reply, "Boss_Lv20");

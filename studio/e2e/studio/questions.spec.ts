@@ -115,7 +115,7 @@ test("reviews a plan: changes from the composer, then approve and leave plan mod
   await bar.getByRole("button", { name: "要修改" }).click();
   const composer = page.getByLabel("输入消息");
   await expect(composer).toBeFocused();
-  await expect(composer).toHaveAttribute("placeholder", /写下要修改的地方/);
+  await expect(composer).toHaveAttribute("aria-placeholder", /写下要修改的地方/);
   await composer.fill("测试也要覆盖超时");
   await screenshot(app, "stage-12", "S12-B-plan-revise", page);
   await composer.press("Enter");

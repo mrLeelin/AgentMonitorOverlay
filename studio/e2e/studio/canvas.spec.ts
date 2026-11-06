@@ -20,6 +20,49 @@ async function dragBy(page: Page, target: Locator, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+test("canvas: middle-button dragging pans from empty space, cards and handles without editing the document", async () => {
+  studio = await launchStudio();
+  const { page } = studio;
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  const topic = await studio.api<Topic>("POST", "/api/topics", { title: "中键平移" });
+  const { task } = await studio.api<{ task: Task }>("POST", "/api/tasks", { title: "中键拖动画布", workspaceId: ws.id, topicId: topic.id });
+  await studio.api("PUT", `/api/tasks/${task.id}/canvas`, { onCanvas: true });
+  await page.getByRole("button", { name: "画布", exact: true }).click();
+  const card = page.getByTestId("canvas-card");
+  const world = page.getByTestId("canvas-world");
+  const viewport = page.getByTestId("canvas-viewport");
+  await expect(card).toBeVisible();
+  await page.getByRole("button", { name: "复位" }).click();
+  const before = await studio.api<CanvasDoc>("GET", `/api/topics/${topic.id}/canvas`);
+  const vbox = (await viewport.boundingBox())!;
+
+  for (const target of [null, card.locator(".canvas-card-title"), card.getByTestId("canvas-handle").first()]) {
+    const box = target ? (await target.boundingBox())! : null;
+    const x = box ? box.x + box.width / 2 : vbox.x + vbox.width - 200;
+    const y = box ? box.y + box.height / 2 : vbox.y + vbox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(x + 40, y + 20, { steps: 3 });
+    await expect(viewport).toHaveClass(/panning/);
+    await expect(page.getByTestId("canvas-detail")).toHaveCount(0);
+    // Releasing another button must not end the middle-button gesture.
+    await page.mouse.down({ button: "right" });
+    await page.mouse.up({ button: "right" });
+    await page.mouse.move(x + 80, y + 45, { steps: 3 });
+    await expect(world).toHaveAttribute("style", /translate\(80px, 45px\) scale\(1\)/);
+    await page.mouse.up({ button: "middle" });
+    await expect(viewport).not.toHaveClass(/panning/);
+    await page.mouse.move(x + 100, y + 60);
+    await expect(world).toHaveAttribute("style", /translate\(80px, 45px\) scale\(1\)/);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "复位" }).click();
+  }
+  await expect(page.getByTestId("canvas-detail")).toHaveCount(0);
+  expect(await studio.api<CanvasDoc>("GET", `/api/topics/${topic.id}/canvas`)).toEqual(before);
+  await screenshot(studio.app, "studio", "canvas-middle-pan", page);
+});
+
 test("canvas: tasks appear, cards move and persist, pan and zoom", async () => {
   studio = await launchStudio();
   const { page } = studio;

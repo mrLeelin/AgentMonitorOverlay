@@ -150,8 +150,10 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
       return next;
     });
 
-  const row = (kind: PinKind | null, id: string | null, target: Scope, name: string, count: number, testId: string, title?: string, onMenu?: (e: MouseEvent) => void, badge?: ReactNode) => {
+  const row = (kind: PinKind | null, id: string | null, target: Scope, name: string, scopedTasks: readonly Task[], testId: string, title?: string, onMenu?: (e: MouseEvent) => void, badge?: ReactNode) => {
     const pinned = !!(kind && id && pins.has(kind, id));
+    const doing = !!kind && scopedTasks.some((t) => t.column === "doing");
+    const review = !!kind && scopedTasks.some((t) => t.column === "review");
     return (
       <div key={testId} className={pinned ? "nav-item pinned" : "nav-item"} title={title}
         data-dragging={dragging?.type === "item" && dragging.kind === kind && dragging.id === id || undefined}
@@ -176,7 +178,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
           endDrag();
         }}
       >
-        <button type="button" className="nav-row" aria-current={!panorama?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
+        <button type="button" className={kind ? "nav-row nav-scope-row" : "nav-row"} aria-current={!panorama?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
           draggable={!!kind && !!id}
           title={kind ? [title, "拖动排序；Alt ↑ / ↓ 调整顺序（置顶项在前）"].filter(Boolean).join("\n") : title}
           onDragStart={(e) => { if (kind && id) startDrag(e, { type: "item", kind, id }); }}
@@ -190,14 +192,17 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
           }}
         >
           {kind && <NavKindIcon kind={kind} />}
-          <span className="name">{name}</span>
+          <span className="nav-entry-name">
+            <span className="name">{name}</span>
+            {doing && <span className="nav-task-dot" data-status="doing" role="img" aria-label="有进行中的任务" title="有进行中的任务" />}
+            {review && <span className="nav-task-dot" data-status="review" role="img" aria-label="有待审阅的任务" title="有待审阅的任务" />}
+          </span>
           {pinned && (
             <svg className="nav-pinned" width="11" height="11" viewBox="0 0 12 12" role="img" aria-label="已置顶">
               <path d="M4 1.5 H8 L7.4 5 L9.5 7 H2.5 L4.6 5 Z M6 7 V11" />
             </svg>
           )}
           {badge}
-          <span className="count">{count}</span>
         </button>
         {kind && id && (
           <button
@@ -248,7 +253,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
       t.id,
       { kind: "topic", id: t.id },
       t.title,
-      liveTasks.filter((x) => x.topicId === t.id).length,
+      liveTasks.filter((x) => x.topicId === t.id),
       `scope-topic-${t.title}`,
       asking[t.id] ? `画布上 ${asking[t.id]} 个问题待你确认` : undefined,
       (e) => {
@@ -262,7 +267,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
       ) : undefined,
     );
   const projectRow = (w: Workspace) =>
-    row("project", w.id, { kind: "workspace", id: w.id }, w.name, liveTasks.filter((t) => t.workspaceId === w.id).length, `scope-ws-${w.name}`, w.description ? `${w.path}\n${w.description}` : w.path, (e) => {
+    row("project", w.id, { kind: "workspace", id: w.id }, w.name, liveTasks.filter((t) => t.workspaceId === w.id), `scope-ws-${w.name}`, w.description ? `${w.path}\n${w.description}` : w.path, (e) => {
       e.preventDefault();
       setMenu({ workspaceId: w.id, x: e.clientX, y: e.clientY });
     });
@@ -416,7 +421,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     <>
     <nav className="scope-nav" aria-label="范围">
       <div className="nav-top">
-        {row(null, null, { kind: "all" }, "全部任务", liveTasks.length, "scope-all")}
+        {row(null, null, { kind: "all" }, "全部任务", liveTasks, "scope-all")}
         {panorama && (
           <div className="nav-item">
             <button type="button" className="nav-row" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">

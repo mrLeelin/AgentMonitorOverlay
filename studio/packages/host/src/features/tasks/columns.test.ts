@@ -62,6 +62,20 @@ describe("放进待办 (2026-11-05)", () => {
 });
 
 describe("进行中 ⇄ 待审阅", () => {
+  it("reopens a completed task when the person sends another message, then moves it to 待审阅 when the turn ends", async () => {
+    const task = store.createTask({ title: "继续已完成任务", workspaceId: alpha.id, column: "doing" });
+    const s = await service.tasks.addSession(task.id, { profileId: "p-ds" });
+    await service.sessions.sendMessage(s.id, "第一轮");
+    await until(() => column(task) === "review");
+    service.tasks.updateTask(task.id, { column: "done" });
+
+    await service.sessions.sendMessage(s.id, "[[slow]]");
+    await until(() => status(s.id) === "running");
+    expect(column(task)).toBe("doing");
+    await service.sessions.interrupt(s.id);
+    await until(() => column(task) === "review");
+  });
+
   it("goes to 待审阅 once the turn is over, and back to 进行中 when the person talks to it again", async () => {
     const task = store.createTask({ title: "改表", workspaceId: alpha.id, column: "doing" });
     const s = await service.tasks.addSession(task.id, { profileId: "p-ds" });
@@ -92,9 +106,9 @@ describe("进行中 ⇄ 待审阅", () => {
     await until(() => column(task) === "review");
   });
 
-  it("leaves 待办, 完成 and the scheduler's task alone, and a card the person moved until a session starts or stops", async () => {
-    const done = store.createTask({ title: "已完成", workspaceId: alpha.id, column: "done" });
-    const d = await service.tasks.addSession(done.id, { profileId: "p-ds" });
+  it("leaves 待办 and the scheduler's task alone, and a card the person moved until a session starts or stops", async () => {
+    const todo = store.createTask({ title: "待办", workspaceId: alpha.id, column: "todo" });
+    const d = await service.tasks.addSession(todo.id, { profileId: "p-ds" });
     const scheduler = store.createTask({ title: "调度", workspaceId: alpha.id, column: "doing" });
     store.setKv(SCHEDULER_TASK_KEY, scheduler.id);
     const sch = await service.tasks.addSession(scheduler.id, { profileId: "p-ds" });
@@ -102,7 +116,7 @@ describe("进行中 ⇄ 待审阅", () => {
     await service.sessions.sendMessage(sch.id, "排一下");
     await until(() => status(d.id) === "idle" && status(sch.id) === "idle");
     await pause(300);
-    expect(column(done)).toBe("done");
+    expect(column(todo)).toBe("todo");
     expect(column(scheduler)).toBe("doing");
 
     // Moved back to 进行中 by the person while nothing runs: it stays there; renaming a session changes nothing.
@@ -112,5 +126,19 @@ describe("进行中 ⇄ 待审阅", () => {
     await service.sessions.renameSession(s.id, "改个名");
     await pause(300);
     expect(column(task)).toBe("doing");
+  });
+
+  it("reopens completed work when a new session starts, but keeps a task manually completed during a running turn", async () => {
+    const task = store.createTask({ title: "新会话继续", workspaceId: alpha.id, column: "done" });
+    const s = await service.tasks.addSession(task.id, { profileId: "p-ds", text: "[[slow]]" });
+    await until(() => status(s.id) === "running");
+    expect(column(task)).toBe("doing");
+    service.tasks.updateTask(task.id, { column: "done" });
+    await service.sessions.renameSession(s.id, "继续运行中");
+    await pause(250);
+    expect(column(task)).toBe("done");
+    await service.sessions.interrupt(s.id);
+    await pause(250);
+    expect(column(task)).toBe("done");
   });
 });

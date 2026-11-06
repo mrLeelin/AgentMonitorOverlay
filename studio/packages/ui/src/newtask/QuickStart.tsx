@@ -9,6 +9,7 @@ import { submitDraft, useTaskDraft } from "./draft.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
 import { ChoicePicker } from "./ChoiceRow.js";
 import { GROUP_HEADINGS } from "./choices.js";
+import { resourceSpans, resourceText } from "../attach/inlineResources.js";
 import { useDraftChoices } from "./useDraftChoices.js";
 
 /**
@@ -65,11 +66,15 @@ export function QuickStart({
     templates: false,
   });
   useEffect(() => input.current?.focus(), []);
+  const hasResources = resourceSpans(draft.text).length > 0;
+  // A draft with inline resources belongs on the full page, where its previews and upload state are available.
+  useEffect(() => { if (hasResources) onExpand(); }, [hasResources, onExpand]);
 
   const project = rows.projects.find((w) => w.id === draft.projectId);
   const topic = rows.topic;
 
   async function submit(file: boolean) {
+    if (hasResources) return onExpand();
     if (busy) return;
     if (!draft.text.trim()) return setError("写一句话再开始。");
     setBusy(true);
@@ -98,7 +103,7 @@ export function QuickStart({
           </span>
           <input
             ref={input}
-            value={draft.text}
+            value={hasResources ? resourceText(draft.text) : draft.text}
             aria-label="快速新任务"
             placeholder="一句话开始新任务，@ 引用项目或任务"
             onChange={(e) => {

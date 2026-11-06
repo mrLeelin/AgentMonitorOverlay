@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "ui.composer",
+      "label": "输入框和行内资源",
+      "aliases": ["输入框", "光标", "拖入", "粘贴", "行内图片", "网址", "附件", "富文本", "撤销"],
+      "category": "ui",
+      "purpose": "新建任务、远程新建任务和会话共用的行内资源编辑器：图片、文件、网址在光标处插入，支持整块删除、撤销和预览。草稿存文本与资源标记；发送前转换为编号图片、文件引用与真实图片 id，消息气泡按编号原位显示。不要把仅用于编辑的资源标记传给模型。",
+      "anchors": [
+        { "label": "编辑器和选择区", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "export function ResourceInput" },
+        { "label": "上传和粘贴接入", "path": "studio/packages/ui/src/attach/AttachmentInput.tsx", "anchor": "export function AttachmentInput" },
+        { "label": "资源发送格式", "path": "studio/packages/ui/src/attach/inlineResources.ts", "anchor": "export function resourceMessage" },
+        { "label": "消息气泡行内显示", "path": "studio/packages/ui/src/attach/InlineMessage.tsx", "anchor": "export function inlineMessage" }
+      ],
+      "related": ["ui.chat", "studio.files", "studio.sessions"],
+      "next": ["studio/e2e/studio/inline-resources.spec.ts", "studio/packages/ui/src/attach/useAttachments.ts"]
+    }
+  ]
+}

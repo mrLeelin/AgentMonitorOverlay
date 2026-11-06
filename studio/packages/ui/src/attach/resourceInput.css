@@ -1,0 +1,24 @@
+.resource-input {
+  flex: 1; width: 100%; min-width: 0; box-sizing: border-box; min-height: calc(var(--resource-rows, 2) * 22px + 8px); max-height: 240px;
+  padding: 4px 16px; border: none; outline: none; overflow-y: auto; scrollbar-gutter: stable;
+  background: transparent; color: var(--chat-label, var(--text)); caret-color: var(--chat-label, var(--text)); font: inherit; font-size: 14px; line-height: 22px;
+  white-space: pre-wrap; overflow-wrap: anywhere; cursor: text;
+}
+.resource-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--chat-caption, var(--text-faint)); pointer-events: none; position: absolute; max-width: calc(100% - 32px); }
+.resource-input[aria-disabled="true"] { cursor: default; }
+.draft-composer .resource-input { padding: 14px 16px 6px; min-height: 96px; font-size: 15px; line-height: 1.7; }
+.resource-atom {
+  display: inline-flex; align-items: center; gap: 3px; max-width: min(340px, 100%); height: 29px; margin: 2px 3px; padding: 1px 4px 1px 2px; box-sizing: border-box;
+  vertical-align: middle; border: 1px solid var(--border); border-radius: 6px; background: var(--chip); color: var(--text); white-space: nowrap; user-select: all;
+}
+.resource-open { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 0; border: none; background: none; color: inherit; font: inherit; font-size: 12px; line-height: 22px; cursor: pointer; }
+.resource-open img { flex: none; width: 24px; height: 24px; border-radius: 3px; object-fit: cover; }
+.resource-kind { flex: none; width: 20px; text-align: center; color: var(--text-dim); font-size: 15px; }
+.resource-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.resource-remove { flex: none; width: 18px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 3px; background: none; color: var(--text-faint); font-size: 16px; cursor: pointer; }
+.resource-remove:hover:not(:disabled) { color: var(--text); background: var(--panel-raised); }
+.resource-atom:hover { border-color: var(--border-strong); }
+.resource-state { flex: none; color: var(--text-dim); font-size: 10px; }
+.resource-atom[data-state="uploading"] img { opacity: .5; }
+.resource-atom[data-state="failed"] { border-color: var(--error); }
+.resource-atom[data-state="failed"] .resource-state { color: var(--error-text); }

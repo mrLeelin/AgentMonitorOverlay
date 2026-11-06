@@ -48,7 +48,7 @@ test("tasks and sessions are renamed in place; a task can be @-ed in a conversat
   await expect(page.getByTestId("suggest")).toContainText("掉落表概率校验");
   await screenshot(studio.app, "stage-10", "S10-at-task", page);
   await composer.press("Enter");
-  await expect(composer).toHaveValue("参考 @掉落表概率校验 ");
+  await expect(composer).toHaveText("参考 @掉落表概率校验 ");
   await composer.press("Enter");
   const target = state.tasks.find((t: Task) => t.title === "掉落表概率校验")!;
   // Since 2026-10-28 (12bce21) the name is coloured in the bubble and what the model was told of it is behind a tag.

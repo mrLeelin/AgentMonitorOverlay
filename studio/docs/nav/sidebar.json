@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "ui.scopeNav",
+      "label": "左侧项目和专题导航",
+      "aliases": ["侧栏", "左栏", "左侧导航", "ScopeNav", "状态圆点", "项目排序", "专题排序", "置顶"],
+      "category": "ui",
+      "purpose": "工作台左栏的项目、专题、全部任务入口，以及置顶、分组、折叠和拖动排序。项目、专题名称后显示未归档任务的看板状态：进行中绿点、待审阅橙黄色点，两类都有则并列显示，圆点为 7px 且垂直居中。不显示任务总数；全部任务不显示圆点。",
+      "anchors": [
+        { "label": "导航入口和状态判断", "path": "studio/packages/ui/src/board/ScopeNav.tsx", "anchor": "export function ScopeNav" },
+        { "label": "导航样式", "path": "studio/packages/ui/src/board/nav.css", "anchor": ".nav-entry-name" },
+        { "label": "排序偏好", "path": "studio/packages/ui/src/board/navOrder.ts", "anchor": "export function useNavOrder" }
+      ],
+      "related": ["studio.tasks", "studio.topics", "ui.shell"],
+      "next": ["studio/e2e/studio/nav.spec.ts", "studio/e2e/studio/nav-status.spec.ts"]
+    }
+  ]
+}

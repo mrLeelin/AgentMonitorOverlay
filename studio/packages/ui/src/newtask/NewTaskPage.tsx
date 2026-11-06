@@ -20,9 +20,10 @@ import { PromptTemplateDialog } from "../attach/PromptTemplateDialog.js";
 import { SubSessionDialog } from "../attach/SubSessionDialog.js";
 import { subSessionSetups } from "../attach/mentions.js";
 import { useAttachments } from "../attach/useAttachments.js";
-import { AttachTray } from "../attach/AttachTray.js";
+import { AttachmentInput } from "../attach/AttachmentInput.js";
+import type { ResourceInputHandle } from "../attach/ResourceInput.js";
+import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
 import { IconPaperclip } from "../attach/icons.js";
-import { withFileRefs } from "../attach/refs.js";
 import { useRemote } from "../remote/remote.js";
 import { RemoteDraft } from "./RemoteDraft.js";
 import { remoteModeShown } from "./remoteTargets.js";
@@ -81,9 +82,9 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const [error, setError] = useState("");
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
-  const input = useRef<HTMLTextAreaElement>(null);
+  const input = useRef<ResourceInputHandle>(null);
   // Images and files pasted, dropped or picked go with the first sentence (2026-10-19); they are not kept in the draft.
-  const attach = useAttachments(link);
+  const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const settings = useSettings(link);
@@ -129,6 +130,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     onFile: (path) => attach.addFiles([path]),
     onFind: (query) => setFinding({ query }),
     onMark: (ref) => attach.addRefs([ref]),
+    inlineFiles: true,
     // 2026-11-05: the task's first session may start sub-sessions, so 开子会话… is offered here too.
     subsession: true,
   });
@@ -150,11 +152,11 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     if (!file) setStarting(resume ? "正在接续会话…" : `正在启动 ${shortModel(profiles.find((p) => p.id === draft.pick.profileId))}…`);
     setError("");
     try {
-      const text = withFileRefs(draftText(draft), attach.files.map(attach.refOf));
-      const images = attach.images.flatMap((i) => (i.id ? [i.id] : []));
+      const { text, ids: images } = resourceMessage(draftText(draft), attach.images);
       const setups = draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : [];
       const { refs: _refs, ...rest } = draft;
-      const created = await submitDraft(link, { ...rest, text, ...(resume && !rest.title.trim() ? { title: resume.title } : {}) }, file, onCanvas, images, resume?.id, setups);
+      const title = rest.title.trim() || (resume ? resume.title : resourceTitle(draft.text)) || "";
+      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups);
       setResume(null);
       attach.reset();
       reset({ projectId: draft.projectId, topicId: draft.topicId });
@@ -339,19 +341,18 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               attach.onDrop(e);
             }}
           >
-            <AttachTray attach={attach} />
-            <textarea
+            <AttachmentInput
               ref={input}
+              attach={attach}
               value={draft.text}
               rows={3}
               aria-label="第一句话"
               placeholder={resume ? "接过来后先说的话，可以不写。打 @ 引用项目、任务或文件。" : "比如：导入器遇到网络错误直接崩，给 fetch 加上失败重试，最多 3 次。打 @ 引用项目、任务或文件。"}
-              onChange={(e) => {
-                update({ text: e.target.value });
-                mentions.track(e.target);
+              onChange={(text) => {
+                update({ text });
               }}
-              onSelect={(e) => mentions.track(e.currentTarget)}
-              onPaste={attach.onPaste}
+              onSelect={mentions.track}
+              mentions={mentions.names}
               onKeyDown={(e) => {
                 if (mentions.onKeyDown(e)) return;
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

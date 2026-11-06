@@ -87,15 +87,15 @@ test("steers a running reply and interrupts another", async () => {
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "打断" })).toHaveCount(0);
   // A reply had come back: the message stays sent.
-  await expect(composer(page)).toHaveValue("");
+  await expect(composer(page)).toHaveText("");
 
   // 停止 before anything came back (2026-10-28): the message goes back into the composer to be reworded.
   await composer(page).fill("改一下掉落表 [[wait]]");
   await composer(page).press("Enter");
-  await expect(composer(page)).toHaveValue("");
+  await expect(composer(page)).toHaveText("");
   await expect(page.getByRole("button", { name: "打断" })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "打断" }).click();
-  await expect(composer(page)).toHaveValue("改一下掉落表 [[wait]]");
+  await expect(composer(page)).toHaveText("改一下掉落表 [[wait]]");
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible({ timeout: 30_000 });
 });
 
@@ -111,17 +111,17 @@ test("a message the Host does not answer: 正在发送… after a few seconds, i
   await page.route("**/api/sessions/*/messages", async (route) => (await held, route.continue()));
   await composer(page).fill("这条卡住了");
   await composer(page).press("Enter");
-  await expect(composer(page)).toHaveValue("");
+  await expect(composer(page)).toHaveText("");
   await expect(page.locator(".composer-hint")).toHaveText("正在发送…", { timeout: 10_000 });
   await screenshot(studio.app, "studio", "send-slow", page);
-  await expect(composer(page)).toHaveValue("这条卡住了", { timeout: 40_000 });
+  await expect(composer(page)).toHaveText("这条卡住了", { timeout: 40_000 });
   await expect(page.getByText(/Host 还没回应：文字放回了输入框/)).toBeVisible();
   await expect(page.locator(".composer-hint")).not.toContainText("正在发送");
   await screenshot(studio.app, "studio", "send-given-up", page);
   // It went in after all: the row shows, and the composer keeps the text (the person decides).
   release();
   await expect(page.getByTestId("msg-user").filter({ hasText: "这条卡住了" })).toBeVisible({ timeout: 30_000 });
-  await expect(composer(page)).toHaveValue("这条卡住了");
+  await expect(composer(page)).toHaveText("这条卡住了");
 });
 
 test("shows a subagent under its parent and jumps to it", async () => {

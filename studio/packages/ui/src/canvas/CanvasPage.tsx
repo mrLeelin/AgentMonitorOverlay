@@ -48,7 +48,7 @@ interface View {
 }
 
 type Drag =
-  | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
+  | { kind: "pan"; button: number; sx: number; sy: number; vx: number; vy: number }
   | { kind: "node"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
   | { kind: "group-move"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
   | { kind: "group-resize"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
@@ -337,6 +337,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       }
     };
     const onUp = (e: MouseEvent) => {
+      if (drag.kind === "pan" && e.button !== drag.button) return;
       if (drag.kind === "connect") {
         // Let go on another card: on one of its handles, that side; elsewhere on it, the side nearest the pointer.
         const hit = document.elementFromPoint(e.clientX, e.clientY);
@@ -351,7 +352,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         setDrag(null);
         return;
       }
-      if (drag.kind === "pan" && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) setSelectionState(null);
+      if (drag.kind === "pan" && drag.button === 0 && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) setSelectionState(null);
       if (drag.kind !== "pan" && drag.moved && previewRef.current) persist(previewRef.current);
       setPreview(null);
       setDrag(null);
@@ -427,12 +428,12 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   // A click on the empty canvas lets go of the selection (and closes its 详情框); a drag there only pans, the box
   // following its card (2026-10-29). A field in the box being typed in is left first, so its text is kept.
   const startPan = (e: ReactMouseEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.button !== 1) return;
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur?.();
     setPicking(false);
     setLinkFrom(null);
-    setDrag({ kind: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
+    setDrag({ kind: "pan", button: e.button, sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
   };
 
   const startDrag = (e: ReactMouseEvent, kind: "node" | "group-move" | "group-resize", id: Id) => {
@@ -743,7 +744,12 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         data-linking={linkFrom ? "true" : undefined}
         data-connecting={drawing ? "true" : undefined}
       >
-        <div className="canvas-world" ref={world} data-testid="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+        <div className="canvas-world" ref={world} data-testid="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }} onMouseDownCapture={(e) => {
+          // 中键优先平移，避免卡片、连线或编辑框截走拖动事件；工具栏和详情框不在 world 内。
+          if (e.button !== 1) return;
+          e.stopPropagation();
+          startPan(e);
+        }}>
           {shown?.groups.map((g) => (
             <div
               key={g.id}
@@ -1037,7 +1043,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             复位
           </button>
         </div>
-        {!compact && <div className="canvas-hint">拖空白处移动视角 · 滚轮缩放 · 从卡片边上的圆点拖出连线 · 单击看详情 · 右键看更多操作 · 双击打开任务</div>}
+        {!compact && <div className="canvas-hint">拖空白处或按住中键移动视角 · 滚轮缩放 · 从卡片边上的圆点拖出连线 · 单击看详情 · 右键看更多操作 · 双击打开任务</div>}
         {!compact && (
           <button
             type="button"

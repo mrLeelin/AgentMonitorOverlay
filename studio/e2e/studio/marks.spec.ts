@@ -192,11 +192,11 @@ test("hands marks to a session: @ 标记的文件, a mark dragged into the compo
   await screenshot(app, "stage-12", "S12-D-at-menu", page);
   // (The task "调掉落" matches too and comes first.)
   await option.click();
-  await expect(composer(page)).toHaveValue("看看 ");
-  const chip = page.getByTestId("file-chip");
+  await expect(composer(page)).toContainText("看看 ");
+  const chip = composer(page).locator(".resource-file");
   await expect(chip).toHaveCount(1);
-  await expect(chip).toContainText("drop.lua:2-3");
-  await expect(chip).toContainText("掉落概率在这里");
+  await expect(chip).toContainText("drop.lua");
+  await expect(chip).toHaveAttribute("title", /掉落概率在这里/);
 
   // Dragging a row out of the marks window: what its dragstart puts on the drag, dropped on the composer. (Playwright
   // cannot drive a real OS drag between two windows; the two halves are played with the same DataTransfer types.)
@@ -218,12 +218,12 @@ test("hands marks to a session: @ 标记的文件, a mark dragged into the compo
     target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
   }, carried);
   await expect(chip).toHaveCount(2);
-  await expect(chip.last()).toContainText("Boss 数值");
-  await expect(composer(page)).toHaveValue("看看 ");
+  await expect(chip.last()).toHaveAttribute("title", /Boss 数值/);
+  await expect(composer(page)).toContainText("看看 ");
 
   // Sent: the message says which files and what the notes are; the transcript shows them as chips with the note.
   await composer(page).press("Enter");
-  await expect(lastAgent(page)).toContainText("（说明：掉落概率在这里）", { timeout: 30_000 });
+  await expect(lastAgent(page)).toContainText("文中资源 1；掉落概率在这里", { timeout: 30_000 });
   await expect(lastAgent(page)).toContainText(`${join(dir, "drop.lua")}:2-3`);
   const bubble = page.getByTestId("msg-user").last();
   await expect(bubble.getByTestId("msg-file")).toHaveCount(2);

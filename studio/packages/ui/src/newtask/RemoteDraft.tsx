@@ -5,8 +5,9 @@ import { onHostEvent } from "../host/events.js";
 import { StartingCover } from "../lib/StartingCover.js";
 import { IconPaperclip } from "../attach/icons.js";
 import { useAttachments } from "../attach/useAttachments.js";
-import { AttachTray } from "../attach/AttachTray.js";
-import { withFileRefs } from "../attach/refs.js";
+import { AttachmentInput } from "../attach/AttachmentInput.js";
+import type { ResourceInputHandle } from "../attach/ResourceInput.js";
+import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
 import { PromptTemplateDialog } from "../attach/PromptTemplateDialog.js";
 import { topicProject } from "./choices.js";
@@ -80,9 +81,9 @@ export function RemoteDraft({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [opening, setOpening] = useState<{ taskId: string; sessionId: string | null; name: string } | null>(null);
-  const input = useRef<HTMLTextAreaElement>(null);
+  const input = useRef<ResourceInputHandle>(null);
   // Pictures and files go along (2026-10-29 evening): this computer's Host sends them to the device before the task.
-  const attach = useAttachments(link);
+  const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -193,9 +194,8 @@ export function RemoteDraft({
     setError("");
     setNotice("");
     try {
-      const images = attach.images.flatMap((i) => (i.id ? [i.id] : []));
-      const text = withFileRefs(draft.text.trim(), attach.files.map(attach.refOf));
-      const made = await call(link, "POST /api/remote/create", {}, { account: target.account, device: target.device, title: draft.title.trim(), text, topicId, workspaceId: projectId, profileId, ...(images.length ? { attachments: images } : {}) });
+      const { text, ids: images } = resourceMessage(draft.text.trim(), attach.images);
+      const made = await call(link, "POST /api/remote/create", {}, { account: target.account, device: target.device, title: draft.title.trim() || resourceTitle(draft.text) || "", text, topicId, workspaceId: projectId, profileId, ...(images.length ? { attachments: images } : {}) });
       rememberDevice(target.key);
       attach.reset();
       onDone();
@@ -307,19 +307,16 @@ export function RemoteDraft({
           attach.onDrop(e);
         }}
       >
-        <AttachTray attach={attach} />
-        <textarea
+        <AttachmentInput
           ref={input}
+          attach={attach}
           value={draft.text}
           rows={3}
           aria-label="第一句话"
           placeholder={target ? `比如：把掉落表的说明整理一遍。会作为第一句话发给 ${target.name} 上新开的会话。打 @ 用那台电脑上的提示词模板。` : "第一句话"}
-          onChange={(e) => {
-            update({ text: e.target.value });
-            mentions.track(e.target);
-          }}
-          onSelect={(e) => mentions.track(e.currentTarget)}
-          onPaste={attach.onPaste}
+          onChange={(text) => update({ text })}
+          onSelect={mentions.track}
+          mentions={mentions.names}
           onKeyDown={(e) => {
             if (mentions.onKeyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

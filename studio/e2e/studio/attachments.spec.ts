@@ -68,14 +68,15 @@ test("pastes an image, sends it with the message, and shows it in the transcript
   const { page } = studio;
   await openTask(studio, studio.workspace("alpha"));
 
+  await composer(page).fill("这张图里是什么");
   await pasteImage(page);
-  const thumb = page.getByTestId("attach-thumb");
+  const thumb = composer(page).locator(".resource-image");
   await expect(thumb).toHaveCount(1);
   await expect(thumb).toHaveAttribute("data-state", "ready");
   // A second one, removed again with its ×.
   await pasteImage(page, "多余.png");
   await expect(thumb).toHaveCount(2);
-  await page.getByRole("button", { name: "移除 多余.png" }).click();
+  await page.getByRole("button", { name: /移除.*多余\.png/ }).click();
   await expect(thumb).toHaveCount(1);
   // Before sending, a click on the thumbnail shows it large (2026-10-25); Esc closes only that.
   await thumb.getByRole("button", { name: /^查看大图/ }).click();
@@ -84,11 +85,10 @@ test("pastes an image, sends it with the message, and shows it in the transcript
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
   await expect(thumb).toHaveCount(1);
-  await composer(page).fill("这张图里是什么");
   await screenshot(studio.app, "stage-11", "S11-B-01-composer-image", page);
   await composer(page).press("Enter");
 
-  await expect(lastAgent(page)).toContainText("MOCK: 这张图里是什么 [images: 1]", { timeout: 30_000 });
+  await expect(lastAgent(page)).toContainText("MOCK: 这张图里是什么【图片 1：截图.png】 [images: 1]", { timeout: 30_000 });
   await expect(thumb).toHaveCount(0);
   const bubble = page.getByTestId("msg-user").last();
   await expect(bubble.getByTestId("msg-images").locator("img")).toHaveCount(1);
@@ -106,7 +106,7 @@ test("pastes an image, sends it with the message, and shows it in the transcript
   await expect(thumb).toHaveAttribute("data-state", "ready");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(lastAgent(page)).toContainText("[images: 1]", { timeout: 30_000 });
-  await expect(page.getByTestId("msg-user").last().locator(".msg-text")).toHaveCount(0);
+  await expect(page.getByTestId("msg-user").last().locator(".msg-text img")).toHaveCount(1);
 });
 
 test("pastes an image into the new-task page: it goes with the first sentence (2026-10-19)", async () => {
@@ -117,25 +117,25 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   const first = page.getByLabel("第一句话");
+  await first.fill("这张图里是什么");
   await pasteImage(page, "截图.png", first);
-  const thumb = page.getByTestId("attach-thumb");
+  const thumb = first.locator(".resource-image");
   await expect(thumb).toHaveAttribute("data-state", "ready");
-  await thumb.getByRole("button", { name: "查看大图 截图.png" }).click();
+  await thumb.getByRole("button", { name: /查看大图.*截图\.png/ }).click();
   await expect(page.getByTestId("lightbox")).toBeVisible();
   await page.getByTestId("lightbox").click();
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
-  await first.fill("这张图里是什么");
   // Filing in 待办 does not take images.
   await first.press("Control+Enter");
   await expect(page.getByRole("alert")).toContainText("放进待办不带图片");
   await screenshot(studio.app, "stage-18", "S18-newtask-image", page);
   await first.press("Enter");
 
-  await expect(lastAgent(page)).toContainText("MOCK: 这张图里是什么 [images: 1]", { timeout: 30_000 });
+  await expect(lastAgent(page)).toContainText("MOCK: 这张图里是什么【图片 1：截图.png】 [images: 1]", { timeout: 30_000 });
   await expect(page.getByTestId("msg-user").first().getByTestId("msg-images").locator("img")).toHaveCount(1);
   // The page is empty again for the next task.
   await page.getByRole("button", { name: "+ 新任务" }).click();
-  await expect(page.getByTestId("attach-thumb")).toHaveCount(0);
+  await expect(page.getByTestId("inline-resource")).toHaveCount(0);
 });
 
 for (const start of ["button", "Enter"] as const) {
@@ -147,7 +147,7 @@ for (const start of ["button", "Enter"] as const) {
     const first = page.getByLabel("第一句话");
     await first.fill(start === "button" ? "   " : "");
     await pasteImage(page, "截图.png", first);
-    await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "ready");
+    await expect(first.locator(".resource-image")).toHaveAttribute("data-state", "ready");
     await expect(page.getByTestId("draft-start")).toBeEnabled();
     if (start === "button") await screenshot(studio.app, "studio", "newtask-image-only", page);
     if (start === "button") await page.getByTestId("draft-start").click();
@@ -156,15 +156,15 @@ for (const start of ["button", "Enter"] as const) {
     await expect(page.getByTestId("task-title")).toBeVisible();
     await expect(lastAgent(page)).toContainText("[images: 1]", { timeout: 30_000 });
     const bubble = page.getByTestId("msg-user").first();
-    await expect(bubble.locator(".msg-text")).toHaveCount(0);
+    await expect(bubble.locator(".msg-text img")).toHaveCount(1);
     await expect(bubble.getByTestId("msg-images").locator("img")).toHaveCount(1);
     if (start === "button") await screenshot(studio.app, "studio", "newtask-image-only-sent", page);
     await page.getByRole("button", { name: "+ 新任务" }).click();
-    await expect(first).toHaveValue("");
-    await expect(page.getByTestId("attach-thumb")).toHaveCount(0);
+    await expect(first).toHaveText("");
+    await expect(page.getByTestId("inline-resource")).toHaveCount(0);
     // Empty input still cannot start, including after its last image is removed.
     await pasteImage(page, "多余.png", first);
-    await page.getByRole("button", { name: "移除 多余.png" }).click();
+    await page.getByRole("button", { name: /移除.*多余\.png/ }).click();
     await page.getByTestId("draft-start").click();
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.getByTestId("task-title")).toHaveCount(0);
@@ -180,11 +180,11 @@ test("an image-only new task waits for upload and refuses a failed image (2026-1
   });
   await pasteImage(page, "截图.png", page.getByLabel("第一句话"));
   const route = await upload;
-  await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "uploading");
+  await expect(page.getByTestId("inline-resource")).toHaveAttribute("data-state", "uploading");
   await page.getByTestId("draft-start").click();
   await expect(page.getByRole("alert")).toContainText("图片还在上传");
   await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "internal", message: "upload rejected" } }) });
-  await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "failed");
+  await expect(page.getByTestId("inline-resource")).toHaveAttribute("data-state", "failed");
   await page.getByLabel("第一句话").press("Enter");
   await expect(page.getByRole("alert")).toContainText("有图片上传失败");
   await expect(page.getByTestId("task-title")).toHaveCount(0);
@@ -200,12 +200,12 @@ test("drops an image and a file from disk: thumbnail, file reference, both in th
   writeFileSync(doc, "# notes\n");
   await openTask(studio, dir);
 
-  await dropFiles(page, [png, doc]);
-  await expect(page.getByTestId("attach-thumb")).toHaveAttribute("data-state", "ready");
-  const chip = page.getByTestId("file-chip");
-  await expect(chip).toHaveText("notes.md");
-  await expect(chip).toHaveAttribute("title", doc);
   await composer(page).fill("对照一下");
+  await dropFiles(page, [png, doc]);
+  await expect(composer(page).locator(".resource-image")).toHaveAttribute("data-state", "ready");
+  const chip = composer(page).locator(".resource-file");
+  await expect(chip).toContainText("notes.md");
+  await expect(chip).toHaveAttribute("title", doc);
   await screenshot(studio.app, "stage-11", "S11-B-03-composer-drop", page);
   await composer(page).press("Enter");
 
@@ -214,7 +214,8 @@ test("drops an image and a file from disk: thumbnail, file reference, both in th
   await expect(lastAgent(page)).toContainText("引用文件：");
   await expect(lastAgent(page)).toContainText("notes.md");
   const bubble = page.getByTestId("msg-user").last();
-  await expect(bubble.locator(".msg-text")).toHaveText("对照一下");
+  await expect(bubble.locator(".msg-text")).toContainText("对照一下");
+  await expect(bubble.locator(".msg-text img")).toHaveCount(1);
   await expect(bubble.getByTestId("msg-file")).toContainText("notes.md");
   await screenshot(studio.app, "stage-11", "S11-B-04-transcript-files", page);
 });
@@ -254,18 +255,17 @@ test("@ offers tasks, sessions and recent files; 找文件… and Ctrl+P open th
   await composer(page).pressSequentially("摸");
   await expect(suggest.getByRole("option").first()).toContainText("摸底");
   await composer(page).press("Enter");
-  await expect(composer(page)).toHaveValue("@摸底 ");
+  await expect(composer(page)).toHaveText("@摸底 ");
   // A file becomes a reference chip, and its @ text goes away.
   await composer(page).pressSequentially("看 @");
   await suggest.getByRole("option", { name: /README\.md/ }).click();
-  await expect(page.getByTestId("file-chip")).toHaveAttribute("title", join(dir, "README.md"));
-  await expect(composer(page)).toHaveValue("@摸底 看 ");
-  // The picked name is coloured (10-22): a layer behind the textarea draws it, lined up with the textarea's text.
-  const token = page.getByTestId("mention-backdrop").locator(".mention-token");
+  await expect(composer(page).locator(".resource-file")).toHaveAttribute("title", join(dir, "README.md"));
+  await expect(composer(page)).toContainText("@摸底 看 ");
+  // The picked name is coloured in the editor, alongside the inline file reference.
+  const token = composer(page).locator(".mention-token");
   await expect(token).toHaveText("@摸底");
-  expect(await token.evaluate((el) => getComputedStyle(el).color)).not.toBe(await composer(page).evaluate((el) => getComputedStyle(el.parentElement!.querySelector(".mention-backdrop")!).color));
-  const [box, area] = [await page.getByTestId("mention-backdrop").boundingBox(), await composer(page).boundingBox()];
-  expect(box).toEqual(area);
+  expect(await token.evaluate((el) => getComputedStyle(el).color)).not.toBe(await composer(page).evaluate((el) => getComputedStyle(el).color));
+  await expect(composer(page).locator(".resource-file")).toContainText("README.md");
   await screenshot(studio.app, "stage-18", "S18-mention-colour", page);
 
   // 找文件… opens the selector with what was typed after @.
@@ -278,7 +278,7 @@ test("@ offers tasks, sessions and recent files; 找文件… and Ctrl+P open th
   await screenshot(studio.app, "stage-11", "S11-B-06-file-picker", page);
   await picker.getByLabel("找文件").press("Enter");
   await expect(picker).toHaveCount(0);
-  await expect(page.getByTestId("file-chip")).toHaveCount(2);
+  await expect(composer(page).locator(".resource-file")).toHaveCount(2);
 
   // Ctrl+P: the whole list, narrowed as you type; arrows move, Esc closes.
   await composer(page).press("Control+p");
@@ -330,7 +330,7 @@ test("@ 开子会话…: the model's own options, its usage and this round's wor
   await suggest.getByRole("option", { name: /开子会话…/ }).click();
   const dialog = page.getByTestId("subsession-dialog");
   await expect(dialog).toBeVisible();
-  await expect(composer(page)).toHaveValue("接下来开子会话就用 ");
+  await expect(composer(page)).toHaveText("接下来开子会话就用 ");
   // The session's model, starting from its defaults: the usage note shown, the permission from 设置 → 子会话.
   await expect(dialog.getByTestId("subsession-note")).toContainText("适合照计划改代码");
   await expect(dialog.locator(".subsession-more summary")).toContainText("现在：完全放开");
@@ -351,9 +351,9 @@ test("@ 开子会话…: the model's own options, its usage and this round's wor
   await screenshot(studio.app, "studio", "subsession-dialog-claude-fast", page);
   await dialog.getByTestId("subsession-ok").click();
   await expect(dialog).toHaveCount(0);
-  await expect(composer(page)).toHaveValue(/^接下来开子会话就用 @子会话·.+·默认强度·Fast $/);
-  const tag = (await composer(page).inputValue()).slice("接下来开子会话就用 @".length).trim();
-  await expect(page.getByTestId("mention-backdrop").locator(".mention-token")).toHaveText(`@${tag}`);
+  await expect(composer(page)).toHaveText(/^接下来开子会话就用 @子会话·.+·默认强度·Fast $/);
+  const tag = (await composer(page).textContent())!.slice("接下来开子会话就用 @".length).trim();
+  await expect(composer(page).locator(".mention-token")).toHaveText(`@${tag}`);
   await screenshot(studio.app, "studio", "subsession-composer-tag", page);
   const posted = page.waitForRequest((r) => r.method() === "POST" && r.url().includes(`/api/sessions/${session.id}/messages`));
   await composer(page).press("Enter");
@@ -384,7 +384,7 @@ test("快速提交 (10-26): from @ or Ctrl+Shift+P, a choice of pushing too; the
   await expect(dialog.getByRole("radio").first()).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("改完了 ");
+  await expect(composer(page)).toHaveText("改完了 ");
 
   await composer(page).press("Control+Shift+P");
   await expect(dialog).toBeVisible();
@@ -393,8 +393,8 @@ test("快速提交 (10-26): from @ or Ctrl+Shift+P, a choice of pushing too; the
   await screenshot(studio.app, "stage-18", "S18-quick-commit", page);
   await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("改完了 @快速提交 ");
-  await expect(page.getByTestId("mention-backdrop").locator(".mention-token")).toHaveText("@快速提交");
+  await expect(composer(page)).toHaveText("改完了 @快速提交 ");
+  await expect(composer(page).locator(".mention-token")).toHaveText("@快速提交");
   await composer(page).press("Enter");
   await expect
     .poll(async () => (await studio!.api<Array<{ type: string; text?: string }>>("GET", `/api/sessions/${session.id}/items`)).filter((i) => i.type === "user").at(-1)?.text ?? "", { timeout: 15_000 })
