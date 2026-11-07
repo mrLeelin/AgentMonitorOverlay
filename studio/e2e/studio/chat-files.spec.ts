@@ -8,7 +8,7 @@ import { launchStudio, screenshot, type Studio, confirmBookmarkNote } from "../s
 
 // S12-C: files in the conversation. Names in a reply, tool rows and file chips become links when the file exists. Stage
 // 13 (S13-A): a click opens the viewer window (查看器: one preview window, reused until 固定), Ctrl+click VS Code, a
-// right click the file menu (在查看器中打开 / 在侧栏预览 / 查看未提交的改动 / … / 加书签, in groups, a letter each); a finished turn lists the files it
+// right click the file menu (在查看器中打开 / 在侧栏预览 / 在 Review 里看 / … / 加书签, in groups, a letter each); a finished turn lists the files it
 // changed and shows each one's diff in the quick look. Test mode records VS Code / Explorer launches (dryRun).
 
 let studio: Studio | undefined;
@@ -177,7 +177,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   // line 2; then rendered.
   await links.last().click({ button: "right" });
   const menu = page.getByTestId("file-menu");
-  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["查看未提交的改动", "D"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["加书签", "B"]];
+  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["在 Review 里看", "R"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["加书签", "B"]];
   await expect(menu.getByRole("menuitem")).toHaveText(items.map(([label, key]) => label + key));
   await expect(menu.getByRole("group")).toHaveCount(3);
   await screenshot(app, "stage-13", "S13-A-file-menu", page);
@@ -214,9 +214,11 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   const dir = studio.workspace("alpha");
   writeFileSync(join(dir, DEMO_FILE), DEMO_FILE_TEXT);
   writeFileSync(join(dir, "notes.md"), "# 笔记\n\n没有改动的文件。\n");
+  writeFileSync(join(dir, "aaa-other.txt"), "before\n");
   git(dir, "init", "-q", "-b", "main");
   git(dir, "add", ".");
   git(dir, "commit", "-q", "-m", "base");
+  writeFileSync(join(dir, "aaa-other.txt"), "after\n");
   const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
   await studio.api("POST", "/api/tasks", {
     title: "导入重试",
@@ -269,13 +271,22 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await viewer.getByTestId("viewer-mode-file").click();
   await expect(viewer.getByTestId("viewer-code")).toBeVisible();
 
-  // 查看未提交的改动 (right click): the project's Review window, at the file.
+  // The changed-file row's Review action selects this file even with another changed file listed first.
+  await row.click({ button: "right" });
+  await screenshot(app, "studio", "file-menu-review", page);
+  const review = await nextWindow(app, () => page.getByTestId("file-menu").getByRole("menuitem", { name: "在 Review 里看" }).click());
+  await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
+  await expect(review.getByTestId("review-file")).toHaveCount(2);
+  await screenshot(app, "studio", "file-menu-review-selected", review, "review");
+  // Reopening from a tool file link selects it again in the existing window; R is the menu shortcut.
+  await review.getByTestId("review-file").filter({ hasText: "aaa-other.txt" }).click();
+  await expect(review.getByTestId("review-file-head")).toContainText("aaa-other.txt");
   await read.getByTestId("file-link").click({ button: "right" });
-  const review = await nextWindow(app, () => page.getByTestId("file-menu").getByRole("menuitem", { name: "查看未提交的改动" }).click());
+  await page.keyboard.press("r");
   await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
   // A file without uncommitted changes (the person's chip, notes.md): the same window says so.
   await page.getByTestId("msg-user").getByTestId("msg-file").click({ button: "right" });
-  await page.keyboard.press("d");
+  await page.keyboard.press("r");
   await expect(review.getByTestId("toast")).toHaveText(/这个文件没有未提交的改动/);
   await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
   // Review's 查看文件 opens the viewer at the file.

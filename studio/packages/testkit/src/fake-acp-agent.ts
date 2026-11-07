@@ -26,13 +26,14 @@
 // the reply, and a prompt with images is refused when they were not offered.
 // Sessions are kept in $DSH_HOME/fake-sessions.json, so another process can resume them.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 interface McpServer {
   type?: string;
   name: string;
+  command?: string;
   url?: string;
   headers?: Array<{ name: string; value: string }>;
 }
@@ -323,6 +324,12 @@ async function goalRounds(a: Active, n: number, slow: boolean): Promise<void> {
 }
 
 async function handle(method: string, params: Record<string, unknown>): Promise<unknown> {
+  // Real DSH validates this on both calls before starting MCPs; keep the fake from hiding invalid launch configs.
+  if (method === "session/new" || method === "session/resume") {
+    for (const [i, server] of ((params.mcpServers as McpServer[]) ?? []).entries()) {
+      if (!server.url && !isAbsolute(server.command ?? "")) throw new RpcError(-32602, `Invalid params: mcpServers[${i}].command must be an absolute path`);
+    }
+  }
   switch (method) {
     case "initialize":
       return { protocolVersion: 1, agentInfo: { name: "fake-dsh-acp", version: "0.0.1" }, agentCapabilities: { mcpCapabilities: { http: true }, promptCapabilities: { image: TAKES_IMAGES }, sessionCapabilities: { close: {}, list: {}, resume: {} } }, authMethods: [] };

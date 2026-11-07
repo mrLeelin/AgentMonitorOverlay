@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CredentialStatus, DshStatus, ModelProfile, ProfileChoices, Session, SessionItem, StateSnapshot, Task, Workspace } from "@amo-studio/protocol";
 import { fakeAcpAgent, removeTempDir, TINY_PNG_BASE64 } from "@amo-studio/testkit";
 import { startHost, type RunningHost } from "../../host-process.js";
@@ -262,6 +262,21 @@ describe("DSH runtime", () => {
     await call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "[[mcp-list]]" });
     await until(() => items(host, s.id), (l) => replies(l).length === 2);
     expect(replies(await items(host, s.id))[1]).toBe("MCP-LIST amo:http,amo-relay:stdio,img:stdio");
+  });
+
+  it("reports an unavailable MCP by name on the next launch after settings change", async () => {
+    const claudeDir = join(root, "claude-local");
+    mkdirSync(claudeDir);
+    const host = await boot({ localClaudeHome: claudeDir });
+    const s = await start(host, "hello");
+    await idle(host, s.id);
+    const refreshed = vi.spyOn(host.service.runtime, "refreshMcp");
+    await call(host, "POST", "/api/mcp/servers", { name: "missing-mcp", spec: { command: "amo-test-missing-mcp-command", env: { PATH: "" } } });
+    // MCP settings apply after the API reply; finish that refresh before sending or closing the test's Host.
+    await until(() => refreshed.mock.results.length, (n) => n > 0);
+    await Promise.all(refreshed.mock.results.map((r) => r.value));
+    refreshed.mockRestore();
+    await expect(call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "hello again" })).rejects.toThrow(/missing-mcp.*amo-test-missing-mcp-command/);
   });
 
   it("resumes the DSH session after a Host restart; model, effort and permission go to DSH", async () => {

@@ -1,4 +1,6 @@
 import type { McpServerSpec } from "@amo-studio/protocol";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, extname, isAbsolute, resolve } from "node:path";
 
 // MCP 设置 (2026-11-04, plans/done/mcp.md): what a runtime starts a session's process with besides `amo`. Worked out by the
 // MCP feature (features/mcp/service.ts launch); here so the runtimes need not import a feature.
@@ -42,7 +44,27 @@ export function sdkServer(spec: McpServerSpec): Record<string, unknown> {
 }
 
 /** A spec as ACP's session/new and session/resume take it (DSH). */
-export function acpServer(name: string, spec: McpServerSpec): Record<string, unknown> {
-  if (spec.type === "stdio") return { name, command: spec.command ?? "", args: spec.args ?? [], env: Object.entries(spec.env ?? {}).map(([k, value]) => ({ name: k, value })) };
+export function acpServer(name: string, spec: McpServerSpec, env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Record<string, unknown> {
+  if (spec.type === "stdio") return { name, command: acpCommand(name, spec, env, cwd), args: spec.args ?? [], env: Object.entries(spec.env ?? {}).map(([k, value]) => ({ name: k, value })) };
   return { type: spec.type, name, url: spec.url ?? "", headers: Object.entries(spec.headers ?? {}).map(([k, value]) => ({ name: k, value })) };
+}
+
+/** ACP rejects bare commands before starting any MCP (2026-11-07); Claude's config commonly has node/npx/codegraph. */
+function acpCommand(name: string, spec: McpServerSpec, env: NodeJS.ProcessEnv, cwd: string): string {
+  const command = spec.command ?? "";
+  if (isAbsolute(command)) return command;
+  const windows = process.platform === "win32";
+  const vars = { ...env, ...spec.env };
+  const variable = (key: string) => windows ? Object.entries(vars).reverse().find(([k]) => k.toUpperCase() === key)?.[1] : vars[key];
+  const names = windows && !extname(command) ? (variable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean).map((ext) => command + ext.toLowerCase()) : [command];
+  const dirs = /[\\/]/.test(command) ? [cwd] : (variable("PATH") ?? "").split(delimiter).filter(Boolean).map((dir) => dir.replace(/^"(.*)"$/, "$1"));
+  if (command) for (const dir of dirs) for (const candidate of names) {
+    const file = resolve(cwd, dir, candidate);
+    try {
+      if (!statSync(file).isFile()) continue;
+      accessSync(file, windows ? constants.F_OK : constants.X_OK);
+      return file;
+    } catch { /* Try the next PATH entry. */ }
+  }
+  throw new Error(`DSH 的 MCP「${name}」找不到启动命令「${command}」：请在 MCP 设置中填写程序的绝对路径，或把它加入 PATH`);
 }

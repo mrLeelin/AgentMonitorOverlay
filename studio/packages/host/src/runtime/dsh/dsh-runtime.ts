@@ -41,7 +41,7 @@ import { blockText, DshTranscript, toolOutput, type AcpUpdate } from "./transcri
 import { DshSubagents } from "./subagents.js";
 import { grantFailurePath, windowsFolderAccess, type FolderAccess, type FolderAccessState } from "./folder-access.js";
 import { shellHelpEnv, withoutHostEnv } from "../agent-env.js";
-import { acpServer, type McpSource } from "../mcp-launch.js";
+import { acpServer, type McpLaunch, type McpSource } from "../mcp-launch.js";
 
 // DeepSeek sessions on a DeepSeek Harness source clone (stage 17, plans/done/stage-17-dsh.md). Each session runs its own
 // `node <clone>/apps/cli/lib/bin.js --profile acp` in its workspace: DSH's sandbox follows the process's working
@@ -268,10 +268,10 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const profile = this.profile(input.profileId);
     // A channel's own model when none was picked (DSH's catalog id, `deepseek-official/<model>`).
     const options = { ...(profile.model && !input.options?.model ? { model: profile.model } : {}), ...(input.options ?? {}) };
-    const token = this.options.identities?.issue();
     const permission = dshPermissionMode(options.permission);
-    const conn = this.spawn(input.workspace.path, profile, permission, `new-${Date.now()}`, options.model);
     const extra = this.extraMcp({ workspaceId: input.workspace.id, ...(options.mcp ? { mcp: options.mcp } : {}) });
+    const token = this.options.identities?.issue();
+    const conn = this.spawn(input.workspace.path, profile, permission, `new-${Date.now()}`, options.model);
     let session: Session;
     let image = false;
     try {
@@ -606,9 +606,9 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       const workspace = this.store.getWorkspace(session.workspaceId);
       if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
       const permission = dshPermissionMode(session.options.permission);
+      const extra = this.extraMcp(session.id);
       const conn = this.spawn(workspace.path, this.profile(session.profileId), permission, session.id, session.options.model);
       let image = false;
-      const extra = this.extraMcp(session.id);
       try {
         image = (await this.initialize(conn)).image;
         const token = this.options.identities?.tokenFor(session.id);
@@ -1090,20 +1090,24 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   // ---- helpers ----------------------------------------------------------------------------------------------------
 
   /** The session's other MCP servers in ACP's shape, and a key to tell a change. */
-  private extraMcp(target: Id | { workspaceId: Id; mcp?: Record<string, boolean> }): { list: unknown[]; key: string } {
+  private extraMcp(target: Id | { workspaceId: Id; mcp?: Record<string, boolean> }, forLaunch = true): { list: unknown[]; key: string } {
+    let plan: McpLaunch | undefined;
     try {
-      const plan = this.options.mcpServers?.launch(target, false);
-      if (!plan) return { list: [], key: "" };
-      const names = Object.keys(plan.explicit).sort();
-      return { list: names.map((n) => acpServer(n, plan.explicit[n]!)), key: JSON.stringify(names.map((n) => [n, plan.explicit[n]])) };
+      plan = this.options.mcpServers?.launch(target, false);
     } catch (err) {
       this.emit("log", `MCP servers for a DSH session could not be read: ${String(err)}`);
       return { list: [], key: "" };
     }
+    if (!plan) return { list: [], key: "" };
+    const workspaceId = typeof target === "string" ? this.store.getSession(target)?.workspaceId : target.workspaceId;
+    const cwd = workspaceId ? this.store.getWorkspace(workspaceId)?.path : undefined;
+    const names = Object.keys(plan.explicit).sort();
+    return { list: forLaunch ? names.map((n) => acpServer(n, plan.explicit[n]!, this.options.env ?? process.env, cwd)) : [], key: JSON.stringify(names.map((n) => [n, plan.explicit[n]])) };
   }
 
   private mcpChanged(sessionId: Id, live: Live): boolean {
-    return !!this.options.mcpServers && this.extraMcp(sessionId).key !== live.mcpKey;
+    // A changed command is validated when the next process starts, so it cannot break the current turn's cleanup.
+    return !!this.options.mcpServers && this.extraMcp(sessionId, false).key !== live.mcpKey;
   }
 
   /** MCP 设置: a change reaches the process when it next starts — now if it is idle, else once the turn ends. */

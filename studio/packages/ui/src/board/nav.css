@@ -3,6 +3,9 @@
 /* No space kept for a scrollbar (it pushed the + and counts short of 全部任务's right edge); a thin one shows when needed. */
 .nav-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; }
 .nav-section-box { display: flex; flex-direction: column; gap: 2px; }
+.nav-scroll[data-folder-drop] { box-shadow: inset 0 0 0 2px var(--primary); border-radius: var(--r-s); }
+.nav-folder-hint { padding: 8px; color: var(--primary); font-size: var(--fs-cap); pointer-events: none; }
+.nav-folder-path { overflow-wrap: anywhere; color: var(--text-dim); }
 /* Section heads (2026-10-15, design A): a small spaced label and its count, a rule to the +; entries carry an icon. */
 .nav-head { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; }
 .nav-fold { flex: none; display: flex; align-items: center; gap: 6px; padding: 0 4px; border: none; background: none; cursor: pointer; text-align: left;

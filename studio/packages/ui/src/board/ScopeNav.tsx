@@ -26,6 +26,7 @@ const readNavFolded = (): boolean => readStored(NAV_FOLD_KEY) === "1";
 import { showToast } from "../lib/toast.js";
 import { useWaitingQuestions } from "../canvas/useCallouts.js";
 import { pickFolder } from "../lib/profiles.js";
+import { dragHasFiles, pathOfFile } from "../attach/useAttachments.js";
 
 /** A project or topic about to be archived from its right-click menu. */
 type Archiving = { kind: "workspace" | "topic"; id: string; name: string };
@@ -77,6 +78,8 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [folderOver, setFolderOver] = useState(false);
+  const [droppedFolders, setDroppedFolders] = useState<{ name: string; path: string }[]>([]);
   const [folded, setFolded] = useState(readFolded);
   const [menu, setMenu] = useState<ProjectMenuAt | null>(null);
   const [topicMenu, setTopicMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -379,7 +382,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   }
 
   async function register(dir: string) {
-    if (!dir.trim()) return;
+    if (!dir.trim() || busy) return false;
     setBusy(true);
     setError("");
     try {
@@ -387,8 +390,11 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
       setPath("");
       setAdding(false);
       onScope({ kind: "workspace", id: ws.id });
+      return true;
     } catch (err) {
-      setError(err instanceof HostApiError ? err.message : String(err));
+      const message = err instanceof HostApiError ? err.message : String(err);
+      setError(message.startsWith("workspace already registered:") ? "这个文件夹已经在项目列表中，无需重复添加。" : message.startsWith("not a directory:") ? "文件夹不存在或已无法访问，请检查路径后重试。" : message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -397,6 +403,27 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   async function pick() {
     const dir = await pickFolder();
     if (dir) await register(dir);
+  }
+
+  function dropFolders(e: DragEvent) {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFolderOver(false);
+    if (busy || droppedFolders.length) return;
+    // Read native entries and paths during drop: browsers hide them during dragover, and File.path no longer exists.
+    const folders = [...e.dataTransfer.items].flatMap((item) => {
+      if (!item.webkitGetAsEntry()?.isDirectory) return [];
+      const file = item.getAsFile();
+      const path = file && pathOfFile(file);
+      return path ? [{ name: file.name, path }] : [];
+    });
+    if (!folders.length) {
+      showToast({ text: "请拖入本机文件夹，以便添加为项目", error: true });
+      return;
+    }
+    setError("");
+    setDroppedFolders(folders);
   }
 
   if (collapsed)
@@ -431,7 +458,19 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
         )}
       </div>
 
-      <div className="nav-scroll">
+      <div className="nav-scroll" data-folder-drop={folderOver || undefined}
+        onDragOverCapture={(e) => {
+          if (!dragHasFiles(e)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = busy || droppedFolders.length ? "none" : "copy";
+          setFolderOver(!busy && !droppedFolders.length);
+        }}
+        onDragLeaveCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFolderOver(false);
+        }}
+        onDropCapture={dropFolders}
+      >
         {sectionRows.map((kind) => kind === "topic" ? (
         <section key="topic" className="nav-section-box" aria-label="专题" {...sectionDrop("topic")}>
           {head("topic", "专题", liveTopics.length, () => setNewTopic(""), "新专题")}
@@ -492,6 +531,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
         ) : (
         <section key="project" className="nav-section-box" aria-label="项目" {...sectionDrop("project")}>
           {head("project", "项目", projects.length, () => setAdding(true), "添加项目")}
+          {folderOver && <div className="nav-folder-hint">松开以添加项目</div>}
           {folded.project || groupsOf.project.length === 0 ? (
             projectRows.map(projectRow)
           ) : (
@@ -597,6 +637,25 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
         />
       )}
       {editingWs && <EditProjectDialog link={link} workspace={editingWs} onClose={() => setEditing(null)} />}
+      {droppedFolders[0] && (
+        <ConfirmDialog
+          key={droppedFolders[0].path}
+          title={`是否将「${droppedFolders[0].name}」加入项目？`}
+          action="加入项目"
+          busy={busy}
+          onCancel={() => { setDroppedFolders([]); setError(""); }}
+          onConfirm={() => {
+            void register(droppedFolders[0]!.path).then((ok) => {
+              if (ok) setDroppedFolders((folders) => folders.slice(1));
+            });
+          }}
+          testId="add-dropped-project-confirm"
+        >
+          <p className="nav-folder-path">{droppedFolders[0].path}</p>
+          {droppedFolders.length > 1 && <p>还有 {droppedFolders.length - 1} 个文件夹待确认。</p>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </ConfirmDialog>
+      )}
       {topicMenu && (
         <TopicMenu
           at={topicMenu}
