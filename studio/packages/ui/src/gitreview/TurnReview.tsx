@@ -10,7 +10,7 @@ import { openViewer } from "../viewer/open.js";
 import { DiffView } from "./DiffView.js";
 import { FileList, Splitter } from "./FileList.js";
 import { dropDraft, newDraftKey } from "./drafts.js";
-import { diffRows, step } from "./logic.js";
+import { diffRows, listOrder, step } from "./logic.js";
 import { diffText, typingIn, useSelectAll } from "./selectAll.js";
 import { useDiffTokens } from "./tokens.js";
 import { turnDiff } from "./turnDiff.js";
@@ -57,7 +57,7 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
     scroller.current?.scrollTo({ top: 0 });
   }, [selected]);
 
-  const listed = useMemo<GitChangedFile[]>(() => (files ?? []).map((f) => ({ path: f.path, status: f.change === "add" ? "added" : f.change === "delete" ? "deleted" : "modified", additions: f.added, deletions: f.removed, binary: false })), [files]);
+  const listed = useMemo<GitChangedFile[]>(() => listOrder((files ?? []).map((f) => ({ path: f.path, status: f.change === "add" ? "added" : f.change === "delete" ? "deleted" : "modified", additions: f.added, deletions: f.removed, binary: false }))), [files]);
   const shown = files?.find((f) => f.path === selected) ?? null;
   const diff = useMemo(() => shown ? turnDiff(shown) : null, [shown]);
   // Repeated edits can reuse a source line number. Keep each recorded occurrence independently addressable.
@@ -80,15 +80,18 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
       if (e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
       const key = e.key.toLowerCase();
       if (key === "e") { e.preventDefault(); setSplit((s) => !s); }
-      if (key === "j" || key === "k") {
-        const index = files?.findIndex((f) => f.path === selected) ?? -1;
-        const next = step((files ?? []).map((_, i) => i), index, key === "j" ? 1 : -1);
-        if (next !== null && files) { e.preventDefault(); setSelected(files[next]!.path); }
+      if (key === "j" || key === "k" || key === "arrowdown" || key === "arrowup") {
+        e.preventDefault();
+        setSelected((current) => {
+          const index = listed.findIndex((f) => f.path === current);
+          const next = step(listed.map((_, i) => i), index, key === "j" || key === "arrowdown" ? 1 : -1);
+          return next === null ? current : listed[next]!.path;
+        });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [files, selected]);
+  }, [listed]);
 
   async function copy(close: boolean) {
     setBusy(true);
@@ -118,7 +121,7 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
       <div className="gr-body">
         <nav className="gr-files" aria-label="本轮改动的文件" style={{ width }}>
           <div className="gr-files-head">{files ? `${files.length} 个文件` : "正在读取…"}</div>
-          <div className="gr-files-hint gr-dim">J / K 切换文件，E 切换单栏 / 左右对照</div>
+          <div className="gr-files-hint gr-dim">↑ / ↓ 或 J / K 切换文件，E 切换单栏 / 左右对照</div>
           <FileList files={listed} layout="flat" selected={selected} perFile={counts} closed={new Set()} onToggle={() => undefined} onSelect={setSelected} onMenu={(f) => setSelected(f.path)} />
         </nav>
         <Splitter width={width} onChange={setWidth} />
