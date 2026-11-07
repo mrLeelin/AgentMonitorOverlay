@@ -322,18 +322,7 @@ function TaskCard({
           <>
             <span className="dot" style={{ background: look.dot }} />
             <span style={{ color: look.text }}>{look.label}</span>
-            {status === "running" && (
-              <svg className="card-runner" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-                <g className="card-runner-body">
-                  <path className="card-runner-arm back" d="M13 9l3 4 4-2" />
-                  <path className="card-runner-leg back" d="M10 15l-3 4H3" />
-                  <circle cx="15" cy="4" r="2" fill="currentColor" stroke="none" />
-                  <path d="M13 8l-3 7" />
-                  <path className="card-runner-arm" d="M13 9l-4 3-3-2" />
-                  <path className="card-runner-leg" d="M10 15l4 3-2 4" />
-                </g>
-              </svg>
-            )}
+            {status === "running" && <span className="card-runner" aria-hidden="true" />}
           </>
         ) : (
           <>

@@ -9,7 +9,7 @@ import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { McpIdentities } from "../../mcp/identity.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
-import { noteOwnDescription, recordRole, roleCard, roleCardFor } from "./role.js";
+import { noteOwnDescription, recordRole, roleCard, roleCardFor, roleUpdate } from "./role.js";
 
 // 2026-10-17: Codex threads start with the role card as developer instructions; a task's later changes (topic, canvas
 // references, 主控, 说明) come with the session's next message; a 主控 relays to tasks referenced on its canvas.
@@ -89,8 +89,11 @@ describe("role card (2026-10-17)", () => {
 
     // Moved into the topic, made its 主控, described: all in one note.
     service.tasks.updateTask(task.id, { topicId: topic.id });
-    service.tasks.updateTask(task.id, { lead: true, description: "迁移装甲车的数据表" });
-    const update = splitRoleUpdate(await send(session, "看看")).update!;
+    // Simulate a role persisted by an older Host; the current API requires old Codex threads to be archived first.
+    store.updateTask(task.id, { lead: true, description: "迁移装甲车的数据表" });
+    // The old thread cannot continue with its earlier write permissions. The role update itself remains available.
+    await expect(send(session, "看看")).rejects.toThrow(/主控只读限制/);
+    const update = roleUpdate(service, session.id).lines.join("\n");
     expect(update).toContain("你现在是「主控」（之前是「执行」）");
     expect(update).toContain("任务现在在专题「迁移」");
     expect(update).toContain("任务说明改成了：迁移装甲车的数据表");

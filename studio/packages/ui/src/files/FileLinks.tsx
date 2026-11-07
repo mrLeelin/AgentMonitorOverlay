@@ -24,6 +24,8 @@ export interface PreviewTarget {
   endLine?: number;
   column?: number;
   diff?: FileDiff;
+  /** An item in the finished turn whose recorded changes Review should show. */
+  turnItemId?: string;
   /** Where a relative name starts (a tool call's working directory), for a remote task's file (远程 step 3). */
   cwd?: string;
 }
@@ -194,11 +196,18 @@ export function FileLinks({
                 run: () => viewFile(t, workspaceId, sessionId),
               },
               { label: "在侧栏预览", key: "P", title: "在对话右边打开，不离开这段对话", run: () => onPreview(t) },
-              {
+              !!t.turnItemId && {
                 label: "在 Review 里看",
                 key: "R",
+                disabled: !reviewIn || !sessionId,
+                title: "查看这一轮记录的文件改动",
+                run: () => reviewIn && sessionId && openReview({ workspaceId: reviewIn, sessionId, turnItemId: t.turnItemId!, file: t.diff?.path ?? t.file.path }),
+              },
+              {
+                label: "查看未提交的改动",
+                key: "D",
                 disabled: !reviewIn,
-                title: reviewIn ? "打开这个项目的 Git Review，直接选中这个文件，查看未提交的改动" : "这段对话不属于任何项目",
+                title: reviewIn ? "在这个项目的 Git Review 里看这个文件还没提交的改动" : "这段对话不属于任何项目",
                 run: () => reviewIn && openReview({ workspaceId: reviewIn, ...(sessionId ? { sessionId } : {}), file: t.file.path }),
               },
               vscode && { label: "用 VS Code 打开", key: "V", title: "Ctrl+单击文件名也是这样打开", run: () => void openInEditor(link, t.file, t.line, t.column).catch(fail) },

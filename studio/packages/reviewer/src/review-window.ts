@@ -30,8 +30,9 @@ let opened = 0;
  * again still reaches the page.
  */
 export function reviewHash(target: unknown): { key: string; hash: string } | null {
-  const t = target as { workspaceId?: unknown; sessionId?: unknown; commit?: unknown; file?: unknown; base?: unknown; baseLabel?: unknown; remote?: unknown } | null;
+  const t = target as { workspaceId?: unknown; sessionId?: unknown; turnItemId?: unknown; commit?: unknown; file?: unknown; base?: unknown; baseLabel?: unknown; remote?: unknown } | null;
   if (typeof t?.workspaceId !== "string" || !ID.test(t.workspaceId)) return null;
+  if (t.turnItemId !== undefined && (t.commit !== undefined || t.base !== undefined)) return null;
   if (t.commit !== undefined && (typeof t.commit !== "string" || !COMMIT.test(t.commit))) return null;
   // 外部打开 Review: a base (full id) to compare with, and how the caller named it.
   if (t.base !== undefined && (typeof t.base !== "string" || !FULL.test(t.base))) return null;
@@ -53,8 +54,11 @@ export function reviewHash(target: unknown): { key: string; hash: string } | nul
     return { key: `${own}${t.workspaceId}@${base ? `${base}..` : ""}${commit}`, hash: `#review?${q.toString()}` };
   }
   const session = typeof t.sessionId === "string" && ID.test(t.sessionId) ? t.sessionId : null;
+  const turn = typeof t.turnItemId === "string" && t.turnItemId.length > 0 && t.turnItemId.length <= 500 && !/[\0\r\n]/.test(t.turnItemId) ? t.turnItemId : null;
+  if (t.turnItemId !== undefined && (!turn || !session || base)) return null;
   const q = new URLSearchParams({ workspace: t.workspaceId });
   if (session) q.set("session", session);
+  if (turn) q.set("turnItem", turn);
   if (base) q.set("base", base);
   if (label) q.set("label", label);
   q.set("n", String(++opened));
@@ -62,7 +66,7 @@ export function reviewHash(target: unknown): { key: string; hash: string } | nul
     q.set("file", file);
   }
   if (remote) q.set("remote", remote);
-  return { key: `${own}${t.workspaceId}`, hash: `#review?${q.toString()}` };
+  return { key: `${own}${t.workspaceId}${turn ? `:turn:${session}:${turn}` : ""}`, hash: `#review?${q.toString()}` };
 }
 
 /** Handles `amo:open-review` from the pages; returns what the main window needs to close the reviews with it. */

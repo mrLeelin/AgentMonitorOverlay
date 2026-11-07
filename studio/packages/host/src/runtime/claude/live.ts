@@ -7,6 +7,7 @@ import type { Id, QuestionPrompt, SessionStatus } from "@amo-studio/protocol";
 
 export interface PendingApproval {
   itemId: Id;
+  toolName?: string;
   input: Record<string, unknown>;
   toolUseId: string | null;
   resolve(result: PermissionResult): void;

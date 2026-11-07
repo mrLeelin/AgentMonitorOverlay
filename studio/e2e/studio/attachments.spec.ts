@@ -96,10 +96,13 @@ test("pastes an image, sends it with the message, and shows it in the transcript
   await expect.poll(() => bubble.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
   await screenshot(studio.app, "stage-11", "S11-B-02-transcript-image", page);
 
+  const opened = studio.app.waitForEvent("window");
   await bubble.getByTitle("查看大图").click();
-  await expect(page.getByTestId("lightbox")).toBeVisible();
-  await page.keyboard.press("Escape");
+  const viewer = await opened;
+  await expect(viewer.getByTestId("file-preview-image")).toBeVisible();
+  await expect.poll(() => viewer.getByTestId("file-preview-image").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
+  await viewer.close();
 
   // An image alone, without text, can be sent too.
   await pasteImage(page);

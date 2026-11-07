@@ -19,14 +19,9 @@
 .board-drag-badge { position: fixed; top: 0; left: 0; z-index: 10000; padding: 12px 18px; border: 1px solid var(--primary); border-radius: var(--r-l); background: var(--panel); color: var(--text); font: inherit; pointer-events: none; }
 .card-title { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-title); line-height: 1.35; overflow-wrap: anywhere; }
 .card-status { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-dim); }
-.card-runner { flex: none; margin: -2px 0 -2px -4px; color: var(--running-text); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.card-runner-body { animation: card-runner-bounce 0.32s ease-in-out infinite; }
-.card-runner-arm { transform-origin: 13px 9px; animation: card-runner-stride 0.64s ease-in-out infinite; }
-.card-runner-leg { transform-origin: 10px 15px; animation: card-runner-stride 0.64s ease-in-out infinite; }
-.card-runner .back { opacity: 0.5; animation-delay: -0.32s; }
-@keyframes card-runner-bounce { 50% { transform: translateY(-1px); } }
-@keyframes card-runner-stride { 0%, 100% { transform: rotate(-28deg); } 50% { transform: rotate(28deg); } }
-@media (prefers-reduced-motion: reduce) { .card-runner-body, .card-runner-arm, .card-runner-leg { animation: none; } }
+.card-runner { flex: none; width: 24px; height: 24px; margin: -3px 0 -3px -4px; background: url("./assets/chibi-run.png") 0 0 / 192px 24px repeat-x; animation: card-runner-frames 0.8s steps(8) infinite; }
+@keyframes card-runner-frames { to { background-position-x: -192px; } }
+@media (prefers-reduced-motion: reduce) { .card-runner { animation: none; } }
 .card-meta { font-size: var(--fs-cap); color: var(--text-faint); }
 /* 归属行 (2026-10-19): 「专题 › 项目」 above the title — the topic in the accent with the left column's bookmark, the
    project in code type with its folder. */

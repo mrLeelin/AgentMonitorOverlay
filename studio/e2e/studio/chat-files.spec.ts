@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import type { OpenInApps, OpenInResult, Session, Task, Workspace } from "@amo-studio/protocol";
 import { DEMO_FILE, DEMO_FILE_TEXT } from "@amo-studio/testkit";
-import { launchStudio, screenshot, type Studio, confirmBookmarkNote } from "../support/studio.js";
+import { launchStudio, screenshot, settlePaint, type Studio, confirmBookmarkNote } from "../support/studio.js";
 
 // S12-C: files in the conversation. Names in a reply, tool rows and file chips become links when the file exists. Stage
 // 13 (S13-A): a click opens the viewer window (查看器: one preview window, reused until 固定), Ctrl+click VS Code, a
-// right click the file menu (在查看器中打开 / 在侧栏预览 / 在 Review 里看 / … / 加书签, in groups, a letter each); a finished turn lists the files it
+// right click the file menu (在查看器中打开 / 在侧栏预览 / 查看未提交的改动 / … / 加书签, in groups, a letter each); a finished turn lists the files it
 // changed and shows each one's diff in the quick look. Test mode records VS Code / Explorer launches (dryRun).
 
 let studio: Studio | undefined;
@@ -177,7 +177,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   // line 2; then rendered.
   await links.last().click({ button: "right" });
   const menu = page.getByTestId("file-menu");
-  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["在 Review 里看", "R"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["加书签", "B"]];
+  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["查看未提交的改动", "D"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["加书签", "B"]];
   await expect(menu.getByRole("menuitem")).toHaveText(items.map(([label, key]) => label + key));
   await expect(menu.getByRole("group")).toHaveCount(3);
   await screenshot(app, "stage-13", "S13-A-file-menu", page);
@@ -271,27 +271,47 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await viewer.getByTestId("viewer-mode-file").click();
   await expect(viewer.getByTestId("viewer-code")).toBeVisible();
 
-  // The changed-file row's Review action selects this file even with another changed file listed first.
+  // Later edits and commits must not change the recorded diff opened from this turn.
+  writeFileSync(join(dir, DEMO_FILE), "def fetch(url, retries=99):\n    pass\n");
+  git(dir, "add", DEMO_FILE);
+  git(dir, "commit", "-q", "-m", "later edit");
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await row.scrollIntoViewIfNeeded();
+  await settlePaint(page);
   await row.click({ button: "right" });
+  await expect(page.getByTestId("file-menu")).toBeVisible();
   await screenshot(app, "studio", "file-menu-review", page);
   const review = await nextWindow(app, () => page.getByTestId("file-menu").getByRole("menuitem", { name: "在 Review 里看" }).click());
   await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
-  await expect(review.getByTestId("review-file")).toHaveCount(2);
+  await expect(review.getByTestId("turn-review")).toBeVisible();
+  await expect(review.getByTestId("review-scope")).toHaveText("本轮改动");
+  await expect(review.getByTestId("review-file")).toHaveCount(1);
+  await expect(review.getByTestId("review-file")).toHaveAttribute("aria-current", "true");
+  await expect(review.locator(".gr-line.add").filter({ hasText: "retries=3" }).first()).toBeVisible();
+  await expect(review.getByTestId("diff-lines")).not.toContainText("retries=99");
+  await expect(review.getByRole("button", { name: "历史", exact: true })).toHaveCount(0);
   await screenshot(app, "studio", "file-menu-review-selected", review, "review");
-  // Reopening from a tool file link selects it again in the existing window; R is the menu shortcut.
-  await review.getByTestId("review-file").filter({ hasText: "aaa-other.txt" }).click();
-  await expect(review.getByTestId("review-file-head")).toContainText("aaa-other.txt");
-  await read.getByTestId("file-link").click({ button: "right" });
+  await review.getByRole("button", { name: "左右对照", exact: true }).click();
+  await expect(review.locator(".gr-cell.new.add").filter({ hasText: "retries=3" }).first()).toBeVisible();
+  await review.getByTestId("diff-cell-new").filter({ hasText: "retries=3" }).first().getByTestId("add-comment").click();
+  await review.getByTestId("comment-draft").getByRole("textbox").fill("检查这一轮的重试次数");
+  await review.getByTestId("comment-draft").getByRole("button", { name: "保存", exact: true }).click();
+  await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
+  await review.getByRole("button", { name: "单栏", exact: true }).click();
+  await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
+  // The card header and R both reopen the same turn window.
+  await changes.getByTestId("turn-changes-review").click();
+  await row.click({ button: "right" });
   await page.keyboard.press("r");
   await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
-  // A file without uncommitted changes (the person's chip, notes.md): the same window says so.
+  expect(app.windows().filter((w) => w.url().includes("#review"))).toHaveLength(1);
+  // The explicit Git action continues to open the repository's current changes in its own window.
   await page.getByTestId("msg-user").getByTestId("msg-file").click({ button: "right" });
-  await page.keyboard.press("r");
-  await expect(review.getByTestId("toast")).toHaveText(/这个文件没有未提交的改动/);
-  await expect(review.getByTestId("review-file-head")).toContainText(DEMO_FILE);
-  // Review's 查看文件 opens the viewer at the file.
-  await review.getByTestId("review-open-viewer").click();
-  await expect(viewer.getByTestId("viewer-name")).toHaveText(DEMO_FILE);
+  const gitReview = await nextWindow(app, () => page.keyboard.press("d"));
+  await expect(gitReview.getByTestId("toast")).toHaveText(/这个文件没有未提交的改动/);
+  await expect(gitReview.getByTestId("review-file-head")).toContainText("aaa-other.txt");
+  await expect(review.getByTestId("turn-review")).toBeVisible();
 
   // The dark theme, with the turn's diff open again.
   await page.getByRole("button", { name: "设置" }).click();

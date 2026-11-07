@@ -102,7 +102,7 @@
       "label": "专题、主控、传话和拆任务",
       "aliases": ["topic", "专题", "主控", "lead", "topic_doc", "专题文档", "task_plan_propose", "TaskPlansFeature", "TopicDocsFeature"],
       "category": "host",
-      "purpose": "专题把相关任务（可跨项目）放在一张画布上；标成主控的任务协调专题：提议拆任务（人在画布上确认后才建）、写专题文档、给别的任务传话。",
+        "purpose": "专题把相关任务（可跨项目）放在一张画布上；主控只读取和分配任务：提议拆任务（人在画布上确认后才建）、写任务说明、给执行任务传话，不能写项目文件、专题文档或画布。专题文档由专题会话维护。",
       "anchors": [
         { "label": "TopicsFeature", "path": "studio/packages/host/src/features/topics/service.ts", "anchor": "export class TopicsFeature" },
         { "label": "专题文档", "path": "studio/packages/host/src/features/topicdocs/service.ts", "anchor": "export class TopicDocsFeature" },

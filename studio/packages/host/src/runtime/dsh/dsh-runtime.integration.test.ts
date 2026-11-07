@@ -87,6 +87,55 @@ afterEach(async () => {
 });
 
 describe("DSH runtime", () => {
+  it("keeps a lead read-only, denies escalation and cannot unlock it through session options", async () => {
+    const host = await boot();
+    const ws = await call<Workspace>(host, "POST", "/api/workspaces", { path: join(root, "ws") });
+    const { session: s } = await call<{ session: Session }>(host, "POST", "/api/tasks", { title: "只读主控", workspaceId: ws.id, lead: true, firstSession: { profileId: "dsh-deepseek", text: "[[env]]", options: { permission: "full-access" } } });
+    await idle(host, s.id);
+    expect(s.options.permission).toBe("read-only");
+    expect(replies(await items(host, s.id))[0]).toMatch(/^ENV permission=read-only /);
+    const changed = await call<Session>(host, "PATCH", `/api/sessions/${s.id}/options`, { permission: "full-access" });
+    expect(changed.options.permission).toBe("read-only");
+    await call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "[[ask: New-Item forbidden.txt]]" });
+    await until(() => items(host, s.id), (l) => replies(l).length === 2);
+    expect(replies(await items(host, s.id))[1]).toBe("REJECTED New-Item forbidden.txt");
+    expect((await items(host, s.id)).some((i) => i.type === "approval" && i.state === "pending")).toBe(false);
+    await idle(host, s.id);
+    // A Host restart must preserve the proof that this DSH runtimeRef was created under the restriction.
+    await host.shutdown();
+    running.splice(running.indexOf(host), 1);
+    const again = await boot();
+    await call(again, "POST", `/api/sessions/${s.id}/messages`, { text: "[[env]]" });
+    await until(() => items(again, s.id), (l) => replies(l).length === 3);
+    expect(replies(await items(again, s.id))[2]).toMatch(/^ENV permission=read-only /);
+  });
+
+  it("refuses promoting a running task and refuses continuing an old writable DSH session as lead", async () => {
+    const host = await boot();
+    const s = await start(host, "[[ask: New-Item old.txt]]");
+    await until(() => status(host, s.id), (v) => v === "awaiting-approval");
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/请先停止/);
+    expect(host.service.store.getTask(s.taskId!)?.lead).toBeFalsy();
+    const approval = (await items(host, s.id)).find((i) => i.type === "approval");
+    await call(host, "POST", `/api/approvals/${approval?.type === "approval" ? approval.approvalId : ""}`, { sessionId: s.id, decision: "decline" });
+    await idle(host, s.id);
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/先归档/);
+    // Existing data from before this restriction must also fail closed, even when the role was changed out of band.
+    host.service.store.updateTask(s.taskId!, { lead: true });
+    await expect(call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "不能继续旧权限" })).rejects.toThrow(/新开一个会话/);
+    await expect(host.service.sessions.startPeer(s.id, { text: "绕过主控", permission: "write" })).rejects.toThrow(/主控只能读取和分配任务/);
+  });
+
+  it("does not promote an idle task while a background command is still running", async () => {
+    const host = await boot();
+    const s = await start(host, "你好");
+    await idle(host, s.id);
+    const now = new Date().toISOString();
+    host.service.store.appendItem({ id: "bg-item", createdAt: now, sessionId: s.id, type: "background", taskId: "bg-write", command: "long-running write", state: "running", startedAt: now });
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/请先停止/);
+    expect(host.service.store.getTask(s.taskId!)?.lead).toBeFalsy();
+  });
+
   it("shows a subagent DSH starts itself as a child session filled from its log, while it runs (2026-11-06)", async () => {
     const host = await boot();
     const s = await start(host, "[[subagent: 1500]]");

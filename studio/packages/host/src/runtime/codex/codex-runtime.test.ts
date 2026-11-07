@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Attachment, HostEvent, ModelProfile, Session, SessionItem, Workspace } from "@amo-studio/protocol";
 import { Store } from "../../store/store.js";
 import { describeReview, CodexRuntime } from "./codex-runtime.js";
@@ -45,6 +45,56 @@ const lastAgent = (sessionId: string) => items(sessionId).filter((i): i is Extra
 const idle = (id: string) => () => session(id).status === "idle" && !items(id).some((i) => i.type === "agent" && i.streaming);
 
 describe("CodexRuntime", () => {
+  it("locks lead starts, forks, resumed threads and turns to read-only without escalation", async () => {
+    store.updateTask(taskId, { lead: true });
+    const handle = await servers.ensure("p-ds");
+    const request = handle.client.request.bind(handle.client);
+    vi.spyOn(handle.client, "request").mockImplementation(((method: string, params: never) => method === "config/read"
+      ? Promise.resolve({ config: { mcp_servers: { amo: {}, unsafe: {} } }, origins: {}, layers: null })
+      : request(method as never, params)) as typeof handle.client.request);
+    const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "read", options: { permission: "full-auto" } });
+    await until(idle(s.id), "lead idle");
+    const fake = servers.fakes.get("p-ds")!;
+    expect(fake.calls.find((x) => x.method === "thread/start")!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false, "features.plugins": false, "features.apps": false, "features.multi_agent": false } });
+    expect(session(s.id).options.permission).toBe("read-only");
+    await runtime.setOptions(s.id, { permission: "full-auto" });
+    expect(session(s.id).options.permission).toBe("read-only");
+    await runtime.sendMessage(s.id, "[[shell: write-file]]");
+    await until(() => lastAgent(s.id)?.markdown === "FAKE-DENIED" && idle(s.id)(), "lead denied");
+    expect(fake.calls.filter((x) => x.method === "turn/start").at(-1)!.params).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false } });
+    expect(items(s.id).some((i) => i.type === "approval")).toBe(false);
+    const fork = await runtime.fork(s.id);
+    expect(fake.calls.find((x) => x.method === "thread/fork")!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false } });
+    await runtime.sendMessage(fork.id, "read again");
+    await until(idle(fork.id), "lead fork idle");
+    await runtime.archive(s.id);
+    await runtime.unarchive(s.id);
+    expect(fake.calls.filter((x) => x.method === "thread/resume").at(-1)!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false } });
+    await expect(runtime.attachInfo(s.id)).rejects.toThrow(/不能接管到终端/);
+  });
+
+  it("does not reuse a writable thread after its task becomes lead, and declines its old pending approval", async () => {
+    const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "[[shell: write-file]]" });
+    await until(() => session(s.id).status === "awaiting-approval", "old approval");
+    const approval = items(s.id).find((i): i is Extract<SessionItem, { type: "approval" }> => i.type === "approval")!;
+    store.updateTask(taskId, { lead: true });
+    await runtime.respondApproval(s.id, approval.approvalId, "accept");
+    await until(idle(s.id), "old request denied");
+    expect(store.getItem(approval.id)).toMatchObject({ state: "declined" });
+    await expect(runtime.sendMessage(s.id, "continue")).rejects.toThrow(/请新开主控会话/);
+    await expect(runtime.fork(s.id)).rejects.toThrow(/请新开主控会话/);
+  });
+
+  it("fails closed when the effective MCP configuration cannot be read", async () => {
+    store.updateTask(taskId, { lead: true });
+    const handle = await servers.ensure("p-ds");
+    const request = handle.client.request.bind(handle.client);
+    vi.spyOn(handle.client, "request").mockImplementation(((method: string, params: never) => method === "config/read"
+      ? Promise.reject(new Error("config unavailable")) : request(method as never, params)) as typeof handle.client.request);
+    await expect(runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace })).rejects.toThrow("config unavailable");
+    expect(servers.fakes.get("p-ds")!.calls.some((x) => x.method === "thread/start")).toBe(false);
+  });
+
   it("starts a session, streams the reply and settles to idle", async () => {
     const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "hello" });
     expect(s.runtimeRef).toBeTruthy();

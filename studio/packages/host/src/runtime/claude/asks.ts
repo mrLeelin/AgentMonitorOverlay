@@ -5,6 +5,7 @@ import { CLAUDE_DEFAULT_PERMISSION, claudePermissionMode } from "../choices.js";
 import type { ClaudeCore } from "./core.js";
 import { waitingStatus, type Live, type PendingQuestion } from "./live.js";
 import { askedQuestions } from "./tool-use.js";
+import { leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
 
 // What waits for the person in canUseTool (stage 16 split out of claude-runtime.ts): approval cards, and AskUserQuestion
 // and ExitPlanMode as question items; their answers; and the session's status while they wait.
@@ -47,7 +48,7 @@ export class ClaudeAsks {
     );
     this.core.setStatus(sessionId, "awaiting-approval");
     return new Promise<PermissionResult>((resolve) => {
-      live.approvals.set(approvalId, { itemId: item.id, input, toolUseId: ctx.toolUseID ?? null, resolve });
+      live.approvals.set(approvalId, { itemId: item.id, toolName, input, toolUseId: ctx.toolUseID ?? null, resolve });
       ctx.signal.addEventListener("abort", () => {
         if (!live.approvals.delete(approvalId)) return;
         this.core.updateItem(item.id, (it) => (it.type === "approval" && it.state === "pending" ? { ...it, state: "resolved-elsewhere" } : it));
@@ -83,12 +84,15 @@ export class ClaudeAsks {
     const live = this.core.live.get(sessionId);
     const pending = live?.approvals.get(approvalId);
     if (!live || !pending) throw new Error(`approval ${approvalId} is not pending`);
+    const session = this.core.requireSession(sessionId);
+    const leadDenied = !!(session.taskId && this.core.store.getTask(session.taskId)?.lead && !leadToolAllowed(pending.toolName ?? ""));
+    if (leadDenied) decision = "decline";
     live.approvals.delete(approvalId);
     if (decision === "decline" && pending.toolUseId) {
       live.declinedTools.add(pending.toolUseId);
       live.declinedByPerson.add(pending.toolUseId);
     }
-    pending.resolve(decision === "accept" ? { behavior: "allow", updatedInput: pending.input } : { behavior: "deny", message: DECLINED });
+    pending.resolve(decision === "accept" ? { behavior: "allow", updatedInput: pending.input } : { behavior: "deny", message: leadDenied ? LEAD_READ_ONLY_REASON : DECLINED });
     this.core.updateItem(pending.itemId, (item) => (item.type === "approval" ? { ...item, state: decision === "accept" ? "accepted" : "declined" } : item));
     this.afterWait(sessionId, live);
   }
@@ -104,6 +108,14 @@ export class ClaudeAsks {
     if (!live || !pending) throw new Error(`question ${itemId} is not pending`);
     const settle = (patch: Partial<Extract<SessionItem, { type: "question" }>>) =>
       this.core.updateItem(itemId, (it) => (it.type === "question" && it.state === "pending" ? { ...it, ...patch } : it));
+    const session = this.core.requireSession(sessionId);
+    if (pending.kind === "plan" && session.taskId && this.core.store.getTask(session.taskId)?.lead) {
+      live.questions.delete(itemId);
+      pending.resolve({ behavior: "deny", message: LEAD_READ_ONLY_REASON });
+      settle({ state: "dismissed" });
+      this.afterWait(sessionId, live);
+      return;
+    }
     if (pending.kind === "ask") {
       if (reply.action === "answer") {
         live.questions.delete(itemId);

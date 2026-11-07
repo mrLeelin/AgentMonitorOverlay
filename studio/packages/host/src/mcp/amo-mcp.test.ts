@@ -344,7 +344,7 @@ describe("AMO MCP", () => {
     await client.close();
   });
 
-  it("tells a session its role; a 主控 writes the topic's documents, which every session reads (stage 16)", async () => {
+  it("tells a session its role; a 主控 reads documents written by the topic session", async () => {
     const client = await connect(MCP_TOKEN, identities.tokenFor(mainSessionId));
     const card = (await text(client, "amo_whoami")).text;
     expect(card).toContain("你在 AMO Studio 里的角色：执行");
@@ -353,14 +353,20 @@ describe("AMO MCP", () => {
     expect(card).toContain("专题的主控：还没有");
     expect((await text(client, "amo_guide", { section: "lead" })).text).toContain("# 主控");
     expect((await text(client, "amo_guide")).text).toContain("可选的 section");
-    // Not the 主控 yet: refused, with what to do instead.
+    // Execution and lead tasks both leave document writing to the topic session.
     const refused = await call(client, "topic_doc_write", { title: "迁移计划", body: "先导入" });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]!.text).toContain("只有主控");
-    service.tasks.updateTask(importTask.id, { lead: true });
+    expect(refused.content[0]!.text).toContain("只有专题会话");
+    store.updateSession(mainSessionId, { status: "idle" });
+    // Simulate an older Host's stored role; active Codex threads cannot be promoted through the current API.
+    store.updateTask(importTask.id, { lead: true });
     expect((await text(client, "amo_whoami")).text).toContain("角色：主控");
-    const doc = (await call(client, "topic_doc_write", { title: "迁移计划", body: "1. 先导入\n2. 再统一配置键" })).data as { id: string };
-    await call(client, "topic_doc_write", { docId: doc.id, body: "1. 先导入（已完成）" });
+    expect((await client.listTools()).tools.some((t) => t.name === "topic_doc_write")).toBe(false);
+    const topicSession = store.createSession({ taskId: null, topicId, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: importTask.workspaceId, title: "专题", status: "idle", writer: "workbench", runtimeRef: null });
+    const topicClient = await connect(MCP_TOKEN, identities.tokenFor(topicSession.id));
+    const doc = (await call(topicClient, "topic_doc_write", { title: "迁移计划", body: "1. 先导入\n2. 再统一配置键" })).data as { id: string };
+    await call(topicClient, "topic_doc_write", { docId: doc.id, body: "1. 先导入（已完成）" });
+    await topicClient.close();
     const listed = (await call(client, "topic_docs")).data as { docs: Array<{ id: string; title: string }> };
     expect(listed.docs).toMatchObject([{ id: doc.id, title: "迁移计划" }]);
     expect((await call(client, "topic_docs", { docId: doc.id })).data).toMatchObject({ title: "迁移计划", body: "1. 先导入（已完成）" });
@@ -371,6 +377,29 @@ describe("AMO MCP", () => {
     const anonymous = await connect(MCP_TOKEN);
     expect((await text(anonymous, "amo_whoami")).isError).toBe(true);
     await anonymous.close();
+  });
+
+  it("lets a DSH lead assign tasks through a proposal that still awaits the person", async () => {
+    const lead = store.createTask({ title: "DSH 主控", workspaceId: importTask.workspaceId, topicId, lead: true });
+    const session = store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "dsh", profileId: "p-ds", workspaceId: lead.workspaceId, title: "分配", status: "idle", writer: "workbench", runtimeRef: null });
+    const client = await connect(MCP_TOKEN, identities.tokenFor(session.id));
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).toContain("task_plan_propose");
+      expect(names).toContain("task_describe");
+      expect(names).toContain("task_message");
+      expect(names).toContain("mailbox_read");
+      expect(names).not.toContain("canvas_group_create");
+      expect(names).not.toContain("topic_doc_write");
+      expect(names).not.toContain("session_start");
+      const before = store.listTasks().length;
+      const proposal = await call(client, "task_plan_propose", { summary: "把实现交给执行任务", tasks: [{ title: "执行导入修复", description: "修复导入重试", firstMessage: "检查失败原因并修复" }] });
+      expect(proposal.isError).not.toBe(true);
+      expect(service.taskPlans.list().find((p) => p.id === proposal.data.proposalId)).toMatchObject({ state: "open", fromSessionId: session.id, tasks: [{ title: "执行导入修复" }] });
+      expect(store.listTasks()).toHaveLength(before);
+    } finally {
+      await client.close();
+    }
   });
 
   it("answers an unknown id with a readable tool error", async () => {

@@ -268,8 +268,10 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const profile = this.profile(input.profileId);
     // A channel's own model when none was picked (DSH's catalog id, `deepseek-official/<model>`).
     const options = { ...(profile.model && !input.options?.model ? { model: profile.model } : {}), ...(input.options ?? {}) };
+    const lead = !!input.taskId && !!this.store.getTask(input.taskId)?.lead;
+    if (lead) options.permission = "read-only";
     const permission = dshPermissionMode(options.permission);
-    const extra = this.extraMcp({ workspaceId: input.workspace.id, ...(options.mcp ? { mcp: options.mcp } : {}) });
+    const extra = lead ? { list: [], key: "" } : this.extraMcp({ workspaceId: input.workspace.id, ...(options.mcp ? { mcp: options.mcp } : {}) });
     const token = this.options.identities?.issue();
     const conn = this.spawn(input.workspace.path, profile, permission, `new-${Date.now()}`, options.model);
     let session: Session;
@@ -294,6 +296,8 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       throw this.explain(err);
     }
     if (token) this.options.identities!.bind(token, session.id);
+    // DSH persists its original sandbox in its own session. Options alone cannot prove an old session is read-only.
+    if (lead) this.store.setKv(`dsh-lead-readonly:${session.id}`, session.runtimeRef!);
     const live = this.adopt(session, conn, {}, permission, image, options.model);
     live.mcpKey = extra.key;
     await this.applyOptions(session.id, live);
@@ -405,6 +409,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
    */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     const before = this.requireSession(sessionId);
+    if (this.isLead(before)) options = { ...options, permission: "read-only" };
     const updated = this.updateSession(sessionId, { options });
     const from = dshPermissionMode(before.options.permission);
     const to = dshPermissionMode(options.permission);
@@ -479,7 +484,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const live = this.live.get(sessionId);
     const w = live?.waiting.get(approvalId);
     if (!live || !w) throw new Error(`approval ${approvalId} is not pending`);
-    this.settleWaiting(sessionId, live, w, decision === "accept" ? "allow" : "reject");
+    this.settleWaiting(sessionId, live, w, decision === "accept" && !this.isLead(this.requireSession(sessionId)) ? "allow" : "reject");
   }
 
   async answerQuestion(): Promise<void> {
@@ -597,6 +602,12 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   /** The session's process, started and resumed when there is none. */
   private ensureLive(session: Session): Promise<Live> {
+    if (!this.isLead(session) && this.store.getKv(`dsh-lead-readonly:${session.id}`)?.value) {
+      this.store.setKv(`dsh-lead-readonly:${session.id}`, "");
+    }
+    if (this.isLead(session) && this.store.getKv(`dsh-lead-readonly:${session.id}`)?.value !== session.runtimeRef) {
+      throw Object.assign(new Error("这个 DSH 会话创建时没有主控只读保护，无法安全收紧权限；请在主控任务里新开一个会话，旧对话仍可读取。"), { code: "read_only" });
+    }
     const existing = this.live.get(session.id);
     if (existing?.conn.alive) return Promise.resolve(existing);
     const pending = this.starting.get(session.id);
@@ -605,7 +616,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       if (!session.runtimeRef) throw new Error(`session ${session.id} has no DSH session`);
       const workspace = this.store.getWorkspace(session.workspaceId);
       if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
-      const permission = dshPermissionMode(session.options.permission);
+      const permission = this.isLead(session) ? "read-only" : dshPermissionMode(session.options.permission);
       const extra = this.extraMcp(session.id);
       const conn = this.spawn(workspace.path, this.profile(session.profileId), permission, session.id, session.options.model);
       let image = false;
@@ -857,6 +868,16 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     for (const id of sent) this.updateItem(id, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
     if (live.idleTimer) clearTimeout(live.idleTimer);
     await this.applyOptions(sessionId, live).catch((err: unknown) => this.emit("log", `dsh set options failed for ${sessionId}: ${String(err)}`));
+    // Role or archive may have changed while the CLI was applying options. Check again with no await before prompt.
+    try {
+      const current = this.writable(sessionId);
+      if (this.isLead(current) && this.store.getKv(`dsh-lead-readonly:${sessionId}`)?.value !== current.runtimeRef) {
+        throw Object.assign(new Error("旧 DSH 会话不能继续作为主控运行，请新开一个会话。"), { code: "read_only" });
+      }
+    } catch (err) {
+      live.inflight = false;
+      throw err;
+    }
     live.transcript.openTurn();
     this.setStatus(sessionId, "running");
     live.conn
@@ -1063,6 +1084,10 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const entry = [...this.live.entries()].find(([, l]) => l.acpId === p.sessionId);
     if (!entry) return { outcome: { outcome: "cancelled" } };
     const [sessionId, live] = entry;
+    if (this.isLead(this.requireSession(sessionId))) {
+      const reject = (p.options ?? []).find((o) => o.kind === DSH_REJECT);
+      return { outcome: reject ? { outcome: "selected", optionId: reject.optionId } : { outcome: "cancelled" } };
+    }
     const shown = live.transcript.approvalText(p.toolCall?.toolCallId, p.toolCall);
     const approvalId = newId("ap");
     // Switched to 完全访问 while this process still runs under its old sandbox: what it asks is granted at once.
@@ -1089,8 +1114,16 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- helpers ----------------------------------------------------------------------------------------------------
 
+  private isLead(session: Pick<Session, "taskId">): boolean {
+    return !!session.taskId && !!this.store.getTask(session.taskId)?.lead;
+  }
+
   /** The session's other MCP servers in ACP's shape, and a key to tell a change. */
   private extraMcp(target: Id | { workspaceId: Id; mcp?: Record<string, boolean> }, forLaunch = true): { list: unknown[]; key: string } {
+    if (typeof target === "string") {
+      const session = this.store.getSession(target);
+      if (session && this.isLead(session)) return { list: [], key: "" };
+    }
     let plan: McpLaunch | undefined;
     try {
       plan = this.options.mcpServers?.launch(target, false);

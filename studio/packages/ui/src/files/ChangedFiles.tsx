@@ -1,25 +1,23 @@
 import { useMemo } from "react";
 import type { SessionItem } from "@amo-studio/protocol";
-import type { HostLink } from "../host/client.js";
 import { IconFile } from "../attach/icons.js";
-import { openReview, useIsGitRepo } from "../gitreview/open.js";
+import { openReview } from "../gitreview/open.js";
 import { turnChanges, type ChangedFile } from "./changes.js";
 import { useExistingPath } from "./exists.js";
 import { useFileLinks, type PreviewTarget } from "./FileLinks.js";
 import { fileName, folderOf } from "./paths.js";
 
 // Under a finished turn's reply (stage 12, S12-C, after DSH's changed-files card): the files the turn changed with
-// their line counts. A click shows the file's change in this turn in the quick look; 在 Review 里看 opens Git Review.
+// their line counts. A click shows the turn's recorded diff in the quick look; Review opens that same turn.
 
 export function TurnChanges({ items }: { items: readonly SessionItem[] }) {
   const ctx = useFileLinks();
   const files = useMemo(() => turnChanges(items), [items]);
   if (!ctx || !files.length) return null;
-  return <ChangesCard link={ctx.link} workspaceId={ctx.workspaceId} sessionId={ctx.sessionId} files={files} />;
+  return <ChangesCard workspaceId={ctx.workspaceId} sessionId={ctx.remote ? null : ctx.sessionId} files={files} turnItemId={items[0]!.id} />;
 }
 
-function ChangesCard({ link, workspaceId, sessionId, files }: { link: HostLink; workspaceId: string | null; sessionId: string | null; files: ChangedFile[] }) {
-  const repo = useIsGitRepo(link, workspaceId);
+function ChangesCard({ workspaceId, sessionId, files, turnItemId }: { workspaceId: string | null; sessionId: string | null; files: ChangedFile[]; turnItemId: string }) {
   const added = files.reduce((n, f) => n + f.added, 0);
   const removed = files.reduce((n, f) => n + f.removed, 0);
   return (
@@ -32,24 +30,24 @@ function ChangesCard({ link, workspaceId, sessionId, files }: { link: HostLink; 
           </span>
         )}
         <span className="spacer" />
-        {repo && workspaceId && (
-          <button type="button" className="tc-review" onClick={() => openReview({ workspaceId, ...(sessionId ? { sessionId } : {}) })} data-testid="turn-changes-review">
+        {workspaceId && sessionId && (
+          <button type="button" className="tc-review" onClick={() => openReview({ workspaceId, sessionId, turnItemId, file: files[0]!.path })} data-testid="turn-changes-review">
             在 Review 里看
           </button>
         )}
       </div>
       {files.map((f) => (
-        <ChangeRow key={f.path} file={f} />
+        <ChangeRow key={f.path} file={f} turnItemId={turnItemId} />
       ))}
     </div>
   );
 }
 
-function ChangeRow({ file }: { file: ChangedFile }) {
+function ChangeRow({ file, turnItemId }: { file: ChangedFile; turnItemId: string }) {
   const ctx = useFileLinks()!;
   // The absolute path once known (a deleted file keeps its name relative to the project).
   const found = useExistingPath(ctx.link, { workspaceId: ctx.workspaceId }, file.path);
-  const target: PreviewTarget = { file: found ? { path: found.path } : { path: file.path, ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}) }, diff: file };
+  const target: PreviewTarget = { file: found ? { path: found.path } : { path: file.path, ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}) }, diff: file, turnItemId };
   return (
     <button
       type="button"
@@ -60,7 +58,7 @@ function ChangeRow({ file }: { file: ChangedFile }) {
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        ctx.menu(e, { file: target.file });
+        ctx.menu(e, target);
       }}
     >
       <IconFile />

@@ -19,6 +19,13 @@ export class CodexAsks {
   constructor(private readonly core: CodexCore) {}
 
   onServerRequest(handle: CodexServerHandle, r: ServerRequest): void {
+    const scope = r.params as { threadId?: string; serverName?: string };
+    const owner = scope.threadId ? this.core.findByThread(scope.threadId) : undefined;
+    if (owner?.taskId && this.core.store.getTask(owner.taskId)?.lead && isApprovalMethod(r.method) && (r.method !== ELICITATION || scope.serverName !== "amo")) {
+      // A stale turn can still ask after its task becomes 主控. Never turn this into a writable approval.
+      handle.client.respond(r.id, r.method === ELICITATION ? { action: "decline", content: null, _meta: null } : { decision: "decline" });
+      return;
+    }
     if (r.method === USER_INPUT || (r.method === ELICITATION && elicitationForm((r.params as { requestedSchema?: unknown }).requestedSchema))) return this.onQuestion(handle, r);
     if (!isApprovalMethod(r.method)) return;
     const params = r.params as { threadId?: string; turnId?: string; itemId?: string; command?: string | null; reason?: string | null; cwd?: string; message?: string; serverName?: string };
@@ -78,6 +85,11 @@ export class CodexAsks {
   async respondApproval(sessionId: Id, approvalId: string, decision: ApprovalDecision): Promise<void> {
     const pending = this.approvals.get(approvalKey(sessionId, approvalId));
     if (!pending) throw new Error(`approval ${approvalId} is not pending`);
+    const session = this.core.store.getSession(sessionId);
+    if (session?.taskId && this.core.store.getTask(session.taskId)?.lead) {
+      const item = this.core.store.getItem(pending.itemId);
+      if (pending.kind !== "elicitation" || item?.type !== "approval" || item.detail !== "MCP：amo") decision = "decline";
+    }
     const handle = await this.core.handleFor(pending.profileId);
     handle.client.respond(
       pending.requestId,
@@ -111,6 +123,13 @@ export class CodexAsks {
     if (!pending || pending.sessionId !== sessionId) throw new Error(`question ${itemId} is not pending`);
     const handle = await this.core.handleFor(pending.profileId);
     const item = this.core.store.getItem(itemId);
+    const session = this.core.store.getSession(sessionId);
+    if (pending.kind === "form" && session?.taskId && this.core.store.getTask(session.taskId)?.lead && (item?.type !== "question" || item.serverName !== "amo")) {
+      handle.client.respond(pending.requestId, { action: "decline", content: null, _meta: null });
+      this.closeQuestion(pending, "dismissed");
+      this.afterAnswer(sessionId);
+      return;
+    }
     if (pending.kind === "input") {
       if (reply.action !== "answer" && reply.action !== "dismiss") throw new Error(`questions take an answer, not ${reply.action}`);
       const answers = reply.action === "answer" ? reply.answers : [];

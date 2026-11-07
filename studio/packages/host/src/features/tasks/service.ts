@@ -194,6 +194,14 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (patch.firstMessage !== undefined) clean.firstMessage = firstMessageOf(patch.firstMessage);
     if (patch.lead !== undefined) {
       if (typeof patch.lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
+      // A running CLI keeps the tools and permissions of its current turn. Do not claim the task is read-only before
+      // that turn (or its terminal writer) has ended; changing role must never silently interrupt the person's work.
+      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && (sessionMoving(s) || this.store.findItems(s.id, "background", { state: "running" }).length > 0))) {
+        throw new HostError("conflict", "请先停止这个任务里正在运行的会话，并收回终端中的会话，再标记主控；主控只能读取和分配任务。");
+      }
+      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtimeRef && (s.runtime === "codex" || s.runtime === "dsh"))) {
+        throw new HostError("conflict", "已有 Codex 或 DSH 会话不能安全切成主控；请先归档这些旧会话，再标记主控并新开只读会话。旧对话仍可读取。");
+      }
       clean.lead = patch.lead;
     }
     if (patch.relayAuto !== undefined) {
@@ -225,6 +233,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       }
     }
     const task = this.store.updateTask(id, clean);
+    // A former lead can load writable tools as a worker. Its old isolation proof must not survive another promotion.
+    if (clean.lead === false && current.lead) {
+      for (const session of this.store.listSessions({ taskId: id })) {
+        this.store.setKv(`codex-lead-readonly:${session.id}`, "");
+        this.store.setKv(`dsh-lead-readonly:${session.id}`, "");
+      }
+    }
     this.publish({ type: "task.upserted", task });
     // A reference card to it on its new topic's canvas becomes its own card there.
     if (clean.topicId) this.f.canvases.joinCanvas(clean.topicId, id);

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -80,6 +80,26 @@ describe("Codex runtime against the real app-server", () => {
   const lastAgent = (id: string) => items(id).filter((i): i is Extract<SessionItem, { type: "agent" }> => i.type === "agent").at(-1);
   const status = (id: string) => host.store.getSession(id)!.status;
   const settled = (id: string) => () => status(id) === "idle" && !items(id).some((i) => i.type === "agent" && i.streaming);
+
+  it("runs a lead in the real read-only sandbox and denies a project write without asking", async () => {
+    const own = startHost();
+    try {
+      const leadDir = join(root, "lead-workspace");
+      mkdirSync(leadDir, { recursive: true });
+      const ws = own.store.addWorkspace({ path: leadDir, name: "lead" });
+      const task = own.store.createTask({ title: "lead", workspaceId: ws.id, lead: true });
+      const s = await own.runtime.startSession({ taskId: task.id, topicId: null, profileId: "codex-mock", workspace: ws, options: { permission: "full-auto" }, text: "[[shell: cmd /c echo forbidden > lead-write.txt]]" });
+      await until(() => own.store.listItems(s.id).some((i) => i.type === "agent" && !i.streaming) && own.store.getSession(s.id)?.status === "idle", "lead sandbox reply");
+      expect(existsSync(join(leadDir, "lead-write.txt"))).toBe(false);
+      expect(own.store.listItems(s.id).some((i) => i.type === "approval")).toBe(false);
+      expect(own.store.getSession(s.id)?.options.permission).toBe("read-only");
+    } finally {
+      // The following crash test needs a manager that owns its child, rather than adopting this test's server.
+      await own.manager.stopAll();
+      own.store.close();
+      hosts.splice(hosts.indexOf(own), 1);
+    }
+  }, 60_000);
 
   it("starts a session and gets the streamed reply", async () => {
     host = startHost();

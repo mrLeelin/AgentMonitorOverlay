@@ -33,6 +33,7 @@ import { ClaudeUsageTracker } from "./usage-tracker.js";
 import { ClaudeAccounts } from "./accounts.js";
 import { ClaudeWake } from "./wake-control.js";
 import { adoptedKey, isCompactSummary, listOutsideSessions, previewOutsideSession, sameFolder } from "./outside.js";
+import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
 
 export { claudeCommands, localCommandText } from "./commands.js";
 export { askedQuestions, describeToolUse, retryReason } from "./tool-use.js";
@@ -200,7 +201,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       workspaceId: input.workspace.id,
       title: input.title ?? "",
       runtimeRef: randomUUID(),
-      options: input.options ?? {},
+      options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
     });
     rememberSessionLogin(this.store, session.id, home.login);
     if (input.text) await this.sendMessage(session.id, input.text);
@@ -262,7 +263,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       workspaceId: input.workspace.id,
       title,
       runtimeRef: forked.sessionId,
-      options: input.options ?? {},
+      options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
     });
     rememberSessionLogin(this.store, session.id, home.login);
     this.store.setKv(adoptedKey(ref), session.id);
@@ -486,6 +487,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   /** Switches model, effort or permissions; a running Claude Code process takes them at once. */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     this.requireSession(sessionId);
+    if (this.isLead(sessionId)) options = { ...options, permission: "plan" };
     const session = this.updateSession(sessionId, { options });
     const live = this.live.get(sessionId);
     if (live) {
@@ -561,6 +563,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    */
   async handoff(sessionId: Id): Promise<{ command: string; cwd: string; env: Record<string, string> }> {
     const session = this.writable(sessionId);
+    if (this.isLead(sessionId)) throw Object.assign(new Error("主控只能读取和分配任务，不能交给可写的终端。"), { code: "read_only" });
     if (this.live.get(sessionId)?.running) throw Object.assign(new Error("回复还在生成，等这一轮结束或先打断，再交给终端"), { code: "conflict" });
     const exe = requireClaudeCode();
     const workspace = this.store.getWorkspace(session.workspaceId);
@@ -728,9 +731,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         // Claude Code's own system prompt, as in a terminal (without it the SDK sends a one-line prompt), plus a project's
         // AGENTS.md when it has no CLAUDE.md.
         systemPrompt: { type: "preset", preset: "claude_code", ...(agentsMd ? { append: agentsMd } : {}) },
-        permissionMode: claudePermissionMode(session.options.permission),
+        permissionMode: this.isLead(session.id) ? "plan" : claudePermissionMode(session.options.permission),
         // Lets the person switch to 全部允许 mid-session; the mode itself stays what the session chose.
-        allowDangerouslySkipPermissions: true,
+        allowDangerouslySkipPermissions: !this.isLead(session.id),
         ...(session.options.model ? { model: session.options.model } : {}),
         ...(session.options.effort ? { effort: session.options.effort as never } : {}),
         includePartialMessages: true,
@@ -738,8 +741,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         // conversation, and its output counts come closer to the real ones.
         forwardSubagentText: true,
         promptSuggestions: readChatSettings(this.store).promptSuggestions,
-        canUseTool: (toolName, toolInput, ctx) => this.asks.askPerson(session.id, live, toolName, toolInput, ctx),
-        hooks: STRIP_SUBAGENT_MODE,
+        canUseTool: (toolName, toolInput, ctx) => this.isLead(session.id) && !leadToolAllowed(toolName)
+          ? Promise.resolve({ behavior: "deny" as const, message: LEAD_READ_ONLY_REASON })
+          : this.asks.askPerson(session.id, live, toolName, toolInput, ctx),
+        hooks: { PreToolUse: [...(leadReadOnlyHooks(() => this.isLead(session.id)).PreToolUse ?? []), ...(STRIP_SUBAGENT_MODE.PreToolUse ?? [])] },
         ...this.mcpOptions(session.id, plan, live),
         // MCP 设置 (2026-11-04): in the person's own config dir the CLI loads their servers itself (OAuth, plugins and
         // its approvals as in a terminal); those turned off are denied to this process only (managedSettings is the
@@ -759,7 +764,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     });
     // With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB the CLI starts in "default" whatever --permission-mode says (CLI 2.1.296,
     // checked in S12-B); switching once it runs works, so a session in another mode switches before its first message.
-    const mode = claudePermissionMode(session.options.permission);
+    const mode = this.isLead(session.id) ? "plan" : claudePermissionMode(session.options.permission);
     if (mode !== "default") {
       live.ready = live.q.setPermissionMode(mode).catch((err: unknown) => {
         this.emit("log", `could not set the permission mode of ${session.id}: ${String(err)}`);
@@ -768,6 +773,11 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     this.live.set(session.id, live);
     live.done = this.consume(session.id, live);
     return live;
+  }
+
+  private isLead(sessionId: Id): boolean {
+    const session = this.store.getSession(sessionId);
+    return !!(session?.taskId && this.store.getTask(session.taskId)?.lead);
   }
 
   private async consume(sessionId: Id, live: Live): Promise<void> {

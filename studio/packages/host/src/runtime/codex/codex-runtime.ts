@@ -112,12 +112,16 @@ export class CodexRuntime extends RuntimeBase {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
     const token = this.options.identities?.issue();
-    const options = input.options ?? {};
+    const options = this.leadTask(input.taskId) ? { ...input.options, permission: "read-only" } : input.options ?? {};
     const developerInstructions = token ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
+    const params = this.threadParams(profile, token);
+    const lead = await this.leadConfig(handle, input.taskId, input.workspace.path);
     const started = await handle.client.request("thread/start", {
       cwd: input.workspace.path,
-      ...this.permissions(options),
-      ...this.threadParams(profile, token),
+      ...this.permissions(options, input.taskId),
+      ...params,
+      ...(lead.config ? { config: { ...params.config, ...lead.config } } : {}),
+      ...(lead.config ? { approvalPolicy: "never" as const, sandbox: "read-only" as const, approvalsReviewer: "user" as const } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     });
@@ -132,6 +136,7 @@ export class CodexRuntime extends RuntimeBase {
       runtimeRef: started.thread.id,
       options,
     });
+    if (lead.config) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (developerInstructions) this.options.roleGiven?.(session.id);
     if (input.text) await this.sendMessage(session.id, input.text);
@@ -150,6 +155,7 @@ export class CodexRuntime extends RuntimeBase {
   /** `extra`: more input (a skill); `again`: the row of a message sent again (重新发送), reused instead of a new one. */
   private async send(sessionId: Id, text: string, images: readonly Attachment[], extra: readonly codex.v2.UserInput[], options: SendOptions = {}, again?: Id): Promise<{ mode: "start" | "steer" }> {
     const session = this.writable(sessionId);
+    this.requireLeadThread(session);
     const handle = await this.handleFor(session.profileId);
     const st = this.sessionState(sessionId);
     const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra];
@@ -195,7 +201,9 @@ export class CodexRuntime extends RuntimeBase {
     // Status and the active turn come from turn/started and turn/completed: a short turn can finish before this
     // response arrives, so setting them here would leave the session stuck in "running".
     try {
-      await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(session.options), ...(await this.serviceTier(session)) });
+      const tier = await this.serviceTier(session);
+      this.requireLeadThread(session);
+      await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
     } catch (err) {
       if (row && clientId) {
         st.sent.delete(clientId);
@@ -244,6 +252,7 @@ export class CodexRuntime extends RuntimeBase {
     };
     const session = this.store.getSession(sessionId);
     if (!session?.runtimeRef || session.archivedAt || session.writer !== "workbench") return lost(0);
+    try { this.requireLeadThread(session); } catch { return lost(0); }
     const [firstId, first] = left[0]!;
     // The rest stay waiting (fresh entries, so a later afterTurn taking them on is seen): steered into the new turn
     // below, or on to the one after it when that turn ends first (its afterTurn).
@@ -254,7 +263,9 @@ export class CodexRuntime extends RuntimeBase {
     let handle: CodexServerHandle;
     try {
       handle = await this.handleFor(session.profileId);
-      await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(session.options), ...(await this.serviceTier(session)) });
+      const tier = await this.serviceTier(session);
+      this.requireLeadThread(session);
+      await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
     } catch (err) {
       this.emit("log", `could not send the unread messages of ${sessionId}: ${String(err)}`);
       for (const [clientId] of left) st.sent.delete(clientId);
@@ -276,7 +287,8 @@ export class CodexRuntime extends RuntimeBase {
   /** Switches model, effort or permissions; Codex applies them from the next turn (a running turn keeps its own). */
   /** Options go with the next turn; 完全访问 also accepts what the running turn is waiting for (asks.ts). */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
-    this.requireSession(sessionId);
+    const session = this.requireSession(sessionId);
+    if (this.leadTask(session.taskId)) options = { ...options, permission: "read-only" };
     const updated = this.updateSession(sessionId, { options });
     if (options.permission === "full-auto") await this.asks.acceptAll(sessionId);
     return updated;
@@ -368,13 +380,17 @@ export class CodexRuntime extends RuntimeBase {
   /** Forks with an explicit provider so the fork never falls back to the server default. */
   async fork(sessionId: Id, profileId?: Id): Promise<Session> {
     const parent = this.requireSession(sessionId);
+    this.requireLeadThread(parent);
     if (!parent.runtimeRef) throw new Error(`session ${sessionId} has no thread yet`);
     const profile = this.profile(profileId ?? parent.profileId);
     const handle = await this.handleFor(parent.profileId);
     const token = this.options.identities?.issue();
-    const r = await handle.client.request("thread/fork", { threadId: parent.runtimeRef, ...this.threadParams(profile, token) });
+    const lead = await this.leadConfig(handle, parent.taskId, this.store.getWorkspace(parent.workspaceId)?.path);
+    const params = this.threadParams(profile, token);
+    const r = await handle.client.request("thread/fork", { threadId: parent.runtimeRef, ...params, ...this.permissions(parent.options, parent.taskId), ...(lead.config ? { config: { ...params.config, ...lead.config }, approvalPolicy: "never" as const, sandbox: "read-only" as const, approvalsReviewer: "user" as const } : {}) });
     // thread/started for the fork may already have created the session.
     const fork = this.findByThread(r.thread.id) ?? this.events.adoptThread(r.thread, parent, "fork", parent.profileId);
+    if (lead.config) this.store.setKv(`codex-lead-readonly:${fork.id}`, r.thread.id);
     if (token) this.options.identities!.bind(token, fork.id);
     return fork;
   }
@@ -401,7 +417,7 @@ export class CodexRuntime extends RuntimeBase {
       try {
         const handle = await this.handleFor(s.profileId);
         await handle.client.request("thread/unarchive", { threadId: s.runtimeRef });
-        await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...this.identityConfig(s.id), ...this.permissions(s.options) });
+        await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
       } catch (err) {
         this.emit("log", `thread/unarchive failed for ${s.id}: ${String(err)}`);
       }
@@ -466,6 +482,7 @@ export class CodexRuntime extends RuntimeBase {
    */
   async runCommand(sessionId: Id, name: string, args: string): Promise<SlashCommandResult> {
     const session = this.writable(sessionId);
+    this.requireLeadThread(session);
     const st = this.sessionState(sessionId);
     if (name === "compact" || name === "code-review") {
       if (st.activeTurnId) throw Object.assign(new Error("回复还在生成，这一轮结束后再运行这个命令"), { code: "conflict" });
@@ -489,10 +506,11 @@ export class CodexRuntime extends RuntimeBase {
   /** Where an attached terminal should connect. The token must only travel through an env var. */
   async attachInfo(sessionId: Id): Promise<{ url: string; token: string; threadId: string }> {
     const s = this.requireSession(sessionId);
+    if (this.leadTask(s.taskId)) throw new Error("主控只能读取和分配任务，不能接管到终端。");
     if (!s.runtimeRef) throw new Error(`session ${sessionId} has no thread yet`);
     const handle = await this.handleFor(s.profileId);
     // Make sure the thread is loaded on this server so `codex --remote … resume` finds it.
-    await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...this.identityConfig(s.id), ...this.permissions(s.options) }).catch(() => undefined);
+    await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...this.identityConfig(s.id), ...this.permissions(s.options, s.taskId) }).catch(() => undefined);
     return { url: handle.url, token: handle.token, threadId: s.runtimeRef };
   }
 
@@ -552,7 +570,7 @@ export class CodexRuntime extends RuntimeBase {
       if (s.profileId !== handle.profileId || !s.runtimeRef || s.archivedAt || s.kind === "sub") continue;
       try {
         // A restarted app-server loads the thread again; only then does the identity header need setting again.
-        const r = await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...this.identityConfig(s.id), ...this.permissions(s.options) });
+        const r = await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
         // Turn events may have been missed while disconnected; take the status from the server's view.
         const active = (r.thread as { status?: { type?: string } }).status?.type === "active";
         const st = this.sessionState(s.id);
@@ -576,12 +594,14 @@ export class CodexRuntime extends RuntimeBase {
    * Who answers approvals and how commands run, for thread/start and thread/resume. Approvals always go to the person,
    * whatever `approvals_reviewer` their own Codex config sets (an automatic reviewer would answer instead).
    */
-  private permissions(options: SessionOptions) {
-    const p = this.permissionOf(options);
+  private permissions(options: SessionOptions, taskId: Id | null) {
+    const p = this.permissionOf(options, taskId);
     return { approvalPolicy: p.approvalPolicy, approvalsReviewer: p.reviewer, sandbox: p.sandbox };
   }
 
-  private permissionOf(options: SessionOptions) {
+  private permissionOf(options: SessionOptions, taskId: Id | null) {
+    // 2026-11-07: 主控 may read and allocate work, never escalate into editing (including forks/subagents).
+    if (this.leadTask(taskId)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
     const p = codexPermission(options.permission);
     return { approvalPolicy: this.options.approvalPolicy ?? p.approvalPolicy, sandbox: this.options.sandbox ?? p.sandbox, reviewer: p.reviewer };
   }
@@ -591,8 +611,8 @@ export class CodexRuntime extends RuntimeBase {
    * effort (they stick for later turns too), and reasoning summaries — models that keep their thinking private (GPT)
    * still show what they thought about.
    */
-  private turnOptions(options: SessionOptions) {
-    const { approvalPolicy, sandbox, reviewer } = this.permissionOf(options);
+  private turnOptions(options: SessionOptions, taskId: Id | null) {
+    const { approvalPolicy, sandbox, reviewer } = this.permissionOf(options, taskId);
     const sandboxPolicy: codex.v2.SandboxPolicy =
       sandbox === "danger-full-access"
         ? { type: "dangerFullAccess" }
@@ -635,6 +655,44 @@ export class CodexRuntime extends RuntimeBase {
   private threadParams(profile: ModelProfile, token: string | undefined) {
     const base = codexThreadParams(profile);
     return { ...base, config: { ...(base.config ?? {}), ...codexAutoCompactConfig(this.store, profile.id), ...(token ? McpIdentities.threadConfig(token) : {}) } };
+  }
+
+  private leadTask(taskId: Id | null): boolean {
+    return !!taskId && this.store.getTask(taskId)?.lead === true;
+  }
+
+  private requireLeadThread(session: Session): void {
+    if (!this.leadTask(session.taskId)) {
+      this.store.deleteKv(`codex-lead-readonly:${session.id}`);
+      return;
+    }
+    if (this.leadTask(session.taskId) && this.store.getKv(`codex-lead-readonly:${session.id}`)?.value !== session.runtimeRef) {
+      throw new Error("这个会话在主控只读限制生效前已启动，请新开主控会话；旧会话不能继续执行。");
+    }
+  }
+
+  /** MCP servers run outside the command sandbox: a read-only lead must not inherit their write tools. */
+  private async leadConfig(handle: CodexServerHandle, taskId: Id | null, cwd?: string): Promise<{ config?: CodexConfig }> {
+    if (!this.leadTask(taskId)) return {};
+    const read = await handle.client.request("config/read", { includeLayers: false, ...(cwd ? { cwd } : {}) }) as codex.v2.ConfigReadResponse;
+    if (!read.config || typeof read.config !== "object") throw new Error("无法读取 Codex 配置，不能安全启动只读主控。");
+    const config: CodexConfig = {};
+    // These native tools and hooks can act outside the filesystem sandbox; keys verified with `codex features list`.
+    for (const feature of ["plugins", "apps", "multi_agent", "multi_agent_v2", "computer_use", "browser_use", "browser_use_external", "in_app_local_automation", "hooks", "image_generation", "artifact"]) config[`features.${feature}`] = false;
+    const servers = read.config.mcp_servers;
+    if (servers && typeof servers === "object" && !Array.isArray(servers)) {
+      for (const name of Object.keys(servers)) {
+        if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Codex MCP 服务名无法安全隔离，不能启动只读主控。");
+        if (name !== "amo") config[`mcp_servers.${name}.enabled`] = false;
+      }
+    }
+    return { config };
+  }
+
+  private async resumeConfig(handle: CodexServerHandle, session: Session): Promise<{ config: CodexConfig }> {
+    this.requireLeadThread(session);
+    const lead = await this.leadConfig(handle, session.taskId, this.store.getWorkspace(session.workspaceId)?.path);
+    return { config: { ...this.identityConfig(session.id).config, ...lead.config } };
   }
 
   /** For thread/resume: the session's identity header (takes effect when the server loads the thread again). */

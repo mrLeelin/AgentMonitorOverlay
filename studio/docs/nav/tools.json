@@ -12,6 +12,7 @@
         { "label": "Review 窗口", "path": "studio/packages/reviewer/src/review-window.ts", "anchor": "export function setupReviewWindows" },
         { "label": "查看器窗口", "path": "studio/packages/reviewer/src/viewer-window.ts", "anchor": "export function setupViewerWindows" },
         { "label": "Review 界面", "path": "studio/packages/ui/src/gitreview/ReviewApp.tsx", "anchor": "export function ReviewApp" },
+        { "label": "本轮改动 Review（读取会话记录）", "path": "studio/packages/ui/src/gitreview/TurnReview.tsx", "anchor": "export function TurnReview" },
         { "label": "查看器界面", "path": "studio/packages/ui/src/viewer/ViewerApp.tsx", "anchor": "export function ViewerApp" },
         { "label": "批注组件", "path": "studio/packages/ui/src/review/AnnotationPanel.tsx" },
         { "label": "命令行入口", "path": "studio/scripts/amo-review.mjs" },
@@ -133,8 +134,6 @@
       "category": "tool",
       "purpose": "手机上的 AMO Studio：Kotlin Multiplatform（shared + app + iosApp），登录后经中转的设备通道连电脑，用 Host 的 rt.* 命令看和操作任务与会话。APK 发到团队服务器，iOS 走 TestFlight（`npm run release -- ios`）。",
       "anchors": [
-        { "label": "工程说明", "path": "studio/mobile/README.md" },
-        { "label": "iOS 版本号", "path": "studio/mobile/iosApp/Version.xcconfig" },
         { "label": "发 APK", "path": "studio/scripts/android-publish.mjs", "anchor": "export function androidRelease" },
         { "label": "发 iOS", "path": "studio/scripts/ios-release.mjs", "anchor": "export async function releaseIos" },
         { "label": "测试用的假电脑", "path": "studio/scripts/android-fixture.mjs" },

@@ -37,6 +37,7 @@ export function roleCardFor(service: CardHost, subject: RoleSubject): string {
 function cardOf(service: CardHost, f: RoleFacts): string {
   const ws = service.store.getWorkspace(f.session.workspaceId);
   const lines: string[] = [`## 你在 AMO Studio 里的角色：${ROLE_NAME[f.role]}`, "", ROLE_DUTY[f.role], ""];
+  if (f.task?.lead && f.role !== "lead") lines.push(ROLE_DUTY.lead, "");
   lines.push(`- 会话：${f.session.title || "（未命名）"}（${f.sessionId ?? "新会话"}，${f.session.runtime}）`);
   if (f.task) {
     lines.push(`- 任务：${taskName(f.task)}（${f.task.id}）· 状态 ${f.task.column}${f.task.lead ? " · 主控" : ""}`);
@@ -65,7 +66,9 @@ function cardOf(service: CardHost, f: RoleFacts): string {
   // (session_start) or split work into tasks (task_plan_propose).
   const notes = f.session.kind === "sub" ? [] : service.config.subsessionNotes();
   if (notes.length) {
-    lines.push("- 人写的模型用法（开子会话 session_start、拆任务 task_plan_propose 时参考；model 照括号里的写）：");
+    lines.push(f.task?.lead
+      ? "- 人写的模型用法（拆任务 task_plan_propose 时参考；主控不能在本任务里另开执行会话；model 照括号里的写）："
+      : "- 人写的模型用法（开子会话 session_start、拆任务 task_plan_propose 时参考；model 照括号里的写）：");
     for (const n of notes) {
       const p = service.profiles.find((x) => x.id === n.profileId)!;
       // 2026-11-05: its defaults as a sub-session, which session_start applies when they are left out.

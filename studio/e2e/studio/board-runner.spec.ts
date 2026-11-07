@@ -25,23 +25,29 @@ test("a running card animates its runner, respects reduced motion and removes it
   await expect(card.locator(".card-status")).toContainText("运行中");
   await expect(runner).toBeVisible();
   await expect(runner).toHaveAttribute("aria-hidden", "true");
-  await expect.poll(() => runner.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(5);
+  await runner.evaluate(async (el) => {
+    const image = new Image();
+    image.src = getComputedStyle(el).backgroundImage.slice(5, -2);
+    await image.decode();
+    if (image.naturalWidth !== 768 || image.naturalHeight !== 96) throw new Error("Unexpected runner sprite dimensions");
+  });
+  await expect.poll(() => runner.evaluate((el) => el.getAnimations().length)).toBe(1);
   // Sample two poses deterministically, including in the hidden Electron window.
   const poses: string[] = [];
-  for (const time of [0, 320]) {
+  for (const time of [0, 400]) {
     poses.push(await runner.evaluate((el, ms) => {
-      for (const animation of el.getAnimations({ subtree: true })) {
+      for (const animation of el.getAnimations()) {
         animation.pause();
         animation.currentTime = ms;
       }
-      return getComputedStyle(el.querySelector(".card-runner-leg")!).transform;
+      return getComputedStyle(el).backgroundPositionX;
     }, time));
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-    await screenshot(studio.app, "studio", `board-runner-dark-${time}`, page);
+    await screenshot(studio.app, "studio", `board-chibi-runner-dark-${time}`, page);
   }
   expect(poses[0]).not.toBe(poses[1]);
   await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
-  await screenshot(studio.app, "studio", "board-runner-light", page);
+  await screenshot(studio.app, "studio", "board-chibi-runner-light", page);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect.poll(() => runner.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);

@@ -4,7 +4,8 @@ import { call, HostApiError } from "../../host/client.js";
 import { Markdown } from "../../lib/markdown.js";
 import { showToast } from "../../lib/toast.js";
 import { rawFileUrl } from "../../lib/openin.js";
-import { AttachLink, Lightbox } from "../../attach/MessageAttachments.js";
+import { AttachLink } from "../../attach/MessageAttachments.js";
+import { useFileLinks, viewFile } from "../../files/FileLinks.js";
 import { IconChevronDown, IconChevronUp, IconTerminal } from "../icons.js";
 import { formatDuration, formatTokens } from "../turns.js";
 
@@ -107,22 +108,21 @@ function FolderAccessButton({ item }: { item: NoticeItem }) {
   );
 }
 
-/** Thumbnails of the images a tool read, viewed or made (files on disk, through the Host); a click enlarges. */
+/** Thumbnails of the images a tool read, viewed or made; a click opens the separate viewer window. */
 export function ToolImages({ images }: { images: readonly MessageImage[] }) {
   const link = useContext(AttachLink);
-  const [open, setOpen] = useState<string | null>(null);
+  const files = useFileLinks();
   if (!images.length || !link) return null;
   return (
     <div className="pr-images" data-testid="tool-images">
       {images.map((img) => {
         const url = rawFileUrl(link, { path: img.path });
         return (
-          <button key={img.path} type="button" className="msg-image" title={`${img.path}\n查看大图`} onClick={() => setOpen(url)}>
+          <button key={img.path} type="button" className="msg-image" title={`${img.path}\n查看大图`} onClick={() => viewFile({ file: { path: img.path } }, files?.workspaceId ?? null, files?.sessionId)}>
             <img src={url} alt={img.path.split(/[\\/]/).at(-1) ?? ""} loading="lazy" />
           </button>
         );
       })}
-      {open && <Lightbox src={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }

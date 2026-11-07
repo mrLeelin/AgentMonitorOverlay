@@ -6,17 +6,16 @@ import { copyText } from "../host/client.js";
 import { lineSuffix } from "@amo-studio/protocol";
 import { baseName, dirName, type FileRefItem } from "./refs.js";
 import { IconFile } from "./icons.js";
-import { FileLink } from "../files/FileLinks.js";
+import { FileLink, useFileLinks, viewFile } from "../files/FileLinks.js";
 
-// What a person's message carries besides its text, as the transcript shows it: image thumbnails (click for a larger
-// view) and chips of the referenced files.
+// What a person's message carries besides its text: thumbnails opening the separate viewer, and referenced files.
 
 /** The Host link, for loading attachment images in the transcript (provided by the conversation). */
 export const AttachLink = createContext<HostLink | null>(null);
 
 export function MessageImages({ images, inline = false }: { images: readonly MessageImage[]; inline?: boolean }) {
   const link = useContext(AttachLink);
-  const [open, setOpen] = useState<string | null>(null);
+  const files = useFileLinks();
   if (!images.length) return null;
   const src = (img: MessageImage) => (img.id && link ? attachmentUrl(link, img.id) : null);
   const Container = inline ? "span" : "div";
@@ -24,8 +23,9 @@ export function MessageImages({ images, inline = false }: { images: readonly Mes
     <Container className={inline ? "msg-images inline" : "msg-images"} data-testid="msg-images">
       {images.map((img, i) => {
         const url = src(img);
+        // Remote message attachments are already copied to this Host, including their local path (CopyImages).
         return url ? (
-          <button key={`${img.path}-${i}`} type="button" className="msg-image" title="查看大图" onClick={() => setOpen(url)}>
+          <button key={`${img.path}-${i}`} type="button" className="msg-image" title="查看大图" onClick={() => viewFile({ file: { path: img.path } }, null, files?.sessionId)}>
             <img src={url} alt={baseName(img.path)} loading="lazy" />
           </button>
         ) : (
@@ -35,7 +35,6 @@ export function MessageImages({ images, inline = false }: { images: readonly Mes
           </span>
         );
       })}
-      {open && <Lightbox src={open} onClose={() => setOpen(null)} />}
     </Container>
   );
 }

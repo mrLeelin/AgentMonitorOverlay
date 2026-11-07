@@ -11,7 +11,8 @@
         { "label": "编辑器和选择区", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "export function ResourceInput" },
         { "label": "上传和粘贴接入", "path": "studio/packages/ui/src/attach/AttachmentInput.tsx", "anchor": "export function AttachmentInput" },
         { "label": "资源发送格式", "path": "studio/packages/ui/src/attach/inlineResources.ts", "anchor": "export function resourceMessage" },
-        { "label": "消息气泡行内显示", "path": "studio/packages/ui/src/attach/InlineMessage.tsx", "anchor": "export function inlineMessage" }
+        { "label": "消息气泡行内显示", "path": "studio/packages/ui/src/attach/InlineMessage.tsx", "anchor": "export function inlineMessage" },
+        { "label": "对话图片在独立查看器打开", "path": "studio/packages/ui/src/attach/MessageAttachments.tsx", "anchor": "export function MessageImages" }
       ],
       "related": ["ui.chat", "studio.files", "studio.sessions"],
       "next": ["studio/e2e/studio/inline-resources.spec.ts", "studio/packages/ui/src/attach/useAttachments.ts"]

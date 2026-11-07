@@ -36,6 +36,7 @@ import { CommitPicker, readHistory } from "./CommitPicker.js";
 import { openReview, switchReview } from "./open.js";
 import { FileHead, ReviewHead } from "./ReviewHead.js";
 import { WindowPlaceholder } from "../shell/WindowControls.js";
+import { TurnReview } from "./TurnReview.js";
 import { RemoteReviewScope, RemoteStaleBar, remoteProjectPath, remoteWorkspace, useRemoteReview } from "../remote/reviewer.js";
 
 // The Git Review window (#review?workspace=…&session=…): a project's changed files on the left, one file's diff on
@@ -60,6 +61,7 @@ export function ReviewApp() {
       {(link, remote) => {
         const ws = remote ? remoteWorkspace(target.workspaceId, remote.device) : host.state.workspaces.find((w) => w.id === target.workspaceId);
         if (!ws) return <WindowPlaceholder title="Git Review">项目不存在或已移除。</WindowPlaceholder>;
+        if (target.turnItemId && target.sessionId) return <TurnReview key={`${ws.id}:${target.sessionId}:${target.turnItemId}`} link={link} workspace={ws} sessionId={target.sessionId} turnItemId={target.turnItemId} file={target.file ?? null} nonce={target.nonce ?? ""} />;
         return (
           <ReviewPage
             key={`${ws.id}@${target.commit ?? ""}@${target.base ?? ""}`}

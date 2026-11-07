@@ -327,6 +327,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     if (from.kind === "sub") throw new HostError("bad_request", "子 agent 不能开 AMO 会话：交给你的主会话来开。");
     if (!from.taskId) throw new HostError("bad_request", "你是专题会话，没有自己的任务：开任务要用 task_plan_propose 提案。");
     const task = this.requireTask(from.taskId);
+    if (task.lead) throw new HostError("read_only", "主控只能读取和分配任务：请用 task_plan_propose 分配独立的执行任务，不能在主控任务里开执行会话。");
     if (task.archivedAt) throw new HostError("read_only", "这个任务已归档，不能再开会话");
     const text = boundedText(input.text, "text", 20_000);
     const title = input.title === undefined || input.title === null || input.title === "" ? null : boundedText(input.title, "title", 100);

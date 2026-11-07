@@ -10,6 +10,8 @@ import { isCommitRef, isObjectId, type GitChangedFile, type GitCommentRange, typ
 export interface ReviewTarget {
   workspaceId: string;
   sessionId?: string;
+  /** Review the recorded changes of the turn containing this session item. */
+  turnItemId?: string;
   /** A commit's window: read-only. */
   commit?: string;
   /** Stage 13 (用 git diff 看): the file to select, absolute or relative to the project. */
@@ -30,6 +32,7 @@ export interface ReviewTarget {
 export function reviewHash(t: ReviewTarget): string {
   if (t.commit) return `#review?${new URLSearchParams({ workspace: t.workspaceId, commit: t.commit, ...(t.base ? { base: t.base } : {}), ...(t.file ? { file: t.file, ...(t.nonce ? { n: t.nonce } : {}) } : {}), ...(t.remote ? { remote: t.remote } : {}) }).toString()}`;
   const q = new URLSearchParams({ workspace: t.workspaceId, ...(t.sessionId ? { session: t.sessionId } : {}) });
+  if (t.turnItemId) q.set("turnItem", t.turnItemId);
   if (t.remote) q.set("remote", t.remote);
   if (t.base) q.set("base", t.base);
   if (t.base && t.baseLabel) q.set("label", t.baseLabel);
@@ -47,13 +50,15 @@ export function parseReviewHash(hash: string): ReviewTarget | null {
   const base = q.get("base");
   if (base !== null && !isObjectId(base)) return null;
   const sessionId = q.get("session");
+  const turnItemId = q.get("turnItem");
+  if (turnItemId && (!sessionId || commit || base)) return null;
   const file = q.get("file");
   const nonce = q.get("n");
   const remote = q.get("remote");
   const r = remote && /^[\w-]{1,80}$/.test(remote) ? { remote } : {};
   if (commit !== null) return isCommitRef(commit) ? { workspaceId, commit, ...(base ? { base } : {}), ...(file ? { file, ...(nonce ? { nonce } : {}) } : {}), ...r } : null;
   const label = q.get("label");
-  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r };
+  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(turnItemId ? { turnItemId } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r };
 }
 
 /** The list's status icons, as in Fork: + added, M modified, − deleted, R renamed. */

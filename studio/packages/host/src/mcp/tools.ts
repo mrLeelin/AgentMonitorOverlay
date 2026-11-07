@@ -20,13 +20,13 @@ export const AMO_MCP_NAME = "amo";
  */
 export const AMO_MCP_INSTRUCTIONS = [
   "AMO Studio: the workbench the person uses to run and watch AI work. Work is organised as projects (a folder, usually a git repository), tasks (one piece of work in one project, optionally in a topic; each has its own sessions, a board column, a description, progress notes and a handoff) and topics (专题: related tasks, possibly across projects, on one canvas with groups, dependencies, notes, colour marks, and the topic's own documents).",
-  "A task the person marks as 主控 (lead) coordinates its topic: it splits the work into tasks, arranges the canvas, describes the tasks and writes the topic's documents, while the work itself happens in each task's own sessions, which the person talks to directly. Every other task's session does its own task (执行). The person decides when to branch and when to merge; Studio never does.",
+  "A task the person marks as 主控 (lead) only reads and assigns work: it proposes tasks, describes their scope and sends instructions, while implementation happens in each execution task's own sessions. A lead cannot write project files or topic documents, change settings or the canvas, or start sessions in its own task to bypass its read-only role. Every other task's session does its own task (执行). The person decides when to branch and when to merge; Studio never does.",
   // 2026-10-22: an agent's xargs -P 12 burst and a grep -r over a big checkout made the person's desktop lag.
   "The person works on this same machine while you run, often with several agents and big game projects open, so keep your commands light: do not fan out many processes at once (xargs -P, parallel loops, more than a few background jobs), search with rg or git grep limited to the folders that matter instead of grep -r over a whole checkout or drive, and cap test runners' workers (for example vitest --maxWorkers=4, dotnet test -m:2) unless the person asks for speed.",
   "Your role card (who you are, your task, topic, its 主控 and documents) is given to you when the session starts; when you do not have it, or need the current one, call amo_whoami. amo_guide explains each part (tasks, topics, canvas, collab, lead, files). Writes that touch other tasks or the canvas's structure ask the person first; your own task's notes, descriptions and colour marks do not.",
   // 2026-10-30 (the user): agents do not reach for the canvas on their own; once the person asks (「用画布展开任务」,
   // 「放到画布上审阅」) they do it fully, as before. Reading it stays.
-  "Use your topic's canvas when the person asks for it — e.g. to lay the work out on the canvas, or to put a review there — and then do it fully, in the way amo_guide describes (sections lead and canvas): split the work into tasks, arrange groups, dependencies and colours, describe each task; or lay review items out and pin remarks and questions. Without such a request leave the canvas as it is (reading it with canvas_read to understand the topic is fine), and reports and reviews go in your reply as usual.",
+  "Leads may read the canvas and propose tasks with task_plan_propose; they cannot edit it directly. Other roles use the canvas when the person asks for it, in the way amo_guide describes (section canvas). Without such a request leave the canvas as it is, and reports and reviews go in your reply as usual.",
   "When the person wants to review a file or saved changes, use review_open: mode=file for its current content (optional line/endLine), mode=changes for its Git diff (optional base, commit or range). It opens the person's reviewer and defaults comments back to your session; it does not perform or approve a review. Save edits before reopening to show the latest content.",
   // 会话里用中转 (2026-10-30, plans/done/relay-in-sessions.md).
   "When the work needs someone on the team other than the person you work for — a programmer to confirm an implementation, an interface or the work it takes, or to check a plan — ask them with team_ask (AMO 中转; team_members lists who does what). It usually waits for the person's OK in Studio (the answer says), goes as the person marked as their AI's, and the reply comes back into this conversation by itself: end your turn after it instead of going on in the unconfirmed direction; then team_followup to ask again, team_done once settled. (task_message is different: it talks to another task's session inside Studio.)",
@@ -50,8 +50,30 @@ export function amoInstructions(service: HostService): string {
 export function amoToolsFor(service: HostService, caller: McpCaller | null): AmoTool[] {
   const ctx = toolContext(service, caller);
   const off = new Set<string>(service.config.disabledFeatures());
-  const tools = FEATURES.filter((f) => !off.has(f.name)).flatMap((f) => f.tools?.(ctx) ?? []).map((t) => keepOffRemoteCopies(service, t));
+  const tools = FEATURES.filter((f) => !off.has(f.name)).flatMap((f) => f.tools?.(ctx) ?? [])
+    .filter((t) => !isLeadCaller(service, caller) || leadMayUse(t))
+    .map((t) => keepLeadReadOnly(service, caller, keepOffRemoteCopies(service, t)));
   return [...tools.filter((t) => t.readOnly), ...tools.filter((t) => !t.readOnly)];
+}
+
+// 2026-11-07, the person: 主控 only reads and assigns; task.lead also covers its forks and native subagents.
+// mailbox_read marks messages read, so it is a write in MCP despite being a reading capability.
+const LEAD_ASSIGNMENT_TOOLS = new Set(["task_plan_propose", "task_describe", "task_message", "mailbox_send", "mailbox_read", "decision_request"]);
+const leadMayUse = (tool: AmoTool): boolean => tool.readOnly || LEAD_ASSIGNMENT_TOOLS.has(tool.name);
+
+function isLeadCaller(service: HostService, caller: McpCaller | null): boolean {
+  const taskId = caller ? service.store.getSession(caller.sessionId)?.taskId : null;
+  return !!taskId && service.store.getTask(taskId)?.lead === true;
+}
+
+/** Recheck when invoked: an SDK server or a cached tool may predate the task being marked as 主控. */
+function keepLeadReadOnly(service: HostService, caller: McpCaller | null, tool: AmoTool): AmoTool {
+  return {
+    ...tool,
+    run: (args) => isLeadCaller(service, caller) && !leadMayUse(tool)
+      ? fail("主控只能读取和分配任务，不能修改项目文件、专题文档、画布或设置，也不能在主控任务里另开执行会话。请把具体工作分配给执行任务。")
+      : tool.run(args),
+  };
 }
 
 /**

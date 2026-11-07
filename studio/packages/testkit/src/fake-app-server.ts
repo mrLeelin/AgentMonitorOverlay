@@ -501,6 +501,7 @@ export async function startFakeAppServer(options: FakeAppServerOptions = {}): Pr
   };
 
   const handlers: Record<string, Handler> = {
+    "config/read": () => ({ config: { mcp_servers: {} }, origins: {}, layers: null }),
     initialize: (client) => {
       client.initialized = true;
       return { userAgent: "fake-app-server/0.0.0" };
