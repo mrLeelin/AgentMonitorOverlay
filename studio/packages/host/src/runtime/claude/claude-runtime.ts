@@ -563,7 +563,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    */
   async handoff(sessionId: Id): Promise<{ command: string; cwd: string; env: Record<string, string> }> {
     const session = this.writable(sessionId);
-    if (this.isLead(sessionId)) throw Object.assign(new Error("主控只能读取和分配任务，不能交给可写的终端。"), { code: "read_only" });
+    if (this.isLead(sessionId)) throw Object.assign(new Error("主控的本地文件只读，不能交给可写的终端。"), { code: "read_only" });
     if (this.live.get(sessionId)?.running) throw Object.assign(new Error("回复还在生成，等这一轮结束或先打断，再交给终端"), { code: "conflict" });
     const exe = requireClaudeCode();
     const workspace = this.store.getWorkspace(session.workspaceId);

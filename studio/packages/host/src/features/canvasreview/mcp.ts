@@ -27,7 +27,7 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
       inputSchema: { item: z.string(), status: STATUS.optional(), title: z.string().optional(), body: z.string().optional(), conclusion: z.string().optional(), refs: z.array(z.string()).optional() },
       readOnly: false,
       autoApprove: true,
-      run: (args) => write(caller, (c) => service.canvasReview.updateItem(ownTopic(c), args.item, args)),
+      run: (args) => write(caller, (c) => service.canvasReview.updateItem(ownTopic(c), args.item, args, c.sessionId)),
     },
     {
       name: "canvas_callout",
@@ -53,7 +53,7 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
       inputSchema: { calloutId: z.string().optional(), target: z.string().optional() },
       readOnly: false,
       autoApprove: true,
-      run: (args) => write(caller, (c) => service.canvasReview.closeFor(ownTopic(c), args)),
+      run: (args) => write(caller, (c) => service.canvasReview.closeFor(ownTopic(c), args, c.sessionId)),
     },
   ];
 }

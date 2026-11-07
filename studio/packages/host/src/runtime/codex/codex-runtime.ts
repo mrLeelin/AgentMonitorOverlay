@@ -3,6 +3,7 @@ import { inTurn, type ApprovalDecision, type Attachment, type Id, type ModelOpti
 import type { Store } from "../../store/store.js";
 import { codexThreadParams, profileGone, type CodexConfig } from "../profiles.js";
 import { McpIdentities } from "../../mcp/identity.js";
+import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
 import { RuntimeBase, STOP_GRACE_MS, type RuntimeEvents, type SendOptions } from "../runtime.js";
@@ -506,7 +507,7 @@ export class CodexRuntime extends RuntimeBase {
   /** Where an attached terminal should connect. The token must only travel through an env var. */
   async attachInfo(sessionId: Id): Promise<{ url: string; token: string; threadId: string }> {
     const s = this.requireSession(sessionId);
-    if (this.leadTask(s.taskId)) throw new Error("主控只能读取和分配任务，不能接管到终端。");
+    if (this.leadTask(s.taskId)) throw new Error("主控的本地文件只读，不能接管到终端。");
     if (!s.runtimeRef) throw new Error(`session ${sessionId} has no thread yet`);
     const handle = await this.handleFor(s.profileId);
     // Make sure the thread is loaded on this server so `codex --remote … resume` finds it.
@@ -600,7 +601,7 @@ export class CodexRuntime extends RuntimeBase {
   }
 
   private permissionOf(options: SessionOptions, taskId: Id | null) {
-    // 2026-11-07: 主控 may read and allocate work, never escalate into editing (including forks/subagents).
+    // 2026-11-07: 主控 manages tasks and canvases through AMO, never escalates into local file editing.
     if (this.leadTask(taskId)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
     const p = codexPermission(options.permission);
     return { approvalPolicy: this.options.approvalPolicy ?? p.approvalPolicy, sandbox: this.options.sandbox ?? p.sandbox, reviewer: p.reviewer };
@@ -681,6 +682,11 @@ export class CodexRuntime extends RuntimeBase {
     for (const feature of ["plugins", "apps", "multi_agent", "multi_agent_v2", "computer_use", "browser_use", "browser_use_external", "in_app_local_automation", "hooks", "image_generation", "artifact"]) config[`features.${feature}`] = false;
     const servers = read.config.mcp_servers;
     if (servers && typeof servers === "object" && !Array.isArray(servers)) {
+      // Only amend an existing server: tool settings alone would create an AMO entry with no transport.
+      const amo = servers.amo;
+      if (amo && typeof amo === "object" && !Array.isArray(amo)) {
+        for (const name of LEAD_MANAGEMENT_TOOLS) config[`mcp_servers.amo.tools.${name}.approval_mode`] = "approve";
+      }
       for (const name of Object.keys(servers)) {
         if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Codex MCP 服务名无法安全隔离，不能启动只读主控。");
         if (name !== "amo") config[`mcp_servers.${name}.enabled`] = false;

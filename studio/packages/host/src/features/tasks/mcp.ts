@@ -1,10 +1,21 @@
 import { z } from "zod";
+import { HostError } from "../../core/shared.js";
 import { answer, write, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 import { noteOwnDescription } from "../guide/role.js";
 
 /** The AMO MCP tools of this feature (gathered in mcp/tools.ts). */
 export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: ToolContext): AmoTool[] {
   return [
+    {
+      name: "task_management", title: "管理范围", description: "Read a task's stored direct and recursive management tree, with unique lead/worker counts. Same-topic and collaboration alone grant no management rights.",
+      inputSchema: { taskId: z.string().optional() }, readOnly: true, autoApprove: true,
+      run: (args) => answer(() => service.tasks.management(args.taskId === undefined && caller ? ownTask(caller) : String(args.taskId))),
+    },
+    {
+      name: "task_manager_set", title: "转交直属主控", description: "Set, transfer or clear (null) a managed task's direct manager. Leads may only transfer descendants within their management tree; initial assignment and cross-tree transfer require the user or topic session. This never changes local file permissions.",
+      inputSchema: { taskId: z.string(), managerTaskId: z.string().nullable() }, readOnly: false, autoApprove: false,
+      run: (args) => write(caller, (c) => service.tasks.setManager(String(args.taskId), args.managerTaskId, c.sessionId)),
+    },
     {
       name: "board_list",
       title: "看板",
@@ -22,6 +33,26 @@ export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: Tool
       readOnly: true,
       autoApprove: true,
       run: (args) => answer(() => model.taskGet(String(args.taskId))),
+    },
+    {
+      name: "task_update",
+      title: "管理任务",
+      description: "Update a task's title, board column (todo/doing/review/done), or topicId (null removes it from its topic). Your own task by default. Leads manage only their stored descendants; topic sessions manage their topic. Linked ownership must be explicitly handled before moving scope. This only changes Studio metadata, never file permissions. A lead manages without a separate approval; other roles ask first.",
+      inputSchema: { taskId: z.string().optional(), title: z.string().min(1).optional(), column: z.enum(["todo", "doing", "review", "done"]).optional(), topicId: z.string().nullable().optional() },
+      readOnly: false,
+      autoApprove: false,
+      run: (args) => write(caller, (c) => {
+        const session = service.store.getSession(c.sessionId)!;
+        const taskId = args.taskId === undefined ? ownTask(c) : String(args.taskId);
+        if (taskId !== session.taskId) {
+          if (session.taskId && !service.store.getTask(session.taskId)?.lead) throw new HostError("bad_request", "执行会话只能管理自己的任务；请联系主控管理其他任务。");
+          inOwnTopic(c, taskId);
+        }
+        const patch = { ...(args.title !== undefined ? { title: args.title } : {}), ...(args.column !== undefined ? { column: args.column } : {}), ...(args.topicId !== undefined ? { topicId: args.topicId } : {}) };
+        if (!Object.keys(patch).length) throw new HostError("bad_request", "请提供任务标题、状态或专题。");
+        if (args.title !== undefined && (typeof args.title !== "string" || !args.title.trim())) throw new HostError("bad_request", "任务标题不能为空。");
+        return service.tasks.updateTask(taskId, patch);
+      }),
     },
     {
       name: "task_describe",

@@ -11,15 +11,17 @@ import { recordRole, roleCard } from "../features/guide/role.js";
 // it with a token that opens /mcp only, plus a per-thread header naming the session; Claude sessions get the same
 // tools in-process (see tools.ts). DSH sessions (stage 17) come the same way as Codex ones; DSH puts a server's
 // instructions into its system prompt, so theirs carry the session's role card (as Claude's do), and DSH runs MCP
-// tools without asking, so the writes the person approves first are left out for them.
+// tools without asking, so writes requiring approval stay hidden unless a lead may manage them directly.
 
 /** `connecting`: the request is the client's `initialize`, the one that reads the instructions. */
 export function createAmoMcpServer(service: HostService, caller: McpCaller | null = null, connecting = false): McpServer {
-  const dsh = caller ? service.store.getSession(caller.sessionId)?.runtime === "dsh" : false;
+  const session = caller ? service.store.getSession(caller.sessionId) : null;
+  const dsh = session?.runtime === "dsh";
+  const lead = !!session?.taskId && service.store.getTask(session.taskId)?.lead === true;
   const server = new McpServer({ name: AMO_MCP_NAME, version: "0.5.0" }, { instructions: dsh && caller ? dshInstructions(service, caller.sessionId, connecting) : amoInstructions(service) });
   const prompted = new Set<string>(PROMPTED_WRITE_TOOLS);
   for (const t of amoToolsFor(service, caller)) {
-    if (dsh && prompted.has(t.name)) continue;
+    if (dsh && prompted.has(t.name) && !(lead && t.autoApprove)) continue;
     const annotations = { readOnlyHint: t.readOnly, destructiveHint: false, openWorldHint: false };
     server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.inputSchema, annotations }, (args: Record<string, unknown>) => t.run(args));
   }

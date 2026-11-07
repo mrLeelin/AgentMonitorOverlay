@@ -91,6 +91,8 @@ export class ReadModel {
     return {
       tasks: tasks.map((t) => ({
         id: t.id,
+        lead: !!t.lead,
+        managerTaskId: t.managerTaskId ?? null,
         title: t.title || "未命名任务",
         column: t.column,
         status: this.status(t.id),
@@ -163,6 +165,10 @@ export class ReadModel {
     return {
       id: t.id,
       title: t.title || "未命名任务",
+      lead: !!t.lead,
+      managerTaskId: t.managerTaskId ?? null,
+      manager: t.managerTaskId ? { id: t.managerTaskId, title: title(t.managerTaskId) } : null,
+      management: this.service.tasks.management(t.id),
       handoff: handoff ? { text: handoff.text, by: author(handoff.sessionId), at: handoff.createdAt } : null,
       // The steps from the task's template (empty when it has none); tick them with checklist_check.
       checklist: this.store.listChecklist(t.id).map((i) => ({ id: i.id, text: i.text, done: i.done, ...(i.done ? { by: author(i.doneBySessionId) } : {}) })),

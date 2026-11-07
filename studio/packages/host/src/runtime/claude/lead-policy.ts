@@ -1,13 +1,13 @@
 import type { HookCallbackMatcher, HookEvent, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 
-export const LEAD_READ_ONLY_REASON = "主控只能读取和分配任务，不能执行命令、修改文件、启动执行代理或使用其他写入工具。请把实施工作分配给执行任务。";
+export const LEAD_READ_ONLY_REASON = "主控可以管理任务和画布；本地文件只读，不能执行命令、修改本地文件、启动执行代理或使用其他写入工具。请把实施工作分配给执行任务。";
 
 // 2026-11-07: plan mode alone is insufficient: ExitPlanMode and an Agent's mode can unlock writes. Deny tools
 // before the CLI's approval rules, including already-approved shell commands and third-party MCP tools.
 const LEAD_READ_TOOLS = new Set(["Read", "Glob", "Grep", "WebFetch", "WebSearch", "AskUserQuestion", "ToolSearch", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
 
 export function leadToolAllowed(toolName: string): boolean {
-  // The AMO server checks a separate allocation-only allowlist on every call, including cached tool handles.
+  // The AMO server checks a separate task/canvas management allowlist on every call, including cached tool handles.
   return LEAD_READ_TOOLS.has(toolName) || toolName.startsWith("mcp__amo__");
 }
 

@@ -60,12 +60,12 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
       const out = addItems(doc, group, items, () => newId("n"));
       placed = out.items;
       return out.doc;
-    });
+    }, sessionId ?? undefined);
     return { groupId, items: placed.map((n) => ({ id: n.id, num: n.num, title: n.title })) };
   }
 
   /** Changes an item (by id, "#3" or "3"): its status, title, body, conclusion or refs. */
-  updateItem(topicId: Id, ref: unknown, patch: Record<string, unknown>): CanvasItem {
+  updateItem(topicId: Id, ref: unknown, patch: Record<string, unknown>, actorSessionId?: Id): CanvasItem {
     if (this.requireTopic(topicId).archivedAt) throw new HostError("read_only", "the topic is archived");
     const key = typeof ref === "string" || typeof ref === "number" ? String(ref) : "";
     if (!key) throw new HostError("bad_request", "item is required: its id, or #n");
@@ -84,7 +84,7 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
       if (!found) throw new HostError("bad_request", `no review item ${key} on this canvas`);
       item = { ...found, ...changes };
       return { ...doc, nodes: doc.nodes.map((n) => (n.id === found.id ? item! : n)) };
-    });
+    }, actorSessionId);
     return item!;
   }
 
@@ -97,6 +97,7 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
     const kind = input.kind === undefined ? "note" : input.kind;
     if (kind !== "note" && kind !== "question") throw new HostError("bad_request", "kind must be note (说明) or question (问题)");
     const target = resolveTarget(this.f.canvases.canvas(topicId), typeof input.target === "string" ? input.target : typeof input.target === "number" ? String(input.target) : "");
+    this.f.canvases.checkTargetScope(topicId, target, sessionId ?? undefined);
     if (this.store.listCallouts(topicId).length >= OPEN_CALLOUTS_MAX) throw new HostError("bad_request", `this canvas already has ${OPEN_CALLOUTS_MAX} bubbles out; close some with canvas_callout_close first`);
     let options: string[] | undefined;
     if (input.options !== undefined && input.options !== null) {
@@ -176,15 +177,17 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
   }
 
   /** canvas_callout_close: one bubble of the caller's topic, or every one still out on a card. */
-  closeFor(topicId: Id, input: { calloutId?: unknown; target?: unknown }): { closed: Id[] } {
+  closeFor(topicId: Id, input: { calloutId?: unknown; target?: unknown }, actorSessionId?: Id): { closed: Id[] } {
     if (typeof input.calloutId === "string" && input.calloutId) {
       const c = this.getCallout(input.calloutId);
       if (c.topicId !== topicId) throw new HostError("bad_request", `callout ${c.id} is not on your topic's canvas`);
+      this.f.canvases.checkTargetScope(topicId, c.target, actorSessionId);
       return { closed: c.state === "closed" ? [] : [this.close(c.id).id] };
     }
     const raw = typeof input.target === "string" || typeof input.target === "number" ? String(input.target) : "";
     if (!raw) throw new HostError("bad_request", "give calloutId, or target to close every bubble on that card");
     const target = resolveTarget(this.f.canvases.canvas(topicId), raw);
+    this.f.canvases.checkTargetScope(topicId, target, actorSessionId);
     return { closed: this.store.listCallouts(topicId).filter((c) => c.target === target).map((c) => this.close(c.id).id) };
   }
 

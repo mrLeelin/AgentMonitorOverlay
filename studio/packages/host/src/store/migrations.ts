@@ -360,4 +360,9 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   ALTER TABLE tasks ADD COLUMN first_message TEXT;
   `,
+  // 26: Explicit management only. Existing tasks stay unassigned; canvas layout never implies ownership.
+  `
+  ALTER TABLE tasks ADD COLUMN manager_task_id TEXT REFERENCES tasks(id);
+  CREATE INDEX tasks_manager ON tasks(manager_task_id);
+  `,
 ];

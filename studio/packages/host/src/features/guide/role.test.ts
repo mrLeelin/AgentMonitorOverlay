@@ -122,11 +122,11 @@ describe("role card (2026-10-17)", () => {
     expect(splitRoleUpdate(await send(session, "二")).update).toContain("任务说明改成了：再改");
   });
 
-  it("lets a 主控 relay to a task its canvas references", async () => {
+  it("does not grant management through canvas references", async () => {
     const lead = store.createTask({ title: "迁移主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
     const leadSession = await start(lead.id);
-    expect(() => service.relays.send(leadSession.id, { taskId: task.id, text: "x" })).toThrow(/不在你的专题里/);
+    expect(() => service.relays.send(leadSession.id, { taskId: task.id, text: "x" })).toThrow(/不在你的管理范围/);
     reference(topic.id, task.id);
-    expect(service.relays.send(leadSession.id, { taskId: task.id, text: "先做数据" })).toMatchObject({ state: "pending", toTaskId: task.id });
+    expect(() => service.relays.send(leadSession.id, { taskId: task.id, text: "先做数据" })).toThrow(/不在你的管理范围/);
   });
 });

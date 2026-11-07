@@ -123,7 +123,7 @@ describe("DSH runtime", () => {
     // Existing data from before this restriction must also fail closed, even when the role was changed out of band.
     host.service.store.updateTask(s.taskId!, { lead: true });
     await expect(call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "不能继续旧权限" })).rejects.toThrow(/新开一个会话/);
-    await expect(host.service.sessions.startPeer(s.id, { text: "绕过主控", permission: "write" })).rejects.toThrow(/主控只能读取和分配任务/);
+    await expect(host.service.sessions.startPeer(s.id, { text: "绕过主控", permission: "write" })).rejects.toThrow(/主控的本地文件只读/);
   });
 
   it("does not promote an idle task while a background command is still running", async () => {

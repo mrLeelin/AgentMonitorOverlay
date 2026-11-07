@@ -1,4 +1,4 @@
-import { isCommon, type Id, type Task } from "@amo-studio/protocol";
+import { isCommon, taskManagement, type Id, type Task } from "@amo-studio/protocol";
 import type { FeatureHost } from "../../core/feature.js";
 import { ROLE_DUTY, ROLE_NAME, roleFacts, subjectFacts, type RoleFacts, type RoleSubject } from "../../core/role.js";
 
@@ -42,6 +42,13 @@ function cardOf(service: CardHost, f: RoleFacts): string {
   if (f.task) {
     lines.push(`- 任务：${taskName(f.task)}（${f.task.id}）· 状态 ${f.task.column}${f.task.lead ? " · 主控" : ""}`);
     if (f.task.description) lines.push(`- 任务说明：${oneLine(f.task.description, 400)}`);
+    const manager = f.task.managerTaskId ? service.store.getTask(f.task.managerTaskId) : null;
+    lines.push(`- 直属主控：${manager ? `${taskName(manager)}（${manager.id}）` : "未分配；同专题和画布位置不代表归属"}`);
+    if (f.task.lead) {
+      const scope = taskManagement(service.store.listTasks(), f.task.id);
+      lines.push(`- 管理范围：直属主控 ${scope.directLeadCount} 个，下辖执行 ${scope.workerCount} 个；直属任务 ${scope.direct.length} 个，下辖共 ${scope.descendants.length} 个（task_management 查询完整树）。只管理自身和下辖任务，协作或引用不扩权。`);
+      lines.push(`- 下辖任务：${scope.descendants.map((t) => `${taskName(t)}（${t.id}，${t.column}）`).join("、") || "暂无；旧任务须由用户或专题入口明确分配"}`);
+    }
   }
   if (ws) lines.push(`- 项目：${isCommon(ws) ? "公共目录（未指定项目）" : ws.name}（${ws.path}）`);
   if (f.topic) {

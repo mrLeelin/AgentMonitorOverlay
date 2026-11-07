@@ -4,6 +4,7 @@ import { Store } from "../../store/store.js";
 import { describeReview, CodexRuntime } from "./codex-runtime.js";
 import { FakeServers } from "./fake-servers.test-support.js";
 import { CodexRpcClient } from "./rpc-client.js";
+import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 
 const PROFILES: ModelProfile[] = [
   { id: "p-ds", label: "DS", runtime: "codex", provider: "amo-ds", model: "ds-model" },
@@ -56,6 +57,8 @@ describe("CodexRuntime", () => {
     await until(idle(s.id), "lead idle");
     const fake = servers.fakes.get("p-ds")!;
     expect(fake.calls.find((x) => x.method === "thread/start")!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false, "features.plugins": false, "features.apps": false, "features.multi_agent": false } });
+    const managementApprovals = Object.fromEntries(LEAD_MANAGEMENT_TOOLS.map((name) => [`mcp_servers.amo.tools.${name}.approval_mode`, "approve"]));
+    expect(fake.calls.find((x) => x.method === "thread/start")!.params).toMatchObject({ config: managementApprovals });
     expect(session(s.id).options.permission).toBe("read-only");
     await runtime.setOptions(s.id, { permission: "full-auto" });
     expect(session(s.id).options.permission).toBe("read-only");
@@ -65,12 +68,28 @@ describe("CodexRuntime", () => {
     expect(items(s.id).some((i) => i.type === "approval")).toBe(false);
     const fork = await runtime.fork(s.id);
     expect(fake.calls.find((x) => x.method === "thread/fork")!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false } });
+    expect(fake.calls.find((x) => x.method === "thread/fork")!.params).toMatchObject({ config: managementApprovals });
     await runtime.sendMessage(fork.id, "read again");
     await until(idle(fork.id), "lead fork idle");
     await runtime.archive(s.id);
     await runtime.unarchive(s.id);
     expect(fake.calls.filter((x) => x.method === "thread/resume").at(-1)!.params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "mcp_servers.unsafe.enabled": false } });
-    await expect(runtime.attachInfo(s.id)).rejects.toThrow(/不能接管到终端/);
+    expect(fake.calls.filter((x) => x.method === "thread/resume").at(-1)!.params).toMatchObject({ config: managementApprovals });
+    await expect(runtime.attachInfo(s.id)).rejects.toThrow("主控的本地文件只读，不能接管到终端。");
+  });
+
+  it.each([{}, { mcp_servers: {} }, { mcp_servers: { unsafe: {} } }])("does not create an AMO transport when none is configured (%j)", async (config) => {
+    store.updateTask(taskId, { lead: true });
+    const handle = await servers.ensure("p-ds");
+    const request = handle.client.request.bind(handle.client);
+    vi.spyOn(handle.client, "request").mockImplementation(((method: string, params: never) => method === "config/read"
+      ? Promise.resolve({ config, origins: {}, layers: null })
+      : request(method as never, params)) as typeof handle.client.request);
+    const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "read" });
+    await until(idle(s.id), "lead without AMO idle");
+    const params = servers.fakes.get("p-ds")!.calls.find((x) => x.method === "thread/start")!.params;
+    expect(params).toMatchObject({ approvalPolicy: "never", sandbox: "read-only", config: { "features.multi_agent": false } });
+    expect(Object.keys((params as { config: Record<string, unknown> }).config).some((key) => key.startsWith("mcp_servers.amo."))).toBe(false);
   });
 
   it("does not reuse a writable thread after its task becomes lead, and declines its old pending approval", async () => {

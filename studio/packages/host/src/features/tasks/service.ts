@@ -2,9 +2,10 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CanvasDoc, Id, NewSessionInput, OutsideSessionList, OutsideSessionPreview, Session, SessionOptions, Task, TaskColumn, Workspace } from "@amo-studio/protocol";
-import { inTurn, isCommon, MAIN_CANVAS_ID, removeTask, TASK_COLUMNS, TASK_DESCRIPTION_MAX, TASK_FIRST_MESSAGE_MAX } from "@amo-studio/protocol";
+import { inTurn, isCommon, MAIN_CANVAS_ID, removeTask, taskManagement, TASK_COLUMNS, TASK_DESCRIPTION_MAX, TASK_FIRST_MESSAGE_MAX } from "@amo-studio/protocol";
 import { HostError, sessionOptions, sessionMoving, LEGACY_COMMON_WORKSPACE_KEY, COMMON_NAME, SCHEDULER_TASK_KEY } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
+import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
 
@@ -140,6 +141,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     topicId?: Id | null;
     column?: TaskColumn;
     lead?: boolean;
+    managerTaskId?: Id | null;
+    description?: string;
     firstSession?: NewSessionInput;
     /** Filed without a session: the sentence its first session will take (2026-11-05). */
     firstMessage?: string;
@@ -161,7 +164,10 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const firstMessage = input.firstSession ? "" : firstMessageOf(input.firstMessage);
     const title = input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60) || firstMessage.split("\n")[0]!.slice(0, 60);
     const column = input.firstSession ? "doing" : (input.column ?? "todo");
-    const task = this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, ...(firstMessage ? { firstMessage } : {}) });
+    const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
+    const description = input.description?.trim() ?? "";
+    if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
+    const task = this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
     this.publish({ type: "task.upserted", task });
     const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
     const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first) : null;
@@ -186,10 +192,19 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     return this.updateTask(id, patch);
   }
 
-  updateTask(id: Id, patch: { title?: unknown; description?: unknown; firstMessage?: unknown; lead?: unknown; relayAuto?: unknown; column?: unknown; workspaceId?: unknown; topicId?: unknown }): Task {
+  updateTask(id: Id, patch: { title?: unknown; description?: unknown; firstMessage?: unknown; lead?: unknown; managerTaskId?: unknown; relayAuto?: unknown; column?: unknown; workspaceId?: unknown; topicId?: unknown }): Task {
     const current = this.requireTask(id);
     if (current.remote) throw new HostError("read_only", `这是 ${current.remote.name} 上的远程任务：状态、说明和专题跟着那台电脑走，这里不能改（名字可以改，会改到那边）`);
-    const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "lead" | "relayAuto">> = {};
+    const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "lead" | "relayAuto" | "managerTaskId">> = {};
+    const children = this.store.listTasks().filter((t) => t.managerTaskId === id);
+    if (patch.lead === false && children.length) throw new HostError("conflict", "请先转交或解除所有直属任务，再取消主控。");
+    const nextTopic = patch.topicId === undefined ? current.topicId : (patch.topicId === null || patch.topicId === "" ? null : String(patch.topicId));
+    const nextWorkspace = patch.workspaceId === undefined ? current.workspaceId : (patch.workspaceId ? String(patch.workspaceId) : this.commonWorkspace().id);
+    if ((nextTopic !== current.topicId || (!nextTopic && nextWorkspace !== current.workspaceId)) && (children.length || current.managerTaskId)) throw new HostError("conflict", "请先转交或解除直属主控和直属任务，再移动专题或项目。");
+    if (patch.managerTaskId !== undefined) {
+      if (current.archivedAt) throw new HostError("read_only", "请先恢复任务，再设置直属主控。");
+      clean.managerTaskId = this.checkManager({ ...current, topicId: nextTopic, workspaceId: nextWorkspace }, patch.managerTaskId);
+    }
     // The first session took it into its composer, or the person cleared it ("").
     if (patch.firstMessage !== undefined) clean.firstMessage = firstMessageOf(patch.firstMessage);
     if (patch.lead !== undefined) {
@@ -197,7 +212,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       // A running CLI keeps the tools and permissions of its current turn. Do not claim the task is read-only before
       // that turn (or its terminal writer) has ended; changing role must never silently interrupt the person's work.
       if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && (sessionMoving(s) || this.store.findItems(s.id, "background", { state: "running" }).length > 0))) {
-        throw new HostError("conflict", "请先停止这个任务里正在运行的会话，并收回终端中的会话，再标记主控；主控只能读取和分配任务。");
+        throw new HostError("conflict", "请先停止这个任务里正在运行的会话，并收回终端中的会话，再标记主控；主控管理任务和画布，具体实现和文件修改需分配给执行任务。");
       }
       if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtimeRef && (s.runtime === "codex" || s.runtime === "dsh"))) {
         throw new HostError("conflict", "已有 Codex 或 DSH 会话不能安全切成主控；请先归档这些旧会话，再标记主控并新开只读会话。旧对话仍可读取。");
@@ -250,6 +265,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   async archiveTask(id: Id): Promise<Task> {
     const task = this.requireTask(id);
     if (task.archivedAt) return task;
+    this.checkArchive(id);
     // A copy of a remote task (远程 step 2): it goes from this computer, the task stays where it runs.
     if (task.remote) {
       this.f.remote.dropCopy(task);
@@ -261,10 +277,50 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     return this.store.getTask(id)!;
   }
 
+  management(id: Id) {
+    this.requireTask(id);
+    return taskManagement(this.store.listTasks(), id);
+  }
+
+  setManager(id: Id, managerTaskId: unknown, actorSessionId?: Id): Task {
+    if (actorSessionId) {
+      const actor = this.requireSession(actorSessionId);
+      const own = actor.taskId ? this.requireTask(actor.taskId) : null;
+      if (own && (!own.lead || id === own.id)) throw new HostError("bad_request", "直属主控由上级、专题会话或用户设置，不能自行取得管理权限。");
+      if (!managesTask(this.host, actorSessionId, id)) throw new HostError("bad_request", "目标任务不在你的管理范围；首次分配请由用户或专题入口处理。");
+      if (managerTaskId && !managesTask(this.host, actorSessionId, String(managerTaskId))) throw new HostError("bad_request", "接收主控不在你的管理范围；跨范围转交请由用户或专题入口处理。");
+    }
+    return this.updateTask(id, { managerTaskId });
+  }
+
+  /** Validate before a topic archive mutates anything; archive descendants before their managers. */
+  checkArchive(id: Id, together: ReadonlySet<Id> = new Set()): void {
+    if (this.store.listTasks().some((t) => t.managerTaskId === id && !t.archivedAt && !together.has(t.id))) throw new HostError("conflict", "请先归档、转交或解除直属任务，再归档主控。");
+  }
+
+  private checkManager(task: Pick<Task, "id" | "workspaceId" | "topicId">, value: unknown): Id | null {
+    if (value === null || value === "") return null;
+    if (typeof value !== "string") throw new HostError("bad_request", "直属主控必须是任务 ID 或 null。");
+    const manager = this.store.getTask(value);
+    if (!manager || !manager.lead || manager.archivedAt || manager.remote || (manager.topicId && this.store.getTopic(manager.topicId)?.archivedAt)) throw new HostError("bad_request", "直属上级必须是有效的本地主控任务。");
+    if (manager.topicId !== task.topicId || (!task.topicId && manager.workspaceId !== task.workspaceId)) throw new HostError("bad_request", "直属主控须在同一专题；无专题时须在同一项目。");
+    const seen = new Set<Id>(task.id ? [task.id] : []);
+    let next: Task | undefined = manager;
+    while (next) {
+      if (seen.has(next.id)) throw new HostError("bad_request", "管理关系不能自管或形成环。");
+      seen.add(next.id);
+      if (!next.managerTaskId) break;
+      next = this.store.getTask(next.managerTaskId);
+      if (!next || !next.lead || next.archivedAt || next.remote || next.topicId !== task.topicId || (!task.topicId && next.workspaceId !== task.workspaceId)) throw new HostError("bad_request", "上级管理链无效，请先修正归属。");
+    }
+    return manager.id;
+  }
+
   /** Restores the task and the sessions that were archived with it (not the ones archived earlier on their own). */
   async unarchiveTask(id: Id): Promise<Task> {
     const task = this.requireTask(id);
     if (!task.archivedAt) return task;
+    if (task.managerTaskId) this.checkManager(task, task.managerTaskId);
     if (task.topicId && this.store.getTopic(task.topicId)?.archivedAt) throw new HostError("conflict", "its topic is archived; restore the topic or move the task out of it first");
     const since = task.archivedAt;
     const restored = this.store.updateTask(id, { archivedAt: null });

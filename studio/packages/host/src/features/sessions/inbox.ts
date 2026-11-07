@@ -3,6 +3,7 @@ import { newId, type SessionItemInput } from "../../store/store.js";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
 import { HostError, isRemoteCopy } from "../../core/shared.js";
+import { managesTask } from "../../core/role.js";
 
 // 会话收件箱 (2026-11-04, plans/done/message-delivery.md): messages from agents and from Studio itself — a 中转 reply, 值守
 // going on in a session, 传话 (task_message), a forwarded mail, session_send, session_start's report — go into the
@@ -68,7 +69,7 @@ export class SessionInbox extends Feature {
    * A message from an agent or from Studio into `sessionId`: shown at once, sent now when the session is free, else
    * when it is. `delivered`: it went in now; `waiting`: how many of the session's are still held.
    */
-  async put(sessionId: Id, text: string): Promise<{ delivered: boolean; waiting: number }> {
+  async put(sessionId: Id, text: string, relayFromSessionId?: Id): Promise<{ delivered: boolean; waiting: number }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt || s.writer === "archived") throw new HostError("read_only", "这个会话已归档，不能再往里发消息");
     if (s.kind === "sub") throw new HostError("read_only", "子 agent 不能单独接收消息");
@@ -78,7 +79,7 @@ export class SessionInbox extends Feature {
       return { delivered: true, waiting: 0 };
     }
     const role = this.sessions.roleUpdate(sessionId);
-    const item = this.append(s, this.sessions.withRole(text, role.lines));
+    const item = this.append(s, this.sessions.withRole(text, role.lines), relayFromSessionId);
     role.told();
     this.remember(sessionId);
     if (this.paused.has(sessionId)) this.tellPaused(sessionId);
@@ -91,6 +92,7 @@ export class SessionInbox extends Feature {
   async sendNow(sessionId: Id, itemId: Id): Promise<void> {
     const item = this.store.getItem(itemId);
     if (item?.type !== "user" || item.sessionId !== sessionId || item.delivery !== "held") return;
+    this.checkSource(item);
     const rt = this.runtime;
     if (!rt.resend) throw new HostError("bad_request", "this Host cannot send a held message");
     await this.wrap(() => rt.resend!(sessionId, itemId, [], { now: true }));
@@ -146,6 +148,7 @@ export class SessionInbox extends Feature {
       if (before !== null) await this.turnSeen(sessionId, before);
       before = current.seq;
       try {
+        this.checkSource(current);
         if (!rt.resend) throw new Error("this Host cannot send a held message");
         await rt.resend(sessionId, it.id, []);
       } catch (err) {
@@ -172,8 +175,15 @@ export class SessionInbox extends Feature {
     }
   }
 
-  private append(s: Session, text: string): SessionItem {
-    const item = this.store.appendItem(this.row(s, { type: "user", text, delivery: "held" }, "user/inbox"));
+  /** Rechecked at actual dispatch, including held messages surviving a Host restart or manual retry. */
+  checkSource(item: SessionItem): void {
+    if (item.type !== "user" || !item.relayFromSessionId) return;
+    const taskId = this.store.getSession(item.sessionId)?.taskId;
+    if (!taskId || !managesTask(this.host, item.relayFromSessionId, taskId)) throw new HostError("read_only", "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。");
+  }
+
+  private append(s: Session, text: string, relayFromSessionId?: Id): SessionItem {
+    const item = this.store.appendItem(this.row(s, { type: "user", text, delivery: "held", ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox"));
     this.publish({ type: "item.appended", item });
     return item;
   }

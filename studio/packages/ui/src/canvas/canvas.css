@@ -1,4 +1,8 @@
 /* Canvas (S3-02) */
+.canvas-relation-issues { flex: 0 0 auto; max-height: 240px; overflow: auto; margin: 0 12px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); font-size: 12px; }
+.canvas-relation-issues summary { cursor: pointer; color: var(--text); }
+.canvas-relation-issues p { color: var(--text-dim); margin: 8px 0; }
+.canvas-relation-issues .dep-row { margin: 5px 0; }
 .canvas-page { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 12px; }
 .canvas-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: var(--r-l); border: 1px solid var(--border); background-color: var(--canvas-bg); background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1.4px); background-size: 20px 20px; cursor: grab; }
 .canvas-viewport.panning { cursor: grabbing; }
@@ -46,6 +50,27 @@
 .dep-add select { flex: 1; min-width: 0; height: 28px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12.5px; }
 .canvas-edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .canvas-edge { stroke: var(--edge); stroke-width: 1.6; }
+.canvas-management-line { stroke: var(--primary); stroke-width: 1.6; stroke-dasharray: 7 5; opacity: 0.35; }
+.canvas-management-line.active { stroke-width: 1.8; opacity: 0.65; }
+.canvas-management-line.active.direct { stroke-width: 2.4; opacity: 1; }
+.canvas-collaboration-line { stroke-dasharray: 1 6; stroke-linecap: round; }
+.management-dimmed { opacity: 0.24; }
+.canvas-world[data-management] > .canvas-note, .canvas-world[data-management] > .canvas-ref, .canvas-world[data-management] > .canvas-group { opacity: 0.24; }
+.canvas-manager { font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.canvas-management-summary { font-size: 11px; line-height: 16px; color: var(--text-dim); flex-shrink: 0; }
+.canvas-relations { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 12px 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); font-size: 11px; }
+.canvas-relations label { display: flex; align-items: center; gap: 5px; }
+.canvas-relations input { margin: 0; }
+.task-management { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.task-management-panel { flex-shrink: 0; max-height: 35vh; overflow: auto; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.task-management select { width: 100%; min-width: 0; }
+.management-manager { align-self: flex-start; }
+.management-tree { display: flex; flex-direction: column; gap: 6px; }
+.management-branch { margin-left: 8px; padding-left: 8px; border-left: 1px dashed var(--border-strong); }
+.management-branch summary { cursor: pointer; }
+.management-branch summary .management-task-row { display: inline-flex; width: calc(100% - 18px); vertical-align: top; }
+.management-task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; font-size: 12px; padding: 4px 0; }
+.management-task-row > .link-btn:first-child { min-width: 0; text-align: left; overflow-wrap: anywhere; }
 .canvas-note {
   position: absolute; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--attention-border); background: var(--attention-bg);
   color: var(--note-text); font-size: 12.5px; white-space: pre-wrap; cursor: pointer; user-select: none; box-shadow: 0 4px 14px var(--shadow-soft);

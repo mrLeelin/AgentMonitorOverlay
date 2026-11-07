@@ -7,11 +7,11 @@ import { MOCK_CLAUDE_MODEL, removeTempDir, startMockAnthropic, mockClaudeProvide
 import { Store } from "../../store/store.js";
 import { StaticCredentialReader } from "../credentials.js";
 import { ClaudeRuntime } from "./claude-runtime.js";
-import { leadReadOnlyHooks, leadToolAllowed } from "./lead-policy.js";
+import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
 
-describe("Claude allocation-only leads", () => {
+describe("Claude leads with local files read-only", () => {
   it("allows only explicit read tools and AMO tools, and rechecks a live task's role", async () => {
-    for (const tool of ["Read", "Glob", "Grep", "WebSearch", "mcp__amo__task_plan_propose", "mcp__amo__task_message"]) expect(leadToolAllowed(tool), tool).toBe(true);
+    for (const tool of ["Read", "Glob", "Grep", "WebSearch", "mcp__amo__task_plan_propose", "mcp__amo__task_message", "mcp__amo__task_update", "mcp__amo__canvas_group_create", "mcp__amo__canvas_move", "mcp__amo__canvas_arrange"]) expect(leadToolAllowed(tool), tool).toBe(true);
     for (const tool of ["Write", "Edit", "NotebookEdit", "Bash", "PowerShell", "Agent", "Task", "Skill", "ExitPlanMode", "mcp__other__write", "mcp__amo_fake__task_message"]) expect(leadToolAllowed(tool), tool).toBe(false);
     let lead = false;
     const hook = leadReadOnlyHooks(() => lead).PreToolUse![0]!.hooks[0]!;
@@ -35,7 +35,7 @@ describe("Claude allocation-only leads", () => {
       const session = await runtime.startSession({ taskId: task.id, topicId: null, workspace, profileId: "mock", options: { permission: "bypassPermissions" } });
       expect(session.options.permission).toBe("plan");
       expect((await runtime.setOptions(session.id, { permission: "bypassPermissions" })).options.permission).toBe("plan");
-      await expect(runtime.handoff(session.id)).rejects.toThrow(/主控只能读取和分配任务/);
+      await expect(runtime.handoff(session.id)).rejects.toThrow(/主控的本地文件只读/);
       const forbidden = join(root, "forbidden.txt");
       await runtime.sendMessage(session.id, `[[shell: echo unsafe > "${forbidden.replace(/\\/g, "/")}"]]`);
       const untilIdle = async () => {
@@ -48,7 +48,7 @@ describe("Claude allocation-only leads", () => {
       await untilIdle();
       expect(existsSync(forbidden)).toBe(false);
       expect(store.listItems(session.id).some((item) => item.type === "approval")).toBe(false);
-      expect(JSON.stringify(store.listItems(session.id))).toContain("主控只能读取和分配任务");
+      expect(JSON.stringify(store.listItems(session.id))).toContain(LEAD_READ_ONLY_REASON);
       const readable = join(root, "readable.txt");
       writeFileSync(readable, "lead-read-proof", "utf8");
       await runtime.sendMessage(session.id, `[[read-image: ${readable}]]`);

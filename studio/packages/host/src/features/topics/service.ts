@@ -32,11 +32,15 @@ export class TopicsFeature extends Feature<"tasks"> {
   async archiveTopic(id: Id): Promise<{ topic: Topic; tasks: Task[] }> {
     const current = this.requireTopic(id);
     if (current.archivedAt) return { topic: current, tasks: [] };
+    const members = this.store.listTasks().filter((x) => x.topicId === id && !x.archivedAt);
+    const together = new Set(members.map((t) => t.id));
+    for (const t of members) this.f.tasks.checkArchive(t.id, together);
     const topic = this.store.updateTopic(id, { archivedAt: new Date().toISOString() });
     this.publish({ type: "topic.upserted", topic });
     await this.f.tasks.archiveSessions(this.store.listSessions({ topicId: id }));
     const tasks: Task[] = [];
-    for (const t of this.store.listTasks().filter((x) => x.topicId === id && !x.archivedAt)) tasks.push(await this.f.tasks.archiveTask(t.id));
+    const depth = (t: Task) => { const seen = new Set<string>(); let next = t; while (next.managerTaskId && !seen.has(next.id)) { seen.add(next.id); next = this.store.getTask(next.managerTaskId) ?? next; } return seen.size; };
+    for (const t of members.sort((a, b) => depth(b) - depth(a))) tasks.push(await this.f.tasks.archiveTask(t.id));
     return { topic: this.store.getTopic(id)!, tasks };
   }
 
@@ -49,7 +53,12 @@ export class TopicsFeature extends Feature<"tasks"> {
     this.publish({ type: "topic.upserted", topic });
     await this.f.tasks.unarchiveSessions(this.store.listSessions({ topicId: id }), since);
     const tasks: Task[] = [];
-    for (const t of this.store.listTasks().filter((x) => x.topicId === id && x.archivedAt && x.archivedAt >= since)) tasks.push(await this.f.tasks.unarchiveTask(t.id));
+    const pending = this.store.listTasks().filter((x) => x.topicId === id && x.archivedAt && x.archivedAt >= since);
+    while (pending.length) {
+      const index = pending.findIndex((t) => !t.managerTaskId || !this.store.getTask(t.managerTaskId)?.archivedAt);
+      if (index < 0) throw new HostError("conflict", "管理链异常，请先恢复直属主控。");
+      tasks.push(await this.f.tasks.unarchiveTask(pending.splice(index, 1)[0]!.id));
+    }
     return { topic: this.store.getTopic(id)!, tasks };
   }
 

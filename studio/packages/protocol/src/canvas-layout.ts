@@ -1,4 +1,4 @@
-import { wouldCycle } from "./canvas.js";
+import { newCanvasRelationIssues, canvasRelationMessage } from "./canvas-relations.js";
 import type { CanvasDoc, CanvasGroup, CanvasItem, CanvasNode, Rect, Id } from "./entities.js";
 
 // Where things go when an agent (through the AMO MCP) changes the canvas: agents never write coordinates, Studio lays
@@ -59,10 +59,10 @@ export function placeTask(doc: CanvasDoc, taskId: Id, groupId: Id | null, newNod
 
 /** Adds "to depends on from"; refuses itself, duplicates and cycles. */
 export function addDependency(doc: CanvasDoc, from: Id, to: Id, edgeId: Id): CanvasDoc {
-  if (from === to) throw new CanvasLayoutError("a task cannot depend on itself");
-  if (doc.edges.some((e) => e.from === from && e.to === to)) throw new CanvasLayoutError("that dependency already exists");
-  if (wouldCycle(doc.edges, from, to)) throw new CanvasLayoutError("that dependency would make a cycle");
-  return { ...doc, edges: [...doc.edges, { id: edgeId, kind: "depends", from, to }] };
+  const next: CanvasDoc = { ...doc, edges: [...doc.edges, { id: edgeId, kind: "depends", from, to }] };
+  const issue = newCanvasRelationIssues(next, doc)[0];
+  if (issue) throw new CanvasLayoutError(canvasRelationMessage(next, issue));
+  return next;
 }
 
 /** Hides a task of the topic from its canvas: only its card goes; its dependencies stay (the task is still in the topic). */

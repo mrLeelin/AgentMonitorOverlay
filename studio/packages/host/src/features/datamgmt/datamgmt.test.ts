@@ -127,8 +127,14 @@ describe("数据管理", () => {
       nodes: [
         { id: "r1", kind: "ref", taskId: x.t1.id, groupId: null, pos: { x: 0, y: 0 } },
         { id: "c3", kind: "task", taskId: x.t3.id, groupId: null, pos: { x: 300, y: 0 } },
+        { id: "note", kind: "note", text: "保留", groupId: null, pos: { x: 600, y: 0 } },
       ],
       edges: [{ id: "e1", kind: "depends", from: x.t1.id, to: x.t3.id }],
+      links: [
+        { id: "ordinary", from: "r1", to: "c3", fromSide: "right", toSide: "left", label: "历史说明" },
+        { id: "collaboration", kind: "collaboration", from: "c3", to: "r1", fromSide: "left", toSide: "right" },
+        { id: "kept", from: "c3", to: "note", fromSide: "right", toSide: "left", label: "保留说明" },
+      ],
       updatedAt: new Date().toISOString(),
     };
     store.putCanvas(canvas);
@@ -158,8 +164,9 @@ describe("数据管理", () => {
     expect(store.listTaskNotes(x.t1.id)).toEqual([]);
     expect(store.getTodo("todo1")).toMatchObject({ text: "做掉落表", taskId: null });
     const after = store.getCanvas(other.id)!;
-    expect(after.nodes.map((n) => n.id)).toEqual(["c3"]);
+    expect(after.nodes.map((n) => n.id)).toEqual(["c3", "note"]);
     expect(after.edges).toEqual([]);
+    expect(after.links).toEqual([canvas.links![2]]);
     expect(existsSync(used.path)).toBe(false);
     expect(existsSync(shared.path)).toBe(true);
     // Only the event that says it is gone still names it.
@@ -184,6 +191,38 @@ describe("数据管理", () => {
     expect(() => host.data.preview("session", x.s1.id)).toThrow(/还没归档|分出来/);
     expect(() => host.data.purge("workspace", host.commonWorkspace().id)).toThrow(/公共目录/);
     expect(() => host.data.purge("nope", "x")).toThrow(/kind/);
+  });
+
+  it.each([false, true])("requires transfer or detachment before deleting a retained child’s manager (archived child: %s)", async (archived) => {
+    const x = await setup();
+    const manager = store.createTask({ title: "主控", workspaceId: x.alpha.id, topicId: x.topic.id, lead: true });
+    const child = store.createTask({ title: "受管任务", workspaceId: x.beta.id, topicId: x.topic.id, managerTaskId: manager.id });
+    store.updateTask(manager.id, { archivedAt: new Date().toISOString() });
+    if (archived) store.updateTask(child.id, { archivedAt: new Date().toISOString() });
+    for (const operation of [() => host.data.preview("task", manager.id), () => host.data.purge("task", manager.id)]) {
+      expect(operation).toThrow(/受管任务.*转交或解除归属/);
+    }
+    // Direct Store consumers, such as remote copy removal, have the same invariant.
+    expect(() => store.purge({ taskIds: [manager.id], sessionIds: [], topicIds: [], workspaceIds: [] })).toThrow(/受管任务.*转交或解除归属/);
+    expect(store.getTask(manager.id)).toBeDefined();
+    expect(store.getTask(child.id)?.managerTaskId).toBe(manager.id);
+    store.updateTask(child.id, { managerTaskId: null });
+    expect(host.data.preview("task", manager.id).tasks).toBe(1);
+    host.data.purge("task", manager.id);
+    expect(store.getTask(manager.id)).toBeUndefined();
+    expect(store.getTask(child.id)?.managerTaskId).toBeNull();
+  });
+
+  it("deletes a complete archived management subtree together, independent of deletion order", async () => {
+    const x = await setup();
+    const manager = store.createTask({ title: "主控", workspaceId: x.alpha.id, topicId: x.topic.id, lead: true });
+    const sub = store.createTask({ title: "下级主控", workspaceId: x.beta.id, topicId: x.topic.id, lead: true, managerTaskId: manager.id });
+    const worker = store.createTask({ title: "执行", workspaceId: x.beta.id, topicId: x.topic.id, managerTaskId: sub.id });
+    await host.topics.archiveTopic(x.topic.id);
+    expect(host.data.preview("topic", x.topic.id).tasks).toBe(4);
+    host.data.purge("topic", x.topic.id);
+    for (const id of [manager.id, sub.id, worker.id, x.t1.id]) expect(store.getTask(id)).toBeUndefined();
+    expect(store.getTask(x.t2.id)).toBeDefined();
   });
 
   it("deletes an archived project with all its tasks, topic sessions, comments and marks; the topic stays", async () => {

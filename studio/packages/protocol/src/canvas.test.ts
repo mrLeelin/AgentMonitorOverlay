@@ -114,7 +114,7 @@ describe("canvasOutline", () => {
         id: "g1",
         title: "导入",
         workspace: "alpha",
-        tasks: [{ id: "task-1", title: "Add retry to the importer", column: "doing", status: "awaiting-approval", workspace: "alpha", dependsOn: ["task-2"] }],
+        tasks: [{ id: "task-1", managerTaskId: null, lead: false, title: "Add retry to the importer", column: "doing", status: "awaiting-approval", workspace: "alpha", dependsOn: ["task-2"] }],
         refs: [],
         notes: [{ id: "n2", text: "先问策划" }],
         items: [],
@@ -124,7 +124,7 @@ describe("canvasOutline", () => {
     expect(json.unplaced.map((t) => [t.id, t.workspace])).toEqual([["task-2", "beta"]]);
     expect(json.dependencies).toEqual([{ from: "task-2", to: "task-1" }]);
     expect(outline).toContain("分组「导入」（工作区 alpha）");
-    expect(outline).toContain("Add retry to the importer（doing · awaiting-approval · alpha）；依赖：Align config keys");
+    expect(outline).toContain("Add retry to the importer（doing · awaiting-approval · alpha）；直属主控：未分配；依赖：Align config keys");
     expect(outline).toContain("便签：先问策划");
     expect(outline).toContain("还没放到画布上的任务");
     expect(JSON.stringify(json)).not.toMatch(/"x"|"pos"|"rect"/);
@@ -161,8 +161,8 @@ describe("连线 (2026-10-19)", () => {
     expect(validateCanvas(doc({ links: [{ ...line("l1", "n1", "n2"), toSide: "middle" as never }] }), TASKS).join()).toMatch(/side/);
     expect(validateCanvas(doc({ links: [line("l1", "n1", "n2", "x".repeat(201))] }), TASKS).join()).toMatch(/label/);
     expect(validateCanvas(doc({ links: [line("n1", "n2", "n3")] }), TASKS).join()).toMatch(/duplicate id/);
-    // Lines may go round (they are not dependencies).
-    expect(validateCanvas(doc({ links: [line("l1", "n1", "n2"), line("l2", "n2", "n1")] }), TASKS)).toEqual([]);
+    // Ordinary arrows keep their own direction, independently from dependencies.
+    expect(validateCanvas(doc({ links: [line("l1", "n1", "n2"), line("l2", "n2", "n1")] }), TASKS).join()).toMatch(/cycle/);
   });
 
   it("drops lines whose card is gone", () => {
@@ -170,6 +170,19 @@ describe("连线 (2026-10-19)", () => {
     expect(pruneLinks(d).links!.map((l) => l.id)).toEqual(["l1"]);
     const kept = doc({ links: [line("l1", "n1", "n3")] });
     expect(pruneLinks(kept)).toBe(kept);
+  });
+
+  it("persists undirected collaboration separately from ordinary lines and dependencies", () => {
+    const collaboration = { ...line("collab", "n1", "n2", "配合验收"), kind: "collaboration" as const };
+    const d = doc({ links: [collaboration, line("ordinary", "n1", "n2", "历史说明")] });
+    expect(validateCanvas(d, TASKS)).toEqual([]);
+    expect(pruneLinks(d).links).toEqual(d.links);
+    const outline = canvasOutline(d, exampleTasks, exampleWorkspaces, exampleSessions);
+    expect(outline.json.links[0]).toMatchObject({ kind: "collaboration", label: "配合验收" });
+    expect(outline.outline).toContain(" ↔ ");
+    expect(outline.json.dependencies).toEqual(d.edges.map(({ from, to }) => ({ from, to })));
+    expect(validateCanvas(doc({ links: [collaboration, { ...collaboration, id: "reverse", from: "n2", to: "n1" }] }), TASKS).join()).toMatch(/duplicate collaboration/);
+    expect(validateCanvas(doc({ links: [{ ...collaboration, kind: "management" as never }] }), TASKS).join()).toMatch(/unknown kind/);
   });
 
   it("tells agents what each line joins and what it says", () => {

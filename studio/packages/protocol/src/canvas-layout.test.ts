@@ -64,9 +64,9 @@ describe("canvas layout for agent changes", () => {
     let d = addDependency(doc(), "a", "b", "e1");
     d = addDependency(d, "b", "c", "e2");
     expect(d.edges.map((e) => [e.from, e.to])).toEqual([["a", "b"], ["b", "c"]]);
-    expect(() => addDependency(d, "a", "a", "x")).toThrow(/itself/);
-    expect(() => addDependency(d, "a", "b", "x")).toThrow(/already/);
-    expect(() => addDependency(d, "c", "a", "x")).toThrow(/cycle/);
+    expect(() => addDependency(d, "a", "a", "x")).toThrow(/自身/);
+    expect(() => addDependency(d, "a", "b", "x")).toThrow(/已存在/);
+    expect(() => addDependency(d, "c", "a", "x")).toThrow(/循环.*a → b → c → a/);
   });
 });
 

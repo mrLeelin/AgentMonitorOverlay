@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { collectSubtreeIds, isCommon, type ArchivedEntry, type DataKind, type Id, type PurgeSummary, type Session } from "@amo-studio/protocol";
+import { collectSubtreeIds, isCommon, type ArchivedEntry, type DataKind, type Id, type PurgeSummary, type Session, type Task } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 
@@ -118,7 +118,10 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
     return { k, set };
   }
 
-  private checkNothingLive(set: PurgeSet, sessions: readonly Session[], tasks: readonly { id: Id; title: string; archivedAt: string | null }[]): void {
+  private checkNothingLive(set: PurgeSet, sessions: readonly Session[], tasks: readonly Task[]): void {
+    const deletedTasks = new Set(set.taskIds);
+    const retained = tasks.find((task) => !deletedTasks.has(task.id) && task.managerTaskId && deletedTasks.has(task.managerTaskId));
+    if (retained) throw new HostError("conflict", `任务「${retained.title || retained.id}」仍归要删除的主控管理，请先转交或解除归属（含已归档任务）`);
     const ids = new Set(set.sessionIds);
     const live = sessions.find((s) => ids.has(s.id) && !s.archivedAt);
     if (live) throw new HostError("conflict", `会话「${live.title || "会话"}」还没归档，先归档它`);

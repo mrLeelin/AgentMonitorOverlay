@@ -47,6 +47,7 @@ import { useStoredIds } from "../lib/storedIds.js";
 import { ALSO_MINE_KEY, PINNED_KEY } from "../focus/pins.js";
 import { readStored, writeStored } from "../lib/stored.js";
 import { writeSessionDraft } from "./sessionDraft.js";
+import { TaskManagement } from "./TaskManagement.js";
 
 /** Whether the right column (进度、批注、留言…) shows; off by default, remembered per window. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -76,12 +77,13 @@ interface TaskPageProps {
   /** What "←" says: where it returns (看板 or 画布). */
   backLabel?: string;
   onBack(): void;
+  onOpenTask?(taskId: string): void;
 }
 
 type Toast = { text: string; command?: string; error?: boolean } | null;
 
 /** Task page: session tree | conversation with composer. Annotations and the scratchpad join in stage 2. */
-export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack }: TaskPageProps) {
+export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask }: TaskPageProps) {
   const own = sessions.filter((s) => s.taskId === task.id);
   // The first live session; in an archived task (or one whose sessions are all archived), the latest archived one.
   const firstSession = () => own.find((s) => !s.archivedAt) ?? [...own].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -135,6 +137,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const [picking, setPicking] = useState<"topic" | null>(null);
   const [taskMenu, setTaskMenu] = useState<Anchor | null>(null);
   const [describing, setDescribing] = useState(false);
+  const [managementOpen, setManagementOpen] = useState(false);
+  const [managedDescription, setManagedDescription] = useState<Task | null>(null);
   /** 绑定到待办 (问题 #10): the 便签's 待办 to pick from, for the task or one of its sessions. */
   const [todoBind, setTodoBind] = useState<{ view: TodoView; target: TodoBindTarget } | null>(null);
   const bindTodo = (target: TodoBindTarget) => void loadTodoForBind().then((view) => view && setTodoBind({ view, target }));
@@ -368,7 +372,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               onSave={(title) => void run(() => call(link, "PATCH /api/tasks/:id", { id: task.id }, { title }))}
             />
             {task.lead && (
-              <span className="lead-badge" title="主控：协调这个专题（或项目）的任务。在 ⋯ 里可以取消" data-testid="task-lead">
+              <span className="lead-badge" title="主控：管理明确归属的下辖任务。在 ⋯ 里可以取消" data-testid="task-lead">
                 主控
               </span>
             )}
@@ -383,6 +387,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             onTopic={() => setPicking("topic")}
             onGitOpen={() => void run(() => call(link, "POST /api/workspaces/:id/git/open", { id: task.workspaceId }))}
           />
+          <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理范围" : " · 设置归属"}</button>
         </div>
         <div className="task-head-actions">
           {!task.archivedAt && !(copy && copy.state === "revoked") && (
@@ -542,7 +547,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               type="button"
               role="menuitem"
               disabled={busy}
-              title="主控负责协调它的专题（不在专题里时是它的项目）：拆任务、排画布、写专题文档"
+              title="主控负责管理明确归属的下辖任务：分配工作、排画布、写专题文档"
               onClick={() => {
                 setTaskMenu(null);
                 void run(() => call(link, "PATCH /api/tasks/:id", { id: task.id }, { lead: !task.lead }));
@@ -609,6 +614,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       )}
       {describing && <DescriptionDialog link={link} task={task} onClose={() => setDescribing(false)} />}
+      {managedDescription && <DescriptionDialog link={link} task={managedDescription} onClose={() => setManagedDescription(null)} />}
+      {managementOpen && <div className="task-management-panel"><TaskManagement link={link} task={task} tasks={tasks} onOpenTask={(id) => onOpenTask ? onOpenTask(id) : void window.amo?.openInWorkbench?.({ taskId: id })} onDescribe={(id) => setManagedDescription(tasks.find((t) => t.id === id) ?? null)} /></div>}
       {todoBind && <TodoBindDialog view={todoBind.view} target={todoBind.target} onClose={() => setTodoBind(null)} />}
       <PlanBanner link={link} plans={plans} tasks={tasks} workspaces={workspaces} profiles={profiles} />
       <RelayBanner link={link} relays={relays} tasks={tasks} />

@@ -1,5 +1,7 @@
 import { CANVAS_COLORS, CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, isCanvasColor, isReviewStatus, REVIEW_BODY_MAX, REVIEW_STATUSES, REVIEW_TITLE_MAX, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasLink, type CanvasNode, type Id, type ReviewStatus, type Session, type SessionStatus, type Task, type Timestamp, type Topic, type Workspace } from "./entities.js";
 import { taskWhere } from "./scope.js";
+import { taskManagement } from "./task-management.js";
+import { newCanvasRelationIssues, canvasRelationDiagnostic } from "./canvas-relations.js";
 
 // Canvas rules shared by Host (validation on save), UI ("agent 视角") and the read-only MCP in stage 4.
 // Coordinates are presentation only: the outline below describes structure (groups, tasks, notes, dependencies).
@@ -30,7 +32,7 @@ export const CANVAS_CARD_MAX = 4000;
  * included). A reference card may point at any other task, even one that is gone (it shows as such); a reference to a
  * task of this topic is refused (place its own card instead), and so is a second reference to the same task.
  */
-export function validateCanvas(doc: CanvasDoc, taskIds: ReadonlySet<Id>): string[] {
+export function validateCanvas(doc: CanvasDoc, taskIds: ReadonlySet<Id>, previous?: CanvasDoc): string[] {
   const errors: string[] = [];
   const ids = new Set<string>();
   const unique = (id: unknown, what: string) => {
@@ -78,26 +80,20 @@ export function validateCanvas(doc: CanvasDoc, taskIds: ReadonlySet<Id>): string
       errors.push(`node ${(n as { id: string }).id} has an unknown kind`);
     }
   }
-  const pairs = new Set<string>();
   for (const e of doc.edges ?? []) {
     unique(e.id, "edge");
     if (e.kind !== "depends") errors.push(`edge ${e.id} has an unknown kind`);
     if (!taskIds.has(e.from) || !taskIds.has(e.to)) errors.push(`edge ${e.id} must connect two existing tasks`);
-    if (e.from === e.to) errors.push(`edge ${e.id} connects a task to itself`);
-    const key = `${e.from}>${e.to}`;
-    if (pairs.has(key)) errors.push(`duplicate dependency ${key}`);
-    pairs.add(key);
   }
   const nodeIds = new Set((doc.nodes ?? []).map((n) => n.id));
   for (const l of doc.links ?? []) {
     unique(l.id, "link");
+    if (l.kind !== undefined && l.kind !== "collaboration") errors.push(`link ${l.id} has an unknown kind`);
     if (!nodeIds.has(l.from) || !nodeIds.has(l.to)) errors.push(`link ${l.id} must connect two cards on the canvas`);
-    if (l.from === l.to) errors.push(`link ${l.id} connects a card to itself`);
     if (!CANVAS_SIDES.includes(l.fromSide) || !CANVAS_SIDES.includes(l.toSide)) errors.push(`link ${l.id} has an unknown side`);
     if (l.label !== undefined && (typeof l.label !== "string" || l.label.length > CANVAS_LINK_LABEL_MAX)) errors.push(`link ${l.id} has an invalid label`);
   }
-  const cycle = findCycle(doc.edges ?? []);
-  if (cycle) errors.push(`dependencies form a cycle: ${cycle.join(" → ")}`);
+  errors.push(...newCanvasRelationIssues(doc, previous).map(canvasRelationDiagnostic));
   return errors;
 }
 
@@ -131,11 +127,23 @@ export function findCycle(edges: ReadonlyArray<{ from: Id; to: Id }>): Id[] | nu
 
 /** Would adding from → to create a cycle? Used by the UI before offering a dependency. */
 export function wouldCycle(edges: ReadonlyArray<{ from: Id; to: Id }>, from: Id, to: Id): boolean {
-  return from === to || findCycle([...edges, { from, to }]) !== null;
+  const visited = new Set<Id>();
+  const queue = [to];
+  for (let i = 0; i < queue.length; i++) {
+    const at = queue[i]!;
+    if (at === from) return true;
+    if (visited.has(at)) continue;
+    visited.add(at);
+    for (const edge of edges) if (edge.from === at && !visited.has(edge.to)) queue.push(edge.to);
+  }
+  return false;
 }
 
 export interface OutlineTask {
   id: Id;
+  managerTaskId: Id | null;
+  lead: boolean;
+  management?: { directLeadCount: number; workerCount: number };
   title: string;
   column: Task["column"];
   status: SessionStatus | null;
@@ -207,8 +215,10 @@ export interface CanvasOutline {
   /** Tasks of the topic that are not placed on its canvas yet. */
   unplaced: OutlineTask[];
   dependencies: Array<{ from: Id; to: Id }>;
+  /** Derived explicit ownership; never an editable canvas line or a start dependency. */
+  management: Array<{ from: Id; to: Id }>;
   /** 连线 between cards: what each end is (a task's title, a note's text, a reference's task) and the label. */
-  links: Array<{ from: string; to: string; label?: string }>;
+  links: Array<{ from: string; to: string; label?: string; kind?: "collaboration" }>;
 }
 
 const URGENCY: SessionStatus[] = ["awaiting-approval", "awaiting-answer", "awaiting-review", "error", "running", "idle", "completed"];
@@ -237,6 +247,9 @@ export function canvasOutline(
     const live = sessions.filter((s) => s.taskId === task.id && !s.archivedAt);
     return {
       id: task.id,
+      managerTaskId: task.managerTaskId ?? null,
+      lead: !!task.lead,
+      ...(task.lead ? { management: (({ directLeadCount, workerCount }) => ({ directLeadCount, workerCount }))(taskManagement(tasks, task.id)) } : {}),
       title: task.title || "未命名任务",
       column: task.column,
       status: mostUrgentStatus(live),
@@ -290,6 +303,7 @@ export function canvasOutline(
     callouts: [],
     unplaced: tasks.filter((t) => !placed.has(t.id)).map(toOutline),
     dependencies: deps,
+    management: tasks.flatMap((manager) => taskManagement(tasks, manager.id).direct.map((task) => ({ from: manager.id, to: task.id }))),
     links: [],
   };
   // What a card is, in a few words, for the 连线 lines and the callouts.
@@ -324,7 +338,7 @@ export function canvasOutline(
   json.links = (doc.links ?? []).flatMap((l: CanvasLink) => {
     const from = cardName(l.from);
     const to = cardName(l.to);
-    return from && to ? [{ from, to, ...(l.label ? { label: l.label } : {}) }] : [];
+    return from && to ? [{ from, to, ...(l.kind ? { kind: l.kind } : {}), ...(l.label ? { label: l.label } : {}) }] : [];
   });
 
   const title = (id: Id) => byId.get(id)?.title || id;
@@ -334,7 +348,8 @@ export function canvasOutline(
     const bits = [t.column, t.status, t.workspace].filter(Boolean).join(" · ");
     const after = t.dependsOn.length ? `；依赖：${t.dependsOn.map(title).join("、")}` : "";
     const about = t.description ? `\n    说明：${oneLine(t.description).slice(0, 300)}` : "";
-    return `  - ${mark(t.color)}${t.title}（${bits}）${after}${about}`;
+    const management = `；直属主控：${t.managerTaskId ? title(t.managerTaskId) : "未分配"}${t.management ? `；直属主控 ${t.management.directLeadCount}，下辖执行 ${t.management.workerCount}` : ""}`;
+    return `  - ${mark(t.color)}${t.title}（${bits}）${management}${after}${about}`;
   };
   // "引用：导入器重试（专题 掉落表 / 项目 alpha · doing · running）": a task that lives elsewhere.
   const refLine = (r: OutlineRef) => {
@@ -363,7 +378,8 @@ export function canvasOutline(
     ...json.groups.map((g) => section(`${mark(g.color)}分组「${g.title}」${g.workspace ? `（工作区 ${g.workspace}）` : ""}`, g.tasks, g.notes, g.refs, g.items)),
     section("未分组", json.ungrouped.tasks, json.ungrouped.notes, json.ungrouped.refs, json.ungrouped.items),
     ...(json.unplaced.length ? [section("还没放到画布上的任务", json.unplaced, [])] : []),
-    ...(json.links.length ? [["连线", ...json.links.map((l) => `  - ${l.from} → ${l.to}${l.label ? `：${oneLine(l.label)}` : ""}`)].join("\n")] : []),
+    ...(json.management.length ? [["管理归属（不参与开始依赖）", ...json.management.map((l) => `  - ${title(l.from)} ⇢ ${title(l.to)}`)].join("\n")] : []),
+    ...(json.links.length ? [["连线", ...json.links.map((l) => `  - ${l.from} ${l.kind === "collaboration" ? "↔" : "→"} ${l.to}${l.label ? `：${oneLine(l.label)}` : ""}`)].join("\n")] : []),
     ...(json.callouts.length ? [["卡片上的说明和问题（没收起的）", ...json.callouts.map(calloutLine)].join("\n")] : []),
   ];
   return { outline: parts.join("\n\n"), json };
@@ -379,6 +395,7 @@ export interface CanvasRoutes {
   "PUT /api/topics/:id/canvas": { req: CanvasDoc; res: CanvasDoc };
   /** Structure without coordinates, for agents (`canvas_read`) and the "agent 视角" tab. */
   "GET /api/topics/:id/canvas/outline": { req: void; res: { outline: string; json: CanvasOutline } };
+  "POST /api/topics/:id/canvas/collaboration": { req: { fromTaskId: Id; toTaskId: Id; remove?: boolean }; res: { fromTaskId: Id; toTaskId: Id; collaboration: boolean; version: number } };
   /**
    * "显示在画布上": shows (`true`) or hides a task's card on its topic's canvas; returns that canvas. Tasks created on the
    * canvas are always shown; ones created elsewhere only when the person asks. Hiding keeps the task and its dependencies.

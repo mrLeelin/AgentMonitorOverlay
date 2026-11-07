@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topics": [{
+    "id": "studio.canvasRelations",
+    "label": "画布连线纠错与管理树布局",
+    "aliases": ["重复连线", "连线循环", "旧脏数据", "连接点去重", "普通线", "管理树布局", "折线避卡"],
+    "category": "host",
+    "purpose": "普通有向线、依赖与协作分别校验；跨连接点去重、定位循环路径、兼容旧问题并逐线修复；管理树按子树居中和折线分叉展示。",
+    "steps": ["关系规则复用 protocol canvas-relations；Host 以存储 current 为基线，不能让客户端声明豁免。", "旧关系的 id、类型、端点不变时可移动和修复，标签和其他类型不能静默删失。", "管理排列只动范围内未分组任务，走线不得改变归属、依赖或现有入口。"],
+    "anchors": [
+      { "label": "共享增量校验", "path": "studio/packages/protocol/src/canvas-relations.ts", "anchor": "export function newCanvasRelationIssues" },
+      { "label": "完整保存", "path": "studio/packages/host/src/features/canvas/service.ts", "anchor": "saveCanvas(" },
+      { "label": "旧线定位修复", "path": "studio/packages/ui/src/canvas/CanvasRelationProblems.tsx", "anchor": "export function CanvasRelationProblems" },
+      { "label": "管理排列", "path": "studio/packages/ui/src/canvas/management-layout.ts", "anchor": "export function arrangeManagement" },
+      { "label": "管理走线", "path": "studio/packages/ui/src/canvas/management-routing.ts", "anchor": "export function managementPath" }
+    ],
+    "related": ["studio.canvas", "studio.leadManagement"],
+    "next": ["studio/plans/done/canvas-relations.md", "studio/packages/host/src/features/canvas/relation-validation.test.ts", "studio/e2e/studio/canvas-relations.spec.ts"]
+  }]
+}

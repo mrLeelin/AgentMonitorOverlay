@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, ITEM_CARD, REVIEW_STATUSES, workspacesActivity, wouldCycle, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasItem, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type ModelProfile, type ReviewStatus, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
+import { CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, ITEM_CARD, REVIEW_STATUSES, taskManagement, workspacesActivity, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasItem, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type ModelProfile, type ReviewStatus, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError } from "../host/client.js";
 import { useCallouts } from "./useCallouts.js";
 import { CalloutDialog, CalloutLayer, calloutFlags, ItemCard, ItemDetail, itemActivity, ITEM_MIN, TalkTab } from "./review.js";
@@ -13,7 +13,7 @@ import type { HostLink } from "../host/client.js";
 import { addGroup, addLink, arrowBetween, contentBounds, deleteGroup, deleteGroupAndCards, duplicateNote, gridStyle, GROUP_HEADER, groupContents, linkCurve, moveGroup, moveNode, nearestSide, outOfGroup, removeEdge, removeLink, resizeGroup, resizeNode, reverseEdge, reverseLink, setColor, setLinkLabel, sidePoint, updateGroup } from "./geometry.js";
 import { useCanvas } from "./useCanvas.js";
 import { RefPicker, type RefChoice } from "./RefPicker.js";
-import { CARD_H, CARD_MIN, CARD_W, cardHeight, NOTE_H, NOTE_MIN, NOTE_W, NoteCard, RefCard, TaskCard } from "./cards.js";
+import { CARD_H, CARD_MIN, CARD_W, cardHeight, managementHeight, NOTE_H, NOTE_MIN, NOTE_W, NoteCard, RefCard, TaskCard } from "./cards.js";
 import { DeleteGroupDialog } from "./DeleteGroupDialog.js";
 import { CanvasMenu, item, SEP, type MenuEntry } from "./CanvasMenu.js";
 import { DescriptionDialog } from "../task/DescriptionDialog.js";
@@ -21,6 +21,11 @@ import { DocsTab } from "./DocsTab.js";
 import { TopicBookmarks } from "../marks/MarksApp.js";
 import { PlanBanner, useTaskPlans } from "../taskplans/TaskPlans.js";
 import { readStored, writeStored, readStoredJson, writeStoredJson } from "../lib/stored.js";
+import { useOpenDecisions } from "../collab/DecisionPanel.js";
+import { arrangeManagement } from "./management-layout.js";
+import { managementPath } from "./management-routing.js";
+import { newCanvasRelationIssues, canvasRelationMessage, CanvasRelationError } from "@amo-studio/protocol";
+import { CanvasRelationProblems } from "./CanvasRelationProblems.js";
 
 export { CARD_H, CARD_W, NOTE_H, NOTE_W } from "./cards.js";
 
@@ -105,6 +110,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     setPreviewState(next);
   };
   const [selection, setSelectionState] = useState<CanvasSelection>(null);
+  const [relations, setRelations] = useState({ management: true, collaboration: true, dependency: true });
+  const [allLevels, setAllLevels] = useState(true);
+  const decisions = useOpenDecisions(link);
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
   const setSelection = setSelectionState;
   const planning = useFeature("planning");
@@ -173,25 +181,31 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     return () => ro.disconnect();
   }, []);
 
-  const persist = useCallback((next: CanvasDoc) => void save(next).catch(() => undefined), [save]);
   const latestDoc = useRef(doc);
   latestDoc.current = doc;
+  const persist = useCallback((next: CanvasDoc) => {
+    const issue = newCanvasRelationIssues(next, latestDoc.current ?? undefined)[0];
+    if (issue) { setNotice({ text: canvasRelationMessage(next, issue, allTasks), error: true }); return; }
+    void save(next).catch(() => undefined);
+  }, [save, allTasks]);
   const edit = useCallback(
     (apply: (d: CanvasDoc) => CanvasDoc) => {
       const cur = latestDoc.current;
       if (!cur) return;
-      const next = apply(cur);
-      if (next !== cur) persist(next);
+      try {
+        const next = apply(cur);
+        if (next !== cur) persist(next);
+      } catch (err) { setNotice({ text: err instanceof CanvasRelationError ? canvasRelationMessage(cur, err.issue, allTasks) : err instanceof Error ? err.message : String(err), error: true }); }
     },
-    [persist],
+    [persist, allTasks],
   );
 
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   // The topic's archived tasks keep their cards, greyed (2026-10-22); a task that left the topic does not.
   const cardTaskById = new Map([...allTasks.filter((t) => t.archivedAt && t.topicId === topic.id), ...tasks].map((t) => [t.id, t]));
   const anyTaskById = new Map(allTasks.map((t) => [t.id, t]));
-  const nodeSize = (n: CanvasNode) => n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : n.kind === "item" ? ITEM_CARD : { w: CARD_W, h: cardHeight(anyTaskById.get(n.taskId)) });
-  const minSize = (n: CanvasNode) => (n.kind === "note" ? NOTE_MIN : n.kind === "item" ? ITEM_MIN : CARD_MIN);
+  const nodeSize = (n: CanvasNode) => n.kind === "task" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? cardHeight(anyTaskById.get(n.taskId)), CARD_H + managementHeight(anyTaskById.get(n.taskId))) } : n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : n.kind === "item" ? ITEM_CARD : { w: CARD_W, h: cardHeight(anyTaskById.get(n.taskId)) });
+  const minSize = (n: CanvasNode) => (n.kind === "note" ? NOTE_MIN : n.kind === "item" ? ITEM_MIN : n.kind === "task" ? { ...CARD_MIN, h: CARD_MIN.h + managementHeight(anyTaskById.get(n.taskId)) } : CARD_MIN);
 
   // 删除分组 (2026-10-29): a group with cards asks first whether they go too; an empty one goes at once.
   const [deletingGroup, setDeletingGroup] = useState<Id | null>(null);
@@ -342,7 +356,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         // Let go on another card: on one of its handles, that side; elsewhere on it, the side nearest the pointer.
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const to = hit?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-        const target = to && to !== drag.from ? latestDoc.current?.nodes.find((n) => n.id === to) : undefined;
+        const target = to ? latestDoc.current?.nodes.find((n) => n.id === to) : undefined;
         if (target) {
           const side = hit?.closest<HTMLElement>(".canvas-handle")?.dataset.side as CanvasSide | undefined;
           const toSide = side && CANVAS_SIDES.includes(side) ? side : nearestSide(rectOf(target), worldAt(e.clientX, e.clientY));
@@ -368,8 +382,20 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   const shown = preview ?? doc;
   const nodeById = new Map((shown?.nodes ?? []).map((n) => [n.id, n]));
+  const selectedNode = selection?.kind === "node" ? nodeById.get(selection.id) : undefined;
+  const selectedTask = selectedNode && (selectedNode.kind === "task" || selectedNode.kind === "ref") ? anyTaskById.get(selectedNode.taskId) : undefined;
+  const selectedTree = selectedTask?.lead ? taskManagement(allTasks, selectedTask.id) : null;
+  const selectedScope = selectedTree && new Set([selectedTask!.id, ...selectedTree.descendants.map((t) => t.id)]);
+  const hiddenTasks = new Set(selectedTree && !allLevels ? selectedTree.descendants.filter((t) => t.managerTaskId !== selectedTask!.id).map((t) => t.id) : []);
+  const visibleNode = (n: CanvasNode) => !(n.kind === "task" && hiddenTasks.has(n.taskId));
+  const visibleLinks = (shown?.links ?? []).filter((l) => l.kind !== "collaboration" || (relations.collaboration && selection?.kind === "node" && (l.from === selection.id || l.to === selection.id)));
   /** A card's box as drawn. */
   const rectOf = (n: CanvasNode) => ({ ...n.pos, ...(sizes.get(n.id) ?? nodeSize(n)) });
+  const locateTask = (id: Id) => {
+    const node = shown?.nodes.find((n) => (n.kind === "task" || n.kind === "ref") && n.taskId === id);
+    if (node) { setAllLevels(true); setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }
+    else onOpenTask(id);
+  };
 
   /** 连线: a drag from one of a card's four side handles draws a line to another card. */
   const startConnect = (e: ReactMouseEvent, nodeId: Id, side: CanvasSide) => {
@@ -496,8 +522,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const link2 = (toTaskId: Id) => {
     const from = linkFrom;
     setLinkFrom(null);
-    if (!doc || !from || from === toTaskId) return;
-    if (doc.edges.some((e) => e.from === from && e.to === toTaskId) || wouldCycle(doc.edges, from, toTaskId)) return;
+    if (!doc || !from) return;
     persist({ ...doc, edges: [...doc.edges, { id: newCanvasId("e"), kind: "depends", from, to: toTaskId }] });
   };
 
@@ -672,16 +697,15 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const linkMenu = (e: ReactMouseEvent, l: CanvasLink) => {
     openMenu(e, "连线", [
       item(l.label ? "编辑文字" : "添加文字", () => setEditingLink(l.id), { testId: "menu-link-label" }),
-      item("反过来", () => edit((d) => reverseLink(d, l.id))),
+      ...(l.kind === "collaboration" ? [] : [item("反过来", () => edit((d) => reverseLink(d, l.id)))]),
       SEP,
       item("删除连线", () => edit((d) => removeLink(d, l.id)), { danger: true, testId: "menu-link-delete" }),
     ]);
   };
 
   const edgeMenu = (e: ReactMouseEvent, edgeId: Id, from: Id, to: Id) => {
-    const others = (doc?.edges ?? []).filter((x) => x.id !== edgeId);
     openMenu(e, "依赖", [
-      item("反过来", () => edit((d) => reverseEdge(d, edgeId)), { disabled: wouldCycle(others, to, from), hint: `改成「${anyTaskById.get(to)?.title || "任务"}」先做` }),
+      item("反过来", () => edit((d) => reverseEdge(d, edgeId)), { hint: `改成「${anyTaskById.get(to)?.title || "任务"}」先做` }),
       item("删除依赖", () => edit((d) => removeEdge(d, edgeId)), { danger: true }),
     ]);
   };
@@ -690,7 +714,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   // Whether each bound project is free (design/scheduler.md): the scheduler only proposes work for free ones.
   const activity = workspacesActivity(workspaces, sessions);
   const cardOf = new Map(
-    (shown?.nodes ?? []).filter((n) => n.kind === "task").map((n) => [(n as { taskId: Id }).taskId, { x: n.pos.x, y: n.pos.y, ...(n.size ?? { w: CARD_W, h: cardHeight(cardTaskById.get((n as { taskId: Id }).taskId)) }) }]),
+    (shown?.nodes ?? []).filter((n) => n.kind === "task" && visibleNode(n)).map((n) => [(n as { taskId: Id }).taskId, rectOf(n)]),
   );
   const describedTask = describing ? anyTaskById.get(describing) : undefined;
   // The 详情框's card (or group) in the viewport's pixels: the box sits beside it wherever the view has put it.
@@ -733,6 +757,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         </div>
       )}
       </div>
+      {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["collaboration", "协作 ··· 点线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => setRelations((cur) => ({ ...cur, [key]: e.target.checked }))} />{label}</label>)}{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}<span className="dim">协作仅在选中相关任务时显示</span></div>}
+      {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
       <div className="canvas-row">
       <div
         className={drag?.kind === "pan" ? "canvas-viewport panning" : "canvas-viewport"}
@@ -744,7 +770,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         data-linking={linkFrom ? "true" : undefined}
         data-connecting={drawing ? "true" : undefined}
       >
-        <div className="canvas-world" ref={world} data-testid="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }} onMouseDownCapture={(e) => {
+        <div className="canvas-world" ref={world} data-testid="canvas-world" data-management={selectedScope ? "selected" : undefined} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }} onMouseDownCapture={(e) => {
           // 中键优先平移，避免卡片、连线或编辑框截走拖动事件；工具栏和详情框不在 world 内。
           if (e.button !== 1) return;
           e.stopPropagation();
@@ -813,15 +839,26 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               <marker id="amo-link-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M0 0 L10 5 L0 10 Z" style={{ fill: "var(--link-line)" }} />
               </marker>
+              <marker id="amo-management-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10" fill="none" stroke="var(--primary)" /></marker>
             </defs>
-            {(shown?.links ?? []).map((l) => {
+            {relations.management && tasks.filter((t) => t.managerTaskId).map((t) => {
+              const from = cardOf.get(t.managerTaskId!);
+              const to = cardOf.get(t.id);
+              if (!from || !to) return null;
+              const siblings = tasks.filter((s) => s.managerTaskId === t.managerTaskId).map((s) => cardOf.get(s.id)).filter((r): r is NonNullable<typeof r> => !!r);
+              const childTop = Math.min(...siblings.map((r) => r.y));
+              const branchY = childTop > from.y + from.h ? (from.y + from.h + childTop) / 2 : undefined;
+              const { d } = managementPath(from, to, (shown?.nodes ?? []).filter(visibleNode).map(rectOf), branchY);
+              return <path key={`management-${t.id}`} d={d} fill="none" className={`canvas-management-line${selectedScope?.has(t.id) ? " active" : ""}${selectedTask?.id === t.managerTaskId ? " direct" : ""}${selectedScope && !selectedScope.has(t.id) ? " management-dimmed" : ""}`} markerEnd="url(#amo-management-arrow)" data-testid="canvas-management-line" />;
+            })}
+            {visibleLinks.map((l) => {
               const from = nodeById.get(l.from);
               const to = nodeById.get(l.to);
-              if (!from || !to) return null;
+              if (!from || !to || !visibleNode(from) || !visibleNode(to)) return null;
               const { d } = linkCurve(sidePoint(rectOf(from), l.fromSide), l.fromSide, sidePoint(rectOf(to), l.toSide), l.toSide);
               return (
-                <g key={l.id}>
-                  <path d={d} className="canvas-link" markerEnd="url(#amo-link-arrow)" data-testid="canvas-link" data-link-id={l.id} />
+                <g key={l.id} className={selectedScope && l.kind !== "collaboration" && ![from, to].every((n) => (n.kind === "task" || n.kind === "ref") && selectedScope.has(n.taskId)) ? "management-dimmed" : undefined}>
+                  <path d={d} className={`canvas-link${l.kind === "collaboration" ? " canvas-collaboration-line" : ""}`} markerEnd={l.kind === "collaboration" ? undefined : "url(#amo-link-arrow)"} data-testid={l.kind === "collaboration" ? "canvas-collaboration-line" : "canvas-link"} data-link-id={l.id} />
                   <path
                     d={d}
                     className="canvas-edge-hit canvas-link-hit"
@@ -839,13 +876,13 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                 if (!from) return null;
                 return <path d={linkCurve(sidePoint(rectOf(from), drawing.side), drawing.side, drawing.at, null).d} className="canvas-link drawing" markerEnd="url(#amo-link-arrow)" data-testid="canvas-link-drawing" />;
               })()}
-            {shown?.edges.map((e) => {
+            {relations.dependency && shown?.edges.map((e) => {
               const from = cardOf.get(e.from);
               const to = cardOf.get(e.to);
               if (!from || !to) return null;
               const { a, b } = arrowBetween(from, to);
               return (
-                <g key={e.id}>
+                <g key={e.id} className={selectedScope && !(selectedScope.has(e.from) && selectedScope.has(e.to)) ? "management-dimmed" : undefined}>
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge" markerEnd="url(#amo-arrow)" data-testid="canvas-edge" />
                   {/* A wider, invisible line takes the right-click. */}
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge-hit" data-testid="canvas-edge-hit" onMouseDown={(ev) => ev.stopPropagation()} onContextMenu={(ev) => edgeMenu(ev, e.id, e.from, e.to)} />
@@ -854,6 +891,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             })}
           </svg>
           {shown?.nodes.map((node) => {
+            if (!visibleNode(node)) return null;
             const selected = selection?.kind === "node" && selection.id === node.id;
             if (node.kind === "note") {
               return <NoteCard key={node.id} node={node} selected={selected} flag={flags.get(node.id)} handles={handlesOf(node.id)} onMouseDown={(e) => startDrag(e, "node", node.id)} onContextMenu={(e) => noteMenu(e, node)} onEdit={editNote} />;
@@ -900,11 +938,19 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             }
             const task = cardTaskById.get(node.taskId);
             if (!task) return null;
+            const tree = task.lead ? taskManagement(allTasks, task.id) : null;
+            const scope = tree ? new Set([task.id, ...tree.descendants.map((t) => t.id)]) : new Set([task.id]);
+            const scopeNodeIds = new Set((shown?.nodes ?? []).filter((n) => (n.kind === "task" || n.kind === "ref") && scope.has(n.taskId)).map((n) => n.id));
+            const pending = new Set([...decisions.filter((d) => d.taskId && scope.has(d.taskId)).map((d) => `decision:${d.id}`), ...callouts.filter((c) => c.kind === "question" && c.state === "open" && (scope.has(c.target) || scopeNodeIds.has(c.target))).map((c) => `callout:${c.id}`)]).size;
             return (
               <TaskCard
                 key={node.id}
                 node={node}
                 task={task}
+                manager={task.managerTaskId ? anyTaskById.get(task.managerTaskId) : undefined}
+                management={tree ? { directLeadCount: tree.directLeadCount, workerCount: tree.workerCount, pending } : undefined}
+                dimmed={!!selectedScope && !selectedScope.has(task.id)}
+                onLocateManager={() => task.managerTaskId && locateTask(task.managerTaskId)}
                 sessions={sessions}
                 workspaces={workspaces}
                 selected={selected}
@@ -925,10 +971,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             );
           })}
           {/* 连线 labels over the cards; double-click a line (or its label) to write one. */}
-          {(shown?.links ?? []).map((l) => {
+          {visibleLinks.map((l) => {
             const from = nodeById.get(l.from);
             const to = nodeById.get(l.to);
-            if (!from || !to) return null;
+            if (!from || !to || !visibleNode(from) || !visibleNode(to)) return null;
             const { mid } = linkCurve(sidePoint(rectOf(from), l.fromSide), l.fromSide, sidePoint(rectOf(to), l.toSide), l.toSide);
             if (editingLink === l.id) {
               return (
@@ -990,6 +1036,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           <button type="button" className="btn-ghost small" onClick={() => newNote()} disabled={!doc}>
             + 便签
           </button>
+          <button type="button" className="btn-ghost small" title="排列选中管理树（未选中时排列全部未分组任务）：主控在上、子树居中；保留手工分组和归属" onClick={() => { setAllLevels(true); edit((d) => arrangeManagement(d, allTasks, nodeSize, selectedScope ?? undefined)); setSelection(null); }} disabled={!doc}>按管理层级排列</button>
           {window.amo?.openCanvasMini && (
             <button type="button" className="btn-ghost small" onClick={() => void window.amo?.openCanvasMini?.({ topicId: topic.id })} title="在一个置顶的小窗里看这张画布，做别的事时也能看到问题和进度" data-testid="canvas-open-mini">
               小窗
@@ -1065,6 +1112,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         )}
         {shown && selection && !compact && (
           <CanvasDetail
+            link={link}
             anchor={detailAnchor}
             avoid={detailAvoid}
             area={area}

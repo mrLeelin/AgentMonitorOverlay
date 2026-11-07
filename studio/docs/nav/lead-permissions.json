@@ -3,23 +3,25 @@
   "topics": [
     {
       "id": "studio.leadPermissions",
-      "label": "主控只读和任务分配权限",
+      "label": "主控文件只读与任务画布管理权限",
       "aliases": ["权限", "只读", "主控权限", "read-only", "lead permissions", "提权"],
       "category": "host",
-      "purpose": "2026-11-07 用户决定：主控只有读取和分配任务能力，不能修改项目文件或其他内容。AMO 工具按白名单限制，三个 runtime 在执行层强制收紧；独立执行任务保持自己的权限。",
+      "purpose": "2026-11-07 用户决定：主控不能修改本地文件，具体实现分配给执行任务；可以直接管理任务和画布，包括移动、排序、分组、依赖、状态和 Studio 内的专题文档。AMO 工具按白名单限制，三个 runtime 保留文件只读；独立执行任务保持自己的权限。",
       "steps": [
-        "修改主控能力时同步检查 MCP 白名单和三个 runtime，不能只改角色提示词。",
+        "修改主控能力时同步检查 MCP 白名单、管理工具审批和三个 runtime，不能只改角色提示词。主控管理工具自动批准，执行任务保留原审批规则。",
         "运行中或仍有后台命令的任务不能直接升为主控。已有 Codex、DSH 会话需先归档，再设主控并新开只读会话；缺少只读隔离记录的旧会话拒绝继续，解除主控会清除旧记录。",
         "分配实现工作用 task_plan_propose 建独立执行任务，主控不能用同任务的子会话或终端接管绕过只读。"
       ],
       "anchors": [
-        { "label": "AMO 工具白名单", "path": "studio/packages/host/src/mcp/tools.ts", "anchor": "LEAD_ASSIGNMENT_TOOLS" },
+        { "label": "AMO 管理工具白名单", "path": "studio/packages/host/src/mcp/names.ts", "anchor": "LEAD_MANAGEMENT_TOOLS" },
+        { "label": "任务管理", "path": "studio/packages/host/src/features/tasks/mcp.ts", "anchor": "task_update" },
+        { "label": "画布移动排序", "path": "studio/packages/host/src/features/canvas/mcp.ts", "anchor": "canvas_arrange" },
         { "label": "任务角色切换", "path": "studio/packages/host/src/features/tasks/service.ts", "anchor": "updateTask(id:" },
         { "label": "Codex 主控隔离", "path": "studio/packages/host/src/runtime/codex/codex-runtime.ts", "anchor": "private requireLeadThread" },
         { "label": "Claude 工具限制", "path": "studio/packages/host/src/runtime/claude/lead-policy.ts", "anchor": "export function leadReadOnlyHooks" },
         { "label": "DSH 会话隔离记录", "path": "studio/packages/host/src/runtime/dsh/dsh-runtime.ts", "anchor": "dsh-lead-readonly:" }
       ],
-      "related": ["studio.topics", "host.agentMcp", "runtime.common"],
+      "related": ["studio.leadManagement", "studio.topics", "host.agentMcp", "runtime.common"],
       "next": ["studio/packages/host/src/mcp/lead-permissions.test.ts", "studio/packages/host/src/runtime/claude/lead-policy.test.ts"]
     }
   ]

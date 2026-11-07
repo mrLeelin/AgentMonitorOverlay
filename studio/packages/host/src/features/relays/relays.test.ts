@@ -32,7 +32,7 @@ beforeEach(() => {
   alpha = store.addWorkspace({ path: join(root, "alpha"), name: "alpha" });
   topic = service.topics.createTopic({ title: "迁移" });
   const lead = store.createTask({ title: "迁移主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
-  target = store.createTask({ title: "装甲车", workspaceId: alpha.id, topicId: topic.id });
+  target = store.createTask({ title: "装甲车", workspaceId: alpha.id, topicId: topic.id, managerTaskId: lead.id });
   const other = store.createTask({ title: "别处", workspaceId: alpha.id });
   const session = (taskId: string) => store.createSession({ taskId, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: alpha.id, title: "", status: "idle", writer: "workbench", runtimeRef: `thr-${taskId}` });
   leadSession = session(lead.id);
@@ -56,7 +56,7 @@ describe("relays (传话)", () => {
   it("takes a relay only from a 主控, for a task of its topic", () => {
     expect(() => service.relays.send(workerSession.id, { taskId: target.id, text: "x" })).toThrow(/只有主控/);
     const outside = store.listTasks().find((t) => t.title === "别处")!;
-    expect(() => service.relays.send(leadSession.id, { taskId: outside.id, text: "x" })).toThrow(/不在你的专题里/);
+    expect(() => service.relays.send(leadSession.id, { taskId: outside.id, text: "x" })).toThrow(/不在你的管理范围/);
     expect(() => service.relays.send(leadSession.id, { taskId: target.id, text: " " })).toThrow(/text/);
     expect(service.relays.send(leadSession.id, { taskId: target.id, text: "先做数据" })).toMatchObject({ state: "pending", toTaskId: target.id });
   });

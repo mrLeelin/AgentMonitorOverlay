@@ -86,15 +86,15 @@ afterAll(async () => {
 });
 
 describe("AMO MCP", () => {
-  it("lists nineteen read-only tools and thirty-four that write for the caller", async () => {
+  it("lists read-only tools and management tools for the caller", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_place", "canvas_read", "checklist_check", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
-      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_describe", "task_get", "task_message", "task_note_add", "task_plan_propose", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
+      "amo_guide", "amo_whoami", "board_list", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_collaborate", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place", "canvas_read", "checklist_check", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
+      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_update", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
     ]);
     expect(tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_read", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
+      "amo_guide", "amo_whoami", "board_list", "canvas_read", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
     ]);
     await client.close();
   });
@@ -189,7 +189,7 @@ describe("AMO MCP", () => {
 
   it("opens /mcp, and only /mcp, with the MCP token", async () => {
     const client = await connect(MCP_TOKEN);
-    expect((await client.listTools()).tools).toHaveLength(53);
+    expect((await client.listTools()).tools).toHaveLength(59);
     await client.close();
     const res = await fetch(`${http.url}/api/state`, { headers: { authorization: `Bearer ${MCP_TOKEN}`, connection: "close" } });
     expect(res.status).toBe(401);
@@ -310,7 +310,7 @@ describe("AMO MCP", () => {
     const made = (await call(client, "canvas_group_create", { title: "配置", workspace: "beta" })).data as { groupId: string };
     expect((await call(client, "canvas_group_create", { title: "x", workspace: "nope" })).isError).toBe(true);
     // configTask already depends on nothing; importTask depends on configTask (seeded), so the reverse would cycle.
-    expect((await call(client, "canvas_depend", { fromTaskId: importTask.id, toTaskId: configTask.id })).content[0]!.text).toMatch(/cycle/);
+    expect((await call(client, "canvas_depend", { fromTaskId: importTask.id, toTaskId: configTask.id })).content[0]!.text).toContain("依赖会形成循环");
     expect((await call(client, "canvas_place", { taskId: configTask.id, groupId: made.groupId })).data).toMatchObject({ groupId: made.groupId });
     const canvas = service.canvases.canvas(topicId);
     expect(canvas.groups.find((g) => g.id === made.groupId)).toMatchObject({ title: "配置", workspaceId: expect.any(String) });
@@ -353,15 +353,15 @@ describe("AMO MCP", () => {
     expect(card).toContain("专题的主控：还没有");
     expect((await text(client, "amo_guide", { section: "lead" })).text).toContain("# 主控");
     expect((await text(client, "amo_guide")).text).toContain("可选的 section");
-    // Execution and lead tasks both leave document writing to the topic session.
+    // Execution tasks leave document writing to the topic session or its lead.
     const refused = await call(client, "topic_doc_write", { title: "迁移计划", body: "先导入" });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]!.text).toContain("只有专题会话");
+    expect(refused.content[0]!.text).toContain("只有主控或专题会话");
     store.updateSession(mainSessionId, { status: "idle" });
     // Simulate an older Host's stored role; active Codex threads cannot be promoted through the current API.
     store.updateTask(importTask.id, { lead: true });
     expect((await text(client, "amo_whoami")).text).toContain("角色：主控");
-    expect((await client.listTools()).tools.some((t) => t.name === "topic_doc_write")).toBe(false);
+    expect((await client.listTools()).tools.some((t) => t.name === "topic_doc_write")).toBe(true);
     const topicSession = store.createSession({ taskId: null, topicId, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: importTask.workspaceId, title: "专题", status: "idle", writer: "workbench", runtimeRef: null });
     const topicClient = await connect(MCP_TOKEN, identities.tokenFor(topicSession.id));
     const doc = (await call(topicClient, "topic_doc_write", { title: "迁移计划", body: "1. 先导入\n2. 再统一配置键" })).data as { id: string };
@@ -370,6 +370,7 @@ describe("AMO MCP", () => {
     const listed = (await call(client, "topic_docs")).data as { docs: Array<{ id: string; title: string }> };
     expect(listed.docs).toMatchObject([{ id: doc.id, title: "迁移计划" }]);
     expect((await call(client, "topic_docs", { docId: doc.id })).data).toMatchObject({ title: "迁移计划", body: "1. 先导入（已完成）" });
+    expect((await call(client, "topic_doc_write", { docId: doc.id, body: "主控已调整分工" })).isError).not.toBe(true);
     expect((await text(client, "amo_whoami")).text).toContain("「迁移计划」");
     service.tasks.updateTask(importTask.id, { lead: false });
     await client.close();
@@ -389,9 +390,13 @@ describe("AMO MCP", () => {
       expect(names).toContain("task_describe");
       expect(names).toContain("task_message");
       expect(names).toContain("mailbox_read");
-      expect(names).not.toContain("canvas_group_create");
-      expect(names).not.toContain("topic_doc_write");
+      expect(names).toContain("canvas_group_create");
+      expect(names).toContain("canvas_move");
+      expect(names).toContain("canvas_arrange");
+      expect(names).toContain("topic_doc_write");
+      expect(names).toContain("task_update");
       expect(names).not.toContain("session_start");
+      expect((await call(client, "canvas_group_create", { title: "主控直接建组" })).isError).not.toBe(true);
       const before = store.listTasks().length;
       const proposal = await call(client, "task_plan_propose", { summary: "把实现交给执行任务", tasks: [{ title: "执行导入修复", description: "修复导入重试", firstMessage: "检查失败原因并修复" }] });
       expect(proposal.isError).not.toBe(true);

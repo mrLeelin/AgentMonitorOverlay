@@ -2,7 +2,7 @@ import { RELAY_TEXT_MAX, type Id, type Relay, type Session } from "@amo-studio/p
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
-import { refTopics, roleFacts } from "../../core/role.js";
+import { managesTask, roleFacts } from "../../core/role.js";
 
 /** How long a decided relay stays listed. */
 const DECIDED_SHOWN_MS = 24 * 3600_000;
@@ -39,10 +39,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     if (!target || target.archivedAt) throw new HostError("bad_request", `task ${String(input.taskId)} not found`);
     if (target.id === facts.task?.id) throw new HostError("bad_request", "传话是给别的任务的");
     // A task of the topic, or one its canvas shows as a reference card (2026-10-17).
-    const inScope = facts.topic
-      ? target.topicId === facts.topic.id || refTopics(this.host, target).some((t) => t.id === facts.topic!.id)
-      : target.workspaceId === facts.task?.workspaceId && !target.topicId;
-    if (!inScope) throw new HostError("bad_request", facts.topic ? `任务 ${target.id} 不在你的专题里（也没有引用在专题的画布上）` : `任务 ${target.id} 不在你的项目里（或在某个专题里）`);
+    if (!managesTask(this.host, fromSessionId, target.id)) throw new HostError("bad_request", `任务 ${target.id} 不在你的管理范围；平级协作请用 mailbox_send。`);
     const text = typeof input.text === "string" ? input.text.trim() : "";
     if (!text) throw new HostError("bad_request", "text is required");
     if (text.length > RELAY_TEXT_MAX) throw new HostError("bad_request", `text is limited to ${RELAY_TEXT_MAX} characters`);
@@ -66,12 +63,13 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     ].join("\n");
     try {
       if (!target || target.archivedAt) throw new HostError("bad_request", "the task is gone or archived");
+      if (!managesTask(this.host, relay.fromSessionId, target.id)) throw new HostError("bad_request", "任务归属已变更，原主控不再管理此任务。");
       const session = latestMain(this.store.listSessions({ taskId: target.id }));
       let sessionId: Id;
       let held = false;
       if (session) {
         // The session's inbox (2026-11-04): it goes in once the session's turn is over, not into the running one.
-        held = !(await this.f.sessions.inbox.put(session.id, message)).delivered;
+        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId)).delivered;
         sessionId = session.id;
       } else {
         const workspace = this.requireWorkspace(target.workspaceId);

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { collectSubtreeIds, ENDED_STATUSES, type CanvasDoc, type HostEvent, type Id, type Session, type SessionItem, type SessionOptions, type Task, type TaskColumn, type TaskRemote, type Topic, type Workspace } from "@amo-studio/protocol";
+import { collectSubtreeIds, ENDED_STATUSES, pruneLinks, type CanvasDoc, type HostEvent, type Id, type Session, type SessionItem, type SessionOptions, type Task, type TaskColumn, type TaskRemote, type Topic, type Workspace } from "@amo-studio/protocol";
 import { DocumentStore } from "./documents.js";
 import { ATTACHMENT_ID, str, strOrNull, toItem, toSession, toTask, toTopic, toWorkspace, type Row } from "./rows.js";
 import { MIGRATIONS } from "./migrations.js";
@@ -168,13 +168,14 @@ export class Store extends DocumentStore {
   // Tasks
 
   /** `id` and `remote`: 远程 step 2, this computer's copy of a paired device's task, under that task's own id. */
-  createTask(input: { title: string; workspaceId: Id; topicId?: Id | null; column?: TaskColumn; lead?: boolean; id?: Id; remote?: TaskRemote; firstMessage?: string }): Task {
+  createTask(input: { title: string; workspaceId: Id; topicId?: Id | null; managerTaskId?: Id | null; column?: TaskColumn; lead?: boolean; id?: Id; remote?: TaskRemote; firstMessage?: string; description?: string }): Task {
     const at = this.timestamp();
     const firstMessage = input.firstMessage?.trim() || "";
-    const task: Task = { id: input.id ?? newId("task"), title: input.title, workspaceId: input.workspaceId, topicId: input.topicId ?? null, column: input.column ?? "todo", ...(firstMessage ? { firstMessage } : {}), ...(input.lead ? { lead: true } : {}), ...(input.remote ? { remote: input.remote } : {}), createdAt: at, updatedAt: at, archivedAt: null };
+    const description = input.description?.trim() || "";
+    const task: Task = { id: input.id ?? newId("task"), title: input.title, workspaceId: input.workspaceId, topicId: input.topicId ?? null, managerTaskId: input.managerTaskId ?? null, column: input.column ?? "todo", ...(firstMessage ? { firstMessage } : {}), ...(description ? { description } : {}), ...(input.lead ? { lead: true } : {}), ...(input.remote ? { remote: input.remote } : {}), createdAt: at, updatedAt: at, archivedAt: null };
     this.db
-      .prepare("INSERT INTO tasks (id, title, workspace_id, topic_id, column_name, lead, remote, first_message, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)")
-      .run(task.id, task.title, task.workspaceId, task.topicId, task.column, input.lead ? 1 : 0, input.remote ? JSON.stringify(input.remote) : null, firstMessage || null, at, at);
+      .prepare("INSERT INTO tasks (id, title, workspace_id, topic_id, manager_task_id, column_name, lead, remote, first_message, description, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)")
+      .run(task.id, task.title, task.workspaceId, task.topicId, task.managerTaskId ?? null, task.column, input.lead ? 1 : 0, input.remote ? JSON.stringify(input.remote) : null, firstMessage || null, description || null, at, at);
     return task;
   }
 
@@ -193,7 +194,7 @@ export class Store extends DocumentStore {
   }
 
   /** `description`, `firstMessage`: empty removes it. */
-  updateTask(id: Id, patch: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "archivedAt" | "description" | "firstMessage" | "lead" | "relayAuto" | "remote">>): Task {
+  updateTask(id: Id, patch: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "managerTaskId" | "archivedAt" | "description" | "firstMessage" | "lead" | "relayAuto" | "remote">>): Task {
     const task = this.getTask(id);
     if (!task) throw new Error(`task ${id} not found`);
     const { description: _old, firstMessage: _oldFirst, lead: _wasLead, relayAuto: _wasAuto, remote: _wasRemote, ...rest } = task;
@@ -205,8 +206,8 @@ export class Store extends DocumentStore {
     const { description: _d, firstMessage: _f, lead: _l, relayAuto: _r, remote: _m, ...plain } = patch;
     const next: Task = { ...rest, ...plain, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(lead ? { lead: true } : {}), ...(relayAuto ? { relayAuto: true } : {}), ...(remote ? { remote } : {}), updatedAt: this.timestamp() };
     this.db
-      .prepare("UPDATE tasks SET title = ?, column_name = ?, workspace_id = ?, topic_id = ?, archived_at = ?, description = ?, first_message = ?, lead = ?, relay_auto = ?, remote = ?, updated_at = ? WHERE id = ?")
-      .run(next.title, next.column, next.workspaceId || null, next.topicId, next.archivedAt, description || null, firstMessage || null, lead ? 1 : 0, relayAuto ? 1 : 0, remote ? JSON.stringify(remote) : null, next.updatedAt, id);
+      .prepare("UPDATE tasks SET title = ?, column_name = ?, workspace_id = ?, topic_id = ?, manager_task_id = ?, archived_at = ?, description = ?, first_message = ?, lead = ?, relay_auto = ?, remote = ?, updated_at = ? WHERE id = ?")
+      .run(next.title, next.column, next.workspaceId || null, next.topicId, next.managerTaskId ?? null, next.archivedAt, description || null, firstMessage || null, lead ? 1 : 0, relayAuto ? 1 : 0, remote ? JSON.stringify(remote) : null, next.updatedAt, id);
     return next;
   }
 
@@ -425,6 +426,10 @@ export class Store extends DocumentStore {
       for (const id of list) stmt.run(id);
     };
     this.transaction(() => {
+      // Even archived children retain their explicit owner. Every deletion path (including remote copies) must
+      // reject a dangling manager before removing any records, rather than rely on a foreign-key error midway.
+      const retained = this.listTasks().find((task) => !tasks.has(task.id) && task.managerTaskId && tasks.has(task.managerTaskId));
+      if (retained) throw new Error(`任务「${retained.title || retained.id}」仍归要删除的主控管理，请先转交或解除归属（含已归档任务）`);
       each(sessions, "DELETE FROM items WHERE session_id = ?");
       each(sessions, "DELETE FROM annotations WHERE session_id = ?");
       each(sessions, "DELETE FROM decisions WHERE session_id = ?");
@@ -438,7 +443,8 @@ export class Store extends DocumentStore {
       for (const t of this.listTodos()) if (t.taskId && tasks.has(t.taskId)) this.putTodo({ ...t, taskId: null });
       // Forks point at their parents: one statement per owner set is checked at its end, so order does not matter.
       if (sessions.size) this.db.prepare(`DELETE FROM sessions WHERE id IN (${[...sessions].map(() => "?").join(", ")})`).run(...sessions);
-      each(tasks, "DELETE FROM tasks WHERE id = ?");
+      // A whole management subtree may go together, independent of parent/child insertion order.
+      if (tasks.size) this.db.prepare(`DELETE FROM tasks WHERE id IN (${[...tasks].map(() => "?").join(", ")})`).run(...tasks);
       each(topics, "DELETE FROM canvas_docs WHERE id = ?");
       each(topics, "DELETE FROM canvas_callouts WHERE topic_id = ?");
       each(topics, "DELETE FROM topic_docs WHERE topic_id = ?");
@@ -448,14 +454,16 @@ export class Store extends DocumentStore {
       // Cards and dependencies of the deleted tasks on the canvases that stay.
       for (const r of this.db.prepare("SELECT body FROM canvas_docs").all() as Row[]) {
         const doc = JSON.parse(str(r.body)) as CanvasDoc;
-        if (!doc.nodes.some((n) => (n.kind === "task" || n.kind === "ref") && tasks.has(n.taskId))) continue;
-        this.putCanvas({
+        const nodes = doc.nodes.filter((n) => (n.kind !== "task" && n.kind !== "ref") || !tasks.has(n.taskId));
+        const edges = doc.edges.filter((e) => !tasks.has(e.from) && !tasks.has(e.to));
+        if (nodes.length === doc.nodes.length && edges.length === doc.edges.length) continue;
+        this.putCanvas(pruneLinks({
           ...doc,
           version: doc.version + 1,
-          nodes: doc.nodes.filter((n) => (n.kind !== "task" && n.kind !== "ref") || !tasks.has(n.taskId)),
-          edges: doc.edges.filter((e) => !tasks.has(e.from) && !tasks.has(e.to)),
+          nodes,
+          edges,
           updatedAt: this.timestamp(),
-        });
+        }));
       }
       each(topics, "DELETE FROM topics WHERE id = ?");
       for (const id of ids.workspaceIds) this.removeWorkspace(id);

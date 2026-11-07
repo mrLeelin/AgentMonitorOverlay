@@ -1,13 +1,14 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostEvent, ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { roleCardFor } from "../guide/role.js";
 
 // Stage 16: a 主控 proposes splitting the work into tasks; the person accepts (changed) or dismisses it.
 
@@ -48,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await servers.close();
   store.close();
   removeTempDir(root);
@@ -90,7 +92,7 @@ describe("task plans (拆任务提案)", () => {
     expect(accepted.created!.map((c) => c.key)).toEqual(["a", "b"]);
     const [data, ui] = accepted.created!.map((c) => store.getTask(c.taskId)!);
     // Left in 待办 (2026-11-05): the first message stays with the task for its first session.
-    expect(data).toMatchObject({ title: "装甲车数据表", workspaceId: alpha.id, topicId: topic.id, column: "todo", description: "先迁数据", firstMessage: "迁装甲车的数据表" });
+    expect(data).toMatchObject({ title: "装甲车数据表", workspaceId: alpha.id, topicId: topic.id, managerTaskId: leadTask.id, column: "todo", description: "先迁数据", firstMessage: "迁装甲车的数据表" });
     expect(ui).toMatchObject({ title: "装甲车界面", workspaceId: beta.id, column: "todo" });
     expect(store.listSessions({ taskId: data!.id })).toEqual([]);
     const canvas = service.canvases.canvas(topic.id);
@@ -139,5 +141,28 @@ describe("task plans (拆任务提案)", () => {
     expect(service.taskPlans.dismiss(plan.id, { note: "先只做装甲车" })).toMatchObject({ state: "dismissed", note: "先只做装甲车" });
     expect(service.collab.readMailFromSession(leadSession.id).at(-1)!.text).toBe("人没有采用你的拆任务提案「把装甲车迁到两个项目」：先只做装甲车");
     expect(store.listTasks().length).toBe(2);
+  });
+
+  it("binds the proposing lead and description before the first session can read its role", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "先验证归属", tasks: [{ key: "a", title: "执行", description: "执行范围", firstMessage: "开始" }] });
+    const cards: string[] = [];
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner, workspace) => {
+      expect(store.getTask(owner.taskId!)?.managerTaskId).toBe(leadTask.id);
+      expect(store.getTask(owner.taskId!)?.description).toBe("执行范围");
+      cards.push(roleCardFor(service, { ...owner, workspaceId: workspace.id, kind: "main", runtime: "codex" }));
+      return store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, topicId: null, runtimeRef: null });
+    });
+    await service.taskPlans.accept(plan.id, { run: true });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain(`直属主控：${leadTask.title}（${leadTask.id}）`);
+    expect(cards[0]).toContain("执行范围");
+  });
+
+  it("rejects a stale proposing lead before creating tasks or canvas groups", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, proposal);
+    service.tasks.updateTask(leadTask.id, { lead: false });
+    await expect(service.taskPlans.accept(plan.id, { run: true })).rejects.toThrow(/来源主控已失效/);
+    expect(store.listTasks()).toHaveLength(2);
+    expect(service.canvases.canvas(topic.id).groups).toEqual([]);
   });
 });

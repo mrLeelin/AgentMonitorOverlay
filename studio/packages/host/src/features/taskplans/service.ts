@@ -89,6 +89,9 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
     if (!kept.length) throw new HostError("bad_request", "keep at least one task, or dismiss the proposal");
     const topic = plan.topicId ? this.store.getTopic(plan.topicId) : undefined;
     const topicId = topic && !topic.archivedAt ? topic.id : null;
+    // Fail before creating groups/tasks if the proposing lead moved or lost its role while the proposal waited.
+    const manager = plan.fromTaskId ? this.store.getTask(plan.fromTaskId) : null;
+    if (plan.fromTaskId && (!manager || !manager.lead || manager.archivedAt || manager.remote || manager.topicId !== topicId || (!topicId && kept.some((t) => t.workspaceId !== manager.workspaceId)))) throw new HostError("conflict", "提案来源主控已失效或离开范围，请重新提案后确认。");
     // A group per project when the tasks span several (the person's case: one migration in three projects).
     const projects = [...new Set(kept.map((t) => t.workspaceId))];
     const groups = new Map<Id, Id>();
@@ -104,6 +107,8 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         title: t.title,
         workspaceId: t.workspaceId,
         topicId,
+        managerTaskId: manager?.id ?? null,
+        ...(t.description ? { description: t.description } : {}),
         ...(run && t.profileId ? { firstSession: { profileId: t.profileId, ...(t.firstMessage ? { text: t.firstMessage } : {}), ...(t.options ? { options: t.options } : {}) } } : { column: "todo" as const, ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}) }),
       });
       const described = t.description ? this.f.tasks.updateTask(task.id, { description: t.description }) : task;

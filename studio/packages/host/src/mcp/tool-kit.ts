@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Id } from "@amo-studio/protocol";
 import type { HostService } from "../service.js";
 import { HostError } from "../core/shared.js";
+import { managesTask } from "../core/role.js";
 import { NotFoundError, ReadModel } from "./read-model.js";
 
 // What every AMO MCP tool is built from: the tool shape, the result helpers and the caller's context. The tools live
@@ -26,7 +27,7 @@ export interface AmoTool {
   /** Reads only Studio's state (annotated readOnlyHint). */
   readOnly: boolean;
   /**
-   * Runs without asking the person: reads, and writes that only touch the caller's own task. Codex gets
+   * Runs without asking the person: reads, writes to the caller's own task, and a lead's task/canvas management. Codex gets
    * `tools.<name>.approval_mode = "approve"` for these; Claude lists them in allowedTools.
    */
   autoApprove: boolean;
@@ -79,7 +80,7 @@ export interface ToolContext {
   ownTask(c: McpCaller): Id;
   /** The topic whose canvas the caller may arrange: its own topic, or its task's. */
   ownTopic(c: McpCaller): Id;
-  /** Refuses tasks outside the caller's topic. */
+  /** Refuses tasks outside the caller's topic or a lead's explicit management tree. */
   inOwnTopic(c: McpCaller, ...taskIds: unknown[]): void;
 }
 
@@ -95,6 +96,12 @@ export function toolContext(service: HostService, caller: McpCaller | null): Too
     return topic.id;
   };
   const inOwnTopic = (c: McpCaller, ...taskIds: unknown[]) => {
+    const session = service.store.getSession(c.sessionId)!;
+    const lead = session.taskId ? service.store.getTask(session.taskId)?.lead : false;
+    if (lead) {
+      for (const id of taskIds) if (!managesTask(service, c.sessionId, String(id))) throw new HostError("read_only", `任务 ${String(id)} 不在你的管理范围内；同专题或协作关系不授予管理权限。`);
+      return;
+    }
     const topicId = ownTopic(c);
     for (const id of taskIds) {
       if (service.store.getTask(String(id))?.topicId !== topicId) throw new HostError("bad_request", `任务 ${String(id)} 不在你所在的专题里`);

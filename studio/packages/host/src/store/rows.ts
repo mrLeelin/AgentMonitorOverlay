@@ -28,6 +28,7 @@ export function toTask(r: Row): Task {
     // NULL only for tasks of the old cross-workspace area until the Host resolves them at start-up.
     workspaceId: strOrNull(r.workspace_id) ?? "",
     topicId: strOrNull(r.topic_id),
+    managerTaskId: strOrNull(r.manager_task_id),
     column: str(r.column_name) as TaskColumn,
     ...(typeof r.description === "string" && r.description ? { description: r.description } : {}),
     ...(typeof r.first_message === "string" && r.first_message ? { firstMessage: r.first_message } : {}),

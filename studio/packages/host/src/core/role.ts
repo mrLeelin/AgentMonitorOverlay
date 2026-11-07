@@ -1,4 +1,5 @@
 import type { Id, Session, Task, Topic } from "@amo-studio/protocol";
+import { isManagedBy } from "@amo-studio/protocol";
 import type { Store } from "../store/store.js";
 
 // Who a session is in AMO — 主控, 执行, a topic's own session or a branch — and what it was last told of it: the judgment
@@ -49,11 +50,22 @@ export function leadsTopic(host: RoleHost, sessionId: Id, topicId: Id): boolean 
   const f = roleFacts(host, sessionId);
   return f.topic?.id === topicId && (f.role === "lead" || f.role === "topic");
 }
+
+/** Management follows stored ownership only; sharing a topic, reference or collaboration never grants authority. */
+export function managesTask(host: RoleHost, sessionId: Id, taskId: Id): boolean {
+  const session = host.store.getSession(sessionId);
+  const target = host.store.getTask(taskId);
+  if (!session || session.archivedAt || !target || target.archivedAt || target.remote) return false;
+  if (!session.taskId) return !!session.topicId && session.topicId === target.topicId && !host.store.getTopic(session.topicId)?.archivedAt;
+  const own = host.store.getTask(session.taskId);
+  if (!own || own.archivedAt || own.remote) return false;
+  return own.id === taskId || (!!own.lead && (!own.topicId || !host.store.getTopic(own.topicId)?.archivedAt) && isManagedBy(host.store.listTasks(), taskId, own.id));
+}
 export const ROLE_NAME: Record<AmoRole, string> = { lead: "主控", worker: "执行", topic: "专题会话", fork: "分支" };
 
 export const ROLE_DUTY: Record<AmoRole, string> = {
   lead:
-    "你是主控：只有读取和分配任务的权限。读取项目和专题，提出拆任务方案（task_plan_propose）、给任务写分工说明（task_describe），用 task_message 或 mailbox_send 交代工作，需要人拍板用 decision_request。具体实现、项目文件和文档的修改都交给执行任务；你不能修改项目文件、专题文档、画布或设置，不能在主控任务里另开执行会话或用子 agent 绕过只读限制。Studio 不替你建分支、不合并。",
+    "你是主控：负责分配工作和管理任务、画布，本地文件只读。读取项目和专题，提出拆任务方案（task_plan_propose）、写分工说明（task_describe），用 task_update 管理任务标题、状态和专题；可以直接操作画布的分组、移动排序、依赖、颜色和审阅条目，也可以维护 Studio 内的专题文档。用 task_message 或 mailbox_send 交代工作，需要人拍板用 decision_request。具体实现和本地文件的修改都交给执行任务；不能在主控任务里另开执行会话、用子 agent 或改执行设置绕过文件只读限制。Studio 不替你建分支、不合并。",
   worker:
     "你是执行：专注做好自己的任务。平时不用主动记进度：人让你记时用 task_note_add，一段工作要交给别的会话或人接手时用 handoff_submit。需要主控或别的任务知道的事用 mailbox_send；需要人拍板用 decision_request；本任务里要并行做一部分、或换个干净的上下文，可以用 session_start 再开一个会话。不要去改别的任务的内容。",
   topic: "你是专题会话：从专题的角度看全局、回答人的问题，可以写专题文档、给任务写说明；人让你整理画布时再整理画布、标颜色。",
@@ -71,6 +83,7 @@ interface RoleStamp {
   topic: { id: Id; title: string } | null;
   refs: Array<{ id: Id; title: string }>;
   description: string;
+  managerTaskId?: Id | null;
 }
 
 const stampKey = (sessionId: Id) => `role-stamp:${sessionId}`;
@@ -81,6 +94,7 @@ function stampOf(f: RoleFacts): RoleStamp {
     topic: f.topic ? { id: f.topic.id, title: f.topic.title } : null,
     refs: f.refTopics.map((t) => ({ id: t.id, title: t.title })),
     description: f.task?.description ?? "",
+    managerTaskId: f.task?.managerTaskId ?? null,
   };
 }
 
@@ -126,6 +140,7 @@ export function roleUpdate(host: RoleHost, sessionId: Id): { lines: string[]; to
 
 function changes(before: RoleStamp, now: RoleStamp): string[] {
   const lines: string[] = [];
+  if ((before.managerTaskId ?? null) !== now.managerTaskId) lines.push(now.managerTaskId ? `直属主控已变更为 ${now.managerTaskId}；最新管理范围见 amo_whoami / task_management。` : "直属主控已解除，任务当前未分配。");
   if (before.role !== now.role) lines.push(`你现在是「${ROLE_NAME[now.role]}」（之前是「${ROLE_NAME[before.role]}」）。${ROLE_DUTY[now.role]}`);
   if (now.topic && before.topic?.id !== now.topic.id) lines.push(`任务现在在专题「${now.topic.title}」（${now.topic.id}）里：那里的主控、其他任务和专题文档见 amo_whoami。`);
   else if (!now.topic && before.topic) lines.push(`任务已移出专题「${before.topic.title}」。`);

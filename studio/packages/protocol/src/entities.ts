@@ -51,6 +51,8 @@ export interface Task {
    * project when it is in none). Its sessions get the 主控 role card and may propose tasks and relay messages.
    */
   lead?: boolean;
+  /** Single direct manager, explicitly assigned; absent/null on tasks created before management was introduced. */
+  managerTaskId?: Id | null;
   /** 主控传话不用确认 (stage 16): a 主控's relays go into this task's session without asking the person. */
   relayAuto?: boolean;
   /**
@@ -388,7 +390,7 @@ export type SessionItem =
    * ran and not read by the model yet (Claude reads it after the next tool call or at the turn's end, Codex at its next
    * step); `unsent` — its process went before it was read (it can be sent again). Absent: it reached the model.
    */
-  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery })
+  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; relayFromSessionId?: Id })
   | (ItemBase & { type: "agent"; markdown: string; streaming: boolean })
   /** The model's thinking before or between steps. */
   | (ItemBase & { type: "reasoning"; text: string; streaming: boolean; durationMs?: number })
@@ -707,6 +709,8 @@ export const CANVAS_LINK_LABEL_MAX = 200;
  */
 export interface CanvasLink {
   id: Id;
+  /** Absent: the original labelled line. Collaboration is undirected and never grants management rights. */
+  kind?: "collaboration";
   /** Node ids (not task ids). */
   from: Id;
   fromSide: CanvasSide;

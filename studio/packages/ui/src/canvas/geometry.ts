@@ -1,4 +1,4 @@
-import { pruneLinks, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type Rect } from "@amo-studio/protocol";
+import { pruneLinks, newCanvasRelationIssues, CanvasRelationError, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type Rect } from "@amo-studio/protocol";
 
 // Pure canvas edits used by the canvas page. Membership is structural (node.groupId); positions follow it.
 
@@ -133,7 +133,7 @@ export function duplicateNote(doc: CanvasDoc, nodeId: Id, newId: Id): CanvasDoc 
 }
 
 export function reverseEdge(doc: CanvasDoc, edgeId: Id): CanvasDoc {
-  return { ...doc, edges: doc.edges.map((e) => (e.id === edgeId ? { ...e, from: e.to, to: e.from } : e)) };
+  return checkedRelationEdit(doc, { ...doc, edges: doc.edges.map((e) => (e.id === edgeId ? { ...e, from: e.to, to: e.from } : e)) });
 }
 
 export function removeEdge(doc: CanvasDoc, edgeId: Id): CanvasDoc {
@@ -180,11 +180,15 @@ export function linkCurve(a: Point, aSide: CanvasSide, b: Point, bSide: CanvasSi
   return { d: `M ${r(a.x)} ${r(a.y)} C ${r(c1.x)} ${r(c1.y)}, ${r(c2.x)} ${r(c2.y)}, ${r(b.x)} ${r(b.y)}`, mid };
 }
 
-/** Adds a line, unless the same one (same cards, same sides) is there already. */
+function checkedRelationEdit(previous: CanvasDoc, next: CanvasDoc): CanvasDoc {
+  const issue = newCanvasRelationIssues(next, previous)[0];
+  if (issue) throw new CanvasRelationError(next, issue);
+  return next;
+}
+
+/** Connection sides are presentation only; relation identity and cycles are shared with Host. */
 export function addLink(doc: CanvasDoc, link: CanvasLink): CanvasDoc {
-  const links = doc.links ?? [];
-  if (link.from === link.to || links.some((l) => l.from === link.from && l.to === link.to && l.fromSide === link.fromSide && l.toSide === link.toSide)) return doc;
-  return { ...doc, links: [...links, link] };
+  return checkedRelationEdit(doc, { ...doc, links: [...(doc.links ?? []), link] });
 }
 
 /** A line's label; an empty one is removed. */
@@ -201,7 +205,7 @@ export function setLinkLabel(doc: CanvasDoc, linkId: Id, label: string): CanvasD
 }
 
 export function reverseLink(doc: CanvasDoc, linkId: Id): CanvasDoc {
-  return { ...doc, links: (doc.links ?? []).map((l) => (l.id === linkId ? { ...l, from: l.to, fromSide: l.toSide, to: l.from, toSide: l.fromSide } : l)) };
+  return checkedRelationEdit(doc, { ...doc, links: (doc.links ?? []).map((l) => (l.id === linkId ? { ...l, from: l.to, fromSide: l.toSide, to: l.from, toSide: l.fromSide } : l)) });
 }
 
 export function removeLink(doc: CanvasDoc, linkId: Id): CanvasDoc {

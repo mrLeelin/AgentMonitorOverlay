@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { projectWorkspaces, taskWhere, wouldCycle, type CanvasDoc, type CanvasEdge, type CanvasItem, type Id, type Rect, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
+import { projectWorkspaces, taskWhere, type CanvasDoc, type CanvasEdge, type CanvasItem, type Id, type Rect, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { COLUMN_NAMES, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
 import { placeBeside, updateGroup } from "./geometry.js";
 import { DeleteButton } from "./DeleteButton.js";
+import { TaskManagement } from "../task/TaskManagement.js";
+import type { HostLink } from "../host/client.js";
 
 export type CanvasSelection = { kind: "node"; id: Id } | { kind: "group"; id: Id } | null;
 
 export interface DetailProps {
+  link: HostLink;
   doc: CanvasDoc;
   selection: NonNullable<CanvasSelection>;
   tasks: readonly Task[];
@@ -75,7 +78,7 @@ export function CanvasDetail({ anchor, avoid, area, hidden, onClose, ...props }:
   );
 }
 
-function DetailContent({ doc, selection, tasks, allTasks = tasks, topics = [], sessions, workspaces, onChange, onEdit, onClearSelection, onDeleteGroup, onOpenTask, onDescribe, newId, renderItem }: DetailProps) {
+function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics = [], sessions, workspaces, onChange, onEdit, onClearSelection, onDeleteGroup, onOpenTask, onDescribe, newId, renderItem }: DetailProps) {
   if (selection.kind === "group") {
     const group = doc.groups.find((g) => g.id === selection.id);
     if (!group) return null;
@@ -206,7 +209,8 @@ function DetailContent({ doc, selection, tasks, allTasks = tasks, topics = [], s
   const look = status ? SESSION_LOOK[status] : null;
   const title = (id: Id) => allTasks.find((t) => t.id === id)?.title || "未命名任务";
   const before = doc.edges.filter((e) => e.to === task.id);
-  const candidates = tasks.filter((t) => t.id !== task.id && !before.some((e) => e.from === t.id) && !wouldCycle(doc.edges, t.id, task.id));
+  // Keep the entry visible; the same save guard explains duplicates and the exact cycle path.
+  const candidates = tasks.filter((t) => t.id !== task.id);
 
   return (
     <div className="side-section" role="group" aria-label="任务详情">
@@ -216,6 +220,7 @@ function DetailContent({ doc, selection, tasks, allTasks = tasks, topics = [], s
         {taskWhere(task, workspaces)}
       </span>
       <TaskDescription task={task} onDescribe={onDescribe} />
+      <TaskManagement link={link} task={task} tasks={allTasks} onOpenTask={onOpenTask} onDescribe={onDescribe} />
       <button type="button" className="btn-ghost small" onClick={() => onOpenTask(task.id)}>
         打开任务
       </button>
@@ -246,6 +251,15 @@ function DetailContent({ doc, selection, tasks, allTasks = tasks, topics = [], s
           onChange({ ...doc, edges: [...doc.edges, edge] });
         }}
       />
+      <span className="side-subheading">协作 · 不授予管理权限</span>
+      {(doc.links ?? []).filter((l) => l.kind === "collaboration" && (l.from === node.id || l.to === node.id)).map((l) => {
+        const other = doc.nodes.find((n) => n.id === (l.from === node.id ? l.to : l.from));
+        return <div className="dep-row" key={l.id}><span className="name">{other && (other.kind === "task" || other.kind === "ref") ? title(other.taskId) : "协作卡片"}</span><button type="button" className="link-btn" onClick={() => onEdit((d) => ({ ...d, links: (d.links ?? []).filter((x) => x.id !== l.id) }))}>解除协作</button></div>;
+      })}
+      <select aria-label="添加协作任务" value="" onChange={(e) => {
+        const to = e.target.value;
+        if (to) onEdit((d) => ({ ...d, links: [...(d.links ?? []), { id: newId("collab"), kind: "collaboration", from: node.id, to, fromSide: "right", toSide: "left" }] }));
+      }}><option value="">选择协作任务…</option>{doc.nodes.filter((n) => (n.kind === "task" || n.kind === "ref") && n.id !== node.id && !(doc.links ?? []).some((l) => l.kind === "collaboration" && ((l.from === node.id && l.to === n.id) || (l.to === node.id && l.from === n.id)))).map((n) => <option key={n.id} value={n.id}>{n.kind === "task" || n.kind === "ref" ? title(n.taskId) : ""}</option>)}</select>
     </div>
   );
 }
@@ -266,7 +280,7 @@ function TaskDescription({ task, onDescribe }: { task: Task; onDescribe?: ((task
 
 function AddDependency({ candidates, onAdd }: { candidates: readonly Task[]; onAdd(taskId: Id): void }) {
   const [value, setValue] = useState("");
-  if (!candidates.length) return <span className="side-note">没有可以设为前置的任务（会成环的已排除）。</span>;
+  if (!candidates.length) return <span className="side-note">专题里没有其他任务可设为前置。</span>;
   return (
     <div className="dep-add">
       <select value={value} onChange={(e) => setValue(e.target.value)} aria-label="添加前置任务">

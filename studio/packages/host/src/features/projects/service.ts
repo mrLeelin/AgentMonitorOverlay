@@ -47,10 +47,14 @@ export class ProjectsFeature extends Feature<"tasks"> {
     const ws = this.requireWorkspace(id);
     if (isCommon(ws)) throw new HostError("conflict", "the common space cannot be archived");
     if (ws.archivedAt) return { workspace: ws, tasks: [] };
+    const members = this.store.listTasks().filter((x) => x.workspaceId === id && !x.archivedAt);
+    const together = new Set(members.map((t) => t.id));
+    for (const t of members) this.f.tasks.checkArchive(t.id, together);
     const workspace = this.store.setWorkspaceArchived(id, new Date().toISOString());
     this.publish({ type: "workspace.upserted", workspace });
     const tasks: Task[] = [];
-    for (const t of this.store.listTasks().filter((x) => x.workspaceId === id && !x.archivedAt)) tasks.push(await this.f.tasks.archiveTask(t.id));
+    const depth = (t: Task) => { const seen = new Set<string>(); let next = t; while (next.managerTaskId && !seen.has(next.id)) { seen.add(next.id); next = this.store.getTask(next.managerTaskId) ?? next; } return seen.size; };
+    for (const t of members.sort((a, b) => depth(b) - depth(a))) tasks.push(await this.f.tasks.archiveTask(t.id));
     await this.f.tasks.archiveSessions(this.store.listSessions().filter((s) => s.topicId && s.workspaceId === id));
     return { workspace: this.store.getWorkspace(id)!, tasks };
   }
@@ -59,13 +63,26 @@ export class ProjectsFeature extends Feature<"tasks"> {
     const ws = this.requireWorkspace(id);
     if (!ws.archivedAt) return { workspace: ws, tasks: [] };
     const since = ws.archivedAt;
+    const restoring = this.store.listTasks().filter((x) => x.workspaceId === id && x.archivedAt && x.archivedAt >= since && !(x.topicId && this.store.getTopic(x.topicId)?.archivedAt));
+    const restoringIds = new Set(restoring.map((t) => t.id));
+    for (const t of restoring) {
+      const seen = new Set<string>([t.id]);
+      let parentId = t.managerTaskId;
+      while (parentId) {
+        const parent = this.store.getTask(parentId);
+        if (!parent || !parent.lead || parent.remote || seen.has(parentId) || (parent.archivedAt && !restoringIds.has(parentId))) throw new HostError("conflict", "请先恢复其他项目中的直属主控，再恢复此项目。");
+        seen.add(parentId);
+        parentId = parent.managerTaskId;
+      }
+    }
     const workspace = this.store.setWorkspaceArchived(id, null);
     this.publish({ type: "workspace.upserted", workspace });
     const tasks: Task[] = [];
-    for (const t of this.store.listTasks().filter((x) => x.workspaceId === id && x.archivedAt && x.archivedAt >= since)) {
-      // A task whose topic is archived stays archived until the topic is restored.
-      if (t.topicId && this.store.getTopic(t.topicId)?.archivedAt) continue;
-      tasks.push(await this.f.tasks.unarchiveTask(t.id));
+    const pending = [...restoring];
+    while (pending.length) {
+      const index = pending.findIndex((t) => !t.managerTaskId || !this.store.getTask(t.managerTaskId)?.archivedAt);
+      if (index < 0) throw new HostError("conflict", "请先恢复其他项目中的直属主控，再恢复这些任务。");
+      tasks.push(await this.f.tasks.unarchiveTask(pending.splice(index, 1)[0]!.id));
     }
     const topicSessions = this.store.listSessions().filter((s) => s.topicId && s.workspaceId === id && !this.store.getTopic(s.topicId)?.archivedAt);
     await this.f.tasks.unarchiveSessions(topicSessions, since);

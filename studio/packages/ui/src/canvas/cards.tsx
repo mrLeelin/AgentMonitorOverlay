@@ -13,7 +13,8 @@ export const NOTE_W = 180;
 export const NOTE_H = 90;
 
 /** How tall a task's card is (edges and placement go by it). */
-export const cardHeight = (task: Task | undefined) => (task?.description ? CARD_H_DESC : CARD_H);
+export const managementHeight = (task: Task | undefined) => (task?.managerTaskId ? 24 : 0) + (task?.lead ? 40 : 0);
+export const cardHeight = (task: Task | undefined) => (task?.description ? CARD_H_DESC : CARD_H) + managementHeight(task);
 
 /**
  * The smallest a card may be dragged to (2026-10-29): a task or reference card keeps its title and status line (the
@@ -39,7 +40,7 @@ interface CardEvents {
   onContextMenu(e: ReactMouseEvent): void;
 }
 
-export function TaskCard({ node, task, sessions, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu }: CardEvents & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void }) {
+export function TaskCard({ node, task, sessions, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager }: CardEvents & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void }) {
   const own = taskSessions(task, sessions);
   const status = taskStatus(own);
   const look = status ? SESSION_LOOK[status] : null;
@@ -47,11 +48,11 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
   const where = taskWhere(task, workspaces);
   // An archived task keeps its card (2026-10-22): greyed, marked 已归档, so its links and dependencies still make sense.
   const archived = !!task.archivedAt;
-  const size = node.size ?? { w: CARD_W, h: cardHeight(task) };
-  const lines = node.size ? descLines(size.h) : 2;
+  const size = { w: node.size?.w ?? CARD_W, h: Math.max(node.size?.h ?? cardHeight(task), CARD_H + managementHeight(task)) };
+  const lines = node.size ? descLines(size.h - managementHeight(task)) : 2;
   return (
     <div
-      className={`canvas-card${archived ? " is-archived" : ""}${selected ? " selected" : ""}${linking ? " link-target" : ""}`}
+      className={`canvas-card${archived ? " is-archived" : ""}${selected ? " selected" : ""}${linking ? " link-target" : ""}${dimmed ? " management-dimmed" : ""}`}
       style={{ left: node.pos.x, top: node.pos.y, width: size.w, height: size.h }}
       role="button"
       tabIndex={0}
@@ -73,7 +74,7 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
           </span>
         )}
         {task.lead && !archived && (
-          <span className="lead-badge" title="主控：协调这个专题的任务" data-testid="lead-badge">
+          <span className="lead-badge" title="主控：管理明确归属的下辖任务" data-testid="lead-badge">
             主控
           </span>
         )}
@@ -90,6 +91,8 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
           </>
         )}
       </span>
+      {task.managerTaskId && <button type="button" className="link-btn canvas-manager" title="定位直属主控" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onLocateManager?.(); }}>直属：{manager?.title || "主控不可用"}</button>}
+      {task.lead && management && <span className="canvas-management-summary" data-testid="canvas-management-summary">直属主控 {management.directLeadCount} · 下辖执行 {management.workerCount}<br />待确认 {management.pending} 项</span>}
       {task.description && lines > 0 && (
         <span className="canvas-card-desc" title={task.description} style={lines !== 2 ? { WebkitLineClamp: lines } : undefined} data-testid="canvas-card-desc">
           {task.description}

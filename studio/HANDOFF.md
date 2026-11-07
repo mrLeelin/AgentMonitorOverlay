@@ -28,6 +28,9 @@
 
 ## 还开着的事
 
+- 画布连线纠错与管理树布局：本工作区已完成共享去重/防环、旧问题逐线定位修复和树形折线布局（`plans/done/canvas-relations.md`）；已做定向测试及隔离 Electron 拖线/反向/修复/布局验证，尚未提交、发布或加载用户使用中的 Studio/Host。
+- 主控归属与画板关系：本工作区已完成代码、定向测试和隔离 Electron 验收（`plans/done/lead-management.md`），未提交、发布或加载用户使用中的 Host；旧任务保持未分配，需由用户或专题入口明确设置直属主控。
+
 | 事项 | 状态（2026-11-06 核对） |
 |---|---|
 | 文档整理（Archify 三层） | 11-06 用户审过，合进 master：HANDOFF 瘦身、导航索引 `docs/nav/`（`node scripts/nav.mjs`）+ 锚点测试、plans 只留决定、`plans/later/` 放以后推进的。维护办法和对比实验在 `plans/doc-architecture.md`；以后每批文档改动后用里面的 3 个问题复测 |

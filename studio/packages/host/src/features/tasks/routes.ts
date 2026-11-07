@@ -4,6 +4,7 @@ import { route, type Route, obj } from "../../http/route.js";
 /** The HTTP routes of this feature (see protocol/src/api.ts for each route's request and response). */
 export function tasksRoutes(service: HostService): Route[] {
   return [
+    route("GET /api/tasks/:id/management", ({ params }) => service.tasks.management(params.id!)),
     route("POST /api/tasks", ({ body }) => service.tasks.createTask(obj(body) as never)),
     route("GET /api/claude/outside-sessions", () => service.tasks.outsideSessions()),
     route("GET /api/claude/outside-sessions/:id/preview", ({ params }) => service.tasks.outsidePreview(params.id!)),

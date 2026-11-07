@@ -43,9 +43,34 @@ function seed(store: Store) {
 describe("Store", () => {
   it("applies migrations once", () => {
     const path = tempDbPath();
-    expect(makeStore(path).schemaVersion()).toBe(25);
+    expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
     open.pop()!.close();
-    expect(makeStore(path).schemaVersion()).toBe(25);
+    expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
+  });
+
+  it("migrates unassigned legacy tasks without guessing managers and persists transfers across reopen", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { ws, task } = seed(store);
+    store.db.exec("DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id;");
+    store.db.prepare("DELETE FROM schema_migrations WHERE version = ?").run(MIGRATIONS.length);
+    open.pop()!.close();
+    const migrated = makeStore(path);
+    expect(migrated.getTask(task.id)).toMatchObject({ title: "Retry", managerTaskId: null });
+    const first = migrated.createTask({ title: "first", workspaceId: ws.id, lead: true });
+    const second = migrated.createTask({ title: "second", workspaceId: ws.id, lead: true });
+    const child = migrated.createTask({ title: "child", workspaceId: ws.id, managerTaskId: first.id, description: "  first-turn scope  " });
+    expect(child.description).toBe("first-turn scope");
+    expect(migrated.getTask(child.id)?.description).toBe("first-turn scope");
+    expect(migrated.getTask(child.id)?.managerTaskId).toBe(first.id);
+    migrated.updateTask(child.id, { managerTaskId: second.id });
+    migrated.updateTask(task.id, { managerTaskId: first.id });
+    migrated.updateTask(task.id, { managerTaskId: null });
+    open.pop()!.close();
+    const reopened = makeStore(path);
+    expect(reopened.getTask(child.id)?.managerTaskId).toBe(second.id);
+    expect(reopened.getTask(child.id)?.description).toBe("first-turn scope");
+    expect(reopened.getTask(task.id)?.managerTaskId).toBeNull();
   });
 
   it("refuses data a newer Studio migrated, says so for the person, and leaves the file alone (2026-10-28)", () => {
