@@ -32,3 +32,13 @@ Desktop.ini
 *.sqlite3
 *.db
 local-state/
+
+# Studio runtime data when the repository root is used as the data directory
+/electron/
+/host-token
+/host.json
+/host.lock
+/mcp-token
+/shell-prefs.json
+/studio.db-shm
+/studio.db-wal
