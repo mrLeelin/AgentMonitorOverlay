@@ -78,7 +78,7 @@ export class CanvasFeature extends Feature {
       updatedAt: new Date().toISOString(),
     };
     this.store.putCanvas(next);
-    this.publish({ type: "canvas.updated", canvas: next });
+    this.publish({ type: "canvas.updated", canvas: next, ...(actorSessionId ? { actorSessionId } : {}) });
     return next;
   }
 

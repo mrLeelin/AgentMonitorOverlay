@@ -139,6 +139,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.tasks.ensureStructure();
     this.sessions.watchReports();
     this.collab.watchAnswers();
+    this.canvasReview.returns.watch();
     this.tasks.watchColumns();
     this.duty.registerCheck(this.issues.dutyCheck());
   }

@@ -389,6 +389,8 @@ export function canvasOutline(
 
 /** A topic's canvas, and 画布审阅's bubbles on it (2026-10-27). */
 export interface CanvasRoutes {
+  "GET /api/topics/:id/canvas/returns": { req: void; res: import("./entities.js").CanvasReturnStatus };
+  "POST /api/topics/:id/canvas/returns/retry": { req: void; res: import("./entities.js").CanvasReturnStatus };
   /** A topic's canvas. */
   "GET /api/topics/:id/canvas": { req: void; res: CanvasDoc };
   /** Saves the whole canvas. `version` must equal the stored one (409 otherwise); the response carries the new one. */

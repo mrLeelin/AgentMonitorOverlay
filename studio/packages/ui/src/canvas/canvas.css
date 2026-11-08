@@ -182,6 +182,19 @@
 .canvas-item { gap: 4px; padding: 8px 12px; }
 .item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .item-num { font-family: var(--font-code); font-weight: 600; color: var(--text-dim); }
+.item-change { margin-left: 6px; font-family: var(--font-ui); color: var(--primary); font-size: 11px; white-space: nowrap; }
+.item-discussion-actions { display: flex; align-items: center; gap: 6px; margin-top: auto; min-width: 0; flex: none; font-size: 11px; height: 20px; }
+.item-discussion-actions > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-discussion-actions > button { flex: none; font-size: 11px; white-space: nowrap; }
+.item-discussion-actions > button:last-child { margin-left: auto; }
+.canvas-review-lines, .canvas-review-lines * { pointer-events: none; }
+.canvas-review-line-label { font-family: var(--font-ui); font-size: 12px; fill: var(--text-dim); stroke: var(--bg); stroke-width: 5px; paint-order: stroke; }
+.canvas-review-relation-card { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px dashed var(--border-strong); border-radius: var(--r-m); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; overflow: hidden; }
+.canvas-review-relation-card > strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; font-size: 12px; }
+.canvas-review-relation-card > span { font-size: 11px; color: var(--text-dim); }
+.canvas-review-relation-card:hover:not(:disabled) { border-color: var(--primary); background: var(--selection); }
+.canvas-review-relation-card:disabled { cursor: default; opacity: 0.65; }
+.canvas-review-changes { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 7px 12px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--bg); font-size: var(--fs-sm); }
 .item-status { padding: 0 6px; border-radius: var(--r-btn); border: 1px solid var(--border-strong); line-height: 18px; color: var(--text-dim); white-space: nowrap; }
 .item-status[data-status="confirmed"] { border-color: var(--running); color: var(--running-text); }
 .item-status[data-status="discuss"] { border-color: var(--attention); color: var(--attention); }
@@ -311,3 +324,5 @@
 .canvas-detail .side-section { gap: 9px; }
 .canvas-detail .side-heading { padding-right: 26px; font-size: 15px; line-height: 1.4; }
 .canvas-detail .stack-field select { min-width: 0; }
+.item-return { margin-left: 5px; color: var(--text-dim); font-size: 10px; font-weight: normal; }
+.item-return[data-state="blocked"] { color: var(--warning, #e8b45b); }

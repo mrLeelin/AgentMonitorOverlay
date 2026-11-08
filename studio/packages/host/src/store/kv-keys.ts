@@ -19,8 +19,10 @@ export interface KvKey {
 }
 
 export const KV_KEYS: readonly KvKey[] = [
+  { key: "canvas.review-returns", scope: "global", owner: "features/canvasreview/returns.ts", what: "画布结论回传记录和整轮继续通知，Host 重启后接续待送消息" },
   // Settings (设置)
   { key: "settings:presets", scope: "global", owner: "core/shared.ts", what: "常用预设" },
+  { key: "settings:network", scope: "global", owner: "runtime/network.ts", what: "模型后台的代理与连接方式" },
   { key: "settings:disabled-features", scope: "global", owner: "core/shared.ts", what: "设置 → 功能：关掉的功能" },
   { key: "settings:experimental-features", scope: "global", owner: "core/shared.ts", what: "设置 → 功能：打开的实验功能" },
   { key: "settings:team-auto-send", scope: "global", owner: "core/shared.ts", what: "中转：会话发的问题不等「发送」直接发" },
@@ -82,6 +84,8 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "remote.images", scope: "global", owner: "features/remote/copy-images.ts", what: "远程会话里的图片 → 本机的附件" },
   // Per session, task, project: deleted with it (Store.purge)
   { key: "role-stamp:", scope: "session", owner: "core/role.ts", what: "会话上次看到的角色卡" },
+  { key: "codex-lead-readonly:", scope: "session", owner: "runtime/codex/codex-runtime.ts", what: "Codex 主控只读会话的运行时标识" },
+  { key: "dsh-lead-readonly:", scope: "session", owner: "runtime/dsh/dsh-runtime.ts", what: "DSH 主控只读会话的运行时标识" },
   { key: "annotation-seq:", scope: "session", owner: "features/review/service.ts", what: "批注编号" },
   { key: "report-turn:", scope: "session", owner: "features/sessions/service.ts", what: "已汇报过的那一轮" },
   { key: "claude.login:", scope: "session", owner: "runtime/claude/claude-login.ts", what: "会话用的 Claude 登录方式" },

@@ -149,10 +149,14 @@
         { "label": "画布审阅", "path": "studio/packages/host/src/features/canvasreview/service.ts", "anchor": "export class CanvasReviewFeature" },
         { "label": "数据结构", "path": "studio/packages/protocol/src/canvas.ts" },
         { "label": "画布页", "path": "studio/packages/ui/src/canvas/CanvasPage.tsx" },
-        { "label": "画布状态", "path": "studio/packages/ui/src/canvas/useCanvas.ts" }
+          { "label": "画布状态", "path": "studio/packages/ui/src/canvas/useCanvas.ts" },
+          { "label": "审阅卡变化标记", "path": "studio/packages/ui/src/canvas/useReviewChanges.ts", "anchor": "export function useReviewChanges" },
+          { "label": "讨论关联上下文", "path": "studio/packages/host/src/features/canvasreview/context.ts", "anchor": "export function discussionContext" },
+          { "label": "审阅来源与讨论关系", "path": "studio/packages/ui/src/canvas/review-relations.ts", "anchor": "export function reviewRelations" },
+          { "label": "确认自动回传与整轮继续", "path": "studio/packages/host/src/features/canvasreview/returns.ts", "anchor": "export class CanvasReturns" }
       ],
       "related": ["studio.topics", "ui.shell"],
-      "next": ["studio/plans/done/review-canvas.md", "studio/plans/later/canvas-workflow.md"]
+        "next": ["studio/plans/done/review-canvas.md", "studio/plans/done/canvas-discussion-context.md", "studio/plans/done/canvas-review-changes.md", "studio/plans/done/canvas-review-returns.md", "studio/plans/later/canvas-workflow.md"]
     },
     {
       "id": "studio.remote",

@@ -1,0 +1,50 @@
+import { expect, test } from "@playwright/test";
+import type { CanvasDoc, CanvasItem, CanvasReturnStatus, Session, SessionItem, Task, Topic } from "@amo-studio/protocol";
+import { launchStudio, screenshot, type Studio } from "../support/studio.js";
+
+let studio: Studio | undefined;
+test.afterEach(async () => { await studio?.close(); studio = undefined; });
+
+test("confirmed discussion returns to the lead, the last UI confirmation resumes it once", async () => {
+  studio = await launchStudio();
+  const s = studio, { page } = s;
+  const topic = await s.api<Topic>("POST", "/api/topics", { title: "画布自动回传测试" });
+  const post = { group: "按钮小测试", items: [{ title: "按钮颜色", body: "建议使用蓝色" }, { title: "按钮文字", body: "确认后使用「开始」" }] };
+  const { session } = await s.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "测试主控", topicId: topic.id, lead: true, firstSession: { profileId: "codex-mock", text: `[[mcp: canvas_items_post ${JSON.stringify(post)}]]` } });
+  const canvas = () => s.api<CanvasDoc>("GET", `/api/topics/${topic.id}/canvas`);
+  const status = () => s.api<CanvasReturnStatus>("GET", `/api/topics/${topic.id}/canvas/returns`);
+  const transcript = () => s.api<SessionItem[]>("GET", `/api/sessions/${session.id}/items`);
+  const continuation = async () => (await transcript()).filter((i) => i.type === "user" && i.text.includes("【画布本轮已确认】"));
+  await expect.poll(async () => (await canvas()).nodes.length, { timeout: 60_000 }).toBe(2);
+  const firstId = (await canvas()).nodes.find((n) => n.kind === "item" && n.num === 1)!.id;
+  const discussion = await s.api<Session>("POST", `/api/topics/${topic.id}/canvas/items/${firstId}/discuss`, {});
+  await expect.poll(async () => (await s.api<{ sessions: Session[] }>("GET", "/api/state")).sessions.find((x) => x.id === discussion.id)?.status, { timeout: 60_000 }).toBe("idle");
+  await s.api("POST", `/api/sessions/${discussion.id}/messages`, { text: '[[mcp: canvas_item_update {"item":"#1","conclusion":"按钮使用蓝色","status":"confirmed"}]]' });
+  await expect.poll(async () => (await status()).receipts.length, { timeout: 60_000 }).toBe(1);
+  expect(await continuation()).toHaveLength(0);
+  await page.getByTestId("scope-topic-画布自动回传测试").click();
+  await page.getByRole("button", { name: "画布", exact: true }).click();
+  await expect(page.getByTestId("canvas-item")).toHaveCount(2);
+  await expect(page.getByTestId("item-return")).toHaveText("已回传主控");
+  await page.getByRole("button", { name: "全部", exact: true }).click();
+  const second = page.getByTestId("canvas-item").filter({ hasText: "按钮文字" });
+  await second.click({ button: "right" });
+  await page.getByTestId("menu-item-confirmed").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("item-return")).toHaveCount(2);
+  await expect.poll(async () => (await continuation()).length, { timeout: 60_000 }).toBe(1);
+  await expect(page.getByTestId("canvas-returns")).toContainText("已通知继续", { timeout: 60_000 });
+  await expect.poll(async () => (await s.api<{ sessions: Session[] }>("GET", "/api/state")).sessions.find((x) => x.id === session.id)?.status, { timeout: 60_000 }).toBe("idle");
+  const rows = await transcript();
+  const returned = (await continuation())[0]!;
+  expect(rows.some((i) => i.type === "agent" && i.seq > returned.seq)).toBe(true);
+  // A stale UI save carrying the same confirmed values, and then a reload, cannot launch another turn.
+  const doc = await canvas();
+  await s.api("PUT", `/api/topics/${topic.id}/canvas`, { ...doc, nodes: doc.nodes.map((n) => ({ ...n, pos: { x: n.pos.x + 1, y: n.pos.y } })) });
+  await page.reload();
+  await expect(page.getByTestId("item-return")).toHaveCount(2);
+  expect(await continuation()).toHaveLength(1);
+  expect((await canvas()).nodes.filter((n): n is CanvasItem => n.kind === "item").every((n) => n.status === "confirmed")).toBe(true);
+  await page.getByRole("button", { name: "全部", exact: true }).click();
+  await screenshot(s.app, "canvas-returns", "CR-1-auto-return", page);
+});

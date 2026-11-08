@@ -859,7 +859,8 @@ export type HostEvent = { seq: number } & (
   | { type: "annotation.upserted"; annotation: Annotation }
   | { type: "annotation.removed"; sessionId: Id; annotationId: Id }
   | { type: "scratchpad.updated"; scratchpad: Scratchpad }
-  | { type: "canvas.updated"; canvas: CanvasDoc }
+  | { type: "canvas.updated"; canvas: CanvasDoc; actorSessionId?: Id }
+  | { type: "canvas.returns.updated"; topicId: Id }
   | { type: "callout.upserted"; callout: import("./entities.js").CanvasCallout }
   | { type: "todo.upserted"; todo: TodoItem }
   | { type: "todo.removed"; todoId: Id }

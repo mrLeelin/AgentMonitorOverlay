@@ -28,6 +28,7 @@
 
 ## 还开着的事
 
+- 画布讨论与变化提醒：关联卡上下文、变化标记、来源关系和讨论展开已实现；11-09 新增确认自动回传和整轮自动继续，已完成隔离 mock Electron 验证并重启开发版加载（`plans/done/canvas-review-returns.md`），待用户手动验收。本批改动在 `codex/canvas-review-workflow` 分支，未发布；连带复查和 Focus 聚合仍待推进。
 - 画布连线纠错与管理树布局：本工作区已完成共享去重/防环、旧问题逐线定位修复和树形折线布局（`plans/done/canvas-relations.md`）；已做定向测试及隔离 Electron 拖线/反向/修复/布局验证，尚未提交、发布或加载用户使用中的 Studio/Host。
 - 主控归属与画板关系：本工作区已完成代码、定向测试和隔离 Electron 验收（`plans/done/lead-management.md`），未提交、发布或加载用户使用中的 Host；旧任务保持未分配，需由用户或专题入口明确设置直属主控。
 
@@ -46,6 +47,7 @@
 
 ## 已知问题
 
+- 画布普通连线标签经过其他卡片时可能遮住卡片点击位置（2026-11-08 隔离 Electron 验证发现）；本批讨论上下文未调整连线布局。
 - `packages/host/src/runtime/codex/server-manager.test.ts` 以前偶发失败：app-server 启动后在后台 `git fetch` OpenAI 的插件市场，这个 git 继承了监听端口，`taskkill /T` 可能漏掉它。11-03 起这个测试用 `-c features.plugins=false` 启动；自动打包时还是把它排除在外（`release.mjs`），等它稳定一阵再定要不要放回去。同一个 git 也会拿着 Electron 的输出管道，让 e2e 的 `app.close()` 等到超时：11-05 起 e2e 的 `launchStudio` 在每个用例的 `codex-home` 写 `[features] plugins = false`。Studio 实际运行时照旧同步插件，碰到端口被占会换个端口重启。
 - `packages/host/src/runtime/dsh/dsh-runtime.integration.test.ts` 的「session_start with write in a folder not set up」在全量 vitest 负载下偶尔超时，单独跑能过（11-05、11-06 都见过），原因没查。
 - 端到端里 Claude 的 mock 配置没法向 Claude Code 要型号列表（会超时），所以测试模式给 mock 配了内置列表（`packages/host/src/bin.ts`）。

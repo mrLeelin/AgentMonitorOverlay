@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, ITEM_CARD, REVIEW_STATUSES, taskManagement, workspacesActivity, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasItem, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type ModelProfile, type ReviewStatus, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError } from "../host/client.js";
 import { useCallouts } from "./useCallouts.js";
@@ -26,6 +26,10 @@ import { arrangeManagement } from "./management-layout.js";
 import { managementPath } from "./management-routing.js";
 import { newCanvasRelationIssues, canvasRelationMessage, CanvasRelationError } from "@amo-studio/protocol";
 import { CanvasRelationProblems } from "./CanvasRelationProblems.js";
+import { useReviewChanges } from "./useReviewChanges.js";
+import { continuingThread, reviewRelations } from "./review-relations.js";
+import { ReviewRelations } from "./ReviewRelations.js";
+import { useCanvasReturns } from "./useCanvasReturns.js";
 
 export { CARD_H, CARD_W, NOTE_H, NOTE_W } from "./cards.js";
 
@@ -100,6 +104,9 @@ interface CanvasPageProps {
 
 export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [topic], sessions, workspaces, profiles = [], onOpenTask, onNewTask, openCallout, compact = false }: CanvasPageProps) {
   const { doc, save, conflict, dismissConflict, error, dismissError } = useCanvas(link, topic.id);
+  const { changes: reviewChanges, acknowledge: acknowledgeReview } = useReviewChanges(doc, topic.id, link.url, !compact);
+  const returns = useCanvasReturns(link, topic.id);
+  const returnReceipts = useMemo(() => new Map(returns.status.receipts.map((r) => [r.itemId, r])), [returns.status.receipts]);
   const viewKey = compact ? MINI_VIEW_KEY : VIEW_KEY;
   const [view, setView] = useState<View>(() => loadView(viewKey));
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -111,6 +118,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   };
   const [selection, setSelectionState] = useState<CanvasSelection>(null);
   const [relations, setRelations] = useState({ management: true, collaboration: true, dependency: true });
+  const [showReviewRelations, setShowReviewRelations] = useState(() => readKey("amo.canvasReviewRelations") !== "0");
+  const [expandedDiscussion, setExpandedDiscussion] = useState<{ topicId: string; itemId: string } | null>(null);
   const [allLevels, setAllLevels] = useState(true);
   const decisions = useOpenDecisions(link);
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
@@ -206,6 +215,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const anyTaskById = new Map(allTasks.map((t) => [t.id, t]));
   const nodeSize = (n: CanvasNode) => n.kind === "task" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? cardHeight(anyTaskById.get(n.taskId)), CARD_H + managementHeight(anyTaskById.get(n.taskId))) } : n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : n.kind === "item" ? ITEM_CARD : { w: CARD_W, h: cardHeight(anyTaskById.get(n.taskId)) });
   const minSize = (n: CanvasNode) => (n.kind === "note" ? NOTE_MIN : n.kind === "item" ? ITEM_MIN : n.kind === "task" ? { ...CARD_MIN, h: CARD_MIN.h + managementHeight(anyTaskById.get(n.taskId)) } : CARD_MIN);
+  const relationDoc = preview ?? doc;
+  const expandedItem = expandedDiscussion?.topicId === topic.id ? expandedDiscussion.itemId : null;
+  const reviewModel = useMemo(() => relationDoc && !compact && showReviewRelations ? reviewRelations(relationDoc, sessions, allTasks, expandedItem, (n) => ({ ...n.pos, ...(sizes.get(n.id) ?? nodeSize(n)) })) : null, [relationDoc, sessions, allTasks, expandedItem, sizes, compact, showReviewRelations]);
 
   // 删除分组 (2026-10-29): a group with cards asks first whether they go too; an empty one goes at once.
   const [deletingGroup, setDeletingGroup] = useState<Id | null>(null);
@@ -289,7 +301,13 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   /** 全部显示: everything on the canvas in view (at most 100%). */
   const fitAll = () => {
-    const cards = doc && contentBounds(doc, nodeSize);
+    let cards = doc && contentBounds(doc, nodeSize);
+    if (cards && reviewModel) {
+      const bounds = [cards, ...reviewModel.sources.map((c) => c.rect), ...reviewModel.discussions.map((c) => c.rect)];
+      const x = Math.min(...bounds.map((r) => r.x));
+      const y = Math.min(...bounds.map((r) => r.y));
+      cards = { x, y, w: Math.max(...bounds.map((r) => r.x + r.w)) - x, h: Math.max(...bounds.map((r) => r.y + r.h)) - y };
+    }
     const box = viewport.current?.getBoundingClientRect();
     if (!cards || !box) return setView({ x: 0, y: 0, k: 1 });
     // Bubbles stand above their cards' top-right corners: room for them too (画布审阅).
@@ -579,14 +597,18 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     if (selection?.kind === "node" && selection.id === id) setSelectionState(null);
   };
   /** 就这条展开聊: a new session on this item, opened at once. */
+  const openingDiscussions = useRef(new Set<string>());
   const discuss = (it: CanvasItem) => {
+    if (openingDiscussions.current.has(it.id)) return;
+    openingDiscussions.current.add(it.id);
     setNotice({ text: `正在为 #${it.num} 开会话…` });
     call(link, "POST /api/topics/:id/canvas/items/:itemId/discuss", { id: topic.id, itemId: it.id }, {})
       .then((s) => {
         setNotice(null);
         if (s.taskId) onOpenTask(s.taskId, s.id);
       })
-      .catch(failed("没能开会话"));
+      .catch(failed("没能开会话"))
+      .finally(() => openingDiscussions.current.delete(it.id));
   };
   const shownCallout = openedCallout ? callouts.find((c) => c.id === openedCallout && c.state !== "closed") : undefined;
   // Asked from outside (Focus): once the canvas and its bubbles are here, centre that question and open it.
@@ -757,8 +779,26 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         </div>
       )}
       </div>
-      {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["collaboration", "协作 ··· 点线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => setRelations((cur) => ({ ...cur, [key]: e.target.checked }))} />{label}</label>)}{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}<span className="dim">协作仅在选中相关任务时显示</span></div>}
+      {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["collaboration", "协作 ··· 点线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => setRelations((cur) => ({ ...cur, [key]: e.target.checked }))} />{label}</label>)}<label title="自动显示问题来源和展开的讨论，不改变管理归属"><input type="checkbox" checked={showReviewRelations} onChange={(e) => { setShowReviewRelations(e.target.checked); writeKey("amo.canvasReviewRelations", e.target.checked ? "1" : "0"); }} />来源与讨论 · 点划线</label>{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}<span className="dim">协作仅在选中相关任务时显示</span></div>}
       {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
+      {!compact && reviewChanges.size > 0 && <div className="canvas-review-changes" role="group" aria-label="审阅变化" data-testid="canvas-review-changes">
+        <span title="与本机上次标为已看时比较；包含标题、正文、结论、状态和引用的变化">审阅变化 {reviewChanges.size} 条</span>
+        <button type="button" className="link-btn" onClick={() => {
+          const ids = [...reviewChanges.keys()];
+          const index = selection?.kind === "node" ? ids.indexOf(selection.id) : -1;
+          const node = doc?.nodes.find((n) => n.id === ids[(index + 1) % ids.length]);
+          if (node) { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }
+        }}>查看下一条</button>
+        {selection?.kind === "node" && reviewChanges.has(selection.id) && <button type="button" className="link-btn" onClick={() => acknowledgeReview(selection.id)}>本条已看</button>}
+        <button type="button" className="link-btn" onClick={() => acknowledgeReview()}>全部标为已看</button>
+      </div>}
+      {!compact && (returns.error || returns.status.receipts.length > 0) && <div className="canvas-review-changes" data-testid="canvas-returns" role="status">
+        <span>{returns.error || `结论已回传 ${returns.status.receipts.filter((r) => r.state === "returned").length} 条`}</span>
+        {returns.status.rounds.map((r) => <span key={`${r.targetSessionId}:${r.groupId}`} title={r.detail}>{doc?.groups.find((g) => g.id === r.groupId)?.title ?? "未分组"}：{r.state === "sent" ? "已通知继续" : r.state === "failed" ? "继续通知未送达" : "等待来源会话接收"}</span>)}
+        {returns.status.receipts.some((r) => r.state === "blocked") && <span>有结论回传受阻</span>}
+        {(returns.status.receipts.some((r) => r.state === "blocked") || returns.status.rounds.some((r) => r.retryable)) && <button type="button" className="link-btn" onClick={() => void returns.retry()}>重试回传</button>}
+        {returns.status.rounds.some((r) => r.state === "failed" && !r.retryable) && <span>请打开来源会话查看发送失败原因</span>}
+      </div>}
       <div className="canvas-row">
       <div
         className={drag?.kind === "pan" ? "canvas-viewport panning" : "canvas-viewport"}
@@ -902,6 +942,24 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                   key={node.id}
                   node={node}
                   activity={itemActivity(node, callouts, sessions)}
+                  returnReceipt={returnReceipts.get(node.id)}
+                  change={reviewChanges.get(node.id)}
+                  discussionCount={new Set(node.threads ?? []).size}
+                  canContinue={!!continuingThread(node, sessions)}
+                  expanded={showReviewRelations && expandedItem === node.id}
+                  onDiscussion={compact ? undefined : () => { const existing = continuingThread(node, sessions); if (existing) openSession(existing.id); else discuss(node); }}
+                  onToggleDiscussions={() => {
+                    setSelection(null);
+                    setShowReviewRelations(true);
+                    writeKey("amo.canvasReviewRelations", "1");
+                    const next = expandedItem === node.id && showReviewRelations ? null : node.id;
+                    setExpandedDiscussion(next ? { topicId: topic.id, itemId: next } : null);
+                    if (next && relationDoc) {
+                      const model = reviewRelations(relationDoc, sessions, allTasks, next, rectOf);
+                      const card = model.discussions[0];
+                      if (card) centreOf({ x: node.pos.x, y: Math.min(node.pos.y, card.rect.y), w: card.rect.x + card.rect.w - node.pos.x, h: Math.max(rectOf(node).h, card.rect.y + card.rect.h - node.pos.y) });
+                    }
+                  }}
                   flag={flags.get(node.id)}
                   selected={selected}
                   handles={handlesOf(node.id)}
@@ -1016,6 +1074,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               </div>
             );
           })}
+          {reviewModel && <ReviewRelations model={reviewModel} onOpen={onOpenTask} />}
           <CalloutLayer callouts={callouts} sessions={sessions} anchor={anchorOf} onOpen={focusCallout} onClose={closeCallout} onMore={() => showTab("talk")} />
         </div>
 

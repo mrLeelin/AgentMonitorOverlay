@@ -23,7 +23,7 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
       name: "canvas_item_update",
       title: "改审阅条目",
       description:
-        "Change a review item on your topic's canvas (item: #n or its id): status (todo 待看, confirmed 已确认, discuss 要讨论, parked 搁置, done 完成), title, body, refs, or conclusion (what was decided; shows on the card). Use it when the person answered, or when talking an item over reached a result.",
+        "Change a review item on your topic's canvas (item: #n or its id): status (todo 待看, confirmed 已确认, discuss 要讨论, parked 搁置, done 完成), title, body, refs, or conclusion (what was decided; shows on the card). Use it when the person answered, or when talking an item over reached a result. Studio automatically returns confirmed conclusions to the source session and asks it to continue when all items from that source in the same group are confirmed, done or parked. Do not send duplicate mailbox messages for these conclusions.",
       inputSchema: { item: z.string(), status: STATUS.optional(), title: z.string().optional(), body: z.string().optional(), conclusion: z.string().optional(), refs: z.array(z.string()).optional() },
       readOnly: false,
       autoApprove: true,

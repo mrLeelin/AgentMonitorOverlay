@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanvasItem, HostEvent, ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
@@ -145,6 +145,10 @@ describe("画布审阅", () => {
   it("就这条展开聊: a session in the laying session's task, seeded with the item, listed on it", async () => {
     await run("canvas_items_post", { group: "审阅", items: [{ title: "协议改了", body: "客户端要一起升", refs: ["packages/relay/src/protocol.ts"] }] });
     const item = items()[0]!;
+    await run("canvas_items_post", { items: [{ title: "兼容约束", body: "至少保留一个版本", status: "confirmed" }] });
+    await run("canvas_item_update", { item: "#2", conclusion: "保留旧协议" });
+    const related = items()[1]!;
+    service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, links: [{ id: "context-link", from: related.id, to: item.id, fromSide: "right", toSide: "left", label: "参考" }] }));
     const session = await service.canvasReview.discuss(topic.id, "#1", {});
     expect(session).toMatchObject({ taskId: task.id, profileId: "p-ds", title: "#1 协议改了" });
     expect(store.getSession(session.id)?.startedBy ?? null).toBeNull();
@@ -155,7 +159,179 @@ describe("画布审阅", () => {
     expect(first).toContain("客户端要一起升");
     expect(first).toContain("packages/relay/src/protocol.ts");
     expect(first).toContain(`canvas_item_update（item: "#1"）`);
-    expect(first).toContain(`mailbox_send 给会话 ${caller.id}`);
+    expect(first).toContain("Studio 会自动将确认结果回传来源会话");
+    expect(first).toContain("结论：保留旧协议");
+    expect(first).toContain("关联卡 → 本卡；标签：参考");
+    const update = amoToolsFor(service, { sessionId: session.id }).find((t) => t.name === "canvas_item_update")!;
+    const result = await update.run({ item: "#1", conclusion: "兼容一个版本", status: "confirmed" });
+    expect(result.isError).not.toBe(true);
+    expect(items()[0]).toMatchObject({ conclusion: "兼容一个版本", status: "confirmed", threads: [session.id] });
+    expect(service.canvases.canvasOutline(topic.id).outline).toContain("兼容一个版本");
+    expect(items()[1]).toMatchObject({ conclusion: "保留旧协议", status: "confirmed" });
     await expect(service.canvasReview.discuss(topic.id, item.id + "x", {})).rejects.toThrow(/no review item/);
+  });
+
+  it("returns each UI confirmation and automatically resumes the source only when the group is settled", async () => {
+    await run("canvas_items_post", { group: "按钮", items: [{ title: "颜色" }, { title: "文字" }] });
+    const confirm = (num: number, conclusion: string) => service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, nodes: doc.nodes.map((n) => n.kind === "item" && n.num === num ? { ...n, status: "confirmed", conclusion } : n) }));
+    confirm(1, "蓝色");
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(1);
+    expect(service.canvasReview.returns.status(topic.id).receipts).toMatchObject([{ state: "returned", targetLabel: "主控" }]);
+    expect(userTexts(caller.id).filter((s) => s.includes("【画布本轮已确认】"))).toHaveLength(0);
+    confirm(2, "开始");
+    await until(() => userTexts(caller.id).some((s) => s.includes("【画布本轮已确认】")));
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(2);
+    const text = userTexts(caller.id).find((s) => s.includes("【画布本轮已确认】"))!;
+    expect(text).toContain("蓝色");
+    expect(text).toContain("开始");
+    expect(text).toContain("按原任务已经获得的授权继续推进");
+    confirm(2, "开始");
+    service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, nodes: doc.nodes.map((n) => ({ ...n, pos: { x: n.pos.x + 10, y: n.pos.y } })) }));
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(2);
+    expect(userTexts(caller.id).filter((s) => s.includes("【画布本轮已确认】"))).toHaveLength(1);
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+  });
+
+  it("coalesces changed conclusions while busy, then sends the latest once; reopening revokes held continuation", async () => {
+    await run("canvas_items_post", { group: "按钮", items: [{ title: "颜色" }, { title: "文字" }] });
+    service.sessions.roleUpdate(caller.id).told();
+    store.updateTask(task.id, { description: "只讨论，不修改文件" });
+    store.updateSession(caller.id, { status: "running" });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    service.canvasReview.updateItem(topic.id, "#2", { status: "confirmed", conclusion: "开始" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
+    const heldId = service.sessions.inbox.held(caller.id)[0]!.id;
+    service.canvasReview.updateItem(topic.id, "#1", { conclusion: "绿色" });
+    await until(() => service.sessions.inbox.held(caller.id).some((r) => r.type === "user" && r.text.includes("绿色")));
+    expect(service.sessions.inbox.held(caller.id).map((r) => r.id)).toEqual([heldId]);
+    expect(store.getItem(heldId)).toMatchObject({ text: expect.stringContaining("只讨论，不修改文件") });
+    service.canvasReview.updateItem(topic.id, "#2", { status: "discuss" });
+    expect(service.sessions.inbox.held(caller.id)).toHaveLength(0);
+    expect(store.getItem(heldId)).toMatchObject({ delivery: "unsent", text: expect.stringContaining("已撤回") });
+    service.canvasReview.updateItem(topic.id, "#2", { status: "confirmed" });
+    await until(() => service.sessions.inbox.held(caller.id).length === 1);
+    expect(service.sessions.inbox.held(caller.id)[0]!.id).not.toBe(heldId);
+    service.publish({ type: "session.upserted", session: store.updateSession(caller.id, { status: "idle" }) });
+    await until(() => service.sessions.inbox.held(caller.id).length === 0);
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+  });
+
+  it("does not turn the source's own completion into a self-waking loop", async () => {
+    await run("canvas_items_post", { group: "按钮", items: [{ title: "颜色" }] });
+    await run("canvas_item_update", { item: "#1", status: "confirmed", conclusion: "蓝色" });
+    await run("canvas_item_update", { item: "#1", status: "done" });
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(0);
+    expect(service.canvasReview.returns.status(topic.id).rounds).toHaveLength(0);
+  });
+
+  it("separates groups and sources; parked cards do not block the round", async () => {
+    const other = await service.tasks.addSession(task.id, { profileId: "p-ds" });
+    service.canvasReview.postItems(caller.id, topic.id, { group: "A", items: [{ title: "颜色" }, { title: "以后" }] });
+    service.canvasReview.postItems(caller.id, topic.id, { group: "B", items: [{ title: "独立" }] });
+    service.canvasReview.postItems(other.id, topic.id, { group: "A", items: [{ title: "另一个来源" }] });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed" });
+    service.canvasReview.updateItem(topic.id, "#2", { status: "parked" });
+    await until(() => userTexts(caller.id).some((s) => s.includes("【画布本轮已确认】")));
+    const message = userTexts(caller.id).find((s) => s.includes("【画布本轮已确认】"))!;
+    expect(message).toContain("搁置");
+    expect(message).not.toContain("独立");
+    expect(message).not.toContain("另一个来源");
+    expect(userTexts(other.id)).toHaveLength(0);
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+  });
+
+  it("keeps confirmed conclusions visible when the source is archived, without choosing an unrelated session", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    await service.sessions.archive(caller.id);
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    expect(items()[0]).toMatchObject({ status: "confirmed", conclusion: "蓝色" });
+    expect(service.canvasReview.returns.status(topic.id).receipts).toMatchObject([{ state: "blocked" }]);
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(0);
+    expect(service.canvasReview.returns.retry(topic.id).receipts[0]?.state).toBe("blocked");
+  });
+
+  it("a changed confirmed conclusion starts a new return, but a repeated value does not", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+    await until(() => store.getSession(caller.id)?.status === "idle");
+    service.canvasReview.updateItem(topic.id, "#1", { conclusion: "绿色" });
+    await until(() => userTexts(caller.id).filter((s) => s.includes("【画布本轮已确认】")).length === 2);
+    service.canvasReview.updateItem(topic.id, "#1", { conclusion: "绿色" });
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(2);
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+  });
+
+  it("recovers a pending durable delivery after restart without duplicating its inbox row", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    store.updateSession(caller.id, { status: "running" });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
+    const before = service.sessions.inbox.held(caller.id).map((r) => r.id);
+    const persisted = JSON.parse(store.getKv("canvas.review-returns")!.value);
+    for (const r of Object.values(persisted[topic.id].rounds) as Array<{ pending: boolean }>) r.pending = true;
+    store.setKv("canvas.review-returns", JSON.stringify(persisted));
+    service.removeAllListeners("event");
+    service = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
+    expect(service.sessions.inbox.held(caller.id).map((r) => r.id)).toEqual(before);
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(1);
+    // Wait for the asynchronous recovery to persist before the fixture closes its database.
+    await until(() => !(Object.values(JSON.parse(store.getKv("canvas.review-returns")!.value)[topic.id].rounds) as Array<{ pending?: boolean }>).some((r) => r.pending));
+  });
+
+  it("does not resume an explicitly stopped source until the person resumes it", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    service.sessions.inbox.pause(caller.id);
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
+    expect(store.getSession(caller.id)?.status).toBe("idle");
+    expect(service.sessions.inbox.held(caller.id)).toHaveLength(1);
+    service.sessions.inbox.resume(caller.id);
+    await until(() => service.sessions.inbox.held(caller.id).length === 0);
+  });
+
+  it("does not backfill historical confirmations on first installation", async () => {
+    await run("canvas_items_post", { items: [{ title: "旧问题", status: "confirmed" }] });
+    store.deleteKv("canvas.review-returns");
+    service.removeAllListeners("event");
+    service = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
+    service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, nodes: doc.nodes.map((n) => ({ ...n, pos: { x: 100, y: 100 } })) }));
+    expect(service.canvasReview.returns.status(topic.id)).toEqual({ receipts: [], rounds: [] });
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(0);
+  });
+
+  it("revokes continuation before dispatch when confirmation and reopen happen in one tick", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed", conclusion: "蓝色" });
+    service.canvasReview.updateItem(topic.id, "#1", { status: "discuss" });
+    await Promise.resolve();
+    expect(userTexts(caller.id).filter((s) => s.includes("【画布本轮已确认】"))).toHaveLength(0);
+    expect(service.canvasReview.returns.status(topic.id).rounds).toHaveLength(0);
+  });
+
+  it("exposes a failed enqueue and retries the same durable notification", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }] });
+    const put = vi.spyOn(service.sessions.inbox, "put").mockRejectedValueOnce(new Error("temporary inbox failure"));
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "failed");
+    service.canvasReview.returns.retry(topic.id);
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "sent");
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(put.mock.calls[0]![3]).toBe(put.mock.calls[1]![3]);
+    expect(service.collab.mail({ sessionId: caller.id })).toHaveLength(1);
+  });
+
+  it("deleting a confirmed member revokes an unsent group notification and updates its receipt UI", async () => {
+    await run("canvas_items_post", { items: [{ title: "颜色" }, { title: "文字" }] });
+    service.sessions.inbox.pause(caller.id);
+    service.canvasReview.updateItem(topic.id, "#1", { status: "confirmed" });
+    service.canvasReview.updateItem(topic.id, "#2", { status: "confirmed" });
+    await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
+    events.length = 0;
+    service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, nodes: doc.nodes.filter((n) => n.kind !== "item" || n.num !== 2) }));
+    expect(service.sessions.inbox.held(caller.id)).toHaveLength(0);
+    expect(service.canvasReview.returns.status(topic.id).receipts).toHaveLength(1);
+    expect(events.some((e) => e.type === "canvas.returns.updated")).toBe(true);
   });
 });

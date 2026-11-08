@@ -1,10 +1,12 @@
 import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { CALLOUT_DETAIL_MAX, ITEM_CARD, REVIEW_STATUSES, type CanvasCallout, type CanvasItem, type Id, type ReviewStatus, type Session } from "@amo-studio/protocol";
+import { CALLOUT_DETAIL_MAX, ITEM_CARD, REVIEW_STATUSES, type CanvasCallout, type CanvasItem, type CanvasReturnReceipt, type Id, type ReviewStatus, type Session } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { Markdown } from "../lib/markdown.js";
 import { DeleteButton } from "./DeleteButton.js";
 import { relativeTime, SESSION_LOOK } from "../lib/status.js";
 import { Modal } from "../lib/Modal.js";
+import type { ItemChange } from "./changes.js";
+import { continuingThread } from "./review-relations.js";
 
 // 画布审阅 (2026-10-27, plans/done/review-canvas.md): a review's items as cards, the agents' remarks and questions pinned to
 // cards as bubbles, the window a question is answered in, and the sidebar's 沟通 list.
@@ -33,6 +35,8 @@ export function itemActivity(item: CanvasItem, callouts: readonly CanvasCallout[
   const threads = (item.threads ?? []).map((id) => byId.get(id)).filter((s): s is Session => !!s && !s.archivedAt);
   const waiting = threads.find((s) => s.status === "awaiting-answer" || s.status === "awaiting-approval" || s.status === "awaiting-review");
   if (waiting) return { text: `子对话${SESSION_LOOK[waiting.status].label}`, dot: SESSION_LOOK[waiting.status].dot, color: SESSION_LOOK[waiting.status].text };
+  const failed = threads.find((s) => s.status === "error" || s.status === "interrupted");
+  if (failed) return { text: `子对话${SESSION_LOOK[failed.status].label}`, dot: SESSION_LOOK[failed.status].dot, color: SESSION_LOOK[failed.status].text };
   const poster = item.sessionId ? byId.get(item.sessionId) : undefined;
   if (poster?.status === "running" && callouts.some((c) => c.target === item.id && c.state === "answered")) return { text: "◐ 进行中 · 在处理你的回答", dot: SESSION_LOOK.running.dot, color: SESSION_LOOK.running.text };
   if (threads.some((s) => s.status === "running")) return { text: "◐ 子对话进行中", dot: SESSION_LOOK.running.dot, color: SESSION_LOOK.running.text };
@@ -53,6 +57,8 @@ export function calloutFlags(callouts: readonly CanvasCallout[]): ReadonlyMap<Id
 
 export function ItemCard({
   node,
+  returnReceipt,
+  change,
   activity,
   flag,
   selected,
@@ -60,8 +66,15 @@ export function ItemCard({
   onOpen,
   onMouseDown,
   onContextMenu,
+  discussionCount = 0,
+  expanded = false,
+  canContinue = false,
+  onDiscussion,
+  onToggleDiscussions,
 }: {
   node: CanvasItem;
+  returnReceipt?: CanvasReturnReceipt;
+  change?: ItemChange;
   activity: ReturnType<typeof itemActivity>;
   flag?: "question" | "note";
   selected: boolean;
@@ -69,11 +82,16 @@ export function ItemCard({
   onOpen(): void;
   onMouseDown(e: ReactMouseEvent): void;
   onContextMenu(e: ReactMouseEvent): void;
+  discussionCount?: number;
+  expanded?: boolean;
+  canContinue?: boolean;
+  onDiscussion?(): void;
+  onToggleDiscussions?(): void;
 }) {
   const summary = node.conclusion ? `结论：${plain(node.conclusion)}` : node.body ? plain(node.body) : "";
   const size = node.size ?? ITEM_CARD;
   // Dragged to a size (2026-10-29): as many summary lines as fit under the head, the title and the activity line.
-  const lines = node.size ? Math.floor((size.h - ITEM_FIXED - (activity ? ITEM_ACTIVITY : 0)) / ITEM_LINE) : null;
+  const lines = Math.floor((size.h - ITEM_FIXED - (activity || onDiscussion ? ITEM_ACTIVITY : 0)) / ITEM_LINE);
   return (
     <div
       className={`canvas-card canvas-item${selected ? " selected" : ""}`}
@@ -86,6 +104,7 @@ export function ItemCard({
       data-group-id={node.groupId ?? ""}
       data-color={node.color}
       data-status={node.status}
+      data-change={change?.label}
       data-callout={flag}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
@@ -93,7 +112,7 @@ export function ItemCard({
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
     >
       <span className="item-head">
-        <span className="item-num">#{node.num}</span>
+        <span className="item-num">#{node.num}{change && <span className="item-change" title={change.detail} data-testid="item-change">{change.label}</span>}{returnReceipt && <span className="item-return" data-state={returnReceipt.state} title={returnReceipt.detail} data-testid="item-return">{returnReceipt.state === "returned" ? `已回传${returnReceipt.targetLabel === "主控" ? "主控" : "来源"}` : "回传受阻"}</span>}</span>
         <span className="item-status" data-status={node.status} data-testid="item-status">
           {STATUS_MARK[node.status]} {statusLabel(node.status)}
         </span>
@@ -106,7 +125,11 @@ export function ItemCard({
           {summary}
         </span>
       )}
-      {activity && (
+      {onDiscussion ? <div className="item-discussion-actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        {discussionCount > 0 && <button type="button" className="link-btn" aria-expanded={expanded} onClick={onToggleDiscussions} data-testid="item-discussions-toggle">讨论 {discussionCount} 个</button>}
+        {activity && !/^\d+ 个子对话$/.test(activity.text) && <span title={activity.text} data-testid="item-activity" style={{ color: activity.color }}>{activity.text.replace("子对话", "").replace("◐ ", "")}</span>}
+        <button type="button" className="link-btn" onClick={onDiscussion} data-testid="item-discussion-primary">{canContinue ? "继续讨论" : discussionCount ? "新开讨论" : "展开讨论"}</button>
+      </div> : activity && (
         <span className="canvas-card-meta item-activity" data-testid="item-activity">
           <span className="dot" style={{ background: activity.dot }} />
           <span style={{ color: activity.color }}>{activity.text}</span>
@@ -378,6 +401,7 @@ export function ItemDetail({
 }) {
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const poster = item.sessionId ? byId.get(item.sessionId) : undefined;
+  const continuing = continuingThread(item, sessions);
   const mine = callouts.filter((c) => c.target === item.id && c.state !== "closed");
   return (
     <div className="side-section item-detail" role="group" aria-label="审阅条目">
@@ -439,10 +463,11 @@ export function ItemDetail({
           </button>
         );
       })}
-      <button type="button" className="btn-primary small" onClick={onDiscuss} data-testid="item-discuss">
-        就这条展开聊（新会话）
+      {continuing && <button type="button" className="btn-primary small" onClick={() => onOpenSession(continuing.id)} data-testid="item-continue">继续讨论「{nameOf(continuing)}」</button>}
+      <button type="button" className={continuing ? "btn-ghost small" : "btn-primary small"} onClick={onDiscuss} data-testid="item-discuss">
+        {item.threads?.length ? "新开讨论" : "就这条展开聊（新会话）"}
       </button>
-      <span className="side-note">新会话开在铺这份审阅的任务里，先读这一条；聊出结论后它会写回这张卡片，主会话的上下文不会被撑大。</span>
+      <span className="side-note">新讨论会带上本条内容和直接关联卡片的摘要。聊出结论后，让 AI 写回这张卡片；已有讨论可以继续，不必重开。</span>
       <DeleteButton onClick={onDelete}>删除这条</DeleteButton>
     </div>
   );

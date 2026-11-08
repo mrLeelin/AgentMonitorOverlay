@@ -2,6 +2,8 @@ import { addItems, CALLOUT_DETAIL_MAX, CALLOUT_OPTIONS_MAX, CALLOUT_TEXT_MAX, fi
 import { newId } from "../../store/store.js";
 import { boundedText, HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
+import { discussionContext } from "./context.js";
+import { CanvasReturns } from "./returns.js";
 
 /** At most this many items in one canvas_items_post. */
 export const ITEMS_PER_POST = 40;
@@ -18,6 +20,7 @@ const statusLabel = (s: ReviewStatus) => REVIEW_STATUSES.find((x) => x.id === s)
  * talk one item over (就这条展开聊).
  */
 export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "tasks"> {
+  readonly returns = new CanvasReturns(this.host);
   callouts(topicId: Id): CanvasCallout[] {
     this.requireTopic(topicId);
     return this.store.listCallouts(topicId, CLOSED_LISTED);
@@ -198,7 +201,8 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
   async discuss(topicId: Id, itemRef: Id, input: { profileId?: unknown }): Promise<Session> {
     const topic = this.requireTopic(topicId);
     if (topic.archivedAt) throw new HostError("read_only", "the topic is archived");
-    const item = findItem(this.f.canvases.canvas(topicId), itemRef);
+    const doc = this.f.canvases.canvas(topicId);
+    const item = findItem(doc, itemRef);
     if (!item) throw new HostError("not_found", `no review item ${itemRef} on this canvas`);
     const poster = item.sessionId ? this.store.getSession(item.sessionId) : undefined;
     const lead = this.store.listTasks().find((t) => t.topicId === topicId && t.lead && !t.archivedAt);
@@ -216,9 +220,10 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
       ...(item.refs?.length ? ["", `涉及：${item.refs.join("、")}`] : []),
       "",
       `现在的状态：${statusLabel(item.status)}${item.conclusion ? `；已有结论：${item.conclusion}` : ""}`,
+      ...discussionContext(doc, item, (id) => this.store.getTask(id)),
       ...(poster ? [`（这份审阅是会话「${poster.title || "未命名会话"}」（${poster.id}）铺到画布上的。）`] : []),
       "",
-      `先用几句话说说你对这一条的理解和需要人确认的点，然后等人说话。聊出结论后，用 canvas_item_update（item: "#${item.num}"）写回结论、改状态${poster ? `；要告诉原来的会话什么，用 mailbox_send 给会话 ${poster.id}` : ""}。`,
+      `先用几句话说说你对这一条的理解和需要人确认的点，然后等人说话。聊出结论后，用 canvas_item_update（item: "#${item.num}"）写回结论、改状态。Studio 会自动将确认结果回传来源会话，同一来源、同一分组的条目全部确认、完成或搁置后会自动通知它继续；不要再为同一个结论调用 mailbox_send。`,
     ].join("\n");
     const started = await this.f.tasks.startSession({ taskId: task.id, topicId: null }, this.requireLiveWorkspace(task.workspaceId), { profileId, text });
     const session = await this.f.sessions.renameSession(started.id, `#${item.num} ${item.title}`.slice(0, 100)).catch(() => started);

@@ -656,6 +656,21 @@ export interface CanvasItem {
   color?: CanvasColor;
 }
 
+/** Host-owned delivery receipts, separate from the editable canvas document. */
+export interface CanvasReturnReceipt {
+  itemId: Id;
+  targetSessionId: Id | null;
+  targetLabel: "主控" | "来源会话";
+  state: "returned" | "blocked";
+  detail: string;
+  at: Timestamp;
+}
+
+export interface CanvasReturnStatus {
+  receipts: CanvasReturnReceipt[];
+  rounds: Array<{ groupId: Id | null; targetSessionId: Id; state: "pending" | "queued" | "sent" | "failed"; retryable: boolean; detail: string }>;
+}
+
 /** 说明 (a remark the card is highlighted with) or 问题 (waits for the person's answer). */
 export type CalloutKind = "note" | "question";
 export const CALLOUT_TEXT_MAX = 2_000;

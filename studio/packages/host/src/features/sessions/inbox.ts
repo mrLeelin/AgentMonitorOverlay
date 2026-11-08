@@ -1,4 +1,4 @@
-import { inTurn, type Id, type Session, type SessionItem } from "@amo-studio/protocol";
+import { inTurn, splitRoleUpdate, type Id, type Session, type SessionItem } from "@amo-studio/protocol";
 import { newId, type SessionItemInput } from "../../store/store.js";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
@@ -69,7 +69,7 @@ export class SessionInbox extends Feature {
    * A message from an agent or from Studio into `sessionId`: shown at once, sent now when the session is free, else
    * when it is. `delivered`: it went in now; `waiting`: how many of the session's are still held.
    */
-  async put(sessionId: Id, text: string, relayFromSessionId?: Id): Promise<{ delivered: boolean; waiting: number }> {
+  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id): Promise<{ delivered: boolean; waiting: number }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt || s.writer === "archived") throw new HostError("read_only", "这个会话已归档，不能再往里发消息");
     if (s.kind === "sub") throw new HostError("read_only", "子 agent 不能单独接收消息");
@@ -78,8 +78,17 @@ export class SessionInbox extends Feature {
       await this.sessions.sendMessage(sessionId, text);
       return { delivered: true, waiting: 0 };
     }
+    // Durable producers may retry after a Host restart: the same inbox row must not start another turn.
+    const existing = messageId ? this.store.getItem(messageId) : undefined;
+    if (existing && (existing.sessionId !== sessionId || existing.type !== "user")) throw new HostError("conflict", "inbox message id belongs to another message");
     const role = this.sessions.roleUpdate(sessionId);
-    const item = this.append(s, this.sessions.withRole(text, role.lines), relayFromSessionId);
+    const item = existing ?? this.append(s, this.sessions.withRole(text, role.lines), relayFromSessionId, messageId);
+    if (existing?.type === "user" && existing.delivery === "held") {
+      // Its role update was marked told at enqueue time, but the model has not seen it yet.
+      const previousUpdate = splitRoleUpdate(existing.text).update;
+      const replacement = this.sessions.withRole(previousUpdate ? `${text}\n\n${previousUpdate}` : text, role.lines);
+      if (existing.text !== replacement) this.publish({ type: "item.updated", item: this.store.replaceItem({ ...existing, text: replacement }) });
+    }
     role.told();
     this.remember(sessionId);
     if (this.paused.has(sessionId)) this.tellPaused(sessionId);
@@ -182,8 +191,9 @@ export class SessionInbox extends Feature {
     if (!taskId || !managesTask(this.host, item.relayFromSessionId, taskId)) throw new HostError("read_only", "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。");
   }
 
-  private append(s: Session, text: string, relayFromSessionId?: Id): SessionItem {
-    const item = this.store.appendItem(this.row(s, { type: "user", text, delivery: "held", ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox"));
+  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id): SessionItem {
+    const row = this.row(s, { type: "user", text, delivery: "held", ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox");
+    const item = this.store.appendItem({ ...row, ...(messageId ? { id: messageId } : {}) });
     this.publish({ type: "item.appended", item });
     return item;
   }

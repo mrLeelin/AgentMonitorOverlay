@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 6
+      "used": 9
     },
     "claude": {
       "limit": 300,
@@ -442,6 +442,21 @@
       "at": "2026-10-30T17:14:55.828Z",
       "provider": "deepseek",
       "note": "Android fixture Dxx-DS isolated remote smoke"
+    },
+    {
+      "at": "2026-11-08T15:48:01.645Z",
+      "provider": "gpt",
+      "note": "用户授权画布小测试：只铺两张示例卡"
+    },
+    {
+      "at": "2026-11-08T15:49:46.728Z",
+      "provider": "gpt",
+      "note": "用户授权画布小测试：展开颜色讨论"
+    },
+    {
+      "at": "2026-11-08T15:50:20.465Z",
+      "provider": "gpt",
+      "note": "用户授权画布小测试：确认示例结论并写回"
     }
   ]
 }
