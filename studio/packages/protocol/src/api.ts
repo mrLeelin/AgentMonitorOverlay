@@ -230,7 +230,18 @@ export const EXPERIMENTAL_FEATURES: readonly { id: ExperimentalFeature; label: s
 ];
 
 /** Studio-wide settings kept by the Host (the look of the UI is per install, in the UI itself). */
+export interface NetworkSettings {
+  mode: "inherit" | "manual" | "direct";
+  proxyUrl: string;
+}
+
+export interface NetworkTestResult {
+  proxy: string;
+  checks: Array<{ name: string; ok: boolean; message: string }>;
+}
+
 export interface StudioSettings {
+  network?: NetworkSettings;
   /**
    * The common space: the built-in workspace where tasks without a project, the scheduler and topic sessions without
    * a project run. Always present (by default `common/` in the data folder).
@@ -597,6 +608,8 @@ export interface HostRoutes
   /** Restores the project and the tasks that were archived with it. */
   "POST /api/workspaces/:id/unarchive": { req: void; res: { workspace: Workspace; tasks: Task[] } };
   "GET /api/settings": { req: void; res: StudioSettings };
+  "POST /api/settings/network/test": { req: NetworkSettings; res: NetworkTestResult };
+  "POST /api/settings/network/apply": { req: void; res: { ok: boolean } };
   /** The Claude Code that Claude sessions run on (2026-10-24). */
   "GET /api/claude-code": { req: void; res: ClaudeCodeStatus };
   /** Looks for it again (e.g. just installed); the channels on Claude Code follow (`profiles.updated`). */
@@ -660,7 +673,7 @@ export interface HostRoutes
   /** The file itself; also accepts `?token=` so an <img> can load it. */
   "GET /api/attachments/:id": { req: void; res: Blob };
   /** `commonDir`: moves the common space to this folder (created if missing; it must not be a registered project). */
-  "PUT /api/settings": { req: { commonDir?: string; devUiDir?: string | null; presets?: SessionPreset[]; disabledFeatures?: OptionalFeature[]; experimentalFeatures?: ExperimentalFeature[]; teamAutoSend?: boolean; shellHelp?: boolean; scratchpadShortcut?: string; modelPrefs?: Record<string, ModelPrefs | null>; scratchpadSafeNewlines?: boolean; quotaDisplay?: Record<string, QuotaDisplay | null>; quickModels?: QuickModel[]; autoCompactTokens?: number | null; autoCompactProfiles?: Record<string, AutoCompactChoice | null>; projectGroups?: Array<Omit<ProjectGroup, "id"> & { id?: Id }>; topicGroups?: Array<Omit<TopicGroup, "id"> & { id?: Id }>; subsessionNotes?: SubsessionNote[] }; res: StudioSettings };
+  "PUT /api/settings": { req: { network?: NetworkSettings; commonDir?: string; devUiDir?: string | null; presets?: SessionPreset[]; disabledFeatures?: OptionalFeature[]; experimentalFeatures?: ExperimentalFeature[]; teamAutoSend?: boolean; shellHelp?: boolean; scratchpadShortcut?: string; modelPrefs?: Record<string, ModelPrefs | null>; scratchpadSafeNewlines?: boolean; quotaDisplay?: Record<string, QuotaDisplay | null>; quickModels?: QuickModel[]; autoCompactTokens?: number | null; autoCompactProfiles?: Record<string, AutoCompactChoice | null>; projectGroups?: Array<Omit<ProjectGroup, "id"> & { id?: Id }>; topicGroups?: Array<Omit<TopicGroup, "id"> & { id?: Id }>; subsessionNotes?: SubsessionNote[] }; res: StudioSettings };
   /** Models (with reasoning efforts) and permission settings of a profile, asked from its CLI. */
   "GET /api/profiles/:id/choices": { req: void; res: ProfileChoices };
   "GET /api/credentials": { req: void; res: CredentialStatus[] };

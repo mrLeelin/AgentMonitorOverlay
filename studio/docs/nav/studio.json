@@ -285,13 +285,15 @@
     {
       "id": "studio.config",
       "label": "设置、常用预设、功能开关",
-      "aliases": ["设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色"],
+      "aliases": ["设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY"],
       "category": "host",
       "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。",
       "anchors": [
         { "label": "ConfigFeature", "path": "studio/packages/host/src/features/config/service.ts", "anchor": "export class ConfigFeature" },
         { "label": "开关和 kv 名", "path": "studio/packages/host/src/core/shared.ts", "anchor": "EXPERIMENTAL" },
         { "label": "给 agent 命令的环境（命令行适配）", "path": "studio/packages/host/src/runtime/agent-env.ts" },
+        { "label": "模型代理与连通性测试", "path": "studio/packages/host/src/runtime/network.ts", "anchor": "export function networkEnv" },
+        { "label": "网络设置页", "path": "studio/packages/ui/src/settings/NetworkPage.tsx", "anchor": "export function NetworkPage" },
         { "label": "设置窗口", "path": "studio/packages/ui/src/settings/SettingsDialog.tsx", "anchor": "export function SettingsDialog" },
         { "label": "本机主题、保存和窗口同步", "path": "studio/packages/ui/src/lib/theme.ts", "anchor": "export function toggleTheme" },
         { "label": "读设置", "path": "studio/packages/ui/src/settings/useSettings.ts" }

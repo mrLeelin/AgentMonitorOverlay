@@ -18,6 +18,7 @@ import type { McpLaunch } from "./runtime/mcp-launch.js";
 import type { McpServerSpec } from "@amo-studio/protocol";
 import { amoInstructions, amoToolsFor } from "./mcp/tools.js";
 import { shellHelpEnv } from "./runtime/agent-env.js";
+import { readNetwork } from "./runtime/network.js";
 import { recordRole, roleCard, roleCardFor } from "./features/guide/role.js";
 import { McpIdentities } from "./mcp/identity.js";
 import { CodexServerManager } from "./runtime/codex/server-manager.js";
@@ -231,6 +232,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
           extraMcp: (): Record<string, McpServerSpec> => service.mcp.codexServers(),
           // 命令行适配 (设置 → 功能): a server started after the switch changes has it.
           baseEnv: () => shellHelpEnv(liveKv),
+          network: () => readNetwork(liveKv),
         });
     const servers = options.servers ?? manager!;
     // Only app-servers Studio launches have the AMO MCP configured; threads then name their session to it.
@@ -319,7 +321,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
       dsh,
       // A Codex channel's address or key is fixed when its app-server starts: restart it, unless a session on it is busy.
       restartProfileServer: async (profileId) => {
-        if (!manager?.handle(profileId)) return true;
+        if (!manager) return true;
         const busy = liveStore.listSessions().some((s) => s.profileId === profileId && inTurn(s.status));
         if (busy) return false;
         await manager.stop(profileId);

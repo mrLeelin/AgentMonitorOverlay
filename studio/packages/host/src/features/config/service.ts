@@ -9,9 +9,19 @@ import { newId } from "../../store/store.js";
 import type { CredentialStore } from "../../runtime/credentials.js";
 import { HostError, sessionOptions, boundedText, PRESETS_KEY, MAX_PRESETS, WRITABLE_CREDENTIALS, DISABLED_FEATURES_KEY, EXPERIMENTAL_FEATURES_KEY, TEAM_AUTO_SEND_KEY, QUOTA_DISPLAY_KEY, QUICK_MODELS_KEY, PROJECT_GROUPS_KEY, TOPIC_GROUPS_KEY, SUBSESSION_NOTES_KEY } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
+import { checkNetwork, readNetwork, NETWORK_KEY } from "../../runtime/network.js";
+import { inTurn } from "@amo-studio/protocol";
 
 /** Studio settings, 常用预设, model credentials, model choices and subscription usage. */
 export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
+  /** Explicit user action only: discard idle Codex servers so their next start reads the saved network choice. */
+  async applyNetwork(): Promise<{ ok: boolean }> {
+    const ids = this.profiles.filter((p) => p.runtime === "codex").map((p) => p.id);
+    if (this.store.listSessions().some((s) => ids.includes(s.profileId) && (inTurn(s.status) || s.writer === "terminal-handoff" || s.writer === "terminal-shared"))) throw new HostError("conflict", "Codex 还有运行中或交给终端的会话，请结束后再应用");
+    if (!this.options.restartProfileServer) return { ok: true };
+    for (const id of ids) if (!(await this.options.restartProfileServer(id))) throw new HostError("conflict", "Codex 有会话正在运行，请结束后再应用");
+    return { ok: true };
+  }
   /**
    * Every change of the Claude accounts (a sign-in's progress included) reaches the windows with the settings. Here
    * rather than in ClaudeAccountsFeature since 2026-11-06 (plans/host-structure.md 8c): the settings are this
@@ -31,6 +41,7 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
       devUiDir: this.devUiDir(),
       teamAutoSend: this.teamAutoSend(),
       shellHelp: this.shellHelp(),
+      network: readNetwork(this.store),
       scratchpadShortcut: this.f.scratchpad.shortcut(),
       scratchpadSafeNewlines: this.f.scratchpad.safeNewlines(),
       autoCompactTokens: readAutoCompact(this.store),
@@ -228,7 +239,7 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
    * Moves the common space to another folder, replaces the 常用预设 list, turns optional features on or off, sets the
    * scratchpad shortcut (便签) and/or how the Claude subscription signs in (sessions started from then on).
    */
-  updateSettings(input: { commonDir?: unknown; devUiDir?: unknown; presets?: unknown; disabledFeatures?: unknown; experimentalFeatures?: unknown; teamAutoSend?: unknown; shellHelp?: unknown; scratchpadShortcut?: unknown; modelPrefs?: unknown; scratchpadSafeNewlines?: unknown; quotaDisplay?: unknown; quickModels?: unknown; autoCompactTokens?: unknown; autoCompactProfiles?: unknown; projectGroups?: unknown; topicGroups?: unknown; subsessionNotes?: unknown }): StudioSettings {
+  updateSettings(input: { network?: unknown; commonDir?: unknown; devUiDir?: unknown; presets?: unknown; disabledFeatures?: unknown; experimentalFeatures?: unknown; teamAutoSend?: unknown; shellHelp?: unknown; scratchpadShortcut?: unknown; modelPrefs?: unknown; scratchpadSafeNewlines?: unknown; quotaDisplay?: unknown; quickModels?: unknown; autoCompactTokens?: unknown; autoCompactProfiles?: unknown; projectGroups?: unknown; topicGroups?: unknown; subsessionNotes?: unknown }): StudioSettings {
     if (input.subsessionNotes !== undefined) this.store.setKv(SUBSESSION_NOTES_KEY, JSON.stringify(this.checkSubsessionNotes(input.subsessionNotes)));
     if (input.projectGroups !== undefined) this.store.setKv(PROJECT_GROUPS_KEY, JSON.stringify(this.checkProjectGroups(input.projectGroups)));
     if (input.topicGroups !== undefined) this.store.setKv(TOPIC_GROUPS_KEY, JSON.stringify(this.checkTopicGroups(input.topicGroups)));
@@ -281,6 +292,10 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
     if (input.teamAutoSend !== undefined) {
       if (typeof input.teamAutoSend !== "boolean") throw new HostError("bad_request", "teamAutoSend must be true or false");
       this.store.setKv(TEAM_AUTO_SEND_KEY, input.teamAutoSend ? "1" : "0");
+    }
+    if ("network" in input) {
+      try { this.store.setKv(NETWORK_KEY, JSON.stringify(checkNetwork(input.network))); }
+      catch (err) { throw new HostError("bad_request", (err as Error).message); }
     }
     if (input.shellHelp !== undefined) {
       if (typeof input.shellHelp !== "boolean") throw new HostError("bad_request", "shellHelp must be true or false");

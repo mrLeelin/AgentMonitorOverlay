@@ -11,6 +11,7 @@ import { lowerAgentPriority } from "../priority.js";
 import { codexServerSpec, profileGone, type CodexProviderDef } from "../profiles.js";
 import { resolveCodexCommand, type CodexCommand } from "./command.js";
 import { CodexRpcClient } from "./rpc-client.js";
+import { networkEnv } from "../network.js";
 
 // One `codex app-server` per Codex profile (studio/spikes/RESULTS.md, sections c and d). Port and token persist in
 // the data dir so a restarted server, or a restarted Host, comes back at the same address and attached TUIs reconnect.
@@ -59,6 +60,7 @@ export interface CodexServerManagerOptions {
   extraMcp?: () => Record<string, import("@amo-studio/protocol").McpServerSpec>;
   /** Variables under everything else, read when a server starts: 命令行适配 (agent-env.ts). */
   baseEnv?: () => Record<string, string>;
+  network?: () => import("@amo-studio/protocol").NetworkSettings;
 }
 
 interface Entry {
@@ -110,8 +112,7 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
 
   /** Stops one server and forgets its pid; port and token are kept for the next start. */
   async stop(profileId: string): Promise<void> {
-    const entry = this.entries.get(profileId);
-    if (!entry) return;
+    const entry = this.entries.get(profileId) ?? this.entry(profileId);
     this.clearTimers(entry);
     entry.handle?.client.close();
     entry.handle = null;
@@ -222,7 +223,7 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
     const child = spawn(cmd.command, args, {
       cwd: this.options.cwd,
       // Not the Host's own variables (agent-env.ts); cmd.env puts ELECTRON_RUN_AS_NODE back when codex.js needs it.
-      env: withoutWindowsApps({ ...(this.options.baseEnv?.() ?? {}), ...withoutHostEnv(process.env), ...cmd.env, ...this.options.env, ...spec.env }),
+      env: withoutWindowsApps(networkEnv(this.options.network?.() ?? { mode: "inherit", proxyUrl: "" }, { ...(this.options.baseEnv?.() ?? {}), ...withoutHostEnv(process.env), ...cmd.env, ...this.options.env, ...spec.env })),
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });

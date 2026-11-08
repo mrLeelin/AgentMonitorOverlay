@@ -3,6 +3,7 @@ import type { StateSnapshot, StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { setThemePref, THEME_LABELS, useThemePref, type ThemePref } from "../lib/theme.js";
 import { ModelsPage } from "./ModelsPage.js";
+import { NetworkPage } from "./NetworkPage.js";
 import { SubsessionPage } from "./SubsessionPage.js";
 import { FeaturesSection } from "./FeaturesSection.js";
 import { DevUiSection } from "./DevUi.js";
@@ -28,6 +29,7 @@ import { GitEditorPage } from "./GitEditorPage.js";
 const PAGES = [
   { id: "ui", label: "界面" },
   { id: "models", label: "模型" },
+  { id: "network", label: "网络" },
   { id: "subsession", label: "子会话" },
   { id: "quota", label: "额度" },
   { id: "stats", label: "统计" },
@@ -129,6 +131,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
             ))}
           </div>
           <div className="settings-page" id="settings-page" role="tabpanel" aria-labelledby={`settings-tab-${page}`} key={page}>
+            {page === "network" && <NetworkPage link={link} value={settings?.network} />}
             {page === "ui" && (
               <section className="settings-section" aria-label="界面">
                 <span className="settings-heading">界面</span>

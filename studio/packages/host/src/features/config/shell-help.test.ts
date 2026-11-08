@@ -1,8 +1,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ModelProfile } from "@amo-studio/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelProfile, Session } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
@@ -35,6 +35,23 @@ afterEach(async () => {
 });
 
 describe("命令行适配", () => {
+  it("persists network settings and refuses an invalid replacement", async () => {
+    expect(service.config.settings().network?.mode).toBe("inherit");
+    service.config.updateSettings({ network: { mode: "manual", proxyUrl: "http://127.0.0.1:7890" } });
+    expect(service.config.settings().network).toEqual({ mode: "manual", proxyUrl: "http://127.0.0.1:7890" });
+    expect(() => service.config.updateSettings({ network: { mode: "manual", proxyUrl: "oops" } })).toThrow();
+    expect(service.config.settings().network?.mode).toBe("manual");
+    await expect(service.config.applyNetwork()).resolves.toEqual({ ok: true });
+  });
+  it("does not release Codex servers while a turn or terminal handoff is active", async () => {
+    const list = vi.spyOn(store, "listSessions");
+    try {
+      for (const state of [{ status: "running", writer: "workbench" }, { status: "idle", writer: "terminal-handoff" }, { status: "idle", writer: "terminal-shared" }]) {
+        list.mockReturnValue([{ profileId: "p-ds", ...state } as Session]);
+        await expect(service.config.applyNetwork()).rejects.toThrow("请结束后再应用");
+      }
+    } finally { list.mockRestore(); }
+  });
   it("is on by default: the variables go under the agents and the instructions carry the Windows lines", () => {
     expect(service.config.settings().shellHelp).toBe(true);
     expect(shellHelpEnv(store)).toEqual({ PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" });

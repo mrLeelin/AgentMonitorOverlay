@@ -41,6 +41,7 @@ import { blockText, DshTranscript, toolOutput, type AcpUpdate } from "./transcri
 import { DshSubagents } from "./subagents.js";
 import { grantFailurePath, windowsFolderAccess, type FolderAccess, type FolderAccessState } from "./folder-access.js";
 import { shellHelpEnv, withoutHostEnv } from "../agent-env.js";
+import { agentNetworkEnv } from "../network.js";
 import { acpServer, type McpLaunch, type McpSource } from "../mcp-launch.js";
 
 // DeepSeek sessions on a DeepSeek Harness source clone (stage 17, plans/done/stage-17-dsh.md). Each session runs its own
@@ -556,7 +557,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   // ---- processes --------------------------------------------------------------------------------------------------
 
   private spawn(cwd: string, profile: ModelProfile | null, permission: DshPermissionMode, label: string, model?: string): AcpConnection {
-    const env: NodeJS.ProcessEnv = { ...shellHelpEnv(this.store), ...withoutHostEnv(this.options.env ?? process.env), [DSH_HOME_ENV]: join(this.options.dir, "home"), [DSH_PERMISSION_ENV]: permission };
+    const env: NodeJS.ProcessEnv = agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...withoutHostEnv(this.options.env ?? process.env), [DSH_HOME_ENV]: join(this.options.dir, "home"), [DSH_PERMISSION_ENV]: permission });
     // A model of the other sign-in (picked before 设置 changed it) is not asked for: the agent starts on its default.
     const usable = model && this.routeAllowed(profile, model) ? model : undefined;
     let patch: string | null;
