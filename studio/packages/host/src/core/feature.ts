@@ -33,6 +33,7 @@ export type FeatureName =
   | "topicDocs"
   | "taskPlans"
   | "orchestration"
+  | "sharedContext"
   | "relays"
   | "chatFiles"
   | "cli"

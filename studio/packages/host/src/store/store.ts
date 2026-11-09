@@ -173,9 +173,10 @@ export class Store extends DocumentStore {
     const firstMessage = input.firstMessage?.trim() || "";
     const description = input.description?.trim() || "";
     const task: Task = { id: input.id ?? newId("task"), title: input.title, workspaceId: input.workspaceId, topicId: input.topicId ?? null, managerTaskId: input.managerTaskId ?? null, column: input.column ?? "todo", ...(firstMessage ? { firstMessage } : {}), ...(description ? { description } : {}), ...(input.lead ? { lead: true } : {}), ...(input.remote ? { remote: input.remote } : {}), createdAt: at, updatedAt: at, archivedAt: null };
+    task.reviewEnteredAt = task.column === "review" ? at : null;
     this.db
-      .prepare("INSERT INTO tasks (id, title, workspace_id, topic_id, manager_task_id, column_name, lead, remote, first_message, description, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)")
-      .run(task.id, task.title, task.workspaceId, task.topicId, task.managerTaskId ?? null, task.column, input.lead ? 1 : 0, input.remote ? JSON.stringify(input.remote) : null, firstMessage || null, description || null, at, at);
+      .prepare("INSERT INTO tasks (id, title, workspace_id, topic_id, manager_task_id, column_name, lead, remote, first_message, description, created_at, updated_at, archived_at, review_entered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)")
+      .run(task.id, task.title, task.workspaceId, task.topicId, task.managerTaskId ?? null, task.column, input.lead ? 1 : 0, input.remote ? JSON.stringify(input.remote) : null, firstMessage || null, description || null, at, at, task.reviewEnteredAt);
     return task;
   }
 
@@ -205,9 +206,13 @@ export class Store extends DocumentStore {
     const remote = patch.remote !== undefined ? patch.remote : task.remote;
     const { description: _d, firstMessage: _f, lead: _l, relayAuto: _r, remote: _m, ...plain } = patch;
     const next: Task = { ...rest, ...plain, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(lead ? { lead: true } : {}), ...(relayAuto ? { relayAuto: true } : {}), ...(remote ? { remote } : {}), updatedAt: this.timestamp() };
+    // Even two transitions within a millisecond must identify different review rounds.
+    next.reviewEnteredAt = next.column === "review" && task.column !== "review"
+      ? new Date(Math.max(Date.parse(next.updatedAt), task.reviewEnteredAt ? Date.parse(task.reviewEnteredAt) + 1 : 0)).toISOString()
+      : (task.reviewEnteredAt ?? null);
     this.db
-      .prepare("UPDATE tasks SET title = ?, column_name = ?, workspace_id = ?, topic_id = ?, manager_task_id = ?, archived_at = ?, description = ?, first_message = ?, lead = ?, relay_auto = ?, remote = ?, updated_at = ? WHERE id = ?")
-      .run(next.title, next.column, next.workspaceId || null, next.topicId, next.managerTaskId ?? null, next.archivedAt, description || null, firstMessage || null, lead ? 1 : 0, relayAuto ? 1 : 0, remote ? JSON.stringify(remote) : null, next.updatedAt, id);
+      .prepare("UPDATE tasks SET title = ?, column_name = ?, workspace_id = ?, topic_id = ?, manager_task_id = ?, archived_at = ?, description = ?, first_message = ?, lead = ?, relay_auto = ?, remote = ?, updated_at = ?, review_entered_at = ? WHERE id = ?")
+      .run(next.title, next.column, next.workspaceId || null, next.topicId, next.managerTaskId ?? null, next.archivedAt, description || null, firstMessage || null, lead ? 1 : 0, relayAuto ? 1 : 0, remote ? JSON.stringify(remote) : null, next.updatedAt, next.reviewEnteredAt, id);
     return next;
   }
 

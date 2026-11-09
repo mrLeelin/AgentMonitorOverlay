@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isCommon, TASK_DESCRIPTION_MAX, TASK_PLAN_MAX_TASKS, wouldCycle, type Id, type ModelProfile, type PlannedTask, type Task, type TaskPlan } from "@amo-studio/protocol";
+import { isCommon, managementRoot, TASK_DESCRIPTION_MAX, TASK_PLAN_MAX_TASKS, wouldCycle, type Id, type ModelProfile, type PlannedTask, type Task, type TaskPlan } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
@@ -10,19 +10,30 @@ const FIRST_MESSAGE_MAX = 20_000;
 /** How long a decided proposal stays listed. */
 const DECIDED_SHOWN_MS = 24 * 3600_000;
 const STARTS_KEY = "taskplans.pending-starts";
-type PendingStart = { taskId: Id; planId: Id; managerTaskId: Id | null; dependsOn: Id[]; profileId: Id; text: string; options?: PlannedTask["options"]; error?: string };
+type PendingStart = { taskId: Id; planId: Id; managerTaskId: Id | null; rootTaskId?: Id | null; dependsOn: Id[]; profileId: Id; text: string; options?: PlannedTask["options"]; error?: string };
 
 /**
  * A lead organises its managed work directly; a topic session without a lead keeps the editable proposal workflow.
  * Tasks and dependencies are created before any session, and dependent work waits for accepted prerequisites.
  */
-export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions" | "tasks"> {
+export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions" | "tasks" | "orchestration" | "sharedContext"> {
   private starting: Promise<void> | null = null;
 
   /** Only accepted plans enter this durable queue; installing it never starts old unaccepted proposals. */
   watch(): void {
     this.host.on("event", (event) => {
-      if (event.type === "task.upserted") void this.startReady();
+      if (event.type === "task.upserted") {
+        // Revoke synchronously: transferring away and back before the async scan must not revive old dispatch.
+        const pending = this.pending(), tasks = this.store.listTasks();
+        let changed = false;
+        for (const entry of Object.values(pending)) {
+          if (entry.rootTaskId === undefined) continue;
+          const task = tasks.find((t) => t.id === entry.taskId);
+          if (!task || (task.managerTaskId ?? null) !== entry.managerTaskId || (managementRoot(tasks, entry.taskId)?.id ?? null) !== entry.rootTaskId) { delete pending[entry.taskId]; changed = true; }
+        }
+        if (changed) this.store.setKv(STARTS_KEY, JSON.stringify(pending));
+        void this.startReady();
+      }
     });
     void this.startReady();
   }
@@ -71,7 +82,9 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
       const effort = typeof t.effort === "string" && t.effort.trim() ? await this.f.sessions.effortFor(picked.profileId, picked.model, t.effort.trim()) : undefined;
       const options = picked.model || effort ? { ...(picked.model ? { model: picked.model } : {}), ...(effort ? { effort } : {}) } : undefined;
       const dependsOn = Array.isArray(t.dependsOn) ? t.dependsOn.map(String) : [];
-      tasks.push({ key, title, workspaceId, ...(t.lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), profileId: picked.profileId, ...(options ? { options } : {}), dependsOn });
+      const contextBasis = plannedBasis(t.contextBasis);
+      if (contextBasis) this.f.sharedContext.validatePlanBasis(sessionId, contextBasis);
+      tasks.push({ key, title, workspaceId, ...(t.lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), profileId: picked.profileId, ...(options ? { options } : {}), ...(contextBasis ? { contextBasis } : {}), dependsOn });
     }
     checkKeys(tasks);
     const at = new Date().toISOString();
@@ -100,7 +113,9 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
       const options = profileId === original.profileId ? original.options : undefined;
       const lead = t.lead === undefined ? original.lead : t.lead;
       if (lead !== undefined && typeof lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
-      kept.push({ key: original.key, title, workspaceId, ...(lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(profileId ? { profileId } : {}), ...(options ? { options } : {}), dependsOn: original.dependsOn });
+      const contextBasis = plannedBasis(t.contextBasis === undefined ? original.contextBasis : t.contextBasis);
+      if (contextBasis) this.f.sharedContext.validatePlanBasis(plan.fromSessionId, contextBasis);
+      kept.push({ key: original.key, title, workspaceId, ...(lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(profileId ? { profileId } : {}), ...(options ? { options } : {}), ...(contextBasis ? { contextBasis } : {}), dependsOn: original.dependsOn });
     }
     if (!kept.length) throw new HostError("bad_request", "keep at least one task, or dismiss the proposal");
     checkKeys(kept);
@@ -131,6 +146,7 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}),
       });
       const described = t.description ? this.f.tasks.updateTask(task.id, { description: t.description }) : task;
+      if (t.contextBasis) this.f.sharedContext.apply(plan.fromSessionId, { ...t.contextBasis, taskIds: [task.id] });
       if (topicId) this.f.canvases.canvasPlaceTask(task.id, groups.get(t.workspaceId) ?? null);
       made.push({ key: t.key, task: described });
     }
@@ -150,7 +166,7 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         for (const t of kept) {
           if (!t.profileId) continue;
           const taskId = made.find((m) => m.key === t.key)!.task.id;
-          pending[taskId] = { taskId, planId: plan.id, managerTaskId: manager?.id ?? null, dependsOn: t.dependsOn.flatMap((key) => made.filter((m) => m.key === key).map((m) => m.task.id)), profileId: t.profileId, text: t.firstMessage || t.description || t.title, ...(t.options ? { options: t.options } : {}) };
+          pending[taskId] = { taskId, planId: plan.id, managerTaskId: manager?.id ?? null, rootTaskId: managementRoot(this.store.listTasks(), taskId)?.id ?? null, dependsOn: t.dependsOn.flatMap((key) => made.filter((m) => m.key === key).map((m) => m.task.id)), profileId: t.profileId, text: t.firstMessage || t.description || t.title, ...(t.options ? { options: t.options } : {}) };
         }
         this.store.setKv(STARTS_KEY, JSON.stringify(pending));
       }
@@ -197,13 +213,24 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         for (const entry of Object.values(this.pending())) {
           const task = this.store.getTask(entry.taskId);
           const manager = entry.managerTaskId ? this.store.getTask(entry.managerTaskId) : null;
-          const invalid = !task || !!task.archivedAt || !!task.remote || (task.topicId !== null && !!this.store.getTopic(task.topicId)?.archivedAt) || task.managerTaskId !== entry.managerTaskId || (entry.managerTaskId && (!manager?.lead || !!manager.archivedAt));
+          const rootChanged = entry.rootTaskId !== undefined && (managementRoot(this.store.listTasks(), entry.taskId)?.id ?? null) !== entry.rootTaskId;
+          const binding = task ? this.f.sharedContext.get(task.id) : null;
+          const invalid = !task || !!task.archivedAt || !!task.remote || (task.topicId !== null && !!this.store.getTopic(task.topicId)?.archivedAt) || task.managerTaskId !== entry.managerTaskId || (entry.managerTaskId && (!manager?.lead || !!manager.archivedAt)) || rootChanged || (!!binding?.binding && !binding.validBinding);
           const existing = this.store.listSessions({ taskId: entry.taskId });
           if (invalid || existing.length) { this.dropPending(entry.taskId); continue; }
           if (entry.error || task.column !== "todo") continue;
           const dependencies = entry.dependsOn.map((id) => this.store.getTask(id));
           if (dependencies.some((dep) => !dep || dep.archivedAt || dep.column !== "done")) continue;
+          // A managed prerequisite needs its actual accepted delivery, owned by the current manager.
+          // Legacy unassigned plans keep their former done-column behavior.
+          const results = dependencies.map((dep) => this.f.orchestration.results(dep!.id).at(-1));
+          if (dependencies.some((dep, index) => {
+            if (!entry.managerTaskId) return false;
+            const result = results[index];
+            return dep!.managerTaskId !== entry.managerTaskId || result?.state !== "accepted" || result.managerTaskId !== dep!.managerTaskId || !this.f.sharedContext.isResultCurrent(dep!.id, result) || !this.f.sharedContext.isPrerequisiteCurrent(task.id, result);
+          })) continue;
           try {
+            this.f.sharedContext.setPrerequisites(task.id, results.flatMap((result) => result ? [result.id] : []));
             this.f.tasks.updateTask(task.id, { column: "doing" });
             await this.f.tasks.addSession(task.id, { profileId: entry.profileId, text: entry.text, ...(entry.options ? { options: entry.options } : {}) });
             this.f.tasks.updateTask(task.id, { firstMessage: "" });
@@ -249,6 +276,14 @@ function optionalText(v: unknown, what: string, max: number): string | undefined
   const t = v.trim();
   if (t.length > max) throw new HostError("bad_request", `${what} is limited to ${max} characters`);
   return t || undefined;
+}
+
+function plannedBasis(value: unknown): PlannedTask["contextBasis"] {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HostError("bad_request", "contextBasis 必须包含 contextId 和 version。");
+  const { contextId, version } = value as Record<string, unknown>;
+  if (typeof contextId !== "string" || !contextId.trim() || typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) throw new HostError("bad_request", "contextBasis 需要有效 contextId 和正整数 version。");
+  return { contextId, version };
 }
 
 /** Keys are unique; dependencies name other planned tasks and make no cycle. */

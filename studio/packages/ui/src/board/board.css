@@ -23,6 +23,10 @@
 @keyframes card-runner-frames { to { background-position-x: -192px; } }
 @media (prefers-reduced-motion: reduce) { .card-runner { animation: none; } }
 .card-meta { font-size: var(--fs-cap); color: var(--text-faint); }
+.card.review-unseen { border-left: 3px solid var(--attention); padding-left: 12px; }
+.card-footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-review-unseen { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--r-btn); background: var(--attention-bg); color: var(--attention); font-size: var(--fs-cap); font-weight: 600; white-space: nowrap; }
+.card-review-unseen .dot { width: 5px; height: 5px; background: currentColor; }
 /* 归属行 (2026-10-19): 「专题 › 项目」 above the title — the topic in the accent with the left column's bookmark, the
    project in code type with its folder. */
 .card-where { display: flex; align-items: center; gap: 5px; min-width: 0; margin-bottom: -2px; font-size: var(--fs-cap); line-height: 18px; }

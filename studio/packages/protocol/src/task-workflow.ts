@@ -1,4 +1,5 @@
 import type { DecisionRequest, Id, Task, Timestamp } from "./entities.js";
+import type { ContextBasis, ContextResolution } from "./shared-context.js";
 
 /** The valid top-level lead of a management tree; layout and links never grant ownership. */
 export function managementRoot(tasks: readonly Task[], taskId: Id): Task | null {
@@ -24,6 +25,11 @@ export interface TaskResult {
   managerTaskId: Id | null;
   summary: string;
   verification: string;
+  contextBasis?: ContextBasis;
+  prerequisiteResultIds?: Id[];
+  /** Submission is saved even when its declared evidence needs a manager's decision. */
+  contextMismatch?: string;
+  contextResolution?: ContextResolution;
   state: "submitted" | "accepted" | "returned";
   review?: string;
   createdAt: Timestamp;

@@ -368,12 +368,15 @@ export class CodexEvents {
         if (sent) {
           st.sent.delete(clientId as string);
           this.core.updateItem(sent.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
+          const row = this.core.store.getItem(sent.itemId);
+          if (row?.type === "user") this.core.messageDelivered(s.id, row.text);
           return;
         }
         const content = (item.content ?? []) as Array<{ type?: string; text?: unknown; path?: unknown }>;
         const text = content.map((c) => (c && typeof c === "object" && typeof c.text === "string" ? c.text : "")).join("");
         const images = content.filter((c) => c?.type === "localImage" && typeof c.path === "string").map((c) => messageImage(c.path as string));
         this.core.appendItem(s.id, { type: "user", text, ...(images.length ? { images } : {}) }, raw);
+        this.core.messageDelivered(s.id, text);
         return;
       }
       case "reasoning": {

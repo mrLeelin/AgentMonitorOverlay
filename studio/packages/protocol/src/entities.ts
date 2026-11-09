@@ -39,6 +39,8 @@ export interface Task {
   /** The topic it belongs to; null when it is in none. */
   topicId: Id | null;
   column: TaskColumn;
+  /** Latest entry into 待审阅. Only a column transition changes it; local viewing records refer to this round. */
+  reviewEnteredAt?: Timestamp | null;
   /** What the task is about (2026-10-17): on its canvas card and task page; the person and agents write it (TASK_DESCRIPTION_MAX). */
   description?: string;
   /**
@@ -514,6 +516,8 @@ export interface TaskPlan {
 }
 
 export interface PlannedTask {
+  /** Explicit frozen requirement for this task; absent preserves unbound legacy behavior. */
+  contextBasis?: import("./shared-context.js").ContextBasis;
   /** The proposal's own name for it, for dependencies ("t1"). */
   key: string;
   title: string;

@@ -62,6 +62,8 @@ export type CodexRuntimeEvents = RuntimeEvents;
 export class CodexRuntime extends RuntimeBase {
   private readonly state = new Map<Id, SessionState>();
   private readonly attached = new WeakSet<CodexServerHandle["client"]>();
+  /** A connection is usable for turns only after its persisted threads have been loaded again. */
+  private readonly restoring = new WeakMap<CodexServerHandle["client"], Promise<void>>();
   private readonly usageCache = new Map<Id, AccountUsage>();
   private readonly modelCache = new Map<Id, { at: number; models: ModelOption[] }>();
   private readonly listingModels = new Map<string, Promise<ModelOption[]>>();
@@ -97,7 +99,7 @@ export class CodexRuntime extends RuntimeBase {
     }
     options.servers.on("ready", (handle) => {
       this.attach(handle);
-      void this.resubscribe(handle).catch((err: unknown) => this.emit("log", `resubscribe failed: ${String(err)}`));
+      void this.restore(handle).catch((err: unknown) => this.emit("log", `resubscribe failed: ${String(err)}`));
     });
   }
 
@@ -567,6 +569,15 @@ export class CodexRuntime extends RuntimeBase {
   }
 
   /** After a (re)connect, subscribe again to every live thread served by this profile's server. */
+  private restore(handle: CodexServerHandle): Promise<void> {
+    let pending = this.restoring.get(handle.client);
+    if (!pending) {
+      pending = this.resubscribe(handle);
+      this.restoring.set(handle.client, pending);
+    }
+    return pending;
+  }
+
   private async resubscribe(handle: CodexServerHandle): Promise<void> {
     for (const s of this.store.listSessions()) {
       if (s.profileId !== handle.profileId || !s.runtimeRef || s.archivedAt || s.kind === "sub") continue;
@@ -712,6 +723,7 @@ export class CodexRuntime extends RuntimeBase {
   private async handleFor(profileId: Id): Promise<CodexServerHandle> {
     const handle = await this.options.servers.ensure(profileId);
     this.attach(handle);
+    await this.restore(handle);
     return handle;
   }
 

@@ -48,7 +48,9 @@ import { ALSO_MINE_KEY, PINNED_KEY } from "../focus/pins.js";
 import { readStored, writeStored } from "../lib/stored.js";
 import { writeSessionDraft } from "./sessionDraft.js";
 import { TaskManagement } from "./TaskManagement.js";
+import { TaskContext } from "./TaskContext.js";
 import { decisionNeedsPerson } from "../focus/managedAttention.js";
+import { useMarkReviewSeen } from "../board/reviewSeen.js";
 
 /** Whether the right column (进度、批注、留言…) shows; off by default, remembered per window. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -85,6 +87,7 @@ type Toast = { text: string; command?: string; error?: boolean } | null;
 
 /** Task page: session tree | conversation with composer. Annotations and the scratchpad join in stage 2. */
 export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask }: TaskPageProps) {
+  useMarkReviewSeen(task);
   const own = sessions.filter((s) => s.taskId === task.id);
   // The first live session; in an archived task (or one whose sessions are all archived), the latest archived one.
   const firstSession = () => own.find((s) => !s.archivedAt) ?? [...own].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -389,6 +392,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             onGitOpen={() => void run(() => call(link, "POST /api/workspaces/:id/git/open", { id: task.workspaceId }))}
           />
           <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">{task.lead && !task.managerTaskId ? "总主控 · 查看管理与交付" : <>直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理与交付" : " · 设置归属"}</>}</button>
+          {!copy && <TaskContext link={link} task={task} tasks={tasks} session={session} />}
         </div>
         <div className="task-head-actions">
           {!task.archivedAt && !(copy && copy.state === "revoked") && (

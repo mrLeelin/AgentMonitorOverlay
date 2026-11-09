@@ -10,6 +10,7 @@ import { KindIcon } from "./KindIcon.js";
 import { setGroupByTopic, useGroupByTopic } from "./prefs.js";
 import { dutyOfTask, useDuty } from "../duty/duty.js";
 import { useBoardSelection } from "./useBoardSelection.js";
+import { useReviewUnseen } from "./reviewSeen.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -237,6 +238,7 @@ function TaskCard({
   teamWaiting?: string[];
 }) {
   const status = taskStatus(sessions);
+  const unseen = useReviewUnseen(task);
   const look = status ? SESSION_LOOK[status] : null;
   // 值守 (2026-10-31): items on that open sessions in this task.
   const duty = dutyOfTask(useDuty(), task.id);
@@ -262,7 +264,7 @@ function TaskCard({
   return (
     <button
       type="button"
-      className={`card${off ? " remote-off" : ""}${selected ? " selected" : ""}`}
+      className={`card${off ? " remote-off" : ""}${selected ? " selected" : ""}${unseen ? " review-unseen" : ""}`}
       aria-pressed={selected}
       onClick={(event) => onOpen(task, event)}
       draggable={draggable}
@@ -333,7 +335,10 @@ function TaskCard({
         <span className="spacer" />
         <span>{relativeTime(task.updatedAt)}</span>
       </span>
-      <span className="card-meta">{meta}</span>
+      <span className="card-footer">
+        <span className="card-meta">{meta}</span>
+        {unseen && <span className="card-review-unseen" data-testid="card-review-unseen" title="进入待审阅后还未打开过，点击任务查看后消失"><span className="dot" aria-hidden="true" />未查看</span>}
+      </span>
       {asks && (
         <span className="card-asks" data-testid="card-asks">
           {asks}

@@ -65,6 +65,16 @@ afterAll(async () => {
 });
 
 describe("ClaudeRuntime", () => {
+  it("reports transport delivery for the context after the CLI accepts input", async () => {
+    const received = vi.fn();
+    runtime.on("message-delivered", received);
+    const text = "[AMO_SHARED_CONTEXT:claude-requirement]\n共同需求正文";
+    const s = await runtime.startSession({ taskId: task.id, topicId: null, profileId: "claude-mock", workspace, text });
+    await until(() => received.mock.calls.some(([id, body]) => id === s.id && body === text), "context transport receipt");
+    await until(() => status(s.id) === "idle", "context turn idle");
+    runtime.off("message-delivered", received);
+  }, 120_000);
+
   it("starts with the chosen model and effort, and switches them in a running session", async () => {
     const s = await runtime.startSession({ taskId: task.id, topicId: null, profileId: "claude-mock", workspace, text: "opts one", options: { model: "mock-claude-b", effort: "high" } });
     await until(() => agentTexts(s.id).includes("MOCK: opts one") && status(s.id) === "idle", "first reply");

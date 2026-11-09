@@ -3,6 +3,7 @@ import type { AccountUsage, Annotation, FolderAccessStatus, CanvasDoc, Checklist
 import type { CanvasRoutes } from "./canvas.js";
 import type { TaskManagement } from "./task-management.js";
 import type { TaskResult, TaskWorkflow } from "./task-workflow.js";
+import type { SharedContextView, SharedContext, TaskContextBinding, ContextReceipt, ContextSaveInput, ContextApplyInput, ContextSubmissionInput } from "./shared-context.js";
 import type { ChannelRoutes } from "./channels.js";
 import type { ChatFileRoutes } from "./chatfiles.js";
 import type { CliRoutes } from "./cli.js";
@@ -698,8 +699,13 @@ export interface HostRoutes
   "PATCH /api/tasks/:id": { req: { title?: string; description?: string; firstMessage?: string; lead?: boolean; managerTaskId?: Id | null; relayAuto?: boolean; column?: TaskColumn; workspaceId?: Id | null; topicId?: Id | null }; res: Task };
   "GET /api/tasks/:id/management": { req: void; res: TaskManagement };
   "GET /api/tasks/:id/workflow": { req: void; res: TaskWorkflow };
-  "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string }; res: TaskResult };
-  "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string }; res: TaskResult };
+  "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string } & ContextSubmissionInput; res: TaskResult };
+  "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
+  "GET /api/tasks/:id/context": { req: void; res: SharedContextView };
+  "POST /api/shared-context/save": { req: ContextSaveInput & { sessionId: Id }; res: SharedContext };
+  "POST /api/shared-context/publish": { req: { sessionId: Id; contextId: Id; baseRevision: number }; res: SharedContext };
+  "POST /api/shared-context/apply": { req: ContextApplyInput & { sessionId: Id }; res: TaskContextBinding[] };
+  "POST /api/shared-context/adopt": { req: { sessionId: Id; contextId: Id; version: number }; res: ContextReceipt };
   /** Archives the task and all its sessions; returns the task. */
   "POST /api/tasks/:id/archive": { req: void; res: Task };
   "POST /api/tasks/:id/unarchive": { req: void; res: Task };

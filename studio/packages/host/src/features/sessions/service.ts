@@ -17,7 +17,7 @@ export const SLOW_SEND_MS = 5000;
 const busy = (s: Session) => inTurn(s.status);
 
 /** Sessions: conversation, approvals, branches, archive, names and options, terminals. */
-export class SessionsFeature extends Feature<"attachments" | "collab" | "config" | "remote" | "review" | "tasks"> {
+export class SessionsFeature extends Feature<"attachments" | "collab" | "config" | "remote" | "review" | "tasks" | "sharedContext"> {
   /** Messages from agents and from Studio: held until the session is free (inbox.ts). */
   readonly inbox = new SessionInbox(this.host, this);
 
@@ -151,6 +151,14 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   withRole(text: string, lines: string[]): string {
     return composeRoleUpdate(text, lines);
   }
+
+  /** Capture the task's explicit version when a message is enqueued; resending never replaces that captured text. */
+  withContext(sessionId: Id, text: string): string {
+    const context = this.f.sharedContext.sessionContext(sessionId);
+    return !context || text.includes(context) ? text : `${text}\n\n${context}`;
+  }
+
+  startingTaskSession(taskId: Id | null): boolean { return !!taskId && this.f.tasks.hasStartingSession(taskId); }
 
   /** What changed about the session's role since it was last told; nothing for one that cannot hear it. */
   roleUpdate(sessionId: Id): { lines: string[]; told: () => void } {

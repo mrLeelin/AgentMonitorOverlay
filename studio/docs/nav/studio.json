@@ -83,7 +83,7 @@
     {
       "id": "studio.tasks",
       "label": "任务和看板",
-      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "框选", "批量拖动", "任务页", "说明", "交接", "handoff", "worktree"],
+      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "框选", "批量拖动", "任务页", "待审阅", "未查看", "说明", "交接", "handoff", "worktree"],
       "category": "host",
       "purpose": "任务（一个项目里的一件事，有自己的会话、看板列、说明、进度、交接）和项目、看板。Studio 从不替人建分支或合并（用户 10 月定）。",
       "anchors": [
@@ -91,6 +91,7 @@
         { "label": "ProjectsFeature", "path": "studio/packages/host/src/features/projects/service.ts", "anchor": "export class ProjectsFeature" },
         { "label": "看板", "path": "studio/packages/ui/src/board/Board.tsx", "anchor": "export function Board" },
         { "label": "看板框选", "path": "studio/packages/ui/src/board/useBoardSelection.ts", "anchor": "export function useBoardSelection" },
+        { "label": "本轮待审阅查看记录", "path": "studio/packages/ui/src/board/reviewSeen.ts", "anchor": "export function useMarkReviewSeen" },
         { "label": "任务页", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "export function TaskPage" },
         { "label": "实体类型", "path": "studio/packages/protocol/src/entities.ts" }
       ],

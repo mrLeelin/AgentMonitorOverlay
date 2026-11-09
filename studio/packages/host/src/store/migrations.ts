@@ -375,4 +375,9 @@ export const MIGRATIONS: readonly Migration[] = [
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE EXISTS (SELECT 1 FROM json_each(canvas_docs.body, '$.links') WHERE json_extract(value, '$.kind') = 'collaboration');
   `,
+  // 28: Board review reminders need a stable round, independent of title/settings edits.
+  `
+  ALTER TABLE tasks ADD COLUMN review_entered_at TEXT;
+  UPDATE tasks SET review_entered_at = updated_at WHERE column_name = 'review';
+  `,
 ];

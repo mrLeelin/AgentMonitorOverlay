@@ -73,6 +73,12 @@ async function legacyProposal(input: Parameters<typeof service.taskPlans.propose
   return pending;
 }
 
+function acceptPrerequisite(taskId: string): void {
+  const owner = store.listSessions({ taskId })[0]!;
+  const result = service.orchestration.submit(owner.id, "前置完成", "隔离验证通过");
+  service.orchestration.review(leadSession.id, result.id, true, "验收通过");
+}
+
 describe("task plans (拆任务提案)", () => {
   it("takes a proposal only from a 主控, and checks it", async () => {
     await expect(service.taskPlans.propose(worker.id, proposal)).rejects.toThrow(/只有主控/);
@@ -196,6 +202,9 @@ describe("task plans (拆任务提案)", () => {
     expect(store.listSessions({ taskId: second })).toHaveLength(0);
     service.tasks.updateTask(first, { column: "done" });
     await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: second })).toHaveLength(0);
+    acceptPrerequisite(first);
+    await service.taskPlans.startReady();
     await service.taskPlans.startReady();
     expect(store.listSessions({ taskId: second })).toHaveLength(1);
     expect(seen).toEqual([{ lead: true, manager: leadTask.id }, { lead: false, manager: leadTask.id }]);
@@ -207,7 +216,7 @@ describe("task plans (拆任务提案)", () => {
       { key: "a", title: "先做" }, { key: "b", title: "后做", dependsOn: ["a"] },
     ] });
     const first = plan.created![0]!.taskId, second = plan.created![1]!.taskId;
-    store.updateTask(first, { column: "done" });
+    acceptPrerequisite(first);
     const { TaskPlansFeature } = await import("./service.js");
     const restored = new TaskPlansFeature(service);
     await restored.startReady();
@@ -230,11 +239,79 @@ describe("task plans (拆任务提案)", () => {
     service.tasks.updateTask(id("a"), { column: "review" });
     await service.taskPlans.startReady();
     expect(store.listSessions({ taskId: id("valid") })).toHaveLength(0);
-    service.tasks.updateTask(id("a"), { column: "done" });
+    acceptPrerequisite(id("a"));
     await service.taskPlans.startReady();
     expect(store.listSessions({ taskId: id("archived") })).toHaveLength(0);
     expect(store.listSessions({ taskId: id("transferred") })).toHaveLength(0);
     expect(store.listSessions({ taskId: id("manual") })).toHaveLength(1);
     expect(store.listSessions({ taskId: id("valid") })).toHaveLength(1);
+  });
+
+  it("freezes the explicitly planned requirement before queuing and records actual prerequisite results", async () => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+    const draft = service.sharedContext.save(leadSession.id, { rootTaskId: leadTask.id, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户目标" }] });
+    const first = service.sharedContext.publishVersion(leadSession.id, draft.id, draft.revision);
+    const contextBasis = { contextId: first.id, version: 1 };
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "按一版派工", tasks: [
+      { key: "a", title: "前置资源", contextBasis }, { key: "b", title: "后置集成", contextBasis, dependsOn: ["a"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId;
+    const changed = service.sharedContext.save(leadSession.id, { rootTaskId: leadTask.id, title: "共同需求", baseRevision: first.revision, body: "五枚投币", changeNote: "调整数量", sources: [{ kind: "user_requirement", source: "用户调整" }] });
+    service.sharedContext.publishVersion(leadSession.id, changed.id, changed.revision);
+    expect(service.sharedContext.binding(b)?.version).toBe(1);
+    expect(store.listSessions({ taskId: b })).toHaveLength(0);
+    const worker = store.listSessions({ taskId: a })[0]!;
+    service.sharedContext.getForSession(worker.id);
+    service.sharedContext.adopt(worker.id, contextBasis);
+    acceptPrerequisite(a);
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: b })).toHaveLength(1);
+    expect(service.sharedContext.binding(b)?.version).toBe(1);
+    expect(service.sharedContext.prerequisites(b)).toEqual([service.orchestration.results(a).at(-1)!.id]);
+  });
+
+  it("does not start a bound dependent with an accepted prerequisite from the wrong version", async () => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+    const draft = service.sharedContext.save(leadSession.id, { rootTaskId: leadTask.id, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户目标" }] });
+    const first = service.sharedContext.publishVersion(leadSession.id, draft.id, draft.revision);
+    const changed = service.sharedContext.save(leadSession.id, { rootTaskId: leadTask.id, title: "共同需求", baseRevision: first.revision, body: "五枚投币", changeNote: "调整数量", sources: [{ kind: "user_requirement", source: "用户调整" }] });
+    service.sharedContext.publishVersion(leadSession.id, changed.id, changed.revision);
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "版本不同的分工", tasks: [
+      { key: "a", title: "前置资源", contextBasis: { contextId: first.id, version: 1 } },
+      { key: "b", title: "后置集成", contextBasis: { contextId: first.id, version: 2 }, dependsOn: ["a"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId, worker = store.listSessions({ taskId: a })[0]!;
+    service.sharedContext.getForSession(worker.id);
+    service.sharedContext.adopt(worker.id, { contextId: first.id, version: 1 });
+    acceptPrerequisite(a);
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: b })).toHaveLength(0);
+    service.tasks.updateTask(a, { column: "doing" });
+    service.sharedContext.apply(leadSession.id, { contextId: first.id, version: 2, taskIds: [a] });
+    service.sharedContext.getForSession(worker.id);
+    service.sharedContext.adopt(worker.id, { contextId: first.id, version: 2 });
+    acceptPrerequisite(a);
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: b })).toHaveLength(1);
+  });
+
+  it("revokes old queued dispatch when its manager subtree transfers away and back", async () => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+    const top = store.createTask({ title: "原管理根", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    const other = store.createTask({ title: "另一个管理根", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    service.tasks.setManager(leadTask.id, top.id);
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "排队派工", tasks: [
+      { key: "a", title: "前置" }, { key: "b", title: "等待前置", dependsOn: ["a"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId;
+    service.tasks.setManager(leadTask.id, other.id);
+    service.tasks.setManager(leadTask.id, top.id);
+    acceptPrerequisite(a);
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: b })).toHaveLength(0);
+    expect(JSON.parse(store.getKv("taskplans.pending-starts")!.value)[b]).toBeUndefined();
   });
 });

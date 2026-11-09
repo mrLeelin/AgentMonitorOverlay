@@ -29,7 +29,8 @@ beforeEach(async () => {
   runtime = new CodexRuntime({ store, servers, profiles: PROFILES });
   service = new HostService(store, runtime, PROFILES, { commonDir: join(root, "common") });
   lines = [];
-  service.on("log", (line) => lines.push(line));
+  const fixtureLines = lines;
+  service.on("log", (line) => fixtureLines.push(line));
   mkdirSync(join(root, "alpha"));
   const alpha: Workspace = store.addWorkspace({ path: join(root, "alpha"), name: "alpha" });
   const task: Task = store.createTask({ title: "日志", workspaceId: alpha.id });

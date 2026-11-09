@@ -36,6 +36,7 @@ import { TeamRelayFeature } from "./features/teamrelay/service.js";
 import { IssuesFeature } from "./features/issues/service.js";
 import { DutyFeature } from "./features/duty/service.js";
 import { OrchestrationFeature } from "./features/orchestration/service.js";
+import { SharedContextFeature } from "./features/sharedcontext/service.js";
 import { ChatFilesFeature } from "./features/chatfiles/service.js";
 import { CliFeature } from "./features/cli/service.js";
 import { DataFeature } from "./features/datamgmt/service.js";
@@ -82,6 +83,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   readonly topicDocs: TopicDocsFeature = new TopicDocsFeature(this);
   readonly taskPlans: TaskPlansFeature = new TaskPlansFeature(this);
   readonly orchestration: OrchestrationFeature = new OrchestrationFeature(this);
+  readonly sharedContext: SharedContextFeature = new SharedContextFeature(this);
   readonly relays: RelaysFeature = new RelaysFeature(this);
   readonly chatFiles: ChatFilesFeature = new ChatFilesFeature(this);
   readonly cli: CliFeature = new CliFeature(this);
@@ -130,15 +132,20 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     } = {},
   ) {
     super();
+    // Feature watchers are permanent observers of this one Host (now more than EventEmitter's default ten).
+    this.setMaxListeners(20);
     // "remote" (copies of tasks paired devices granted this computer) is one more runtime of the router; a single runtime
     // (tests) gets a router around it first.
     const router = runtime instanceof RuntimeRouter ? runtime : RuntimeRouter.around(store, runtime);
     router.register("remote", new RemoteRuntime(() => this.remote.copies));
     this.runtime = router;
+    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), validate: (sessionId, itemId) => this.sharedContext.validateMessage(sessionId, itemId), checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze) });
+    router.on("message-delivered", (sessionId, text) => this.sharedContext.markDelivered(sessionId, text));
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));
     this.config.watchClaudeAccounts();
     this.tasks.ensureStructure();
+    this.sharedContext.watch();
     this.sessions.watchReports();
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();

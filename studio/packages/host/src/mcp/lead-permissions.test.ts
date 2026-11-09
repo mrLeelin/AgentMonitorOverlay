@@ -45,7 +45,7 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     const tools = amoToolsFor(service, { sessionId });
     expect(tools.filter((t) => !t.readOnly).map((t) => t.name).sort()).toEqual([
       "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place",
-      "checklist_check", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_decision_answer", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "topic_doc_write",
+      "checklist_check", "context_adopt", "context_apply", "context_publish", "context_save", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_decision_answer", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "topic_doc_write",
     ]);
     expect(tools.every((t) => t.autoApprove)).toBe(true);
     expect(tools.some((t) => t.name === "topic_docs")).toBe(true);

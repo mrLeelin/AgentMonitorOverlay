@@ -8,7 +8,7 @@ export function taskPlansTools({ service, caller }: ToolContext): AmoTool[] {
     {
       name: "task_plan_propose",
       title: "拆任务提案",
-      description: `主控 splits work into managed tasks (at most ${TASK_PLAN_MAX_TASKS}) and starts them automatically; no repeated human confirmation. A topic session without a lead still proposes for the person to confirm. Tasks are placed on the canvas and bound to the proposing lead before their first session. Per task: key, title, project (default yours), description, firstMessage (enough to work independently), lead (true for a domain coordinator who may split its own work), model, effort, dependsOn (keys that must be accepted/done before this task starts). Root tasks start at once; dependent tasks start automatically after their prerequisites finish. New task ids are returned in created.`,
+      description: `主控 splits work into managed tasks (at most ${TASK_PLAN_MAX_TASKS}) and starts them automatically; no repeated human confirmation. A topic session without a lead still proposes for the person to confirm. Tasks are placed on the canvas and bound to the proposing lead before their first session. Per task: key, title, project (default yours), description, firstMessage (enough to work independently), lead (true for a domain coordinator who may split its own work), model, effort, contextBasis ({contextId,version}, explicit frozen shared requirement; omitted stays unbound), dependsOn (keys whose actual current delivery must be accepted before this task starts). Tasks without prerequisites start at once; dependent tasks retain their specified version while queued. New task ids are returned in created.`,
       inputSchema: {
         summary: z.string(),
         tasks: z.array(
@@ -22,6 +22,7 @@ export function taskPlansTools({ service, caller }: ToolContext): AmoTool[] {
             model: z.string().optional(),
             effort: z.string().optional(),
             dependsOn: z.array(z.string()).optional(),
+            contextBasis: z.object({ contextId: z.string(), version: z.number().int().positive() }).optional(),
           }),
         ),
       },

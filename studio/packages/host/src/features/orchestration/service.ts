@@ -8,7 +8,7 @@ const OUTBOX_KEY = "orchestration.outbox";
 type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; targetSessionId?: Id; messageId?: Id; sent?: boolean; error?: string; decisionId?: Id; resultId?: Id; turnId?: Id; direction: "up" | "down" };
 
 /** The management tree runs work; the inbox remains the sole automatic conversation delivery path. */
-export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab"> {
+export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab" | "sharedContext"> {
   private readonly sending = new Set<Id>();
 
   workflow(taskId: Id): TaskWorkflow {
@@ -43,51 +43,70 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 
   private ready(task: Task): void {
     const children = this.store.listTasks().filter((t) => t.managerTaskId === task.id && !t.archivedAt);
-    const unfinished = children.filter((t) => t.column !== "done" || this.results(t.id).at(-1)?.state !== "accepted" || this.results(t.id).at(-1)?.managerTaskId !== task.id);
+    const unfinished = children.filter((t) => {
+      const result = this.results(t.id).at(-1);
+      return t.column !== "done" || result?.state !== "accepted" || result.managerTaskId !== task.id || !this.f.sharedContext.isResultCurrent(t.id, result);
+    });
     if (unfinished.length) throw new HostError("conflict", `请先验收直属任务：${unfinished.map((t) => t.title || t.id).join("、")}`);
     const ids = new Set([task.id, ...taskManagement(this.store.listTasks(), task.id).descendants.map((t) => t.id)]);
     if (this.store.listDecisions({ state: "open" }).some((d) => d.taskId && ids.has(d.taskId))) throw new HostError("conflict", "本任务或下辖还有未处理的业务问题，请先解决再交付。");
   }
 
-  submit(sessionId: Id, summaryIn: unknown, verificationIn: unknown): TaskResult {
+  private assertReviewSettled(taskId: Id, callerSessionId: Id, selfRoot: boolean): void {
+    // The root resolves its own pending final delivery from a tool in the current turn.
+    // Other sessions of that root, and every session of a reviewed child, must still be settled.
+    if (this.store.listSessions({ taskId }).some((s) => !(selfRoot && s.id === callerSessionId) && sessionMoving(s))) throw new HostError("conflict", "执行任务仍在工作，请等本轮结束后再验收。");
+  }
+
+  submit(sessionId: Id, summaryIn: unknown, verificationIn: unknown, input?: Pick<TaskResult, "contextBasis" | "prerequisiteResultIds">): TaskResult {
     const { task } = this.own(sessionId);
     const summary = requiredText(summaryIn, "交付摘要"), verification = requiredText(verificationIn, "验证证据");
     this.ready(task);
+    const basis = this.f.sharedContext.captureBasis(sessionId, input);
     const results = this.results(task.id);
     const previous = results.at(-1);
-    if (previous && (previous.state === "submitted" || (previous.state === "accepted" && task.column === "done")) && previous.summary === summary && previous.verification === verification && previous.managerTaskId === (task.managerTaskId ?? null)) return previous;
+    if (previous && (previous.state === "submitted" || (previous.state === "accepted" && task.column === "done")) && previous.summary === summary && previous.verification === verification && previous.managerTaskId === (task.managerTaskId ?? null) && JSON.stringify(previous.contextBasis) === JSON.stringify(basis.contextBasis) && JSON.stringify(previous.prerequisiteResultIds) === JSON.stringify(basis.prerequisiteResultIds)) return previous;
     if (previous?.state === "submitted") throw new HostError("conflict", "交付已提交，等待直属主控验收；需修改时由主控先退回。");
     const at = new Date().toISOString();
-    const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, state: task.managerTaskId ? "submitted" : "accepted", createdAt: at, updatedAt: at };
+    const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, ...basis, state: task.managerTaskId || basis.contextMismatch ? "submitted" : "accepted", createdAt: at, updatedAt: at };
     this.store.transaction(() => {
+      if (result.state === "accepted") this.f.sharedContext.assertAcceptable(task.id, result);
       this.saveResults(task.id, [...results, result]);
-      if (task.managerTaskId) this.queue({ id: `i-${result.id}-submit`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", resultId: result.id, text: `【下级任务提交交付】「${task.title}」（${task.id}）\n结果 ${result.id}\n${summary}\n\n验证：${verification}\n\n请先用 task_workflow 读取最新结果，再用 task_review_result 验收或退回。提交不代表已完成；直属任务全部验收后再提交你自己的汇总。` });
+      if (task.managerTaskId) this.queue({ id: `i-${result.id}-submit`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", resultId: result.id, text: `【下级任务提交交付】「${task.title}」（${task.id}）\n结果 ${result.id}\n${summary}\n\n验证：${verification}${result.contextBasis ? `\n需求依据：${result.contextBasis.contextId} v${result.contextBasis.version}` : ""}${result.prerequisiteResultIds?.length ? `\n前置结果：${result.prerequisiteResultIds.join("、")}` : ""}${result.contextMismatch ? `\n待处理差异：${result.contextMismatch}` : ""}\n\n请先用 task_workflow 读取最新结果，再用 task_review_result 验收或退回。提交不代表已完成；直属任务全部验收后再提交你自己的汇总。` });
     });
-    this.f.tasks.updateTask(task.id, { column: task.managerTaskId ? "review" : "done" });
+    this.f.tasks.updateTask(task.id, { column: result.state === "submitted" ? "review" : "done" });
     this.changed(task.id);
     this.deliver();
     return result;
   }
 
-  review(sessionId: Id, resultId: Id, accept: boolean, reviewIn: unknown): TaskResult {
+  review(sessionId: Id, resultId: Id, accept: boolean, reviewIn: unknown, contextExplanation?: string): TaskResult {
     const { task: manager } = this.own(sessionId);
     if (!manager.lead) throw new HostError("bad_request", "只有直属主控能够验收交付。");
     const review = requiredText(reviewIn, "验收结论或退回原因");
-    const child = this.store.listTasks().find((t) => t.managerTaskId === manager.id && !t.archivedAt && this.results(t.id).some((r) => r.id === resultId));
+    const child = this.store.listTasks().find((t) => (t.managerTaskId === manager.id || (t.id === manager.id && !manager.managerTaskId)) && !t.archivedAt && this.results(t.id).some((r) => r.id === resultId));
     if (!child) throw new HostError("bad_request", "结果不属于你的有效直属任务，归属可能已变更。");
     const results = this.results(child.id), latest = results.at(-1)!;
-    if (latest.id !== resultId || latest.managerTaskId !== manager.id) throw new HostError("conflict", "只能验收最新且仍归你管理的交付。");
+    const expectedManager = child.id === manager.id ? null : manager.id;
+    if (latest.id !== resultId || latest.managerTaskId !== expectedManager) throw new HostError("conflict", "只能验收最新且仍归你管理的交付。");
     const state = accept ? "accepted" : "returned";
     if (latest.state === state && latest.review === review) return latest;
     if (latest.state !== "submitted") throw new HostError("conflict", "此交付已经处理，请读取最新状态。");
+    const selfRoot = child.id === manager.id && expectedManager === null;
     if (accept) {
-      if (this.store.listSessions({ taskId: child.id }).some(sessionMoving)) throw new HostError("conflict", "执行任务仍在工作，请等本轮结束后再验收。");
+      this.assertReviewSettled(child.id, sessionId, selfRoot);
       this.ready(child);
     }
-    const next: TaskResult = { ...latest, state, review, updatedAt: new Date().toISOString() };
-    this.store.transaction(() => {
-      this.saveResults(child.id, [...results.slice(0, -1), next]);
+    const next = this.store.transaction(() => {
+      // Acceptance is based on the requirement and ownership read inside the write transaction.
+      const current = this.requireTask(child.id), currentManager = this.requireTask(manager.id), currentResults = this.results(child.id), currentLatest = currentResults.at(-1);
+      if (current.archivedAt || (current.managerTaskId ?? null) !== expectedManager || !currentManager.lead || !managementRoot(this.store.listTasks(), current.id) || currentLatest?.id !== resultId || currentLatest.state !== "submitted" || currentLatest.managerTaskId !== expectedManager) throw new HostError("conflict", "交付或任务归属已变化，请重新读取后验收。");
+      if (accept) { this.assertReviewSettled(current.id, sessionId, selfRoot); this.ready(current); }
+      const contextResolution = accept ? this.f.sharedContext.assertAcceptable(current.id, currentLatest, contextExplanation) : undefined;
+      const next: TaskResult = { ...currentLatest, state, review, ...(contextResolution ? { contextResolution } : {}), updatedAt: new Date().toISOString() };
+      this.saveResults(child.id, [...currentResults.slice(0, -1), next]);
       if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: manager.id, targetTaskId: child.id, direction: "down", resultId, text: `【直属主控退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。` });
+      return next;
     });
     this.f.tasks.updateTask(child.id, { column: accept ? "done" : "doing" });
     this.changed(child.id);

@@ -19,6 +19,8 @@ export interface RuntimeEvents {
   /** Every change, already persisted (except `item.delta`, which carries the last persisted seq). */
   event: [HostEvent];
   log: [string];
+  /** Transport confirmed this text entered the session; this never means the agent adopted its requirements. */
+  "message-delivered": [Id, string];
 }
 
 export interface SessionRuntimeApi {
@@ -94,6 +96,7 @@ export interface SessionRuntimeApi {
   mcpStatus?(sessionId: Id): Promise<Array<{ name: string; status: string; error?: string; source?: string }> | null>;
   on(event: "event", listener: (e: HostEvent) => void): unknown;
   on(event: "log", listener: (line: string) => void): unknown;
+  on(event: "message-delivered", listener: (sessionId: Id, text: string) => void): unknown;
 }
 
 /** The optional operations: a router made `around` one runtime offers only those that runtime has. */
@@ -105,6 +108,15 @@ const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", 
  * step 2) — 2026-11-05, plans/host-structure.md 8a: it used to be a wrapper around the router.
  */
 export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements SessionRuntimeApi {
+  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void } | null = null;
+
+  /** One Host-owned context assembler for every runtime, including first messages and resumed sessions. */
+  setMessageContext(context: NonNullable<RuntimeRouter["context"]>): void { this.context = context; }
+
+  private withContext(text: string, context: string): string {
+    // A queued message keeps the version it already carries, even after another version is applied to the task.
+    return !context || text.includes(context) ? text : `${text}\n\n${context}`;
+  }
   /** `around`: the one runtime every session and profile goes to that no registered runtime takes. */
   private fallback: SessionRuntimeApi | null = null;
 
@@ -140,6 +152,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   private listen(r: SessionRuntimeApi): void {
     r.on("event", (e) => this.emit("event", e));
     r.on("log", (line) => this.emit("log", line));
+    r.on("message-delivered", (sessionId, text) => this.emit("message-delivered", sessionId, text));
   }
 
   private byRuntime(runtime: SessionRuntime): SessionRuntimeApi {
@@ -180,10 +193,14 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   }
 
   startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]) {
-    return this.requireProfileRuntime(input.profileId).startSession(input);
+    if (input.taskId) this.context?.checkStart?.(input.taskId, true);
+    const text = input.text && input.taskId ? this.withContext(input.text, this.context?.task(input.taskId) ?? "") : input.text;
+    return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text } : {}) });
   }
   sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}) {
-    return this.forSession(sessionId).sendMessage(sessionId, text, images, options);
+    const taskId = this.store.getSession(sessionId)?.taskId;
+    if (taskId) this.context?.checkStart?.(taskId, false);
+    return this.forSession(sessionId).sendMessage(sessionId, this.withContext(text, this.context?.session(sessionId) ?? ""), images, options);
   }
   outsideSessions(): Promise<OutsideSessionList> {
     const r = this.claude;
@@ -202,11 +219,22 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   sendNow(sessionId: Id, itemId: Id): Promise<void> {
     const r = this.forSession(sessionId);
     if (!r.sendNow) throw Object.assign(new Error("这种会话不能立即发送：消息会在这一轮结束后发出"), { code: "bad_request" });
+    if (this.context && !this.context.validate(sessionId, itemId)) throw Object.assign(new Error("共同需求通知已失效，请读取当前任务的共同需求。"), { code: "conflict" });
+    const taskId = this.store.getSession(sessionId)?.taskId;
+    if (taskId) this.context?.checkStart?.(taskId, false);
     return r.sendNow(sessionId, itemId);
   }
   resend(sessionId: Id, itemId: Id, images: readonly Attachment[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const r = this.forSession(sessionId);
     if (!r.resend) throw Object.assign(new Error("这种会话不能重新发送消息"), { code: "bad_request" });
+    if (this.context && !this.context.validate(sessionId, itemId)) throw Object.assign(new Error("共同需求通知已失效，请读取当前任务的共同需求。"), { code: "conflict" });
+    const taskId = this.store.getSession(sessionId)?.taskId;
+    if (taskId) this.context?.checkStart?.(taskId, false);
+    const item = this.store.getItem(itemId);
+    if (item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent")) {
+      const text = item.text.includes("[AMO_SHARED_CONTEXT:") ? item.text : this.withContext(item.text, this.context?.session(sessionId) ?? "");
+      if (text !== item.text) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...item, text }) }));
+    }
     return r.resend(sessionId, itemId, images, options);
   }
   choices(profileId: Id) {
@@ -315,6 +343,7 @@ export interface RuntimeCore {
   readonly store: Store;
   now(): Date;
   log(line: string): void;
+  messageDelivered(sessionId: Id, text: string): void;
   requireSession(id: Id): Session;
   createSession(input: NewSessionInput): Session;
   updateSession(id: Id, patch: Parameters<Store["updateSession"]>[1]): Session;
@@ -412,6 +441,7 @@ export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
       store: this.store,
       now: () => this.now(),
       log: (line) => this.emit("log", line),
+      messageDelivered: (sessionId, text) => { this.emit("message-delivered", sessionId, text); },
       requireSession: (id) => this.requireSession(id),
       createSession: (input) => this.createSession(input),
       updateSession: (id, patch) => this.updateSession(id, patch),

@@ -42,3 +42,4 @@ local-state/
 /shell-prefs.json
 /studio.db-shm
 /studio.db-wal
+studio/screenshots

@@ -35,6 +35,7 @@ import { useCanvasReturns } from "./useCanvasReturns.js";
 import { taskStatus } from "../lib/status.js";
 import { dependencyFlow, managementFlow } from "./task-flow.js";
 import { useTaskFlow } from "./useTaskFlow.js";
+import { useContextHints } from "./useContextHints.js";
 import { FlowOverlay } from "./FlowOverlay.js";
 
 export { CARD_H, CARD_W, NOTE_H, NOTE_W } from "./cards.js";
@@ -157,6 +158,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const [allLevels, setAllLevels] = useState(true);
   const decisions = useOpenDecisions(link);
   const taskFlow = useTaskFlow(link, tasks);
+  const contextHints = useContextHints(link, tasks);
   const [animateFlow, setAnimateFlow] = useState(() => readKey("amo.canvasFlowAnimation") !== "0");
   const flowStatus = new Map(tasks.map((t) => [t.id, taskStatus(sessions.filter((s) => s.taskId === t.id))]));
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
@@ -908,6 +910,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         <label title="高亮沿箭头流向执行任务；提交后沿管理线回流到主控"><input type="checkbox" checked={animateFlow} onChange={(e) => { setAnimateFlow(e.target.checked); writeKey("amo.canvasFlowAnimation", e.target.checked ? "1" : "0"); }} />流转动画</label>
         <span data-state="running">顺流执行</span><span data-state="submitted">回流待验收</span><span data-state="waiting">等待时静止</span>
         {taskFlow.unavailable && <span role="status">交付状态暂未加载</span>}
+        {contextHints.unavailable && <span role="status">共同需求状态暂未加载</span>}
       </div>}
       {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
       {!compact && reviewChanges.size > 0 && <div className="canvas-review-changes" role="group" aria-label="审阅变化" data-testid="canvas-review-changes">
@@ -1144,6 +1147,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                 task={task}
                 manager={task.managerTaskId ? anyTaskById.get(task.managerTaskId) : undefined}
                 management={tree ? { directLeadCount: tree.directLeadCount, workerCount: tree.workerCount, pending } : undefined}
+                contextHint={contextHints.hints.get(task.id)}
                 dimmed={!!selectedScope && !selectedScope.has(task.id)}
                 onLocateManager={() => task.managerTaskId && locateTask(task.managerTaskId)}
                 sessions={sessions}

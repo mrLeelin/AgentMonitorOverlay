@@ -3,7 +3,7 @@ import type { Attachment, HostEvent, ModelProfile, Session, SessionItem, Workspa
 import { Store } from "../../store/store.js";
 import { describeReview, CodexRuntime } from "./codex-runtime.js";
 import { FakeServers } from "./fake-servers.test-support.js";
-import { CodexRpcClient } from "./rpc-client.js";
+import { CodexRpcClient, type ParamsOf } from "./rpc-client.js";
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 
 const PROFILES: ModelProfile[] = [
@@ -29,6 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await servers.close();
   store.close();
 });
@@ -46,6 +47,15 @@ const lastAgent = (sessionId: string) => items(sessionId).filter((i): i is Extra
 const idle = (id: string) => () => session(id).status === "idle" && !items(id).some((i) => i.type === "agent" && i.streaming);
 
 describe("CodexRuntime", () => {
+  it("reports transport delivery only after the app-server echoes the context input", async () => {
+    const received = vi.fn();
+    runtime.on("message-delivered", received);
+    const text = "[AMO_SHARED_CONTEXT:codex-requirement]\n共同需求正文";
+    const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text });
+    await until(() => received.mock.calls.some(([id, body]) => id === s.id && body === text), "context delivery echo");
+    expect(received).toHaveBeenCalledWith(s.id, text);
+  });
+
   it("locks lead starts, forks, resumed threads and turns to read-only without escalation", async () => {
     store.updateTask(taskId, { lead: true });
     const handle = await servers.ensure("p-ds");
@@ -365,6 +375,46 @@ describe("CodexRuntime", () => {
     await until(() => fake.calls.filter((c) => c.method === "thread/resume").length > before, "resume after reconnect");
     await runtime.sendMessage(s.id, "after reconnect");
     await until(() => lastAgent(s.id)?.markdown === "FAKE: after reconnect", "reply after reconnect");
+  });
+
+  it("waits for reconnect thread restoration before the first continuation", async () => {
+    const first = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "first thread" });
+    const second = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "second thread" });
+    await until(() => idle(first.id)() && idle(second.id)(), "initial turns");
+    servers.handles.get("p-ds")!.client.close();
+    const connect = CodexRpcClient.connect.bind(CodexRpcClient);
+    let release!: () => void;
+    const restoring = new Promise<void>((resolve) => { release = resolve; });
+    const restored = new Set<string>();
+    let resumeCalls = 0, prematureStarts = 0;
+    vi.spyOn(CodexRpcClient, "connect").mockImplementationOnce(async (options) => {
+      const client = await connect(options), request = client.request.bind(client);
+      vi.spyOn(client, "request").mockImplementation((method, params, options) => {
+        const threadId = String((params as { threadId?: string }).threadId ?? "");
+        if (method === "thread/resume") {
+          resumeCalls++;
+          return restoring.then(() => request("thread/resume", params as ParamsOf<"thread/resume">, options)).then((response) => { restored.add(threadId); return response; });
+        }
+        if (method === "turn/start" && !restored.has(threadId)) {
+          prematureStarts++;
+          return Promise.reject(new Error(`turn/start: thread not found: ${threadId}`));
+        }
+        return request(method, params, options);
+      });
+      return client;
+    });
+    const sent = runtime.sendMessage(second.id, "first continuation").then(() => null, (error: unknown) => error);
+    try {
+      await until(() => resumeCalls > 0, "restoration started");
+      expect(prematureStarts).toBe(0);
+      expect(servers.fakes.get("p-ds")!.calls.filter((c) => c.method === "turn/start" && JSON.stringify(c.params).includes("first continuation"))).toHaveLength(0);
+    } finally { release(); }
+    expect(await sent).toBeNull();
+    await until(() => lastAgent(second.id)?.markdown === "FAKE: first continuation", "first continuation response");
+    expect(restored).toEqual(new Set([first.runtimeRef!, second.runtimeRef!]));
+    expect(resumeCalls).toBe(2); // ready and the caller share one restore pass for this connection.
+    expect(items(second.id).filter((i) => i.type === "user" && i.text === "first continuation")).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 
   it("closes pending approvals when the connection drops and picks up the replay after reconnecting", async () => {

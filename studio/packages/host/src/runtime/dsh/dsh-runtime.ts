@@ -888,6 +888,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
         (err: unknown) => this.endTurn(sessionId, live, "error", this.explain(err).message),
       )
       .catch((err: unknown) => this.emit("log", `dsh turn end failed for ${sessionId}: ${String(err)}`));
+    this.emit("message-delivered", sessionId, text);
   }
 
   private async endTurn(sessionId: Id, live: Live, stopReason: string, error?: string): Promise<void> {

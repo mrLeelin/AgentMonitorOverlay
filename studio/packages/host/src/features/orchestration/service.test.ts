@@ -26,6 +26,17 @@ const task = (title: string, lead = false, managerTaskId: string | null = null) 
 const session = (owner: Task) => store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "idle", writer: "workbench", runtimeRef: null });
 const delivery = () => vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
 
+function requireNextRootVersion(sessionId: string, taskId: string): void {
+  const draft = service.sharedContext.save(sessionId, { rootTaskId: taskId, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户目标" }] });
+  const first = service.sharedContext.publishVersion(sessionId, draft.id, draft.revision);
+  service.sharedContext.apply(sessionId, { contextId: first.id, version: 1, taskIds: [taskId] });
+  service.sharedContext.getForSession(sessionId);
+  service.sharedContext.adopt(sessionId, { contextId: first.id, version: 1 });
+  const changed = service.sharedContext.save(sessionId, { rootTaskId: taskId, title: "共同需求", baseRevision: first.revision, body: "五枚投币", changeNote: "调整数量", sources: [{ kind: "user_requirement", source: "用户调整" }] });
+  service.sharedContext.publishVersion(sessionId, changed.id, changed.revision);
+  service.sharedContext.apply(sessionId, { contextId: first.id, version: 2, taskIds: [taskId] });
+}
+
 describe("managed delivery workflow", () => {
   it("returns work for correction, accepts it at each level and only then completes the root", async () => {
     const send = delivery();
@@ -163,5 +174,103 @@ describe("managed delivery workflow", () => {
     service.tasks.updateTask(child.id, { title: "执行改名" });
     await Promise.resolve();
     expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves actual adopted version and requires an explicit difference decision before acceptance", () => {
+    delivery();
+    const top = task("总主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child);
+    const draft = service.sharedContext.save(manager.id, { rootTaskId: top.id, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户明确要求" }] });
+    const first = service.sharedContext.publishVersion(manager.id, draft.id, draft.revision);
+    service.sharedContext.apply(manager.id, { contextId: first.id, version: 1, taskIds: [child.id] });
+    service.sharedContext.getForSession(worker.id);
+    service.sharedContext.adopt(worker.id, { contextId: first.id, version: 1 });
+    const changed = service.sharedContext.save(manager.id, { rootTaskId: top.id, title: "共同需求", baseRevision: first.revision, body: "五枚投币", changeNote: "调整数量", sources: [{ kind: "user_requirement", source: "用户明确调整" }] });
+    service.sharedContext.publishVersion(manager.id, changed.id, changed.revision);
+    service.sharedContext.apply(manager.id, { contextId: first.id, version: 2, taskIds: [child.id] });
+    const result = service.orchestration.submit(worker.id, "资源完成", "素材检查通过");
+    expect(result).toMatchObject({ state: "submitted", contextBasis: { contextId: first.id, version: 1 }, contextMismatch: expect.any(String) });
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过")).toThrow(/contextExplanation/);
+    expect(service.orchestration.results(child.id).at(-1)?.state).toBe("submitted");
+    const accepted = service.orchestration.review(manager.id, result.id, true, "通过", "本任务只交付通用投币图标，数量变化不影响素材");
+    expect(accepted.contextBasis?.version).toBe(1);
+    expect(accepted.contextResolution).toEqual({ explanation: "本任务只交付通用投币图标，数量变化不影响素材", requiredBasis: { contextId: first.id, version: 2 } });
+    expect(service.sharedContext.isResultCurrent(child.id, accepted)).toBe(true);
+  });
+
+  it("lets the running root resolve its own pending delivery and keeps it accepted through turn completion", async () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top);
+    requireNextRootVersion(manager.id, top.id);
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "running" }) });
+    const result = service.orchestration.submit(manager.id, "最终汇总", "隔离检查通过");
+    expect(result.state).toBe("submitted");
+    expect(store.getTask(top.id)?.column).toBe("review");
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过")).toThrow(/contextExplanation/);
+    const accepted = service.orchestration.review(manager.id, result.id, true, "最终通过", "实际采用一版；已逐条核对二版数量变化不影响此份汇总中的通用资源结论");
+    expect(accepted.state).toBe("accepted");
+    expect(store.getTask(top.id)?.column).toBe("done");
+    // Additional status updates in the same turn do not reopen the delivery. Ending the turn also keeps done.
+    service.publish({ type: "session.upserted", session: store.getSession(manager.id)! });
+    service.tasks.reviewSettleMs = 0;
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "idle" }) });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("accepted");
+    expect(store.getTask(top.id)?.column).toBe("done");
+    // A genuinely new turn still reopens completed work and invalidates the old acceptance.
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "running" }) });
+    expect(store.getTask(top.id)?.column).toBe("doing");
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("returned");
+  });
+
+  it("blocks root self-acceptance while another session of the root is running", () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), other = session(top);
+    requireNextRootVersion(manager.id, top.id);
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "running" }) });
+    service.publish({ type: "session.upserted", session: store.updateSession(other.id, { status: "running" }) });
+    const result = service.orchestration.submit(manager.id, "最终汇总", "隔离检查通过");
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("submitted");
+  });
+
+  it.each(["root", "child"])("rechecks active %s sessions inside the acceptance transaction", (mode) => {
+    delivery();
+    const top = task("总主控", true), manager = session(top);
+    const owner = mode === "root" ? top : task("执行", false, top.id), worker = mode === "root" ? manager : session(owner);
+    if (mode === "root") requireNextRootVersion(manager.id, top.id);
+    const blocking = mode === "root" ? session(top) : worker;
+    const result = service.orchestration.submit(worker.id, "交付", "隔离验证");
+    const transaction = store.transaction.bind(store);
+    vi.spyOn(store, "transaction").mockImplementationOnce((fn) => {
+      // A worker or another root session begins after the initial activity check.
+      store.updateSession(blocking.id, { status: "running" });
+      return transaction(fn);
+    });
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
+    expect(service.orchestration.results(owner.id).at(-1)?.state).toBe("submitted");
+  });
+
+  it("rechecks the required version inside the acceptance transaction", () => {
+    delivery();
+    const top = task("总主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child);
+    const draft = service.sharedContext.save(manager.id, { rootTaskId: top.id, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户目标" }] });
+    const first = service.sharedContext.publishVersion(manager.id, draft.id, draft.revision);
+    service.sharedContext.apply(manager.id, { contextId: first.id, version: 1, taskIds: [child.id] });
+    service.sharedContext.getForSession(worker.id);
+    service.sharedContext.adopt(worker.id, { contextId: first.id, version: 1 });
+    const result = service.orchestration.submit(worker.id, "完成", "按一版验证通过");
+    const changed = service.sharedContext.save(manager.id, { rootTaskId: top.id, title: "共同需求", baseRevision: first.revision, body: "五枚投币", changeNote: "调整数量", sources: [{ kind: "user_requirement", source: "用户调整" }] });
+    service.sharedContext.publishVersion(manager.id, changed.id, changed.revision);
+    const transaction = store.transaction.bind(store);
+    vi.spyOn(store, "transaction").mockImplementationOnce((fn) => {
+      // Simulate another operation committing an explicit requirement change after review's initial read.
+      service.sharedContext.apply(manager.id, { contextId: first.id, version: 2, taskIds: [child.id] });
+      return transaction(fn);
+    });
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过")).toThrow(/contextExplanation/);
+    expect(service.orchestration.results(child.id).at(-1)?.state).toBe("submitted");
+    expect(store.getTask(child.id)?.column).toBe("review");
   });
 });

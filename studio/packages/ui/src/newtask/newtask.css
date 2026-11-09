@@ -88,7 +88,12 @@
   width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: none; border-radius: var(--r-s);
   background: transparent; color: var(--text); font-size: var(--fs-sm); text-align: left; cursor: pointer;
 }
-.suggest button.hl, .suggest button:hover { background: var(--selected); }
+.suggest button:hover { background: var(--menu-hover); }
+/* The keyboard selection must stand out against the dark menu, including while another row is hovered. */
+.suggest button.hl {
+  background: var(--selection); box-shadow: inset 3px 0 var(--primary); color: var(--text);
+  --text-faint: var(--text); --text-dim: var(--text);
+}
 .suggest-name { flex: none; }
 .suggest-hint { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 11px; }
 

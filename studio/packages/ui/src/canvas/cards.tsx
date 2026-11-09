@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { taskWhere, type CanvasNode, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { relativeTime, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
+import type { ContextHint } from "./useContextHints.js";
 
 // The canvas's cards (stage 16 split out of CanvasPage.tsx): a task of the topic, a reference to another topic's task,
 // and a note. A task's description shows on its card (two lines); a colour mark is its outline (data-color).
@@ -40,7 +41,7 @@ interface CardEvents {
   onContextMenu(e: ReactMouseEvent): void;
 }
 
-export function TaskCard({ node, task, sessions, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager }: CardEvents & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void }) {
+export function TaskCard({ node, task, sessions, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager, contextHint }: CardEvents & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void; contextHint?: ContextHint }) {
   const own = taskSessions(task, sessions);
   const status = taskStatus(own);
   const look = status ? SESSION_LOOK[status] : null;
@@ -87,7 +88,7 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
           <>
             <span className="dot" style={{ background: look?.dot ?? "var(--muted-dot)" }} />
             <span style={{ color: look?.text ?? "var(--text-dim)" }}>{look?.label ?? "未开始"}</span>
-            <span>· {[where, live ? `${live} 个会话` : ""].filter(Boolean).join(" · ")}</span>
+            {contextHint ? <span className="canvas-context-hint" data-testid="canvas-context-hint" title={contextHint.detail}>{contextHint.label}</span> : <span>· {[where, live ? `${live} 个会话` : ""].filter(Boolean).join(" · ")}</span>}
           </>
         )}
       </span>

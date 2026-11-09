@@ -17,14 +17,15 @@ import { managesTask } from "../../core/role.js";
 // archived session's become 没送到 too. A copy of a remote session is not held here: its rows are the other computer's.
 
 const INBOX_KEY = "sessions.inbox";
+const PAUSED_KEY = "sessions.inbox.paused";
 /** session_send's queue before the inbox (2026-11-01..11-04): session id → texts. Moved into the inbox at start. */
 const PEER_QUEUE_KEY = "sessions.peer-queue";
 /** How long the next held message waits for the turn the first one started to show (see deliver). */
 const TURN_SEEN_MS = 3000;
 
-export class SessionInbox extends Feature {
+export class SessionInbox extends Feature<"sharedContext"> {
   constructor(
-    host: FeatureHost,
+    host: FeatureHost<"sharedContext">,
     /** The feature the inbox is part of (it sends through it). */
     private readonly sessions: SessionsFeature,
   ) {
@@ -37,22 +38,35 @@ export class SessionInbox extends Feature {
   private readonly again = new Set<Id>();
   /**
    * Sessions the person stopped (2026-11-04, the user): what is held waits for their next message, and goes in with it,
-   * or for 立即发送 — a session stopped on purpose is not started again by a reply arriving. Until the Host restarts.
+   * or for 立即发送 — a session stopped on purpose is not started again by a reply arriving, including after restart.
    */
-  private readonly paused = new Set<Id>();
+  private paused: Set<Id> | null = null;
+  private readonly contextQueueing = new Set<Id>();
+
+  private pauses(): Set<Id> {
+    if (!this.paused) {
+      try {
+        const value: unknown = JSON.parse(this.store.getKv(PAUSED_KEY)?.value ?? "[]");
+        this.paused = new Set(Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : []);
+      } catch { this.paused = new Set(); }
+    }
+    return this.paused;
+  }
   /** Paused sessions already told so in a notice. */
   private readonly told = new Set<Id>();
 
   /** 停止 by the person: hold what comes until they write again. */
   pause(sessionId: Id): void {
-    this.paused.add(sessionId);
+    this.pauses().add(sessionId);
+    this.store.setKv(PAUSED_KEY, JSON.stringify([...this.pauses()]));
     this.told.delete(sessionId);
     if (this.held(sessionId).length) this.tellPaused(sessionId);
   }
 
   /** The person wrote again: what is held goes in now, with their message (queued or steered as theirs would be). */
   resume(sessionId: Id): void {
-    if (!this.paused.delete(sessionId)) return;
+    if (!this.pauses().delete(sessionId)) return;
+    this.store.setKv(PAUSED_KEY, JSON.stringify([...this.pauses()]));
     this.told.delete(sessionId);
     void this.flush(sessionId, true).catch(() => undefined);
   }
@@ -82,16 +96,19 @@ export class SessionInbox extends Feature {
     const existing = messageId ? this.store.getItem(messageId) : undefined;
     if (existing && (existing.sessionId !== sessionId || existing.type !== "user")) throw new HostError("conflict", "inbox message id belongs to another message");
     const role = this.sessions.roleUpdate(sessionId);
-    const item = existing ?? this.append(s, this.sessions.withRole(text, role.lines), relayFromSessionId, messageId);
+    const item = existing ?? this.append(s, this.sessions.withContext(sessionId, this.sessions.withRole(text, role.lines)), relayFromSessionId, messageId);
     if (existing?.type === "user" && existing.delivery === "held") {
       // Its role update was marked told at enqueue time, but the model has not seen it yet.
       const previousUpdate = splitRoleUpdate(existing.text).update;
-      const replacement = this.sessions.withRole(previousUpdate ? `${text}\n\n${previousUpdate}` : text, role.lines);
+      const base = this.sessions.withRole(previousUpdate ? `${text}\n\n${previousUpdate}` : text, role.lines);
+      const contextStart = existing.text.indexOf("[AMO_SHARED_CONTEXT:");
+      const frozen = contextStart >= 0 ? existing.text.slice(contextStart) : "";
+      const replacement = frozen && !base.includes("[AMO_SHARED_CONTEXT:") ? `${base}\n\n${frozen}` : this.sessions.withContext(sessionId, base);
       if (existing.text !== replacement) this.publish({ type: "item.updated", item: this.store.replaceItem({ ...existing, text: replacement }) });
     }
     role.told();
     this.remember(sessionId);
-    if (this.paused.has(sessionId)) this.tellPaused(sessionId);
+    if (this.pauses().has(sessionId)) this.tellPaused(sessionId);
     await this.flush(sessionId);
     const now = this.store.getItem(item.id);
     return { delivered: !(now?.type === "user" && now.delivery === "held"), waiting: this.held(sessionId).length };
@@ -110,10 +127,34 @@ export class SessionInbox extends Feature {
   /** Watches sessions get free; sends what the last Host left held, and moves session_send's old queue in. */
   watch(): void {
     this.migratePeerQueue();
+    // New sessions get the frozen context in their first runtime input. Queuing a second automatic input during
+    // session creation can race that first turn; task changes still enqueue notices for every existing session.
+    const resumed = new Set(this.store.listSessions().map((s) => s.id));
     this.host.on("event", (e) => {
       if (e.type === "session.upserted" && this.ids().has(e.session.id)) void this.flush(e.session.id).catch(() => undefined);
+      if (e.type === "session.upserted" && resumed.has(e.session.id)) this.queueContext(e.session);
+      if (e.type === "task.upserted") for (const session of this.store.listSessions({ taskId: e.task.id })) this.queueContext(session);
     });
     for (const id of this.ids()) void this.flush(id).catch(() => undefined);
+    for (const session of this.store.listSessions()) this.queueContext(session);
+  }
+
+  private queueContext(session: Session): void {
+    if (session.kind !== "main" || session.archivedAt || session.writer === "archived" || isRemoteCopy(session) || this.sessions.startingTaskSession(session.taskId) || this.contextQueueing.has(session.id)) return;
+    const notices = this.f.sharedContext.pendingNotifications(session.id);
+    if (!notices.length) return;
+    this.contextQueueing.add(session.id);
+    void (async () => {
+      for (const notice of notices) {
+        this.f.sharedContext.markQueued(session.id, notice.id);
+        await this.put(session.id, notice.text, undefined, notice.id);
+      }
+    })().catch((error: unknown) => this.log(`shared context inbox: ${String(error)}`)).finally(() => {
+      this.contextQueueing.delete(session.id);
+      // apply can arrive while put awaits a runtime. Replay only a newly selected requirement, never the same held row.
+      const current = this.store.getSession(session.id);
+      if (current && this.f.sharedContext.pendingNotifications(session.id).some((n) => !notices.some((old) => old.id === n.id))) this.queueContext(current);
+    });
   }
 
   /** The session's held rows, oldest first. */
@@ -144,7 +185,7 @@ export class SessionInbox extends Feature {
       for (const it of held) this.mark(it.id, "unsent");
       return this.forget(sessionId);
     }
-    if (this.paused.has(sessionId)) return;
+    if (this.pauses().has(sessionId)) return;
     if (!free(s) && !(withTurn && s.status === "running" && writable(s))) return;
     const rt = this.runtime;
     // The first starts a turn; the others follow it at once (queued at the CLI, steered in, or DSH's next turn) — once
@@ -186,6 +227,7 @@ export class SessionInbox extends Feature {
 
   /** Rechecked at actual dispatch, including held messages surviving a Host restart or manual retry. */
   checkSource(item: SessionItem): void {
+    if (!this.f.sharedContext.validateMessage(item.sessionId, item.id)) throw new HostError("read_only", "共同需求通知已失效，请读取当前任务的共同需求。");
     if (item.type !== "user" || !item.relayFromSessionId) return;
     const taskId = this.store.getSession(item.sessionId)?.taskId;
     if (!taskId || !managesTask(this.host, item.relayFromSessionId, taskId)) throw new HostError("read_only", "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。");

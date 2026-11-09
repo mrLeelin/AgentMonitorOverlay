@@ -315,7 +315,14 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     this.clearIdle(live);
     // Goes in once the permission mode is in force, without waiting for it here: a new session's process takes a few
     // seconds to come up, and the caller (开始, 新会话) is not held for it (2026-10-23). Sends queue up in order on it.
-    void live.ready.then(() => live.push({ content, uuid }));
+    void live.ready.then(() => {
+      live.push({ content, uuid });
+      // Older CLIs have no consumed-message acknowledgement: report transport delivery only after the process is ready.
+      if (!live.capabilities.has("msg_lifecycle_v1")) {
+        const row = this.store.getItem(itemId);
+        if (row?.type === "user") this.emit("message-delivered", sessionId, row.text);
+      }
+    });
     // 立即发送 from the composer (Ctrl+Enter, 2026-11-02): the running turn gives way to it, as the button under a
     // waiting message does. 2026-11-03 (问题 #16, "it seems to hang a long time"): it went as a `priority: "now"` message,
     // which CLI 2.1.304 only lets through at once while a shell command is in its first second or two — after that the

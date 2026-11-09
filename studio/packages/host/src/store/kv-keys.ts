@@ -19,6 +19,10 @@ export interface KvKey {
 }
 
 export const KV_KEYS: readonly KvKey[] = [
+  { key: "shared-context:", scope: "task", owner: "features/sharedcontext/service.ts", what: "管理根的共同需求草稿和不可变发布版本" },
+  { key: "context-binding:", scope: "task", owner: "features/sharedcontext/service.ts", what: "任务显式要求的共同需求版本" },
+  { key: "context-prerequisites:", scope: "task", owner: "features/sharedcontext/service.ts", what: "启动时固定的前置交付 resultId" },
+  { key: "context-receipts:", scope: "session", owner: "features/sharedcontext/service.ts", what: "共同需求排队、送达与声明采用记录" },
   { key: "tasks.lead-promotions", scope: "global", owner: "features/tasks/lead-promotion.ts", what: "任务自行设主控的切换申请、只读会话与失败记录" },
   { key: "task-results:", scope: "task", owner: "features/orchestration/service.ts", what: "任务交付与直属主控验收历史" },
   { key: "orchestration.outbox", scope: "global", owner: "features/orchestration/service.ts", what: "管理树通知的持久投递记录与去重" },
@@ -69,6 +73,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "duty.sessions", scope: "global", owner: "features/duty/service.ts", what: "值守开的会话 → 值守项（留最近 300 个）" },
   { key: "issues.sessions", scope: "global", owner: "features/issues/service.ts", what: "问题页：每个问题最后写它的会话（留最近 300 个）" },
   { key: "sessions.inbox", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱里有待送消息的会话" },
+  { key: "sessions.inbox.paused", scope: "global", owner: "features/sessions/inbox.ts", what: "用户停止会话后暂停自动投递，重启仍保持" },
   { key: "sessions.peer-queue", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱以前 session_send 的队列（启动时迁进收件箱，过一两个版本删）" },
   { key: "teamrelay.sends", scope: "global", owner: "features/teamrelay/service.ts", what: "中转：会话要发的（等人确认、已发出）" },
   { key: "teamrelay.threads", scope: "global", owner: "features/teamrelay/service.ts", what: "中转：会话发出的中转会话" },

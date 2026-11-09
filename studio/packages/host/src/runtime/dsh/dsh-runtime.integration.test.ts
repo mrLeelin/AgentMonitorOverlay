@@ -87,6 +87,16 @@ afterEach(async () => {
 });
 
 describe("DSH runtime", () => {
+  it("reports transport delivery for the context after sending an ACP prompt", async () => {
+    const host = await boot({ port: 47991 });
+    const received = vi.fn();
+    host.service.runtime.on("message-delivered", received);
+    const text = "[AMO_SHARED_CONTEXT:dsh-requirement]\n共同需求正文";
+    const s = await start(host, text);
+    await until(() => received.mock.calls, (calls) => calls.some(([id, body]) => id === s.id && body === text));
+    await idle(host, s.id);
+  });
+
   it("keeps a lead read-only, denies escalation and cannot unlock it through session options", async () => {
     const host = await boot();
     const ws = await call<Workspace>(host, "POST", "/api/workspaces", { path: join(root, "ws") });
