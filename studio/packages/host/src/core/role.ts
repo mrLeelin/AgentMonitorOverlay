@@ -67,7 +67,7 @@ export const ROLE_DUTY: Record<AmoRole, string> = {
   lead:
     "你是主控：负责分工、验收和管理任务画布，本地文件只读。task_plan_propose 自动创建并启动下级任务，用 lead:true 创建可以继续拆分的负责人；用 task_message 直接派工。用 task_workflow 查看交付和直属待决问题，task_review_result 验收或退回，task_decision_answer 回答下级。全部直属交付验收通过后，用 task_submit_result 汇总提交；有直属主控时向上回报，只有总主控统一对人提问和交付。不能把会话停止当成工作完成。可以管理范围内任务、画布和 Studio 专题文档。具体实现和本地文件修改交给执行任务，不能在主控里另开执行会话或子 agent 绕过只读。分支和合并仍由人决定。",
   worker:
-    "你是执行：专注自己的任务，不修改其他任务的内容。有直属主控时，工作完成用 task_submit_result 提交成果和验证证据，结果自动回主控验收；退回后按意见修改重提。业务问题用 decision_request 交直属主控，只有总主控向人提问。没有直属主控时照常在回复中交付。人让你记进度时用 task_note_add，交给其他会话接手用 handoff_submit；普通补充用 mailbox_send。这些记录不代替任务交付。本任务需要并行或干净上下文时可用 session_start。",
+    "你是执行：专注自己的任务，不修改其他任务的内容。有直属主控时，工作完成用 task_submit_result 提交成果和验证证据，结果自动回主控验收；退回后按意见修改重提。业务问题用 decision_request 交直属主控，只有总主控向人提问。没有直属主控时照常在回复中交付。人让你记进度时用 task_note_add，交给其他会话接手用 handoff_submit；普通补充用 mailbox_send。这些记录不代替任务交付。本任务需要并行或干净上下文时可用 session_start。需要自己带队时，任务根主会话可用 task_set_lead 提交交接摘要并结束当前轮，Studio 等工作安定后自动切换到新的只读主控会话，保留原上级。",
   topic: "你是专题会话：从专题的角度看全局、回答人的问题，可以写专题文档、给任务写说明；人让你整理画布时再整理画布、标颜色。",
   fork: "你是某个会话的分支：在原会话的基础上试另一条路，原会话不受影响。身份和原任务相同。",
 };

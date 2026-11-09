@@ -158,6 +158,7 @@ export class CodexRuntime extends RuntimeBase {
     const session = this.writable(sessionId);
     this.requireLeadThread(session);
     const handle = await this.handleFor(session.profileId);
+    this.requireLeadThread(this.writable(sessionId));
     const st = this.sessionState(sessionId);
     const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra];
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
@@ -203,7 +204,7 @@ export class CodexRuntime extends RuntimeBase {
     // response arrives, so setting them here would leave the session stuck in "running".
     try {
       const tier = await this.serviceTier(session);
-      this.requireLeadThread(session);
+      this.requireLeadThread(this.writable(sessionId));
       await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
     } catch (err) {
       if (row && clientId) {
@@ -265,7 +266,7 @@ export class CodexRuntime extends RuntimeBase {
     try {
       handle = await this.handleFor(session.profileId);
       const tier = await this.serviceTier(session);
-      this.requireLeadThread(session);
+      this.requireLeadThread(this.writable(sessionId));
       await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
     } catch (err) {
       this.emit("log", `could not send the unread messages of ${sessionId}: ${String(err)}`);

@@ -8,9 +8,12 @@ import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
+import { TaskLeadPromotion } from "./lead-promotion.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
 export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions"> {
+  readonly leadPromotion = new TaskLeadPromotion(this.host, this);
+  private readonly sessionStarts = new Map<Id, number>();
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
   reviewSettleMs = 4000;
   private readonly movingBefore = new Map<Id, boolean>();
@@ -209,6 +212,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (patch.firstMessage !== undefined) clean.firstMessage = firstMessageOf(patch.firstMessage);
     if (patch.lead !== undefined) {
       if (typeof patch.lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
+      if (patch.lead === true && !current.lead && this.hasStartingSession(id)) throw new HostError("conflict", "任务有会话正在创建，等待创建结束后再设置主控。");
       // A running CLI keeps the tools and permissions of its current turn. Do not claim the task is read-only before
       // that turn (or its terminal writer) has ended; changing role must never silently interrupt the person's work.
       if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && (sessionMoving(s) || this.store.findItems(s.id, "background", { state: "running" }).length > 0))) {
@@ -370,6 +374,31 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
+    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input));
+  }
+
+  /** Includes forks: an in-flight runtime request may not have saved its session yet. */
+  async trackSessionStart<T>(taskId: Id | null, start: () => Promise<T>): Promise<T> {
+    this.leadPromotion.assertAvailable(taskId);
+    if (taskId) this.sessionStarts.set(taskId, (this.sessionStarts.get(taskId) ?? 0) + 1);
+    try {
+      return await start();
+    } finally {
+      if (taskId) {
+        const remaining = (this.sessionStarts.get(taskId) ?? 1) - 1;
+        if (remaining) this.sessionStarts.set(taskId, remaining);
+        else this.sessionStarts.delete(taskId);
+        void this.leadPromotion.flush();
+      }
+    }
+  }
+
+  hasStartingSession(taskId: Id): boolean {
+    return this.sessionStarts.has(taskId);
+  }
+
+  private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
+    this.leadPromotion.assertAvailable(owner.taskId);
     const options = await this.withDefaults(input.profileId, sessionOptions(input.options));
     // MCP 设置 (2026-11-04): no level of its own for a task; a new session goes on with the task's latest choices.
     if (!options.mcp) {
@@ -379,6 +408,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const images = this.firstImages(input);
     // A first message with images goes as an ordinary message once the session exists (the runtimes start with text only).
     const resumeFrom = this.resumeFrom(input);
+    this.leadPromotion.assertAvailable(owner.taskId);
     const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(input.text && !images.length ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
     if (images.length) await this.f.sessions.sendMessage(session.id, input.text ?? "", images);
     // The owner's updatedAt moves with its sessions so the board can sort by activity.

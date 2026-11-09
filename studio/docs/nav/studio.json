@@ -100,17 +100,18 @@
     {
       "id": "studio.topics",
       "label": "专题、主控、传话和拆任务",
-      "aliases": ["topic", "专题", "主控", "lead", "topic_doc", "专题文档", "task_plan_propose", "TaskPlansFeature", "TopicDocsFeature"],
+      "aliases": ["topic", "专题", "主控", "lead", "task_set_lead", "自行设置主控", "topic_doc", "专题文档", "task_plan_propose", "TaskPlansFeature", "TopicDocsFeature"],
       "category": "host",
       "purpose": "专题把相关任务（可跨项目）放在一张画布上；主控自动拆分和派工、验收下级交付并管理任务画布，可以维护 Studio 内专题文档。本地文件只读，具体实现分配给执行任务；专题会话没有任务主控身份时仍由人确认提案。逐层回报见 studio.managedWorkflow。",
       "anchors": [
         { "label": "TopicsFeature", "path": "studio/packages/host/src/features/topics/service.ts", "anchor": "export class TopicsFeature" },
         { "label": "专题文档", "path": "studio/packages/host/src/features/topicdocs/service.ts", "anchor": "export class TopicDocsFeature" },
         { "label": "主控提议拆任务", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "export class TaskPlansFeature" },
+        { "label": "任务自行设主控与只读会话交接", "path": "studio/packages/host/src/features/tasks/lead-promotion.ts", "anchor": "export class TaskLeadPromotion" },
         { "label": "主控是谁", "path": "studio/packages/host/src/core/role.ts", "anchor": "leadsTopic" }
       ],
       "related": ["studio.canvas", "studio.relays", "host.agentMcp"],
-      "next": ["studio/plans/done/stage-15.md", "studio/plans/done/stage-16.md", "studio/plans/later/canvas-workflow.md"]
+      "next": ["studio/plans/done/stage-15.md", "studio/plans/done/stage-16.md", "studio/plans/done/task-self-lead.md", "studio/plans/later/canvas-workflow.md"]
     },
     {
       "id": "studio.relays",
@@ -141,7 +142,7 @@
     {
       "id": "studio.canvas",
       "label": "画布和画布审阅",
-      "aliases": ["canvas", "画布", "CanvasFeature", "canvas_items_post", "画布审阅", "callout", "气泡", "引用卡片", "分组"],
+      "aliases": ["canvas", "画布", "CanvasFeature", "canvas_items_post", "画布审阅", "callout", "气泡", "引用卡片", "分组", "任务流转", "流转动画", "箭头动画"],
       "category": "host",
       "purpose": "专题的画布：任务卡、分组、依赖、便签、颜色、引用卡片；审阅时的编号条目（#n）和 AI 钉在卡片上的提示 / 提问。agent 只在人要求时动画布（用户 10-30 定）。",
       "anchors": [
@@ -149,6 +150,8 @@
         { "label": "画布审阅", "path": "studio/packages/host/src/features/canvasreview/service.ts", "anchor": "export class CanvasReviewFeature" },
         { "label": "数据结构", "path": "studio/packages/protocol/src/canvas.ts" },
         { "label": "画布页", "path": "studio/packages/ui/src/canvas/CanvasPage.tsx" },
+        { "label": "任务流转状态与方向", "path": "studio/packages/ui/src/canvas/task-flow.ts", "anchor": "export function managementFlow" },
+        { "label": "箭头流动高亮与状态标签", "path": "studio/packages/ui/src/canvas/FlowOverlay.tsx", "anchor": "export function FlowOverlay" },
           { "label": "画布状态", "path": "studio/packages/ui/src/canvas/useCanvas.ts" },
           { "label": "审阅卡变化标记", "path": "studio/packages/ui/src/canvas/useReviewChanges.ts", "anchor": "export function useReviewChanges" },
           { "label": "讨论关联上下文", "path": "studio/packages/host/src/features/canvasreview/context.ts", "anchor": "export function discussionContext" },

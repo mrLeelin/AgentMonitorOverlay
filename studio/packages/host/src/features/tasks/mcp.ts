@@ -8,6 +8,11 @@ import { noteOwnDescription } from "../guide/role.js";
 export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: ToolContext): AmoTool[] {
   return [
     {
+      name: "task_set_lead", title: "将本任务设为主控", description: "Promote your own task to lead without a separate approval. Only the task's root main session may call; no other task id is accepted. Provide summary with the goal, existing results and next steps. Returns pending while the current turn, other task sessions, terminals, background work or undelivered messages remain active. Once settled, Studio archives the old sessions (keeping their conversations), marks this same task as lead and starts a fresh read-only lead session with your summary. Finish this turn after calling. Existing management ownership stays unchanged. Repeating the request does not create duplicate sessions.",
+      inputSchema: { summary: z.string().min(1).max(20_000) }, readOnly: false, autoApprove: true,
+      run: (args) => write(caller, (c) => service.tasks.leadPromotion.request(c.sessionId, args.summary)),
+    },
+    {
       name: "task_management", title: "管理范围", description: "Read a task's stored direct and recursive management tree, with unique lead/worker counts. Sharing a topic, reference cards or annotation lines grants no management rights.",
       inputSchema: { taskId: z.string().optional() }, readOnly: true, autoApprove: true,
       run: (args) => answer(() => service.tasks.management(args.taskId === undefined && caller ? ownTask(caller) : String(args.taskId))),

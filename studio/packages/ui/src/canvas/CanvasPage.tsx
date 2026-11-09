@@ -32,6 +32,10 @@ import { useReviewChanges } from "./useReviewChanges.js";
 import { continuingThread, reviewRelations } from "./review-relations.js";
 import { ReviewRelations } from "./ReviewRelations.js";
 import { useCanvasReturns } from "./useCanvasReturns.js";
+import { taskStatus } from "../lib/status.js";
+import { dependencyFlow, managementFlow } from "./task-flow.js";
+import { useTaskFlow } from "./useTaskFlow.js";
+import { FlowOverlay } from "./FlowOverlay.js";
 
 export { CARD_H, CARD_W, NOTE_H, NOTE_W } from "./cards.js";
 
@@ -152,6 +156,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const [expandedDiscussion, setExpandedDiscussion] = useState<{ topicId: string; itemId: string } | null>(null);
   const [allLevels, setAllLevels] = useState(true);
   const decisions = useOpenDecisions(link);
+  const taskFlow = useTaskFlow(link, tasks);
+  const [animateFlow, setAnimateFlow] = useState(() => readKey("amo.canvasFlowAnimation") !== "0");
+  const flowStatus = new Map(tasks.map((t) => [t.id, taskStatus(sessions.filter((s) => s.taskId === t.id))]));
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
   const setSelection = (next: CanvasSelection) => {
     setSelectedIds(new Set());
@@ -897,6 +904,11 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       )}
       </div>
       {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => changeRelation(key, e.target.checked)} />{label}</label>)}<label title="自动显示问题来源和展开的讨论，不改变管理归属"><input type="checkbox" checked={showReviewRelations} onChange={(e) => { setShowReviewRelations(e.target.checked); writeKey("amo.canvasReviewRelations", e.target.checked ? "1" : "0"); }} />来源与讨论 · 点划线</label>{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}</div>}
+      {!compact && <div className="canvas-flow-legend" role="group" aria-label="任务流转">
+        <label title="高亮沿箭头流向执行任务；提交后沿管理线回流到主控"><input type="checkbox" checked={animateFlow} onChange={(e) => { setAnimateFlow(e.target.checked); writeKey("amo.canvasFlowAnimation", e.target.checked ? "1" : "0"); }} />流转动画</label>
+        <span data-state="running">顺流执行</span><span data-state="submitted">回流待验收</span><span data-state="waiting">等待时静止</span>
+        {taskFlow.unavailable && <span role="status">交付状态暂未加载</span>}
+      </div>}
       {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
       {!compact && reviewChanges.size > 0 && <div className="canvas-review-changes" role="group" aria-label="审阅变化" data-testid="canvas-review-changes">
         <span title="与本机上次标为已看时比较；包含标题、正文、结论、状态和引用的变化">审阅变化 {reviewChanges.size} 条</span>
@@ -1006,7 +1018,11 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               const childTop = Math.min(...siblings.map((r) => r.y));
               const branchY = childTop > from.y + from.h ? (from.y + from.h + childTop) / 2 : undefined;
               const { d } = managementPath(from, to, (shown?.nodes ?? []).filter(visibleNode).map(rectOf), branchY);
-              return <path key={`management-${t.id}`} d={d} fill="none" className={`canvas-management-line${selectedScope?.has(t.id) ? " active" : ""}${selectedTask?.id === t.managerTaskId ? " direct" : ""}${selectedScope && !selectedScope.has(t.id) ? " management-dimmed" : ""}`} markerEnd="url(#amo-management-arrow)" data-testid="canvas-management-line" />;
+              const flow = managementFlow(t, flowStatus.get(t.id) ?? null, taskFlow.results.get(t.id), decisions.some((q) => q.taskId === t.id && q.routedToTaskId === t.managerTaskId));
+              return <g key={`management-${t.id}`} className={selectedScope && !selectedScope.has(t.id) ? "management-dimmed" : undefined} data-flow-task-id={t.id}>
+                <path d={d} fill="none" className={`canvas-management-line${selectedScope?.has(t.id) ? " active" : ""}${selectedTask?.id === t.managerTaskId ? " direct" : ""}`} markerEnd="url(#amo-management-arrow)" data-testid="canvas-management-line" />
+                <FlowOverlay d={d} at={{ x: to.x + to.w / 2, y: to.y - 23 }} flow={flow} animate={animateFlow} />
+              </g>;
             })}
             {visibleLinks.map((l) => {
               const from = nodeById.get(l.from);
@@ -1039,9 +1055,12 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               const to = cardOf.get(e.to);
               if (!from || !to) return null;
               const { a, b } = arrowBetween(from, to);
+              const source = anyTaskById.get(e.from), target = anyTaskById.get(e.to);
+              const flow = source && target ? dependencyFlow(source, target, flowStatus.get(e.to) ?? null) : null;
               return (
                 <g key={e.id} className={!selectedLines.has(`edge:${e.id}`) && selectedScope && !(selectedScope.has(e.from) && selectedScope.has(e.to)) ? "management-dimmed" : undefined}>
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`canvas-edge${selectedLines.has(`edge:${e.id}`) ? " selected" : ""}`} markerEnd="url(#amo-arrow)" data-testid="canvas-edge" data-edge-id={e.id} />
+                  <FlowOverlay d={`M ${a.x} ${a.y} L ${b.x} ${b.y}`} at={{ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }} flow={flow} animate={animateFlow} />
                   {/* A wider, invisible line takes the right-click. */}
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge-hit" data-testid="canvas-edge-hit" data-line-selection={`edge:${e.id}`} onMouseDown={(ev) => selectLine(ev, `edge:${e.id}`)} onContextMenu={(ev) => edgeMenu(ev, e.id, e.from, e.to)} />
                 </g>

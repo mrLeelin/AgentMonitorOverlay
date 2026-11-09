@@ -72,7 +72,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    * canvas, became a 主控…), a short note of what changed goes last (composeRoleUpdate).
    */
   async sendMessage(sessionId: Id, text: string, attachments: readonly Id[] = [], annotations: readonly Id[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
-    this.requireSession(sessionId);
+    this.f.tasks.leadPromotion.assertAvailable(this.requireSession(sessionId).taskId);
     const referenced = annotations.length ? this.f.review.referencedAnnotations(sessionId, annotations) : null;
     if (referenced) {
       const result = await this.sendMessage(sessionId, composeAnnotationRefs(text ?? "", referenced.refs), attachments, [], options);
@@ -168,6 +168,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   /** 停止, the person's (here or from another device): the inbox holds what comes until they write again (2026-11-04, the user). */
   async interrupt(sessionId: Id): Promise<void> {
     this.requireSession(sessionId);
+    this.f.tasks.leadPromotion.cancel(sessionId);
     this.inbox.pause(sessionId);
     await this.wrap(() => this.runtime.interrupt(sessionId));
   }
@@ -189,7 +190,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const s = this.requireSession(sessionId);
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be forked");
     if (profileId) this.requireProfile(profileId);
-    return this.wrap(() => this.runtime.fork(sessionId, profileId));
+    return this.f.tasks.trackSessionStart(s.taskId, () => this.wrap(() => this.runtime.fork(sessionId, profileId)));
   }
 
   async archive(sessionId: Id): Promise<Session[]> {

@@ -61,6 +61,24 @@
 .canvas-relations { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 12px 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); font-size: 11px; }
 .canvas-relations label { display: flex; align-items: center; gap: 5px; }
 .canvas-relations input { margin: 0; }
+.canvas-flow-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 14px 0; color: var(--text-dim); font-size: 11px; }
+.canvas-flow-legend label { display: flex; align-items: center; gap: 5px; }
+.canvas-flow-legend input { margin: 0; }
+.canvas-task-flow, .canvas-flow-legend [data-state] { --flow-color: var(--running-text); }
+.canvas-task-flow[data-state="submitted"], .canvas-flow-legend [data-state="submitted"] { --flow-color: var(--primary); }
+.canvas-task-flow[data-state="waiting"], .canvas-task-flow[data-state="returned"], .canvas-flow-legend [data-state="waiting"] { --flow-color: var(--attention); }
+.canvas-task-flow[data-state="error"] { --flow-color: var(--error-text); }
+.canvas-task-flow[data-state="accepted"], .canvas-task-flow[data-state="ready"] { --flow-color: var(--running-text); }
+.canvas-flow-legend [data-state]::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--flow-color); }
+.canvas-flow-track { stroke: var(--flow-color); stroke-width: 2; opacity: 0.3; }
+.canvas-flow-pulse { stroke: var(--flow-color); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 10 38; animation: canvas-flow-forward 1.4s linear infinite; }
+.canvas-task-flow[data-direction="reverse"] .canvas-flow-pulse { animation-name: canvas-flow-reverse; }
+.canvas-flow-label rect { fill: var(--panel); stroke: color-mix(in srgb, var(--flow-color) 50%, var(--border)); }
+.canvas-flow-label circle { fill: var(--flow-color); }
+.canvas-flow-label text { fill: var(--flow-color); font-size: 11px; }
+@keyframes canvas-flow-forward { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -48; } }
+@keyframes canvas-flow-reverse { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 48; } }
+@media (prefers-reduced-motion: reduce) { .canvas-task-flow .canvas-flow-pulse, .canvas-task-flow[data-direction="reverse"] .canvas-flow-pulse { animation: none; } }
 .task-management { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .task-management-panel { flex-shrink: 0; max-height: 35vh; overflow: auto; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .task-management select { width: 100%; min-width: 0; }

@@ -169,6 +169,7 @@ export class ReadModel {
       managerTaskId: t.managerTaskId ?? null,
       manager: t.managerTaskId ? { id: t.managerTaskId, title: title(t.managerTaskId) } : null,
       management: this.service.tasks.management(t.id),
+      leadPromotion: this.service.tasks.leadPromotion.status(t.id),
       handoff: handoff ? { text: handoff.text, by: author(handoff.sessionId), at: handoff.createdAt } : null,
       // The steps from the task's template (empty when it has none); tick them with checklist_check.
       checklist: this.store.listChecklist(t.id).map((i) => ({ id: i.id, text: i.text, done: i.done, ...(i.done ? { by: author(i.doneBySessionId) } : {}) })),

@@ -19,6 +19,7 @@ export interface KvKey {
 }
 
 export const KV_KEYS: readonly KvKey[] = [
+  { key: "tasks.lead-promotions", scope: "global", owner: "features/tasks/lead-promotion.ts", what: "任务自行设主控的切换申请、只读会话与失败记录" },
   { key: "task-results:", scope: "task", owner: "features/orchestration/service.ts", what: "任务交付与直属主控验收历史" },
   { key: "orchestration.outbox", scope: "global", owner: "features/orchestration/service.ts", what: "管理树通知的持久投递记录与去重" },
   { key: "taskplans.pending-starts", scope: "global", owner: "features/taskplans/service.ts", what: "主控分配任务的待启动项和前置依赖" },

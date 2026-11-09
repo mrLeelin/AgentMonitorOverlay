@@ -6,7 +6,7 @@
 // review_open and view_open (查看包, 2026-10-23) only put something in front of the person.
 // session_archive (2026-11-01, 问题 #6): only sessions the caller itself started, so putting them away is as free as starting them.
 // session_send (2026-11-01): the same sessions; telling them more is as free as starting them.
-export const AUTO_APPROVED_WRITE_TOOLS = ["task_note_add", "handoff_submit", "mailbox_send", "mailbox_read", "decision_request", "task_submit_result", "task_review_result", "task_decision_answer", "checklist_check", "schedule_propose", "session_start", "session_send", "session_archive", "review_open", "view_open"] as const;
+export const AUTO_APPROVED_WRITE_TOOLS = ["task_set_lead", "task_note_add", "handoff_submit", "mailbox_send", "mailbox_read", "decision_request", "task_submit_result", "task_review_result", "task_decision_answer", "checklist_check", "schedule_propose", "session_start", "session_send", "session_archive", "review_open", "view_open"] as const;
 
 // Writes the person approves first. Codex's default ("auto") lets tools annotated as non-destructive run unasked
 // (S5-05: canvas_group_create ran without a prompt), so these are set to "prompt" explicitly.
@@ -19,7 +19,7 @@ export const PROMPTED_WRITE_TOOLS = ["canvas_group_create", "canvas_depend", "ca
 export const LEAD_MANAGEMENT_TOOLS = [
   "task_plan_propose", "task_describe", "task_message", "mailbox_send", "mailbox_read", "decision_request",
   "task_submit_result", "task_review_result", "task_decision_answer",
-  "task_update", "task_manager_set", "task_note_add", "handoff_submit", "checklist_check", "topic_doc_write",
+  "task_update", "task_set_lead", "task_manager_set", "task_note_add", "handoff_submit", "checklist_check", "topic_doc_write",
   "canvas_group_create", "canvas_depend", "canvas_color", "canvas_place", "canvas_arrange", "canvas_move",
   "canvas_items_post", "canvas_item_update", "canvas_callout", "canvas_callout_close",
 ] as const;

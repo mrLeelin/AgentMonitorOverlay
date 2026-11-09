@@ -306,7 +306,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   private async deliver(session: Session, content: SDKUserMessage["message"]["content"], options: SendOptions, item: (mode: SendMode, delivery: UserDelivery | undefined) => Id): Promise<{ mode: SendMode }> {
     const sessionId = session.id;
     await this.closing.get(sessionId);
-    const live = this.ensureLive(session);
+    const live = this.ensureLive(this.writable(sessionId));
     const mode: SendMode = live.running ? "queue" : "start";
     if (!live.running) this.turns.started(sessionId, live, "person");
     const itemId = item(mode, mode === "queue" && live.capabilities.has("msg_lifecycle_v1") ? "waiting" : undefined);

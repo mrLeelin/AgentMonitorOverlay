@@ -48,7 +48,7 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
   async propose(sessionId: Id, input: { summary?: unknown; tasks?: unknown }): Promise<TaskPlan> {
     const facts = roleFacts(this.host, sessionId);
     if (facts.role !== "lead" && facts.role !== "topic") {
-      throw new HostError("bad_request", "只有主控（或专题会话）能提拆任务的提案：把想法用 mailbox_send 发给主控，或请人把你的任务标成主控。");
+      throw new HostError("bad_request", "只有主控（或专题会话）能提拆任务的提案：把想法用 mailbox_send 发给主控，或由任务主会话用 task_set_lead 自行设置主控并在新的只读主控会话中继续。");
     }
     const summary = typeof input.summary === "string" ? input.summary.trim() : "";
     if (!summary) throw new HostError("bad_request", "summary is required: what the split is for, in a few lines");

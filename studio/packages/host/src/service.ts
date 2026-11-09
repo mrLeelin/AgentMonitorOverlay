@@ -143,6 +143,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();
     this.tasks.watchColumns();
+    this.tasks.leadPromotion.watch();
     this.orchestration.watch();
     this.taskPlans.watch();
     this.relays.watch();

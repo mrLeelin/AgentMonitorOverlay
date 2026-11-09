@@ -21,7 +21,7 @@ const oneLine = (s: string, max: number) => s.replace(/\s+/g, " ").slice(0, max)
 /** A topic's 主控 tasks, as text. */
 function leadsOf(service: CardHost, topicId: Id): string {
   const leads = service.store.listTasks().filter((t) => t.topicId === topicId && !t.archivedAt && t.lead);
-  return leads.length ? leads.map((t) => `${taskName(t)}（${t.id}）`).join("、") : "还没有（人可以在任务页标记）";
+  return leads.length ? leads.map((t) => `${taskName(t)}（${t.id}）`).join("、") : "还没有（任务主会话可用 task_set_lead 自行设置，人也可以在任务页标记）";
 }
 
 /** The role card as text (Markdown), for the instructions and amo_whoami. */
