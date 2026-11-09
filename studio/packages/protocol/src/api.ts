@@ -2,6 +2,7 @@
 import type { AccountUsage, Annotation, FolderAccessStatus, CanvasDoc, ChecklistItem, ScheduleProposal, DecisionRequest, Id, MailMessage, MailRecipient, ModelProfile, TaskNote, TodoItem, Session, SessionItem, SessionOptions, Task, TaskColumn, TaskPlan, PlannedTask, Relay, Timestamp, Topic, TopicDoc, Workspace } from "./entities.js";
 import type { CanvasRoutes } from "./canvas.js";
 import type { TaskManagement } from "./task-management.js";
+import type { TaskResult, TaskWorkflow } from "./task-workflow.js";
 import type { ChannelRoutes } from "./channels.js";
 import type { ChatFileRoutes } from "./chatfiles.js";
 import type { CliRoutes } from "./cli.js";
@@ -696,6 +697,9 @@ export interface HostRoutes
    */
   "PATCH /api/tasks/:id": { req: { title?: string; description?: string; firstMessage?: string; lead?: boolean; managerTaskId?: Id | null; relayAuto?: boolean; column?: TaskColumn; workspaceId?: Id | null; topicId?: Id | null }; res: Task };
   "GET /api/tasks/:id/management": { req: void; res: TaskManagement };
+  "GET /api/tasks/:id/workflow": { req: void; res: TaskWorkflow };
+  "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string }; res: TaskResult };
+  "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string }; res: TaskResult };
   /** Archives the task and all its sessions; returns the task. */
   "POST /api/tasks/:id/archive": { req: void; res: Task };
   "POST /api/tasks/:id/unarchive": { req: void; res: Task };

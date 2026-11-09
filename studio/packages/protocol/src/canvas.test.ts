@@ -172,17 +172,11 @@ describe("连线 (2026-10-19)", () => {
     expect(pruneLinks(kept)).toBe(kept);
   });
 
-  it("persists undirected collaboration separately from ordinary lines and dependencies", () => {
-    const collaboration = { ...line("collab", "n1", "n2", "配合验收"), kind: "collaboration" as const };
-    const d = doc({ links: [collaboration, line("ordinary", "n1", "n2", "历史说明")] });
-    expect(validateCanvas(d, TASKS)).toEqual([]);
-    expect(pruneLinks(d).links).toEqual(d.links);
-    const outline = canvasOutline(d, exampleTasks, exampleWorkspaces, exampleSessions);
-    expect(outline.json.links[0]).toMatchObject({ kind: "collaboration", label: "配合验收" });
-    expect(outline.outline).toContain(" ↔ ");
-    expect(outline.json.dependencies).toEqual(d.edges.map(({ from, to }) => ({ from, to })));
-    expect(validateCanvas(doc({ links: [collaboration, { ...collaboration, id: "reverse", from: "n2", to: "n1" }] }), TASKS).join()).toMatch(/duplicate collaboration/);
-    expect(validateCanvas(doc({ links: [{ ...collaboration, kind: "management" as never }] }), TASKS).join()).toMatch(/unknown kind/);
+  it("refuses the removed collaboration kind instead of silently treating it as an ordinary arrow", () => {
+    const removed = { ...line("old-collab", "n1", "n2", "旧协作说明"), kind: "collaboration" };
+    expect(validateCanvas(doc({ links: [removed] }), TASKS).join()).toMatch(/unknown kind/);
+    const unknown = { ...removed, kind: "management" };
+    expect(validateCanvas(doc({ links: [unknown] }), TASKS).join()).toMatch(/unknown kind/);
   });
 
   it("tells agents what each line joins and what it says", () => {

@@ -30,7 +30,7 @@ function managers(task: Task, byId: ReadonlyMap<Id, Task>): Id[] | null {
   return chain;
 }
 
-/** Strict descendant check: a task never manages itself. No canvas position, label or collaboration is consulted. */
+/** Strict descendant check: a task never manages itself. No canvas position, reference or annotation is consulted. */
 export function isManagedBy(tasks: readonly Task[], taskId: Id, managerId: Id): boolean {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const task = byId.get(taskId);

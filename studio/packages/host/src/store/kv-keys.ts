@@ -19,6 +19,9 @@ export interface KvKey {
 }
 
 export const KV_KEYS: readonly KvKey[] = [
+  { key: "task-results:", scope: "task", owner: "features/orchestration/service.ts", what: "任务交付与直属主控验收历史" },
+  { key: "orchestration.outbox", scope: "global", owner: "features/orchestration/service.ts", what: "管理树通知的持久投递记录与去重" },
+  { key: "taskplans.pending-starts", scope: "global", owner: "features/taskplans/service.ts", what: "主控分配任务的待启动项和前置依赖" },
   { key: "canvas.review-returns", scope: "global", owner: "features/canvasreview/returns.ts", what: "画布结论回传记录和整轮继续通知，Host 重启后接续待送消息" },
   // Settings (设置)
   { key: "settings:presets", scope: "global", owner: "core/shared.ts", what: "常用预设" },

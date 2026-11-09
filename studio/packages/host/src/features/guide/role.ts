@@ -1,4 +1,4 @@
-import { isCommon, taskManagement, type Id, type Task } from "@amo-studio/protocol";
+import { isCommon, managementRoot, taskManagement, type Id, type Task } from "@amo-studio/protocol";
 import type { FeatureHost } from "../../core/feature.js";
 import { ROLE_DUTY, ROLE_NAME, roleFacts, subjectFacts, type RoleFacts, type RoleSubject } from "../../core/role.js";
 
@@ -44,9 +44,14 @@ function cardOf(service: CardHost, f: RoleFacts): string {
     if (f.task.description) lines.push(`- 任务说明：${oneLine(f.task.description, 400)}`);
     const manager = f.task.managerTaskId ? service.store.getTask(f.task.managerTaskId) : null;
     lines.push(`- 直属主控：${manager ? `${taskName(manager)}（${manager.id}）` : "未分配；同专题和画布位置不代表归属"}`);
+    const root = managementRoot(service.store.listTasks(), f.task.id);
+    if (root) {
+      lines.push(`- 统一沟通入口：${taskName(root)}（${root.id}）。业务问题用 decision_request 交直属主控，只有总主控向人提问；命令授权和工具原生问答照常。`);
+      lines.push(f.task.lead ? "- 分工与验收：task_plan_propose 自动创建并启动下级任务；负责人用 lead: true 建二级主控。用 task_workflow 读取交付和待决问题，用 task_review_result 验收或退回、task_decision_answer 回答直属问题。全部下辖验收完成后用 task_submit_result 汇总交付，不能把会话停止当成任务完成。" : "- 工作完成后必须用 task_submit_result 提交摘要和实际验证证据，自动回报直属主控；等待验收或按退回意见修改。handoff_submit 和普通回复不代替交付。不要自己用 task_update 标记完成。");
+    }
     if (f.task.lead) {
       const scope = taskManagement(service.store.listTasks(), f.task.id);
-      lines.push(`- 管理范围：直属主控 ${scope.directLeadCount} 个，下辖执行 ${scope.workerCount} 个；直属任务 ${scope.direct.length} 个，下辖共 ${scope.descendants.length} 个（task_management 查询完整树）。只管理自身和下辖任务，协作或引用不扩权。`);
+      lines.push(`- 管理范围：直属主控 ${scope.directLeadCount} 个，下辖执行 ${scope.workerCount} 个；直属任务 ${scope.direct.length} 个，下辖共 ${scope.descendants.length} 个（task_management 查询完整树）。只管理自身和下辖任务，同专题或引用不扩权。`);
       lines.push(`- 下辖任务：${scope.descendants.map((t) => `${taskName(t)}（${t.id}，${t.column}）`).join("、") || "暂无；旧任务须由用户或专题入口明确分配"}`);
     }
   }

@@ -51,7 +51,7 @@ export function leadsTopic(host: RoleHost, sessionId: Id, topicId: Id): boolean 
   return f.topic?.id === topicId && (f.role === "lead" || f.role === "topic");
 }
 
-/** Management follows stored ownership only; sharing a topic, reference or collaboration never grants authority. */
+/** Management follows stored ownership only; sharing a topic, reference or annotation never grants authority. */
 export function managesTask(host: RoleHost, sessionId: Id, taskId: Id): boolean {
   const session = host.store.getSession(sessionId);
   const target = host.store.getTask(taskId);
@@ -65,9 +65,9 @@ export const ROLE_NAME: Record<AmoRole, string> = { lead: "主控", worker: "执
 
 export const ROLE_DUTY: Record<AmoRole, string> = {
   lead:
-    "你是主控：负责分配工作和管理任务、画布，本地文件只读。读取项目和专题，提出拆任务方案（task_plan_propose）、写分工说明（task_describe），用 task_update 管理任务标题、状态和专题；可以直接操作画布的分组、移动排序、依赖、颜色和审阅条目，也可以维护 Studio 内的专题文档。用 task_message 或 mailbox_send 交代工作，需要人拍板用 decision_request。具体实现和本地文件的修改都交给执行任务；不能在主控任务里另开执行会话、用子 agent 或改执行设置绕过文件只读限制。Studio 不替你建分支、不合并。",
+    "你是主控：负责分工、验收和管理任务画布，本地文件只读。task_plan_propose 自动创建并启动下级任务，用 lead:true 创建可以继续拆分的负责人；用 task_message 直接派工。用 task_workflow 查看交付和直属待决问题，task_review_result 验收或退回，task_decision_answer 回答下级。全部直属交付验收通过后，用 task_submit_result 汇总提交；有直属主控时向上回报，只有总主控统一对人提问和交付。不能把会话停止当成工作完成。可以管理范围内任务、画布和 Studio 专题文档。具体实现和本地文件修改交给执行任务，不能在主控里另开执行会话或子 agent 绕过只读。分支和合并仍由人决定。",
   worker:
-    "你是执行：专注做好自己的任务。平时不用主动记进度：人让你记时用 task_note_add，一段工作要交给别的会话或人接手时用 handoff_submit。需要主控或别的任务知道的事用 mailbox_send；需要人拍板用 decision_request；本任务里要并行做一部分、或换个干净的上下文，可以用 session_start 再开一个会话。不要去改别的任务的内容。",
+    "你是执行：专注自己的任务，不修改其他任务的内容。有直属主控时，工作完成用 task_submit_result 提交成果和验证证据，结果自动回主控验收；退回后按意见修改重提。业务问题用 decision_request 交直属主控，只有总主控向人提问。没有直属主控时照常在回复中交付。人让你记进度时用 task_note_add，交给其他会话接手用 handoff_submit；普通补充用 mailbox_send。这些记录不代替任务交付。本任务需要并行或干净上下文时可用 session_start。",
   topic: "你是专题会话：从专题的角度看全局、回答人的问题，可以写专题文档、给任务写说明；人让你整理画布时再整理画布、标颜色。",
   fork: "你是某个会话的分支：在原会话的基础上试另一条路，原会话不受影响。身份和原任务相同。",
 };

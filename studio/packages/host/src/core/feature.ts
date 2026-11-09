@@ -32,6 +32,7 @@ export type FeatureName =
   | "marks"
   | "topicDocs"
   | "taskPlans"
+  | "orchestration"
   | "relays"
   | "chatFiles"
   | "cli"

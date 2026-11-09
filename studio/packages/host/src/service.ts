@@ -35,6 +35,7 @@ import { RelaysFeature } from "./features/relays/service.js";
 import { TeamRelayFeature } from "./features/teamrelay/service.js";
 import { IssuesFeature } from "./features/issues/service.js";
 import { DutyFeature } from "./features/duty/service.js";
+import { OrchestrationFeature } from "./features/orchestration/service.js";
 import { ChatFilesFeature } from "./features/chatfiles/service.js";
 import { CliFeature } from "./features/cli/service.js";
 import { DataFeature } from "./features/datamgmt/service.js";
@@ -80,6 +81,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   readonly marks: MarksFeature = new MarksFeature(this);
   readonly topicDocs: TopicDocsFeature = new TopicDocsFeature(this);
   readonly taskPlans: TaskPlansFeature = new TaskPlansFeature(this);
+  readonly orchestration: OrchestrationFeature = new OrchestrationFeature(this);
   readonly relays: RelaysFeature = new RelaysFeature(this);
   readonly chatFiles: ChatFilesFeature = new ChatFilesFeature(this);
   readonly cli: CliFeature = new CliFeature(this);
@@ -141,6 +143,9 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();
     this.tasks.watchColumns();
+    this.orchestration.watch();
+    this.taskPlans.watch();
+    this.relays.watch();
     this.duty.registerCheck(this.issues.dutyCheck());
   }
 

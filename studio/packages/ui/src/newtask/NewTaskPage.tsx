@@ -139,6 +139,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
 
   async function submit(file: boolean) {
     if (busy) return;
+    if (resume && draft.lead) return setError("接续已有会话不能作为主控带队：请取消接续，再新建主控会话。");
     if (resume && file) return setError("接续的会话不能放进待办：直接点「接续」，第一句话可以不写。");
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
     if (!resume && !draft.text.trim() && (file || attach.empty)) return setError(file ? "写一句话再放进待办。" : "写一句话或添加图片、文件再开始。");
@@ -173,7 +174,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     setPickingResume(false);
     setResume(s);
     setError("");
-    update({ title: s.title.slice(0, 100), ...(subscription ? { pick: { profileId: subscription.id, model: null } } : {}) });
+    update({ title: s.title.slice(0, 100), lead: false, ...(subscription ? { pick: { profileId: subscription.id, model: null } } : {}) });
     if (s.workspaceId) rows.pickProject(s.workspaceId);
     requestAnimationFrame(() => input.current?.focus());
   }
@@ -284,11 +285,11 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 {fromCanvas && <span className="drawer-note">从画布新建，总在画布上</span>}
               </label>
             )}
-            <label className="pick-row draft-oncanvas" title="主控负责协调它的专题（不在专题里时是它的项目）：拆任务、排画布、写专题文档；具体的活由各任务的会话做。之后在任务页随时可以改">
+            <label className="pick-row draft-oncanvas" title="你只和总主控沟通。主控拆分并派工给各负责人，收结果、验收或退回，再向你汇总交付。接续已有会话不能改为主控。">
               <span className="pick-lab" />
-              <input type="checkbox" checked={!!draft.lead} onChange={(e) => update({ lead: e.target.checked })} data-testid="draft-lead" />
-              设为主控
-              <span className="drawer-note">协调{topic ? "这个专题" : "这个项目"}的任务</span>
+              <input type="checkbox" checked={!!draft.lead} disabled={!!resume} onChange={(e) => update({ lead: e.target.checked })} data-testid="draft-lead" />
+              主控带队
+              <span className="drawer-note">拆分派工 → 收结果 → 验收汇总</span>
             </label>
           </div>
 
@@ -384,7 +385,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 <EffortBars efforts={model.efforts} value={draft.options.effort ?? null} fallback={model.defaultEffort} onChange={(effort) => update({ options: { ...draft.options, effort } })} />
               )}
               <FastToggle fast={model?.fast} value={draft.options.fast} onChange={(fast) => update({ options: { ...draft.options, fast } })} />
-              {choices ? (
+              {draft.lead ? <span className="drawer-note" data-testid="draft-lead-permission">主控只读项目，具体修改交给执行任务</span> : choices ? (
                 <PermissionSegments
                   choices={choices}
                   value={draft.options.permission ?? null}

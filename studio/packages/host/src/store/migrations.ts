@@ -365,4 +365,14 @@ export const MIGRATIONS: readonly Migration[] = [
   ALTER TABLE tasks ADD COLUMN manager_task_id TEXT REFERENCES tasks(id);
   CREATE INDEX tasks_manager ON tasks(manager_task_id);
   `,
+  // 27: The person removed canvas collaboration (2026-11-09). Do not turn it into an arrow or a dependency.
+  `
+  UPDATE canvas_docs
+  SET body = json_set(body,
+    '$.links', json((SELECT json_group_array(json(value)) FROM json_each(canvas_docs.body, '$.links') WHERE json_extract(value, '$.kind') IS NOT 'collaboration')),
+    '$.version', COALESCE(json_extract(body, '$.version'), 0) + 1,
+    '$.updatedAt', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE EXISTS (SELECT 1 FROM json_each(canvas_docs.body, '$.links') WHERE json_extract(value, '$.kind') = 'collaboration');
+  `,
 ];

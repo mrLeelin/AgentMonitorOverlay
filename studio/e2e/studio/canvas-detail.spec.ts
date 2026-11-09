@@ -13,12 +13,12 @@ test.afterEach(async () => {
   studio = undefined;
 });
 
-async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, button: "left" | "middle" = "left") {
   await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
+  await page.mouse.down({ button });
   await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 });
   await page.mouse.move(to.x, to.y, { steps: 4 });
-  await page.mouse.up();
+  await page.mouse.up({ button });
 }
 
 const theme = (page: Page, which: "light" | "dark") => page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), which);
@@ -152,9 +152,9 @@ test("the 详情框: beside the selected card, follows a pan, closed by Esc, × 
   await expect(detail.getByRole("group", { name: "任务详情" })).toContainText("改导入");
   await expect(detail.getByTestId("side-description")).toContainText("先看现在的导入");
 
-  // A pan (dragging the empty canvas) keeps the selection; the box moves with the card.
+  // A middle-button pan keeps the selection; the box moves with the card.
   const v = (await page.getByTestId("canvas-viewport").boundingBox())!;
-  await drag(page, { x: v.x + v.width - 120, y: v.y + v.height - 120 }, { x: v.x + v.width - 60, y: v.y + v.height - 90 });
+  await drag(page, { x: v.x + v.width - 120, y: v.y + v.height - 120 }, { x: v.x + v.width - 60, y: v.y + v.height - 90 }, "middle");
   await expect(detail).toBeVisible();
   const moved = (await detail.boundingBox())!;
   const movedCard = (await card(page, "n-imp").boundingBox())!;

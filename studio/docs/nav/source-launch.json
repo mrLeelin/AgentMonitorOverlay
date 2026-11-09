@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "app.sourceLaunch",
+      "label": "源码版启动与双击重启",
+      "aliases": ["启动", "重启", "bat", "restart-amo", "start-studio", "源码版", "端口冲突"],
+      "category": "app",
+      "purpose": "start-studio.cmd 启动开发版；根目录 restart-amo.bat 构建并重启当前工作区，固定使用 studio/.data。重启复用后台健康检查和关闭接口，有运行中会话时拒绝，关闭后备份数据库，优先沿用端口并避开其他版本占用。",
+      "anchors": [
+        { "label": "双击重启入口", "path": "restart-amo.bat" },
+        { "label": "构建与重启", "path": "studio/scripts/restart-studio.mjs", "anchor": "async function restart()" },
+        { "label": "启动入口", "path": "studio/start-studio.ps1" },
+        { "label": "会话保护", "path": "studio/packages/host/src/http/server.ts", "anchor": "route(\"POST /api/shutdown\"" }
+      ],
+      "related": ["host.structure"],
+      "next": ["studio/scripts/restart-studio.mjs", "studio/packages/app/src/host-link.ts"]
+    }
+  ]
+}

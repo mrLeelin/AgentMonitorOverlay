@@ -88,7 +88,7 @@ export function validateCanvas(doc: CanvasDoc, taskIds: ReadonlySet<Id>, previou
   const nodeIds = new Set((doc.nodes ?? []).map((n) => n.id));
   for (const l of doc.links ?? []) {
     unique(l.id, "link");
-    if (l.kind !== undefined && l.kind !== "collaboration") errors.push(`link ${l.id} has an unknown kind`);
+    if ("kind" in l && l.kind !== undefined) errors.push(`link ${l.id} has an unknown kind`);
     if (!nodeIds.has(l.from) || !nodeIds.has(l.to)) errors.push(`link ${l.id} must connect two cards on the canvas`);
     if (!CANVAS_SIDES.includes(l.fromSide) || !CANVAS_SIDES.includes(l.toSide)) errors.push(`link ${l.id} has an unknown side`);
     if (l.label !== undefined && (typeof l.label !== "string" || l.label.length > CANVAS_LINK_LABEL_MAX)) errors.push(`link ${l.id} has an invalid label`);
@@ -218,7 +218,7 @@ export interface CanvasOutline {
   /** Derived explicit ownership; never an editable canvas line or a start dependency. */
   management: Array<{ from: Id; to: Id }>;
   /** 连线 between cards: what each end is (a task's title, a note's text, a reference's task) and the label. */
-  links: Array<{ from: string; to: string; label?: string; kind?: "collaboration" }>;
+  links: Array<{ from: string; to: string; label?: string }>;
 }
 
 const URGENCY: SessionStatus[] = ["awaiting-approval", "awaiting-answer", "awaiting-review", "error", "running", "idle", "completed"];
@@ -338,7 +338,7 @@ export function canvasOutline(
   json.links = (doc.links ?? []).flatMap((l: CanvasLink) => {
     const from = cardName(l.from);
     const to = cardName(l.to);
-    return from && to ? [{ from, to, ...(l.kind ? { kind: l.kind } : {}), ...(l.label ? { label: l.label } : {}) }] : [];
+    return from && to ? [{ from, to, ...(l.label ? { label: l.label } : {}) }] : [];
   });
 
   const title = (id: Id) => byId.get(id)?.title || id;
@@ -379,7 +379,7 @@ export function canvasOutline(
     section("未分组", json.ungrouped.tasks, json.ungrouped.notes, json.ungrouped.refs, json.ungrouped.items),
     ...(json.unplaced.length ? [section("还没放到画布上的任务", json.unplaced, [])] : []),
     ...(json.management.length ? [["管理归属（不参与开始依赖）", ...json.management.map((l) => `  - ${title(l.from)} ⇢ ${title(l.to)}`)].join("\n")] : []),
-    ...(json.links.length ? [["连线", ...json.links.map((l) => `  - ${l.from} ${l.kind === "collaboration" ? "↔" : "→"} ${l.to}${l.label ? `：${oneLine(l.label)}` : ""}`)].join("\n")] : []),
+    ...(json.links.length ? [["连线", ...json.links.map((l) => `  - ${l.from} → ${l.to}${l.label ? `：${oneLine(l.label)}` : ""}`)].join("\n")] : []),
     ...(json.callouts.length ? [["卡片上的说明和问题（没收起的）", ...json.callouts.map(calloutLine)].join("\n")] : []),
   ];
   return { outline: parts.join("\n\n"), json };
@@ -397,7 +397,6 @@ export interface CanvasRoutes {
   "PUT /api/topics/:id/canvas": { req: CanvasDoc; res: CanvasDoc };
   /** Structure without coordinates, for agents (`canvas_read`) and the "agent 视角" tab. */
   "GET /api/topics/:id/canvas/outline": { req: void; res: { outline: string; json: CanvasOutline } };
-  "POST /api/topics/:id/canvas/collaboration": { req: { fromTaskId: Id; toTaskId: Id; remove?: boolean }; res: { fromTaskId: Id; toTaskId: Id; collaboration: boolean; version: number } };
   /**
    * "显示在画布上": shows (`true`) or hides a task's card on its topic's canvas; returns that canvas. Tasks created on the
    * canvas are always shown; ones created elsewhere only when the person asks. Hiding keeps the task and its dependencies.

@@ -7,6 +7,7 @@ import { QuickStart } from "./newtask/QuickStart.js";
 import { needsPerson, taskSessions, taskStatus } from "./lib/status.js";
 import { useUnreadMail } from "./collab/useInbox.js";
 import { useOpenDecisions } from "./collab/DecisionPanel.js";
+import { decisionNeedsPerson } from "./focus/managedAttention.js";
 import { useChecklist } from "./collab/ChecklistPanel.js";
 import { usePendingProposals } from "./planning/ProposalsPanel.js";
 import { useTodos } from "./planning/TodoTab.js";
@@ -94,7 +95,7 @@ export function App() {
   const setView = (next: View) => setShownView((current) => withOrigin(next, current));
   const focus = useFocusToggle();
   const unreadMail = useUnreadMail(host.kind === "ready" ? host.link : NO_LINK);
-  const openDecisions = useOpenDecisions(host.kind === "ready" ? host.link : NO_LINK);
+  const openDecisions = useOpenDecisions(host.kind === "ready" ? host.link : NO_LINK).filter((d) => host.kind !== "ready" || decisionNeedsPerson(d, host.state.tasks));
   const checklist = useChecklist(host.kind === "ready" ? host.link : NO_LINK);
   const proposals = usePendingProposals(host.kind === "ready" ? host.link : NO_LINK);
   const { todos } = useTodos(host.kind === "ready" ? host.link : NO_LINK);

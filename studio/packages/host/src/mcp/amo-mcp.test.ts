@@ -90,11 +90,11 @@ describe("AMO MCP", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_collaborate", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place", "canvas_read", "checklist_check", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
-      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_update", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
+      "amo_guide", "amo_whoami", "board_list", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place", "canvas_read", "checklist_check", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
+      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_decision_answer", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_submit_result", "task_update", "task_workflow", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
     ]);
     expect(tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_read", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
+      "amo_guide", "amo_whoami", "board_list", "canvas_read", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "task_workflow", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
     ]);
     await client.close();
   });
@@ -189,7 +189,7 @@ describe("AMO MCP", () => {
 
   it("opens /mcp, and only /mcp, with the MCP token", async () => {
     const client = await connect(MCP_TOKEN);
-    expect((await client.listTools()).tools).toHaveLength(59);
+    expect((await client.listTools()).tools).toHaveLength(62);
     await client.close();
     const res = await fetch(`${http.url}/api/state`, { headers: { authorization: `Bearer ${MCP_TOKEN}`, connection: "close" } });
     expect(res.status).toBe(401);
@@ -199,6 +199,16 @@ describe("AMO MCP", () => {
     await expect(connect("wrong")).rejects.toThrow();
     const res = await fetch(`${http.url}/mcp`, { method: "POST", headers: { "content-type": "application/json", connection: "close" }, body: "{}" });
     expect(res.status).toBe(401);
+  });
+
+  it("removes the collaboration MCP capability and HTTP endpoint", async () => {
+    const client = await connect();
+    expect((await client.listTools()).tools.some((tool) => tool.name === "canvas_collaborate")).toBe(false);
+    const removed = await client.callTool({ name: "canvas_collaborate", arguments: { fromTaskId: importTask.id, toTaskId: configTask.id } });
+    expect(removed.isError).toBe(true);
+    await client.close();
+    const response = await fetch(`${http.url}/api/topics/${topicId}/canvas/collaboration`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", connection: "close" }, body: JSON.stringify({ fromTaskId: importTask.id, toTaskId: configTask.id }) });
+    expect(response.status).toBe(404);
   });
 
   it("reads the board, a task, its session tree, the workspaces and the canvas", async () => {
@@ -380,7 +390,7 @@ describe("AMO MCP", () => {
     await anonymous.close();
   });
 
-  it("lets a DSH lead assign tasks through a proposal that still awaits the person", async () => {
+  it("lets a DSH lead assign managed tasks automatically", async () => {
     const lead = store.createTask({ title: "DSH 主控", workspaceId: importTask.workspaceId, topicId, lead: true });
     const session = store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "dsh", profileId: "p-ds", workspaceId: lead.workspaceId, title: "分配", status: "idle", writer: "workbench", runtimeRef: null });
     const client = await connect(MCP_TOKEN, identities.tokenFor(session.id));
@@ -400,8 +410,9 @@ describe("AMO MCP", () => {
       const before = store.listTasks().length;
       const proposal = await call(client, "task_plan_propose", { summary: "把实现交给执行任务", tasks: [{ title: "执行导入修复", description: "修复导入重试", firstMessage: "检查失败原因并修复" }] });
       expect(proposal.isError).not.toBe(true);
-      expect(service.taskPlans.list().find((p) => p.id === proposal.data.proposalId)).toMatchObject({ state: "open", fromSessionId: session.id, tasks: [{ title: "执行导入修复" }] });
-      expect(store.listTasks()).toHaveLength(before);
+      expect(service.taskPlans.list().find((p) => p.id === proposal.data.proposalId)).toMatchObject({ state: "accepted", fromSessionId: session.id, tasks: [{ title: "执行导入修复" }] });
+      expect(store.listTasks()).toHaveLength(before + 1);
+      expect(store.getTask(proposal.data.created[0].taskId)?.managerTaskId).toBe(lead.id);
     } finally {
       await client.close();
     }

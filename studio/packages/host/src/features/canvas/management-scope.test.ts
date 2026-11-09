@@ -62,20 +62,14 @@ describe("canvas explicit management scope", () => {
     expect(service.canvases.canvas(topicId).nodes.find((n) => n.id === "child")?.color).toBe("green");
   });
 
-  it("lets the topic entry point manage peers and stores collaboration separately without granting authority", async () => {
+  it("lets the topic entry point arrange peers while ordinary annotations grant no authority", async () => {
     const before = service.canvases.canvas(topicId);
-    service.canvases.canvasCollaborate(topicId, { fromTaskId: child.id, toTaskId: peer.id }, topicSessionId);
-    service.canvases.canvasCollaborate(topicId, { fromTaskId: peer.id, toTaskId: child.id }, topicSessionId);
-    const doc = service.canvases.canvas(topicId);
-    expect(doc.links).toHaveLength(2);
-    expect(doc.links?.find((l) => l.id === "ordinary")).toEqual(before.links?.[0]);
-    expect(doc.links?.find((l) => l.kind === "collaboration")).toMatchObject({ from: "child", to: "peer" });
-    expect(doc.edges).toEqual([]);
     const tools = canvasTools(toolContext(service, { sessionId: leadSessionId }));
     expect(await tools.find((t) => t.name === "canvas_color")!.run({ target: peer.id, color: "red" })).toHaveProperty("isError", true);
-    service.canvases.canvasCollaborate(topicId, { fromTaskId: peer.id, toTaskId: child.id, remove: true });
-    expect(service.canvases.canvas(topicId).links).toEqual(before.links);
     service.canvases.canvasMove(topicId, { target: "mixed", x: 10, y: 20 }, topicSessionId);
+    expect(service.canvases.canvas(topicId).links).toEqual(before.links);
+    expect(service.canvases.canvas(topicId).edges).toEqual([]);
+    expect(service.canvases.canvas(topicId).groups[0]?.rect).toMatchObject({ x: 10, y: 20 });
   });
 
   it("checks review callouts and grouped item insertion through the same boundary", () => {

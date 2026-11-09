@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { managementRoot } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { answer, write, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 import { noteOwnDescription } from "../guide/role.js";
@@ -7,7 +8,7 @@ import { noteOwnDescription } from "../guide/role.js";
 export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: ToolContext): AmoTool[] {
   return [
     {
-      name: "task_management", title: "管理范围", description: "Read a task's stored direct and recursive management tree, with unique lead/worker counts. Same-topic and collaboration alone grant no management rights.",
+      name: "task_management", title: "管理范围", description: "Read a task's stored direct and recursive management tree, with unique lead/worker counts. Sharing a topic, reference cards or annotation lines grants no management rights.",
       inputSchema: { taskId: z.string().optional() }, readOnly: true, autoApprove: true,
       run: (args) => answer(() => service.tasks.management(args.taskId === undefined && caller ? ownTask(caller) : String(args.taskId))),
     },
@@ -51,6 +52,7 @@ export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: Tool
         const patch = { ...(args.title !== undefined ? { title: args.title } : {}), ...(args.column !== undefined ? { column: args.column } : {}), ...(args.topicId !== undefined ? { topicId: args.topicId } : {}) };
         if (!Object.keys(patch).length) throw new HostError("bad_request", "请提供任务标题、状态或专题。");
         if (args.title !== undefined && (typeof args.title !== "string" || !args.title.trim())) throw new HostError("bad_request", "任务标题不能为空。");
+        if (args.column === "done" && managementRoot(service.store.listTasks(), taskId)) throw new HostError("bad_request", "管理任务的完成须经过交付验收：执行任务用 task_submit_result，直属主控用 task_review_result；总主控验收全部下辖后再提交最终交付。");
         return service.tasks.updateTask(taskId, patch);
       }),
     },

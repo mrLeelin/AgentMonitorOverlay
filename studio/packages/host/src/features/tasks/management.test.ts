@@ -83,7 +83,7 @@ describe("stored management ownership", () => {
     expect(managesTask(service, topSession.id, worker.id)).toBe(false);
   });
 
-  it("rechecks cached MCP tools after transfer and never derives rights from collaboration", async () => {
+  it("rechecks cached MCP tools after transfer and never derives rights from annotation lines", async () => {
     const top = task("主控", true);
     const peer = task("平级主控", true);
     const worker = task("执行", false, top.id);
@@ -94,7 +94,7 @@ describe("stored management ownership", () => {
     const doc = service.canvases.canvas(topic.id);
     const a = doc.nodes.find((n) => n.kind === "task" && n.taskId === top.id)!;
     const b = doc.nodes.find((n) => n.kind === "task" && n.taskId === peer.id)!;
-    store.putCanvas({ ...doc, links: [...(doc.links ?? []), { id: "collaboration", from: a.id, fromSide: "right", to: b.id, toSide: "left", kind: "collaboration" }] });
+    store.putCanvas({ ...doc, links: [...(doc.links ?? []), { id: "annotation", from: a.id, fromSide: "right", to: b.id, toSide: "left", label: "仅供参考" }] });
     const tools = amoToolsFor(service, { sessionId: topSession.id });
     const update = tools.find((t) => t.name === "task_update")!;
     expect(await update.run({ taskId: worker.id, column: "review" })).not.toHaveProperty("isError", true);
@@ -188,10 +188,10 @@ describe("stored management ownership", () => {
     expect(await service.relays.deliver(relay.id)).toMatchObject({ state: "delivered", sessionId: targetSession.id });
     const [row] = service.sessions.inbox.held(targetSession.id);
     expect(row).toMatchObject({ type: "user", delivery: "held", relayFromSessionId: subSession.id });
-    expect(originalResend).not.toHaveBeenCalled();
+    expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
     service.tasks.setManager(worker.id, peer.id);
     await expect(service.sessions.sendNow(targetSession.id, row!.id)).rejects.toThrow(/原主控/);
-    expect(originalResend).not.toHaveBeenCalled();
+    expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
     // A new inbox has no in-memory knowledge of the relay: its source must come from the stored message row.
     const runtime = new CodexRuntime({ store, servers, profiles: PROFILES });
     const resumedResend = vi.spyOn(runtime, "resend").mockResolvedValue({ mode: "start" });
@@ -200,8 +200,8 @@ describe("stored management ownership", () => {
     await resumed.sessions.inbox.flush(targetSession.id);
     await vi.waitFor(() => expect(store.getItem(row!.id)).toMatchObject({ type: "user", delivery: "unsent", relayFromSessionId: subSession.id }));
     await expect(resumed.sessions.resend(targetSession.id, row!.id)).rejects.toThrow(/原主控/);
-    expect(resumedResend).not.toHaveBeenCalled();
-    expect(originalResend).not.toHaveBeenCalled();
+    expect(resumedResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
+    expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
   });
 
   it("revokes cached automatic management after demotion or archive", async () => {

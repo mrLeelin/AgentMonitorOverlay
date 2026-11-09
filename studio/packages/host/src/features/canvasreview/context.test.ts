@@ -28,9 +28,9 @@ describe("discussion context", () => {
     expect(text).toContain("另有 2 张直接关联卡未展开");
     expect(text.length).toBeLessThan(7000);
     expect(text).not.toContain("gone");
-    const mixed = { ...emptyCanvas(), nodes: [current, { id: "note", kind: "note" as const, text: "注意事项", groupId: null, pos: { x: 0, y: 0 } }, { id: "ref", kind: "ref" as const, taskId: "deleted", groupId: null, pos: { x: 0, y: 0 } }], links: [{ ...link("a", "note"), kind: "collaboration" as const }, link("ref", "a")] };
+    const mixed = { ...emptyCanvas(), nodes: [current, { id: "note", kind: "note" as const, text: "注意事项", groupId: null, pos: { x: 0, y: 0 } }, { id: "ref", kind: "ref" as const, taskId: "deleted", groupId: null, pos: { x: 0, y: 0 } }], links: [link("a", "note"), link("ref", "a")] };
     const summary = discussionContext(mixed, current, () => undefined).join("\n");
-    expect(summary).toContain("协作（无方向）");
+    expect(summary).toContain("普通连线：本卡 → 关联卡");
     expect(summary).toContain("便签：注意事项");
     expect(summary).toContain("任务已不存在");
   });

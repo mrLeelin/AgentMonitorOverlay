@@ -71,6 +71,83 @@ async function openCanvas(page: Page) {
 
 const nodeOf = (doc: CanvasDoc, id: string) => doc.nodes.find((n) => n.id === id) as CanvasNode;
 
+test("canvas selection is distinct in both themes; Delete removes mixed selected cards but keeps tasks and dependencies", async () => {
+  studio = await launchStudio();
+  const { page } = studio;
+  const { canvas } = await setup(studio);
+  const tasksBefore = (await studio.api<StateSnapshot>("GET", "/api/state")).tasks;
+  const before = await canvas();
+  await studio.api("PUT", `/api/topics/${before.id}/canvas`, {
+    ...before,
+    nodes: before.nodes.map((n) => n.id === "n-note" ? { ...n, color: "green" } : n.kind === "item" ? { ...n, status: "done" } : n),
+    links: [{ id: "l1", from: "n-task", fromSide: "right", to: "n-note", toSide: "left" }],
+  });
+  const at = await openCanvas(page);
+  const node = (id: string) => page.locator(`[data-node-id="${id}"]`);
+  // Delete in a text field edits the text, rather than removing its card.
+  await node("n-note").click();
+  const text = page.getByRole("textbox", { name: "便签内容" });
+  await text.focus();
+  await text.press("Delete");
+  await expect(node("n-note")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await drag(page, at(25, 85), at(650, 440));
+  const selected = page.locator(".canvas-card.selected, .canvas-note.selected");
+  await expect(selected).toHaveCount(4);
+  // The box crosses the dependency too; explicitly keep that dependency in this deletion.
+  await expect(page.getByTestId("canvas-edge")).toHaveClass(/selected/);
+  await page.keyboard.down("Control");
+  const edgePoint = at(150, 430);
+  await page.mouse.click(edgePoint.x, edgePoint.y);
+  await page.keyboard.up("Control");
+  await expect(page.getByTestId("canvas-edge")).not.toHaveClass(/selected/);
+  for (const which of ["light", "dark"] as const) {
+    await theme(page, which);
+    for (const id of ["n-task", "n-note", "n-ref", "n-item"]) {
+      await expect(node(id)).toHaveCSS("outline-width", "3px");
+      await expect(node(id)).toHaveCSS("outline-style", "solid");
+      await expect(node(id)).toHaveCSS("outline-offset", "3px");
+      await expect(node(id)).toHaveCSS("opacity", "1");
+    }
+    await screenshot(studio.app, "studio", `canvas-selected-${which}`, page);
+  }
+  await page.keyboard.press("Delete");
+  const confirm = page.getByTestId("canvas-delete-confirm");
+  await expect(confirm).toContainText("4 张卡片");
+  await expect(confirm.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+  const pending = await canvas();
+  expect(pending.nodes).toHaveLength(5);
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(selected).toHaveCount(4);
+  expect(await canvas()).toEqual(pending);
+  await page.keyboard.press("Delete");
+  await confirm.getByTestId("confirm-action").click();
+  await expect.poll(async () => (await canvas()).nodes.map((n) => n.id)).toEqual(["n-after"]);
+  await expect(selected).toHaveCount(0);
+  expect((await canvas()).links).toEqual([]);
+  expect((await canvas()).edges).toEqual(before.edges);
+  expect((await canvas()).groups).toEqual(before.groups);
+
+  // A single selected task card also leaves the canvas with Delete.
+  await node("n-after").click();
+  await page.keyboard.press("Delete");
+  await expect(confirm).toContainText("1 张任务卡片");
+  await confirm.getByTestId("confirm-action").click();
+  await expect.poll(async () => (await canvas()).nodes).toEqual([]);
+  expect((await studio.api<StateSnapshot>("GET", "/api/state")).tasks).toEqual(tasksBefore);
+  // Even an empty group requires confirmation when removed with Delete.
+  await page.getByTestId("canvas-group").locator(".canvas-group-bar").click();
+  await page.keyboard.press("Delete");
+  const groupConfirm = page.getByTestId("delete-group-confirm");
+  await expect(groupConfirm).toBeVisible();
+  expect((await canvas()).groups).toHaveLength(1);
+  await groupConfirm.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByTestId("canvas-group")).toHaveCount(1);
+});
+
 test("canvas sizes: a group and each kind of card keep the size they are dragged to, and a small card cuts its text", async () => {
   studio = await launchStudio();
   const { page } = studio;

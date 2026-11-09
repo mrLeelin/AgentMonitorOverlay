@@ -64,6 +64,15 @@ const proposal = {
   ],
 };
 
+/** Already-open proposals from an older Host remain editable and acceptable after upgrading. */
+async function legacyProposal(input: Parameters<typeof service.taskPlans.propose>[1] = proposal) {
+  const s = store.createSession({ ...leadSession, id: undefined, taskId: null, topicId: topic.id, runtimeRef: null });
+  const plan = await service.taskPlans.propose(s.id, input);
+  const pending = { ...plan, fromTaskId: leadTask.id, fromSessionId: leadSession.id };
+  store.putTaskPlan(pending);
+  return pending;
+}
+
 describe("task plans (拆任务提案)", () => {
   it("takes a proposal only from a 主控, and checks it", async () => {
     await expect(service.taskPlans.propose(worker.id, proposal)).rejects.toThrow(/只有主控/);
@@ -72,7 +81,10 @@ describe("task plans (拆任务提案)", () => {
     await expect(service.taskPlans.propose(leadSession.id, { summary: "x", tasks: [{ title: "a", model: "nope" }] })).rejects.toThrow(/DS, GPT Sol/);
     await expect(service.taskPlans.propose(leadSession.id, { summary: "x", tasks: [{ key: "a", title: "a", dependsOn: ["b"] }, { key: "b", title: "b", dependsOn: ["a"] }] })).rejects.toThrow(/cycle/);
     const plan = await service.taskPlans.propose(leadSession.id, proposal);
-    expect(plan).toMatchObject({ topicId: topic.id, fromSessionId: leadSession.id, fromTaskId: leadTask.id, state: "open" });
+    expect(plan).toMatchObject({ topicId: topic.id, fromSessionId: leadSession.id, fromTaskId: leadTask.id, state: "accepted" });
+    expect(plan.created).toHaveLength(3);
+    expect(store.listSessions({ taskId: plan.created![0]!.taskId })).toHaveLength(1);
+    expect(store.listSessions({ taskId: plan.created![1]!.taskId })).toHaveLength(0);
     expect(plan.tasks.map((t) => [t.key, t.workspaceId, t.profileId, t.dependsOn])).toEqual([
       ["a", alpha.id, "p-gpt", []],
       ["b", beta.id, "p-ds", ["a"]],
@@ -83,7 +95,7 @@ describe("task plans (拆任务提案)", () => {
   });
 
   it("accepts it as changed: tasks with descriptions, on the canvas in a group per project, dependencies, and mail to the 主控", async () => {
-    const plan = await service.taskPlans.propose(leadSession.id, proposal);
+    const plan = await legacyProposal();
     const accepted = await service.taskPlans.accept(plan.id, {
       run: false,
       tasks: [{ ...plan.tasks[0]!, title: "装甲车数据表" }, { ...plan.tasks[1]! }, { ...plan.tasks[2]!, include: false }],
@@ -111,7 +123,7 @@ describe("task plans (拆任务提案)", () => {
   it("takes a particular model and an effort per task, checked as session_start's; the session starts with them; another account picked drops them (2026-10-26)", async () => {
     await expect(service.taskPlans.propose(leadSession.id, { summary: "x", tasks: [{ title: "a", model: "Plain", effort: "max" }] })).rejects.toThrow(/effort 只能是：low, high/);
     await expect(service.taskPlans.propose(leadSession.id, { summary: "x", tasks: [{ title: "a", effort: "high" }] })).rejects.toThrow(/没有思考强度可选/);
-    const plan = await service.taskPlans.propose(leadSession.id, {
+    const plan = await legacyProposal({
       summary: "用便宜的型号先做",
       tasks: [
         { key: "a", title: "慢慢查", model: "Plain/Fake Slow", firstMessage: "查一下" },
@@ -137,14 +149,14 @@ describe("task plans (拆任务提案)", () => {
   });
 
   it("dismisses it with a note the 主控 reads", async () => {
-    const plan = await service.taskPlans.propose(leadSession.id, proposal);
+    const plan = await legacyProposal();
     expect(service.taskPlans.dismiss(plan.id, { note: "先只做装甲车" })).toMatchObject({ state: "dismissed", note: "先只做装甲车" });
     expect(service.collab.readMailFromSession(leadSession.id).at(-1)!.text).toBe("人没有采用你的拆任务提案「把装甲车迁到两个项目」：先只做装甲车");
     expect(store.listTasks().length).toBe(2);
   });
 
   it("binds the proposing lead and description before the first session can read its role", async () => {
-    const plan = await service.taskPlans.propose(leadSession.id, { summary: "先验证归属", tasks: [{ key: "a", title: "执行", description: "执行范围", firstMessage: "开始" }] });
+    const plan = await legacyProposal({ summary: "先验证归属", tasks: [{ key: "a", title: "执行", description: "执行范围", firstMessage: "开始" }] });
     const cards: string[] = [];
     vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner, workspace) => {
       expect(store.getTask(owner.taskId!)?.managerTaskId).toBe(leadTask.id);
@@ -159,10 +171,70 @@ describe("task plans (拆任务提案)", () => {
   });
 
   it("rejects a stale proposing lead before creating tasks or canvas groups", async () => {
-    const plan = await service.taskPlans.propose(leadSession.id, proposal);
+    const plan = await legacyProposal();
     service.tasks.updateTask(leadTask.id, { lead: false });
     await expect(service.taskPlans.accept(plan.id, { run: true })).rejects.toThrow(/来源主控已失效/);
     expect(store.listTasks()).toHaveLength(2);
     expect(service.canvases.canvas(topic.id).groups).toEqual([]);
+  });
+
+  it("creates a domain lead before starting it, and starts dependents only after accepted work is done", async () => {
+    const seen: Array<{ lead: boolean; manager: string | null | undefined }> = [];
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => {
+      const task = store.getTask(owner.taskId!)!;
+      seen.push({ lead: !!task.lead, manager: task.managerTaskId });
+      return store.createSession({ ...leadSession, id: undefined, taskId: task.id, runtimeRef: null });
+    });
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "分工", tasks: [
+      { key: "art", title: "资源负责人", lead: true, firstMessage: "组织资源制作" },
+      { key: "logic", title: "资源接入", dependsOn: ["art"], firstMessage: "接入资源" },
+    ] });
+    expect(seen).toEqual([{ lead: true, manager: leadTask.id }]);
+    const first = plan.created![0]!.taskId, second = plan.created![1]!.taskId;
+    service.tasks.updateTask(first, { column: "review" });
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: second })).toHaveLength(0);
+    service.tasks.updateTask(first, { column: "done" });
+    await service.taskPlans.startReady();
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: second })).toHaveLength(1);
+    expect(seen).toEqual([{ lead: true, manager: leadTask.id }, { lead: false, manager: leadTask.id }]);
+  });
+
+  it("resumes a persisted dependency queue without duplicating previously started tasks", async () => {
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "有前后置", tasks: [
+      { key: "a", title: "先做" }, { key: "b", title: "后做", dependsOn: ["a"] },
+    ] });
+    const first = plan.created![0]!.taskId, second = plan.created![1]!.taskId;
+    store.updateTask(first, { column: "done" });
+    const { TaskPlansFeature } = await import("./service.js");
+    const restored = new TaskPlansFeature(service);
+    await restored.startReady();
+    await restored.startReady();
+    expect(store.listSessions({ taskId: first })).toHaveLength(1);
+    expect(store.listSessions({ taskId: second })).toHaveLength(1);
+  });
+
+  it("rechecks waiting work for archiving, transfer and an already-created session before auto-starting", async () => {
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "等待前置验收", tasks: [
+      { key: "a", title: "前置" },
+      ...["archived", "transferred", "manual", "valid"].map((key) => ({ key, title: key, dependsOn: ["a"] })),
+    ] });
+    const id = (key: string) => plan.created!.find((item) => item.key === key)!.taskId;
+    await service.tasks.archiveTask(id("archived"));
+    const peer = store.createTask({ title: "另一个主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    service.tasks.setManager(id("transferred"), peer.id);
+    store.createSession({ ...leadSession, id: undefined, taskId: id("manual"), runtimeRef: null });
+    service.tasks.updateTask(id("a"), { column: "review" });
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: id("valid") })).toHaveLength(0);
+    service.tasks.updateTask(id("a"), { column: "done" });
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: id("archived") })).toHaveLength(0);
+    expect(store.listSessions({ taskId: id("transferred") })).toHaveLength(0);
+    expect(store.listSessions({ taskId: id("manual") })).toHaveLength(1);
+    expect(store.listSessions({ taskId: id("valid") })).toHaveLength(1);
   });
 });

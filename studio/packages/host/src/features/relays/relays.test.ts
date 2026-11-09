@@ -84,4 +84,25 @@ describe("relays (传话)", () => {
     expect(store.getRelay(sent.id)!.sessionId).toBe(first.sessionId);
     expect(userTexts(first.sessionId!).at(-1)).toContain("计划改了：先做界面");
   });
+
+  it("automatically dispatches a lead's managed work without relayAuto and delivers one receipt", async () => {
+    const sent = service.relays.send(leadSession.id, { taskId: target.id, text: "按已定范围完成投币逻辑" });
+    const [first, second] = await Promise.all([service.relays.deliver(sent.id), service.relays.deliver(sent.id)]);
+    expect(first).toEqual(second);
+    expect(first.state).toBe("delivered");
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
+    expect(store.listItems(first.sessionId!).filter((i) => i.id === `i-relay-${sent.id}`)).toHaveLength(1);
+    await until(() => store.listItems(leadSession.id).some((i) => i.id === `i-relay-receipt-${sent.id}`));
+    service.relays.watch();
+    expect(store.listItems(leadSession.id).filter((i) => i.id === `i-relay-receipt-${sent.id}`)).toHaveLength(1);
+  });
+
+  it("keeps topic-only proposals manual and does not turn an unassigned peer into a managed task", async () => {
+    const s = store.createSession({ ...leadSession, id: undefined, taskId: null, topicId: topic.id, runtimeRef: null });
+    const sent = service.relays.send(s.id, { taskId: target.id, text: "专题协调意见" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(store.getRelay(sent.id)?.state).toBe("pending");
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(0);
+    service.relays.dismiss(sent.id);
+  });
 });

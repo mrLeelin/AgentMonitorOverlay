@@ -48,6 +48,7 @@ import { ALSO_MINE_KEY, PINNED_KEY } from "../focus/pins.js";
 import { readStored, writeStored } from "../lib/stored.js";
 import { writeSessionDraft } from "./sessionDraft.js";
 import { TaskManagement } from "./TaskManagement.js";
+import { decisionNeedsPerson } from "../focus/managedAttention.js";
 
 /** Whether the right column (进度、批注、留言…) shows; off by default, remembered per window. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -253,7 +254,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
     );
   const reclaim = (id: string) => run(() => call(link, "POST /api/sessions/:id/reclaim", { id }));
   const mail = useTaskMail(link, task, sessions);
-  const decisions = useOpenDecisions(link);
+  const decisions = useOpenDecisions(link).filter((d) => decisionNeedsPerson(d, tasks));
   const notes = useTaskNotes(link, task.id);
   const unread = new Map<string, number>();
   for (const m of mail) if (m.state === "unread" && m.to.kind === "session") unread.set(m.to.sessionId, (unread.get(m.to.sessionId) ?? 0) + 1);
@@ -387,7 +388,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             onTopic={() => setPicking("topic")}
             onGitOpen={() => void run(() => call(link, "POST /api/workspaces/:id/git/open", { id: task.workspaceId }))}
           />
-          <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理范围" : " · 设置归属"}</button>
+          <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">{task.lead && !task.managerTaskId ? "总主控 · 查看管理与交付" : <>直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理与交付" : " · 设置归属"}</>}</button>
         </div>
         <div className="task-head-actions">
           {!task.archivedAt && !(copy && copy.state === "revoked") && (

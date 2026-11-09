@@ -1,5 +1,6 @@
 export * from "./entities.js";
 export * from "./task-management.js";
+export * from "./task-workflow.js";
 export * from "./canvas-relations.js";
 export * from "./session-tree.js";
 export * from "./examples.js";

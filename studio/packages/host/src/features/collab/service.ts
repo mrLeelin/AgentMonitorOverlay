@@ -1,4 +1,4 @@
-import { inTurn, type Id, type TaskNote, type MailMessage, type MailRecipient, type DecisionRequest, type ChecklistItem, type Session } from "@amo-studio/protocol";
+import { inTurn, managementRoot, type Id, type TaskNote, type MailMessage, type MailRecipient, type DecisionRequest, type ChecklistItem, type Session } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError, boundedText, MAX_NOTE_CHARS, MAX_QUESTION_CHARS, MAX_OPTION_CHARS } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
@@ -94,6 +94,8 @@ export class CollabFeature extends Feature<"sessions"> {
     const question = boundedText(questionIn, "question", MAX_QUESTION_CHARS);
     const options = Array.isArray(optionsIn) ? optionsIn.filter((o): o is string => typeof o === "string" && !!o.trim()).map((o) => o.trim().slice(0, MAX_OPTION_CHARS)).slice(0, 6) : [];
     const d: DecisionRequest = { id: newId("dec"), sessionId, taskId: s.taskId, topicId: s.topicId, question, options, state: "open", answer: null, createdAt: new Date().toISOString(), answeredAt: null };
+    const task = s.taskId ? this.store.getTask(s.taskId) : undefined;
+    if (task?.managerTaskId && managementRoot(this.store.listTasks(), task.id)) d.routedToTaskId = task.managerTaskId;
     this.store.putDecision(d);
     this.publish({ type: "decision.upserted", decision: d });
     return d;

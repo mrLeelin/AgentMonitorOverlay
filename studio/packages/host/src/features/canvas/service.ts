@@ -130,26 +130,6 @@ export class CanvasFeature extends Feature {
     return { from: from.id, to: to.id };
   }
 
-  /** Collaboration is an undirected stored relation; it never becomes a dependency or grants authority. */
-  canvasCollaborate(topicId: Id, input: { fromTaskId?: unknown; toTaskId?: unknown; remove?: unknown }, actorSessionId?: Id) {
-    const from = this.requireTask(String(input.fromTaskId));
-    const to = this.requireTask(String(input.toTaskId));
-    if (from.id === to.id) throw new HostError("bad_request", "collaboration needs two different tasks");
-    if (from.archivedAt || to.archivedAt) throw new HostError("read_only", "archived tasks cannot get collaboration relations");
-    if (input.remove !== undefined && typeof input.remove !== "boolean") throw new HostError("bad_request", "remove must be true or false");
-    const next = this.mutateCanvas(topicId, (doc) => {
-      const a = doc.nodes.find((n) => (n.kind === "task" || n.kind === "ref") && n.taskId === from.id);
-      const b = doc.nodes.find((n) => (n.kind === "task" || n.kind === "ref") && n.taskId === to.id);
-      if (!a || !b) throw new HostError("bad_request", "请先将两个任务显示在这张画布上，跨专题任务可使用引用卡。");
-      const matches = (l: NonNullable<CanvasDoc["links"]>[number]) => l.kind === "collaboration" && ((l.from === a.id && l.to === b.id) || (l.from === b.id && l.to === a.id));
-      const links = doc.links ?? [];
-      if (input.remove) return { ...doc, links: links.filter((l) => !matches(l)) };
-      if (links.some(matches)) return doc;
-      return { ...doc, links: [...links, { id: newId("l"), kind: "collaboration" as const, from: a.id, to: b.id, fromSide: "right" as const, toSide: "left" as const }] };
-    }, actorSessionId);
-    return { fromTaskId: from.id, toTaskId: to.id, collaboration: !input.remove, version: next.version };
-  }
-
   /**
    * A colour mark on the canvas (2026-10-17): `target` is a group's or a note's id, or a task with a card (its own or a
    * reference) there; `color` one of CANVAS_COLORS, or "none" to take the mark off.

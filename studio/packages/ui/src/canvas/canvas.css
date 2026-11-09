@@ -4,8 +4,9 @@
 .canvas-relation-issues p { color: var(--text-dim); margin: 8px 0; }
 .canvas-relation-issues .dep-row { margin: 5px 0; }
 .canvas-page { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 12px; }
-.canvas-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: var(--r-l); border: 1px solid var(--border); background-color: var(--canvas-bg); background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1.4px); background-size: 20px 20px; cursor: grab; }
+.canvas-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: var(--r-l); border: 1px solid var(--border); background-color: var(--canvas-bg); background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1.4px); background-size: 20px 20px; cursor: default; }
 .canvas-viewport.panning { cursor: grabbing; }
+.canvas-selection-box { position: absolute; z-index: 40; pointer-events: none; border: 1px solid var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .canvas-world { position: absolute; left: 0; top: 0; width: 1px; height: 1px; transform-origin: 0 0; }
 .canvas-card { position: absolute; box-sizing: border-box; padding: 10px 12px; border-radius: var(--r-l); border: 1px solid var(--border); background: var(--panel); color: var(--text); display: flex; flex-direction: column; gap: 6px; cursor: pointer; user-select: none; box-shadow: 0 1px 0 var(--shadow-soft); }
 .canvas-card:hover { border-color: var(--border-strong); }
@@ -53,7 +54,6 @@
 .canvas-management-line { stroke: var(--primary); stroke-width: 1.6; stroke-dasharray: 7 5; opacity: 0.35; }
 .canvas-management-line.active { stroke-width: 1.8; opacity: 0.65; }
 .canvas-management-line.active.direct { stroke-width: 2.4; opacity: 1; }
-.canvas-collaboration-line { stroke-dasharray: 1 6; stroke-linecap: round; }
 .management-dimmed { opacity: 0.24; }
 .canvas-world[data-management] > .canvas-note, .canvas-world[data-management] > .canvas-ref, .canvas-world[data-management] > .canvas-group { opacity: 0.24; }
 .canvas-manager { font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
@@ -170,6 +170,8 @@
 :root { --link-line: color-mix(in srgb, var(--text-dim) 85%, transparent); }
 .canvas-link { fill: none; stroke: var(--link-line); stroke-width: 2; }
 .canvas-link.drawing { stroke-dasharray: 6 4; }
+.canvas-link.selected, .canvas-edge.selected { stroke: var(--primary); stroke-width: 4; filter: drop-shadow(0 0 3px var(--primary)); }
+.canvas-link-label.selected { outline: 2px solid var(--primary); outline-offset: 2px; }
 .canvas-link-hit { fill: none; cursor: pointer; }
 .canvas-link-label, .canvas-link-input {
   position: absolute; z-index: 4; transform: translate(-50%, -50%); max-width: 220px; padding: 2px 8px; border-radius: 6px;
@@ -206,6 +208,8 @@
 /* A card with an open question or remark on it. */
 .canvas-card[data-callout="question"], .canvas-note[data-callout="question"] { border-color: var(--attention); box-shadow: 0 0 0 2px var(--attention), 0 4px 14px var(--shadow-soft); }
 .canvas-card[data-callout="note"], .canvas-note[data-callout="note"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), 0 4px 14px var(--shadow-soft); }
+/* Keep selection visible around coloured cards and question borders without covering their status colours. */
+.canvas-world > :is(.canvas-card, .canvas-note, .canvas-group).selected { outline: 3px solid var(--primary); outline-offset: 3px; opacity: 1; }
 
 .callout-stack { position: absolute; width: max-content; max-width: 260px; transform: translateY(-100%); display: flex; flex-direction: column; align-items: flex-start; gap: 4px; z-index: 3; cursor: default; }
 .callout { box-sizing: border-box; width: max-content; max-width: 260px; display: flex; align-items: flex-start; gap: 4px; padding: 6px 8px; border-radius: 10px 10px 10px 2px; border: 1px solid var(--border-strong); background: var(--panel-float); color: var(--text); font: inherit; font-size: 12px; text-align: left; box-shadow: 0 4px 14px var(--shadow); cursor: pointer; }

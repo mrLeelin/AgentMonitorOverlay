@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isCommon, TASK_DESCRIPTION_MAX, TASK_PLAN_MAX_TASKS, wouldCycle, type Id, type ModelProfile, type PlannedTask, type Task, type TaskPlan } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
@@ -8,14 +9,24 @@ const SUMMARY_MAX = 2000;
 const FIRST_MESSAGE_MAX = 20_000;
 /** How long a decided proposal stays listed. */
 const DECIDED_SHOWN_MS = 24 * 3600_000;
+const STARTS_KEY = "taskplans.pending-starts";
+type PendingStart = { taskId: Id; planId: Id; managerTaskId: Id | null; dependsOn: Id[]; profileId: Id; text: string; options?: PlannedTask["options"]; error?: string };
 
 /**
- * 主控's proposals to split work into tasks (stage 16, from the stage 15 design): a 主控 (or a topic's own session)
- * proposes; the person looks at it on the topic's canvas, changes what they want and accepts it — then Studio makes
- * the tasks, puts them on the canvas (a group per project when they span several) with their dependencies, starts
- * them or leaves them in 待办, and tells the 主控 which tasks they became — or dismisses it, with a note.
+ * A lead organises its managed work directly; a topic session without a lead keeps the editable proposal workflow.
+ * Tasks and dependencies are created before any session, and dependent work waits for accepted prerequisites.
  */
 export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions" | "tasks"> {
+  private starting: Promise<void> | null = null;
+
+  /** Only accepted plans enter this durable queue; installing it never starts old unaccepted proposals. */
+  watch(): void {
+    this.host.on("event", (event) => {
+      if (event.type === "task.upserted") void this.startReady();
+    });
+    void this.startReady();
+  }
+
   list(): TaskPlan[] {
     const since = Date.now() - DECIDED_SHOWN_MS;
     return this.store.listTaskPlans().filter((p) => p.state === "open" || Date.parse(p.decidedAt ?? p.createdAt) > since);
@@ -53,17 +64,20 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
       if (!title) throw new HostError("bad_request", `task ${key} needs a title`);
       const workspaceId = t.project === undefined || t.project === "" ? defaultWs : this.workspaceByRef(String(t.project));
       const description = optionalText(t.description, `task ${key}: description`, TASK_DESCRIPTION_MAX);
+      if (t.lead !== undefined && typeof t.lead !== "boolean") throw new HostError("bad_request", `task ${key}: lead must be true or false`);
       const firstMessage = optionalText(t.firstMessage, `task ${key}: firstMessage`, FIRST_MESSAGE_MAX);
       // model: an account, or "<account>/<model>"; effort: checked against the model it will run (as session_start).
       const picked = t.model === undefined || t.model === "" ? { profileId: this.requireSession(sessionId).profileId } : await this.f.sessions.modelByRef(String(t.model));
       const effort = typeof t.effort === "string" && t.effort.trim() ? await this.f.sessions.effortFor(picked.profileId, picked.model, t.effort.trim()) : undefined;
       const options = picked.model || effort ? { ...(picked.model ? { model: picked.model } : {}), ...(effort ? { effort } : {}) } : undefined;
       const dependsOn = Array.isArray(t.dependsOn) ? t.dependsOn.map(String) : [];
-      tasks.push({ key, title, workspaceId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), profileId: picked.profileId, ...(options ? { options } : {}), dependsOn });
+      tasks.push({ key, title, workspaceId, ...(t.lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), profileId: picked.profileId, ...(options ? { options } : {}), dependsOn });
     }
     checkKeys(tasks);
     const at = new Date().toISOString();
-    return this.save({ id: newId("plan"), topicId: facts.topic?.id ?? null, fromSessionId: sessionId, fromTaskId: facts.task?.id ?? null, summary, tasks, state: "open", createdAt: at, decidedAt: null });
+    const plan = this.save({ id: newId("plan"), topicId: facts.topic?.id ?? null, fromSessionId: sessionId, fromTaskId: facts.task?.id ?? null, summary, tasks, state: "open", createdAt: at, decidedAt: null });
+    // A real lead already has the person's authority to organise its own work (2026-11-09).
+    return facts.role === "lead" ? this.accept(plan.id, { run: true }) : plan;
   }
 
   /** The person accepts, with their changes: the tasks are made (and started, with `run`). */
@@ -84,9 +98,12 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
       const profileId = typeof t.profileId === "string" && t.profileId ? this.requireProfile(t.profileId).id : original.profileId;
       // Another account picked: the proposed model and effort were that account's; the new one's defaults apply.
       const options = profileId === original.profileId ? original.options : undefined;
-      kept.push({ key: original.key, title, workspaceId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(profileId ? { profileId } : {}), ...(options ? { options } : {}), dependsOn: original.dependsOn });
+      const lead = t.lead === undefined ? original.lead : t.lead;
+      if (lead !== undefined && typeof lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
+      kept.push({ key: original.key, title, workspaceId, ...(lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), ...(profileId ? { profileId } : {}), ...(options ? { options } : {}), dependsOn: original.dependsOn });
     }
     if (!kept.length) throw new HostError("bad_request", "keep at least one task, or dismiss the proposal");
+    checkKeys(kept);
     const topic = plan.topicId ? this.store.getTopic(plan.topicId) : undefined;
     const topicId = topic && !topic.archivedAt ? topic.id : null;
     // Fail before creating groups/tasks if the proposing lead moved or lost its role while the proposal waited.
@@ -108,8 +125,10 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         workspaceId: t.workspaceId,
         topicId,
         managerTaskId: manager?.id ?? null,
+        ...(t.lead ? { lead: true } : {}),
         ...(t.description ? { description: t.description } : {}),
-        ...(run && t.profileId ? { firstSession: { profileId: t.profileId, ...(t.firstMessage ? { text: t.firstMessage } : {}), ...(t.options ? { options: t.options } : {}) } } : { column: "todo" as const, ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}) }),
+        column: "todo",
+        ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}),
       });
       const described = t.description ? this.f.tasks.updateTask(task.id, { description: t.description }) : task;
       if (topicId) this.f.canvases.canvasPlaceTask(task.id, groups.get(t.workspaceId) ?? null);
@@ -124,12 +143,25 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
         }
       }
     }
-    const accepted = this.save({ ...plan, state: "accepted", decidedAt: new Date().toISOString(), created: made.map((m) => ({ key: m.key, taskId: m.task.id })) });
+    const accepted = this.store.transaction(() => {
+      const saved = this.save({ ...plan, tasks: kept, state: "accepted", decidedAt: new Date().toISOString(), created: made.map((m) => ({ key: m.key, taskId: m.task.id })) });
+      if (run) {
+        const pending = this.pending();
+        for (const t of kept) {
+          if (!t.profileId) continue;
+          const taskId = made.find((m) => m.key === t.key)!.task.id;
+          pending[taskId] = { taskId, planId: plan.id, managerTaskId: manager?.id ?? null, dependsOn: t.dependsOn.flatMap((key) => made.filter((m) => m.key === key).map((m) => m.task.id)), profileId: t.profileId, text: t.firstMessage || t.description || t.title, ...(t.options ? { options: t.options } : {}) };
+        }
+        this.store.setKv(STARTS_KEY, JSON.stringify(pending));
+      }
+      return saved;
+    });
+    if (run) await this.startReady();
     const lines = made.map((m) => `- ${m.task.title}（${m.task.id}）`);
     const dropped = plan.tasks.length - made.length;
     this.tellLead(
       plan,
-      `人确认了你的拆任务提案「${firstLine(plan.summary)}」，建了 ${made.length} 个任务${dropped ? `（${dropped} 个没有采用）` : ""}，${run ? "都已开跑" : "放在待办里，等人开始"}：\n${lines.join("\n")}${topicId ? "\n它们已经在专题画布上，依赖也连好了。" : ""}`,
+      `${manager ? "已按你的分工" : "人确认了你的拆任务提案"}「${firstLine(plan.summary)}」，建了 ${made.length} 个任务${dropped ? `（${dropped} 个没有采用）` : ""}，${run ? "无前置依赖的已启动，其余在前置任务验收完成后自动启动" : "放在待办里，等人开始"}：\n${lines.join("\n")}${topicId ? "\n它们已经在专题画布上，依赖也连好了。" : ""}`,
     );
     return accepted;
   }
@@ -143,13 +175,61 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
     return dismissed;
   }
 
-  /** The decision goes back to the 主控 as mail (the person decides when it enters the conversation). */
+  /** Keep the audit mail and automatically continue the lead through the durable inbox. */
   private tellLead(plan: TaskPlan, text: string): void {
     try {
       this.f.collab.sendMail(null, { kind: "session", sessionId: plan.fromSessionId }, text);
+      if (plan.fromTaskId) void this.f.sessions.inbox.put(plan.fromSessionId, text, undefined, `i-taskplan-${plan.id}-${createHash("sha256").update(text).digest("hex").slice(0, 20)}`).catch((error: unknown) => this.log(`task plan notification: ${String(error)}`));
     } catch {
       // The 主控's session is gone: the proposal still records the decision.
     }
+  }
+
+  private pending(): Record<Id, PendingStart> {
+    return JSON.parse(this.store.getKv(STARTS_KEY)?.value ?? "{}");
+  }
+
+  /** Serialised starts and a stable persisted entry prevent task events or a restart from duplicating sessions. */
+  startReady(): Promise<void> {
+    // Enqueue rather than reuse the current promise: acceptance may persist new entries while an earlier
+    // event's empty scan is finishing, and its caller must await a scan that can see those entries.
+    const running = (this.starting ?? Promise.resolve()).then(async () => {
+        for (const entry of Object.values(this.pending())) {
+          const task = this.store.getTask(entry.taskId);
+          const manager = entry.managerTaskId ? this.store.getTask(entry.managerTaskId) : null;
+          const invalid = !task || !!task.archivedAt || !!task.remote || (task.topicId !== null && !!this.store.getTopic(task.topicId)?.archivedAt) || task.managerTaskId !== entry.managerTaskId || (entry.managerTaskId && (!manager?.lead || !!manager.archivedAt));
+          const existing = this.store.listSessions({ taskId: entry.taskId });
+          if (invalid || existing.length) { this.dropPending(entry.taskId); continue; }
+          if (entry.error || task.column !== "todo") continue;
+          const dependencies = entry.dependsOn.map((id) => this.store.getTask(id));
+          if (dependencies.some((dep) => !dep || dep.archivedAt || dep.column !== "done")) continue;
+          try {
+            this.f.tasks.updateTask(task.id, { column: "doing" });
+            await this.f.tasks.addSession(task.id, { profileId: entry.profileId, text: entry.text, ...(entry.options ? { options: entry.options } : {}) });
+            this.f.tasks.updateTask(task.id, { firstMessage: "" });
+            this.dropPending(task.id);
+          } catch (error) {
+            // A runtime failure can happen after the session was saved. Never silently make another one.
+            if (this.store.listSessions({ taskId: task.id }).length) this.dropPending(task.id);
+            else {
+              const pending = this.pending();
+              if (pending[task.id]) pending[task.id]!.error = String(error);
+              this.store.setKv(STARTS_KEY, JSON.stringify(pending));
+            }
+            const plan = this.store.getTaskPlan(entry.planId);
+            if (plan) this.tellLead(plan, `任务「${task.title}」未能自动启动：${String(error)}。请检查后用 task_message 安排继续；不会重复创建会话。`);
+          }
+        }
+    }).catch((error: unknown) => this.log(`task plan starts: ${String(error)}`));
+    this.starting = running;
+    void running.finally(() => { if (this.starting === running) this.starting = null; });
+    return running;
+  }
+
+  private dropPending(taskId: Id): void {
+    const pending = this.pending();
+    delete pending[taskId];
+    this.store.setKv(STARTS_KEY, JSON.stringify(pending));
   }
 
   private workspaceByRef(ref: string): Id {

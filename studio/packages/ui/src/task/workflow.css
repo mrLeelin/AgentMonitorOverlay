@@ -1,0 +1,11 @@
+.task-workflow { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.workflow-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; }
+.workflow-result, .workflow-decision { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--panel-raised); }
+.workflow-result > summary { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; cursor: pointer; }
+.workflow-state { color: var(--text-dim); font-size: var(--fs-cap); }
+.workflow-result[data-state="submitted"] .workflow-state { color: var(--attention); }
+.workflow-result[data-state="returned"] .workflow-state { color: var(--error-text); }
+.workflow-text { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.workflow-decision { border-left: 3px solid var(--attention); }
+.workflow-decision > .link-btn { display: block; margin-top: 8px; }
+.workflow-delivery-issue { padding: 10px 12px; border: 1px solid var(--error-border); border-radius: var(--r-m); background: var(--error-bg); color: var(--error-text); }

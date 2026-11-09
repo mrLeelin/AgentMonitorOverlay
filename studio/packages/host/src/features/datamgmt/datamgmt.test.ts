@@ -132,7 +132,6 @@ describe("数据管理", () => {
       edges: [{ id: "e1", kind: "depends", from: x.t1.id, to: x.t3.id }],
       links: [
         { id: "ordinary", from: "r1", to: "c3", fromSide: "right", toSide: "left", label: "历史说明" },
-        { id: "collaboration", kind: "collaboration", from: "c3", to: "r1", fromSide: "left", toSide: "right" },
         { id: "kept", from: "c3", to: "note", fromSide: "right", toSide: "left", label: "保留说明" },
       ],
       updatedAt: new Date().toISOString(),
@@ -166,7 +165,7 @@ describe("数据管理", () => {
     const after = store.getCanvas(other.id)!;
     expect(after.nodes.map((n) => n.id)).toEqual(["c3", "note"]);
     expect(after.edges).toEqual([]);
-    expect(after.links).toEqual([canvas.links![2]]);
+    expect(after.links).toEqual([canvas.links![1]]);
     expect(existsSync(used.path)).toBe(false);
     expect(existsSync(shared.path)).toBe(true);
     // Only the event that says it is gone still names it.

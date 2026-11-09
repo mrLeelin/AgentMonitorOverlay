@@ -27,6 +27,7 @@ import { useWindowShape } from "./windowShape.js";
 import { useRemote } from "../remote/remote.js";
 import { FocusPairRequest } from "./FocusPairRequest.js";
 import { FocusTaskRequest } from "./FocusTaskRequest.js";
+import { decisionNeedsPerson, replyNeedsPerson } from "./managedAttention.js";
 import "./focus.css";
 
 export { isToReview, latestSnippet, summary } from "./FocusEntry.js";
@@ -156,12 +157,12 @@ export function FocusApp() {
   useEffect(() => void (liveSessionsId !== null && subsOpen.keepOnly(new Set(liveSessionsId.split("|")))), [liveSessionsId]);
   const subs = live ? subsByParent(live.sessions) : new Map<string, Session[]>();
   const waiting = live ? needsMe(live).filter(mine) : [];
-  const finished = live ? unseenSessions(live.sessions, seenData).filter((s) => !waiting.includes(s) && mine(s)) : [];
+  const finished = live ? unseenSessions(live.sessions, seenData).filter((s) => !waiting.includes(s) && mine(s) && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   // Seen means reviewed (我知道了, 在工作台打开, or looked at in the workbench) and it leaves at once, open or not
   // (2026-10-26: an entry kept while open looked unreviewed for half an hour after 在工作台打开, then vanished when its
   // title folded it). Opening it here no longer counts as seeing it.
   const list = [...waiting, ...finished];
-  const asks = live ? decisions.filter((d) => live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
+  const asks = live ? decisions.filter((d) => decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
   const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id)]);
   const keysId = keys.join("|");
   // Forget what was handled, so it alerts again if it comes back.

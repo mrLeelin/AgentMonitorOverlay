@@ -27,6 +27,7 @@ const GRAPH: Record<string, string[]> = {
   gitreview: ["projects", "remote", "sessions"],
   guide: ["config"],
   marks: ["openin"],
+  orchestration: ["collab", "sessions", "tasks"],
   planning: ["canvas", "tasks"],
   projects: ["tasks"],
   relays: ["collab", "sessions", "tasks"],

@@ -134,10 +134,13 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
  */
 /** `resumeFrom` (接续已有会话, 2026-11-05): the outside Claude session the first session goes on from; the text may be empty then. */
 export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[]): Promise<{ task: Task; session: Session | null }> {
+  if (draft.lead && resumeFrom) throw new Error("接续已有会话不能作为主控带队，请新建主控会话。");
   const text = draftText(draft);
   // 子会话设定 named in the first message (2026-11-05): kept by the Host for the task's first session.
   const setups = subsessions ?? (draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : []);
   const options: SessionOptions = { ...draft.options, ...(draft.pick.model ? { model: draft.pick.model } : {}) };
+  // Lead isolation is enforced by each runtime (Claude calls it plan); never reuse the draft's writable choice.
+  if (draft.lead) delete options.permission;
   const created = await call(link, "POST /api/tasks", {}, {
     ...(draft.title.trim() ? { title: draft.title.trim() } : file ? { title: text.split("\n")[0]!.slice(0, 60) } : {}),
     workspaceId: draft.projectId,

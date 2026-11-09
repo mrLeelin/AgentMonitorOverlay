@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topics": [{
+    "id": "studio.managedWorkflow",
+    "label": "主控带队、逐层交付与统一沟通",
+    "aliases": ["主控带队", "自动派工", "逐层回报", "验收", "退回", "task_submit_result", "task_review_result", "task_workflow", "routedToTaskId"],
+    "category": "host",
+    "purpose": "主控自动拆分和派工，支持二级负责人；交付与业务问题沿直属管理树逐层回报，通过持久收件箱继续，总主控统一对人沟通。会话停止不等于验收完成。",
+    "steps": ["管理根只从显式归属推导；任务结果包含摘要和验证，只有直属主控验收，不能用普通 task_update 跳过。", "自动通知走稳定消息 id 的收件箱，归属变化撤回失效通知，不重放历史会话；人工停止和运行时审批语义保留。", "新建主控入口与交付面板在任务界面；Focus 和看板只收敛已明确路由的业务问题，工具原生阻塞和故障不能隐藏。"],
+    "anchors": [
+      { "label": "管理根与交付类型", "path": "studio/packages/protocol/src/task-workflow.ts", "anchor": "export function managementRoot" },
+      { "label": "提交、验收和持久通知", "path": "studio/packages/host/src/features/orchestration/service.ts", "anchor": "export class OrchestrationFeature" },
+      { "label": "自动拆分与依赖启动", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "startReady():" },
+      { "label": "任务交付面板", "path": "studio/packages/ui/src/task/TaskWorkflow.tsx", "anchor": "export function TaskWorkflow" },
+      { "label": "业务提醒路由", "path": "studio/packages/ui/src/focus/managedAttention.ts", "anchor": "export function decisionNeedsPerson" }
+    ],
+    "related": ["studio.leadManagement", "studio.topics", "studio.sessions", "studio.canvas"],
+    "next": ["studio/plans/done/managed-workflow.md", "studio/packages/host/src/features/orchestration/service.test.ts", "studio/e2e/studio/managed-workflow.spec.ts"]
+  }]
+}

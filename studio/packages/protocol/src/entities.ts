@@ -519,6 +519,8 @@ export interface PlannedTask {
   title: string;
   workspaceId: Id;
   description?: string;
+  /** A domain coordinator that may split and assign its own managed work. */
+  lead?: boolean;
   /** The first message of its first session when it starts at once. */
   firstMessage?: string;
   /** The model profile to start it with. */
@@ -724,8 +726,6 @@ export const CANVAS_LINK_LABEL_MAX = 200;
  */
 export interface CanvasLink {
   id: Id;
-  /** Absent: the original labelled line. Collaboration is undirected and never grants management rights. */
-  kind?: "collaboration";
   /** Node ids (not task ids). */
   from: Id;
   fromSide: CanvasSide;
@@ -829,6 +829,8 @@ export interface DecisionRequest {
   answeredAt: Timestamp | null;
   /** The mail the answer went back as (2026-11-05): still unread once the turn is over, it goes in as a message. */
   mailId?: Id;
+  /** A managed business question goes to this lead first; absent/null means it needs the person. */
+  routedToTaskId?: Id | null;
 }
 
 /** One quota window of a subscription (e.g. GPT's 5-hour and weekly limits). */

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Session, SessionItem } from "@amo-studio/protocol";
+import { emptyCanvas, type CanvasDoc, type Session, type SessionItem } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { MIGRATIONS } from "./migrations.js";
 import { Store, StoreTooNewError } from "./store.js";
@@ -53,7 +53,7 @@ describe("Store", () => {
     const store = makeStore(path);
     const { ws, task } = seed(store);
     store.db.exec("DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id;");
-    store.db.prepare("DELETE FROM schema_migrations WHERE version = ?").run(MIGRATIONS.length);
+    store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(26);
     open.pop()!.close();
     const migrated = makeStore(path);
     expect(migrated.getTask(task.id)).toMatchObject({ title: "Retry", managerTaskId: null });
@@ -71,6 +71,41 @@ describe("Store", () => {
     expect(reopened.getTask(child.id)?.managerTaskId).toBe(second.id);
     expect(reopened.getTask(child.id)?.description).toBe("first-turn scope");
     expect(reopened.getTask(task.id)?.managerTaskId).toBeNull();
+  });
+
+  it("removes only legacy canvas collaboration once, preserving management, dependencies, labels and layout", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { ws, task } = seed(store);
+    store.updateTask(task.id, { lead: true });
+    const worker = store.createTask({ title: "执行", workspaceId: ws.id, managerTaskId: task.id });
+    const doc: CanvasDoc = {
+      ...emptyCanvas("legacy"), version: 8,
+      groups: [{ id: "group", title: "保留分工", workspaceId: null, rect: { x: 10, y: 20, w: 400, h: 600 } }],
+      nodes: [
+        { id: "lead", kind: "task", taskId: task.id, groupId: "group", pos: { x: 30, y: 60 } },
+        { id: "worker", kind: "task", taskId: worker.id, groupId: "group", pos: { x: 30, y: 300 } },
+      ],
+      edges: [{ id: "dependency", kind: "depends", from: task.id, to: worker.id }],
+      links: [{ id: "ordinary", from: "lead", to: "worker", fromSide: "right", toSide: "left", label: "保留普通说明" }],
+    };
+    const collaboration = { id: "old-collaboration", kind: "collaboration", from: "worker", to: "lead", fromSide: "left", toSide: "right", label: "已移除协作" };
+    store.putCanvas({ ...doc, links: [...doc.links!, collaboration] } as CanvasDoc);
+    store.putCanvas({ ...emptyCanvas("only-collaboration"), links: [collaboration] } as CanvasDoc);
+    store.putCanvas({ ...doc, id: "unchanged" });
+    store.db.prepare("DELETE FROM schema_migrations WHERE version = ?").run(MIGRATIONS.length);
+    open.pop()!.close();
+    const upgraded = makeStore(path);
+    expect(upgraded.getCanvas("legacy")).toMatchObject({ ...doc, version: 9, updatedAt: expect.any(String) });
+    expect(upgraded.getCanvas("legacy")?.updatedAt).not.toBe(doc.updatedAt);
+    expect(upgraded.getCanvas("only-collaboration")?.links).toEqual([]);
+    expect(upgraded.getCanvas("unchanged")).toEqual({ ...doc, id: "unchanged" });
+    expect(upgraded.getTask(worker.id)?.managerTaskId).toBe(task.id);
+    expect(upgraded.getTask(task.id)?.lead).toBe(true);
+    open.pop()!.close();
+    const reopened = makeStore(path);
+    expect(reopened.getCanvas("legacy")?.version).toBe(9);
+    expect(reopened.getCanvas("legacy")?.links).toEqual(doc.links);
   });
 
   it("refuses data a newer Studio migrated, says so for the person, and leaves the file alone (2026-10-28)", () => {

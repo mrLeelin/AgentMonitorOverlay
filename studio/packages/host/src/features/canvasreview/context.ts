@@ -11,7 +11,7 @@ export function discussionContext(doc: CanvasDoc, item: CanvasItem, taskById: (i
   for (const link of doc.links ?? []) {
     const id = link.to === item.id ? link.from : link.from === item.id ? link.to : null;
     if (!id || id === item.id || !doc.nodes.some((n) => n.id === id)) continue;
-    const relation = link.kind === "collaboration" ? "协作（无方向）" : link.to === item.id ? "普通连线：关联卡 → 本卡" : "普通连线：本卡 → 关联卡";
+    const relation = link.to === item.id ? "普通连线：关联卡 → 本卡" : "普通连线：本卡 → 关联卡";
     const labels = neighbours.get(id) ?? [];
     const label = `${relation}${link.label ? `；标签：${brief(link.label, 200)}` : ""}`;
     if (!labels.includes(label) && labels.length < 3) labels.push(label);

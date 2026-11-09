@@ -102,7 +102,7 @@
       "label": "专题、主控、传话和拆任务",
       "aliases": ["topic", "专题", "主控", "lead", "topic_doc", "专题文档", "task_plan_propose", "TaskPlansFeature", "TopicDocsFeature"],
       "category": "host",
-        "purpose": "专题把相关任务（可跨项目）放在一张画布上；主控分配工作并管理任务和画布，可以移动排序、归组、连依赖、调整任务状态，维护 Studio 内的专题文档。本地文件只读，具体实现分配给执行任务；拆任务提案仍由人在画布上确认后建任务。",
+      "purpose": "专题把相关任务（可跨项目）放在一张画布上；主控自动拆分和派工、验收下级交付并管理任务画布，可以维护 Studio 内专题文档。本地文件只读，具体实现分配给执行任务；专题会话没有任务主控身份时仍由人确认提案。逐层回报见 studio.managedWorkflow。",
       "anchors": [
         { "label": "TopicsFeature", "path": "studio/packages/host/src/features/topics/service.ts", "anchor": "export class TopicsFeature" },
         { "label": "专题文档", "path": "studio/packages/host/src/features/topicdocs/service.ts", "anchor": "export class TopicDocsFeature" },

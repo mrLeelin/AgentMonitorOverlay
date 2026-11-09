@@ -9,11 +9,19 @@ const DECIDED_SHOWN_MS = 24 * 3600_000;
 
 /**
  * 传话 (stage 16, from the stage 15 design): a 主控 (or a topic's own session) asks Studio to say something in another
- * task's session of its topic (or of its project when it is in none). The person confirms it in the main window or
- * Focus, unless the task takes relays without asking (relayAuto); then it goes into the task's latest main session
- * (queued while a turn runs), or a new one with the 主控's model when it has none. The 主控 hears how it went by mail.
+ * managed task's session automatically. Topic sessions retain the confirmation workflow. Dispatch and receipts
+ * use stable inbox ids so a restart cannot duplicate a delivered message.
  */
 export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
+  private readonly delivering = new Map<Id, Promise<Relay>>();
+
+  /** Resume owned dispatches that were persisted before a Host interruption. */
+  watch(): void {
+    for (const relay of this.store.listRelays()) {
+      if (relay.state === "pending" && relay.fromTaskId && this.store.getTask(relay.fromTaskId)?.lead) void this.deliver(relay.id).catch(() => undefined);
+    }
+  }
+
   list(): Relay[] {
     const since = Date.now() - DECIDED_SHOWN_MS;
     return this.store.listRelays().filter((r) => r.state === "pending" || Date.parse(r.decidedAt ?? r.createdAt) > since);
@@ -31,7 +39,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     return relay;
   }
 
-  /** A 主控's relay (MCP task_message): waits for the person, or goes at once to a task that takes relays. */
+  /** An authorised lead dispatches directly; topic-only coordination still waits for confirmation. */
   send(fromSessionId: Id, input: { taskId?: unknown; text?: unknown }): Relay {
     const facts = roleFacts(this.host, fromSessionId);
     if (facts.role !== "lead" && facts.role !== "topic") throw new HostError("bad_request", "只有主控（或专题会话）能传话：要找别的任务，用 mailbox_send 留言。");
@@ -44,12 +52,20 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     if (!text) throw new HostError("bad_request", "text is required");
     if (text.length > RELAY_TEXT_MAX) throw new HostError("bad_request", `text is limited to ${RELAY_TEXT_MAX} characters`);
     const relay = this.save({ id: newId("relay"), fromSessionId, fromTaskId: facts.task?.id ?? null, toTaskId: target.id, text, state: "pending", createdAt: new Date().toISOString(), decidedAt: null });
-    if (target.relayAuto) void this.deliver(relay.id).catch(() => undefined);
+    if (facts.role === "lead" || target.relayAuto) void Promise.resolve().then(() => this.deliver(relay.id)).catch(() => undefined);
     return relay;
   }
 
   /** The person said yes (or the task takes relays): into the task's session. */
-  async deliver(id: Id): Promise<Relay> {
+  deliver(id: Id): Promise<Relay> {
+    const existing = this.delivering.get(id);
+    if (existing) return existing;
+    const pending = this.deliverOnce(id).finally(() => this.delivering.delete(id));
+    this.delivering.set(id, pending);
+    return pending;
+  }
+
+  private async deliverOnce(id: Id): Promise<Relay> {
     const relay = this.requireRelay(id);
     if (relay.state !== "pending") throw new HostError("conflict", "this relay was decided already");
     const target = this.store.getTask(relay.toTaskId);
@@ -59,7 +75,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       `【主控「${lead?.title || "主控"}」传话】`,
       relay.text,
       "",
-      `（这是主控通过 AMO Studio 传来的。要回复主控，用 mailbox_send 给${relay.fromTaskId ? `任务 ${relay.fromTaskId}` : `会话 ${relay.fromSessionId}`}。）`,
+      `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给${relay.fromTaskId ? `任务 ${relay.fromTaskId}` : `会话 ${relay.fromSessionId}`}。）`,
     ].join("\n");
     try {
       if (!target || target.archivedAt) throw new HostError("bad_request", "the task is gone or archived");
@@ -69,12 +85,13 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       let held = false;
       if (session) {
         // The session's inbox (2026-11-04): it goes in once the session's turn is over, not into the running one.
-        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId)).delivered;
+        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId, `i-relay-${relay.id}`)).delivered;
         sessionId = session.id;
       } else {
         const workspace = this.requireWorkspace(target.workspaceId);
         const profileId = from?.profileId ?? this.profiles[0]!.id;
-        sessionId = (await this.f.tasks.startSession({ taskId: target.id, topicId: null }, workspace, { profileId, text: message })).id;
+        sessionId = (await this.f.tasks.startSession({ taskId: target.id, topicId: null }, workspace, { profileId })).id;
+        held = !(await this.f.sessions.inbox.put(sessionId, message, relay.fromSessionId, `i-relay-${relay.id}`)).delivered;
       }
       const delivered = this.save({ ...this.requireRelay(id), state: "delivered", decidedAt: new Date().toISOString(), sessionId });
       this.tellLead(relay, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : `传话已送到「${target.title || "未命名任务"}」。`);
@@ -99,6 +116,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
   private tellLead(relay: Relay, text: string): void {
     try {
       this.f.collab.sendMail(null, { kind: "session", sessionId: relay.fromSessionId }, text);
+      if (relay.fromTaskId) void this.f.sessions.inbox.put(relay.fromSessionId, text, undefined, `i-relay-receipt-${relay.id}`).catch((error: unknown) => this.log(`relay receipt: ${String(error)}`));
     } catch {
       // The 主控's session is gone: the relay still records what happened.
     }
@@ -108,6 +126,6 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
 /** The task's main session it was last working in (not archived, not handed to a terminal). */
 function latestMain(sessions: readonly Session[]): Session | undefined {
   return sessions
-    .filter((s) => s.kind === "main" && !s.archivedAt && s.writer !== "archived" && s.writer !== "terminal-handoff")
+    .filter((s) => s.kind === "main" && !s.archivedAt && s.writer !== "archived")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
 }

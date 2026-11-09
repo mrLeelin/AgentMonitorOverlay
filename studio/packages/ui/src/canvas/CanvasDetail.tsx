@@ -251,15 +251,6 @@ function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics =
           onChange({ ...doc, edges: [...doc.edges, edge] });
         }}
       />
-      <span className="side-subheading">协作 · 不授予管理权限</span>
-      {(doc.links ?? []).filter((l) => l.kind === "collaboration" && (l.from === node.id || l.to === node.id)).map((l) => {
-        const other = doc.nodes.find((n) => n.id === (l.from === node.id ? l.to : l.from));
-        return <div className="dep-row" key={l.id}><span className="name">{other && (other.kind === "task" || other.kind === "ref") ? title(other.taskId) : "协作卡片"}</span><button type="button" className="link-btn" onClick={() => onEdit((d) => ({ ...d, links: (d.links ?? []).filter((x) => x.id !== l.id) }))}>解除协作</button></div>;
-      })}
-      <select aria-label="添加协作任务" value="" onChange={(e) => {
-        const to = e.target.value;
-        if (to) onEdit((d) => ({ ...d, links: [...(d.links ?? []), { id: newId("collab"), kind: "collaboration", from: node.id, to, fromSide: "right", toSide: "left" }] }));
-      }}><option value="">选择协作任务…</option>{doc.nodes.filter((n) => (n.kind === "task" || n.kind === "ref") && n.id !== node.id && !(doc.links ?? []).some((l) => l.kind === "collaboration" && ((l.from === node.id && l.to === n.id) || (l.to === node.id && l.from === n.id)))).map((n) => <option key={n.id} value={n.id}>{n.kind === "task" || n.kind === "ref" ? title(n.taskId) : ""}</option>)}</select>
     </div>
   );
 }

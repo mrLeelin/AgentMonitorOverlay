@@ -44,8 +44,8 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     store.updateTask(taskId, { lead: true });
     const tools = amoToolsFor(service, { sessionId });
     expect(tools.filter((t) => !t.readOnly).map((t) => t.name).sort()).toEqual([
-      "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_collaborate", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place",
-      "checklist_check", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_update", "topic_doc_write",
+      "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place",
+      "checklist_check", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_decision_answer", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_submit_result", "task_update", "topic_doc_write",
     ]);
     expect(tools.every((t) => t.autoApprove)).toBe(true);
     expect(tools.some((t) => t.name === "topic_docs")).toBe(true);
@@ -54,7 +54,7 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     expect(store.getTask(taskId)?.description).toBe("让执行任务修复导入");
     expect(await tools.find((t) => t.name === "mailbox_read")!.run({})).not.toHaveProperty("isError", true);
     expect(roleCard(service, sessionId)).toContain("本地文件只读");
-    expect(roleCard(service, sessionId)).toContain("移动排序");
+    expect(roleCard(service, sessionId)).toContain("task_review_result");
   });
 
   it("refuses cached write tools immediately after the task becomes a lead", async () => {

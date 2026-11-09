@@ -51,15 +51,6 @@ export function canvasTools({ service, caller, model, ownTopic, inOwnTopic }: To
       run: (args) => write(caller, (c) => (inOwnTopic(c, args.fromTaskId, args.toTaskId), service.canvases.canvasAddDependency(args.fromTaskId, args.toTaskId, c.sessionId))),
     },
     {
-      name: "canvas_collaborate",
-      title: "画布协作关系",
-      description: "Create or remove an undirected collaboration relation between two task cards on your topic's canvas. It grants no management permission and does not block task start. Ordinary links and dependency arrows remain separate. Both tasks must be in your management range; use the person's canvas entry point for peer or cross-team collaboration.",
-      inputSchema: { fromTaskId: z.string(), toTaskId: z.string(), remove: z.boolean().optional() },
-      readOnly: false,
-      autoApprove: false,
-      run: (args) => write(caller, (c) => service.canvases.canvasCollaborate(ownTopic(c), args, c.sessionId)),
-    },
-    {
       name: "canvas_color",
       title: "画布标颜色",
       description: "Mark a task card, reference card, note or group on your topic's canvas with a colour (red, yellow, green, blue), or take the mark off (none). The colour is the card's outline; what each colour means is the person's (state, priority…). target: a task id, or a group's or note's id from canvas_read.",

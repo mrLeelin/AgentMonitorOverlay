@@ -15,6 +15,8 @@ import { useCanvas } from "./useCanvas.js";
 import { RefPicker, type RefChoice } from "./RefPicker.js";
 import { CARD_H, CARD_MIN, CARD_W, cardHeight, managementHeight, NOTE_H, NOTE_MIN, NOTE_W, NoteCard, RefCard, TaskCard } from "./cards.js";
 import { DeleteGroupDialog } from "./DeleteGroupDialog.js";
+import { DeleteSelectionDialog, type CanvasDeletion } from "./DeleteSelectionDialog.js";
+import { canvasLinePolylines, polylineIntersectsRect } from "./selection.js";
 import { CanvasMenu, item, SEP, type MenuEntry } from "./CanvasMenu.js";
 import { DescriptionDialog } from "../task/DescriptionDialog.js";
 import { DocsTab } from "./DocsTab.js";
@@ -58,8 +60,9 @@ interface View {
 
 type Drag =
   | { kind: "pan"; button: number; sx: number; sy: number; vx: number; vy: number }
-  | { kind: "node"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
-  | { kind: "group-move"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
+  | { kind: "marquee"; sx: number; sy: number; start: Point; base: ReadonlySet<Id>; lineBase: ReadonlySet<string>; lines: ReturnType<typeof canvasLinePolylines> }
+  | { kind: "node"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean }
+  | { kind: "group-move"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean }
   | { kind: "group-resize"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
   /** A card's bottom-right corner (2026-10-29), from the size it had when the drag began. */
   | { kind: "node-resize"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean; w: number; h: number }
@@ -117,13 +120,44 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     setPreviewState(next);
   };
   const [selection, setSelectionState] = useState<CanvasSelection>(null);
-  const [relations, setRelations] = useState({ management: true, collaboration: true, dependency: true });
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<Id>>(new Set());
+  const [selectedLines, setSelectedLines] = useState<ReadonlySet<string>>(new Set());
+  // Let Ctrl/Shift clicks reach cards covered by the detail box; typing shortcuts keep the editor visible.
+  const [multiSelecting, setMultiSelecting] = useState(false);
+  useEffect(() => {
+    const onModifier = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = t?.matches?.("input, textarea, select") || t?.isContentEditable;
+      if (!e.ctrlKey && !e.metaKey && !e.shiftKey) setMultiSelecting(false);
+      else if (!typing) setMultiSelecting(true);
+    };
+    const reset = () => setMultiSelecting(false);
+    window.addEventListener("keydown", onModifier);
+    window.addEventListener("keyup", onModifier);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", onModifier);
+      window.removeEventListener("keyup", onModifier);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
+  const [deletingSelection, setDeletingSelection] = useState<CanvasDeletion | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [relations, setRelations] = useState({ management: true, dependency: true });
+  const changeRelation = (key: keyof typeof relations, checked: boolean) => {
+    setRelations((cur) => ({ ...cur, [key]: checked }));
+    if (!checked && key === "dependency") setSelectedLines((cur) => new Set([...cur].filter((line) => !line.startsWith("edge:"))));
+  };
   const [showReviewRelations, setShowReviewRelations] = useState(() => readKey("amo.canvasReviewRelations") !== "0");
   const [expandedDiscussion, setExpandedDiscussion] = useState<{ topicId: string; itemId: string } | null>(null);
   const [allLevels, setAllLevels] = useState(true);
   const decisions = useOpenDecisions(link);
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
-  const setSelection = setSelectionState;
+  const setSelection = (next: CanvasSelection) => {
+    setSelectedIds(new Set());
+    setSelectedLines(new Set());
+    setSelectionState(next);
+  };
   const planning = useFeature("planning");
   const [sideOpen, setSideOpenState] = useState(() => readKey(SIDE_KEY) !== "0");
   const setSideOpen = (on: boolean) => {
@@ -221,10 +255,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   // 删除分组 (2026-10-29): a group with cards asks first whether they go too; an empty one goes at once.
   const [deletingGroup, setDeletingGroup] = useState<Id | null>(null);
-  const askDeleteGroup = (groupId: Id) => {
+  const askDeleteGroup = (groupId: Id, confirmEmpty = false) => {
     const cur = latestDoc.current;
     if (!cur) return;
-    if (groupContents(cur, groupId).total > 0) return setDeletingGroup(groupId);
+    if (confirmEmpty || groupContents(cur, groupId).total > 0) return setDeletingGroup(groupId);
     persist(deleteGroup(cur, groupId));
     setSelectionState((s) => (s?.kind === "group" && s.id === groupId ? null : s));
   };
@@ -233,10 +267,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     if (deletingGroup && doc && !doc.groups.some((g) => g.id === deletingGroup)) setDeletingGroup(null);
   }, [deletingGroup, doc]);
 
-  // Delete / Backspace removes the selected group (asking about its cards), note or reference card (never the task
-  // itself), unless typing somewhere. Escape leaves 连依赖, else closes the 详情框 (2026-10-29): a field in the box being
+  // Delete / Backspace removes selected canvas cards (never the tasks themselves), or asks about a selected group's
+  // cards, unless typing or interacting with an overlay. Escape leaves 连依赖, else closes the 详情框: a field in the box being
   // typed in is left first (its text kept), and an Esc meant for a dialog, a menu or a field elsewhere is not ours.
-  const overlayOpen = !!(menu || describing || deletingGroup || openedCallout || picking || editingLink || renaming);
+  const overlayOpen = !!(menu || describing || deletingGroup || deletingSelection || openedCallout || picking || editingLink || renaming);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -246,6 +280,15 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         return;
       }
       if (e.key === "Escape") {
+        if (!typing && !overlayOpen && !e.defaultPrevented && !document.querySelector('[aria-modal="true"]') && (selectedIds.size || selectedLines.size || drag?.kind === "marquee")) {
+          e.preventDefault();
+          setSelectedIds(new Set());
+          setSelectedLines(new Set());
+          setSelectionBox(null);
+          setPreview(null);
+          setDrag(null);
+          return;
+        }
         if (!selection || overlayOpen || e.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
         if (typing) {
           if (!t!.closest(".canvas-detail")) return;
@@ -257,21 +300,23 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         setSelectionState(null);
         return;
       }
-      if ((e.key !== "Delete" && e.key !== "Backspace") || !doc || !selection || deletingGroup) return;
+      if ((e.key !== "Delete" && e.key !== "Backspace") || !doc || compact || drag || overlayOpen || e.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
       if (typing) return;
-      if (selection.kind === "group") {
+      if (selectedIds.size || selectedLines.size) {
         e.preventDefault();
-        askDeleteGroup(selection.id);
-      } else if (doc.nodes.some((n) => n.id === selection.id && (n.kind === "note" || n.kind === "ref" || n.kind === "item"))) {
+        setDeletingSelection({ nodes: new Set(selectedIds), lines: new Set(selectedLines) });
+      } else if (selection?.kind === "group") {
         e.preventDefault();
-        persist({ ...doc, nodes: doc.nodes.filter((n) => n.id !== selection.id) });
-        setSelectionState(null);
+        askDeleteGroup(selection.id, true);
+      } else if (selection?.kind === "node") {
+        e.preventDefault();
+        setDeletingSelection({ nodes: new Set([selection.id]), lines: new Set() });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- askDeleteGroup reads the latest document itself
-  }, [doc, selection, persist, linkFrom, deletingGroup, overlayOpen]);
+  }, [doc, selection, selectedIds, selectedLines, drag, persist, linkFrom, deletingGroup, overlayOpen, callouts, compact]);
 
   const zoomAt = useCallback((px: number, py: number, factor: number) => {
     setView((v) => {
@@ -342,6 +387,23 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   useLayoutEffect(() => {
     if (!drag) return;
     const onMove = (e: MouseEvent) => {
+      if (drag.kind === "marquee") {
+        const at = worldAt(e.clientX, e.clientY);
+        const box = { x: Math.min(drag.start.x, at.x), y: Math.min(drag.start.y, at.y), w: Math.abs(at.x - drag.start.x), h: Math.abs(at.y - drag.start.y) };
+        const moved = Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) >= 3;
+        setSelectionBox(moved ? box : null);
+        const ids = new Set(drag.base);
+        if (moved) for (const node of doc?.nodes ?? []) {
+          if (!visibleNode(node)) continue;
+          const r = rectOf(node);
+          if (r.x < box.x + box.w && r.x + r.w > box.x && r.y < box.y + box.h && r.y + r.h > box.y) ids.add(node.id);
+        }
+        setSelectedIds(ids);
+        const lines = new Set(drag.lineBase);
+        if (moved) for (const line of drag.lines) if (polylineIntersectsRect(line.points, box)) lines.add(line.key);
+        setSelectedLines(lines);
+        return;
+      }
       if (drag.kind === "pan") {
         setView((v) => ({ ...v, x: drag.vx + e.clientX - drag.sx, y: drag.vy + e.clientY - drag.sy }));
         return;
@@ -354,11 +416,13 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       const dy = Math.round((e.clientY - drag.sy) / view.k);
       if (!drag.moved && Math.hypot(dx, dy) < 3) return;
       drag.moved = true;
-      if (drag.kind === "node") {
-        const node = drag.base.nodes.find((n) => n.id === drag.id)!;
-        setPreview(moveNode(drag.base, drag.id, { x: node.pos.x + dx, y: node.pos.y + dy }, nodeSize(node)));
-      } else if (drag.kind === "group-move") {
-        setPreview(moveGroup(drag.base, drag.id, dx, dy));
+      if (drag.kind === "node" || drag.kind === "group-move") {
+        let next = drag.base;
+        const groups = new Set(drag.base.groups.filter((g) => drag.ids.includes(g.id)).map((g) => g.id));
+        for (const id of groups) next = moveGroup(next, id, dx, dy);
+        // A selected card already carried by a selected group must move only once.
+        for (const node of drag.base.nodes) if (drag.ids.includes(node.id) && (node.groupId === null || !groups.has(node.groupId))) next = moveNode(next, node.id, { x: node.pos.x + dx, y: node.pos.y + dy }, nodeSize(node));
+        setPreview(next);
       } else if (drag.kind === "node-resize") {
         // The card stays where it is (and in its group); only its size follows the corner, down to its kind's least.
         const min = minSize(drag.base.nodes.find((n) => n.id === drag.id)!);
@@ -369,7 +433,13 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       }
     };
     const onUp = (e: MouseEvent) => {
-      if (drag.kind === "pan" && e.button !== drag.button) return;
+      if (e.button !== (drag.kind === "pan" ? drag.button : 0)) return;
+      if (drag.kind === "marquee") {
+        onMove(e);
+        setSelectionBox(null);
+        setDrag(null);
+        return;
+      }
       if (drag.kind === "connect") {
         // Let go on another card: on one of its handles, that side; elsewhere on it, the side nearest the pointer.
         const hit = document.elementFromPoint(e.clientX, e.clientY);
@@ -384,16 +454,18 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         setDrag(null);
         return;
       }
-      if (drag.kind === "pan" && drag.button === 0 && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) setSelectionState(null);
       if (drag.kind !== "pan" && drag.moved && previewRef.current) persist(previewRef.current);
       setPreview(null);
       setDrag(null);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    const cancel = () => { setDrag(null); setPreview(null); setSelectionBox(null); setDrawing(null); };
+    window.addEventListener("blur", cancel);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", cancel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nodeSize follows the tasks, which do not change mid-drag
   }, [drag, persist, view.k]);
@@ -406,7 +478,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const selectedScope = selectedTree && new Set([selectedTask!.id, ...selectedTree.descendants.map((t) => t.id)]);
   const hiddenTasks = new Set(selectedTree && !allLevels ? selectedTree.descendants.filter((t) => t.managerTaskId !== selectedTask!.id).map((t) => t.id) : []);
   const visibleNode = (n: CanvasNode) => !(n.kind === "task" && hiddenTasks.has(n.taskId));
-  const visibleLinks = (shown?.links ?? []).filter((l) => l.kind !== "collaboration" || (relations.collaboration && selection?.kind === "node" && (l.from === selection.id || l.to === selection.id)));
+  const visibleLinks = shown?.links ?? [];
   /** A card's box as drawn. */
   const rectOf = (n: CanvasNode) => ({ ...n.pos, ...(sizes.get(n.id) ?? nodeSize(n)) });
   const locateTask = (id: Id) => {
@@ -417,7 +489,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   /** 连线: a drag from one of a card's four side handles draws a line to another card. */
   const startConnect = (e: ReactMouseEvent, nodeId: Id, side: CanvasSide) => {
-    if (e.button !== 0 || !doc) return;
+    if (e.button !== 0 || !doc || drag) return;
     e.preventDefault();
     e.stopPropagation();
     setLinkFrom(null);
@@ -429,7 +501,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
    * free), kept once let go; a double-click there gives the card back its own size.
    */
   const startResize = (e: ReactMouseEvent, nodeId: Id) => {
-    if (e.button !== 0 || !doc) return;
+    if (e.button !== 0 || !doc || drag) return;
     const node = doc.nodes.find((n) => n.id === nodeId);
     if (!node) return;
     e.preventDefault();
@@ -469,10 +541,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   // preventDefault on every drag start: a leftover text selection would otherwise turn the gesture into a native
   // drag-and-drop, which swallows the mousemove/mouseup events the canvas listens to.
-  // A click on the empty canvas lets go of the selection (and closes its 详情框); a drag there only pans, the box
-  // following its card (2026-10-29). A field in the box being typed in is left first, so its text is kept.
+  // 中键只移动视角；空白处左键框选卡片，卡片上的左键仍用于拖动。先提交正在编辑的字段。
   const startPan = (e: ReactMouseEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button !== 1 || drag) return;
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur?.();
     setPicking(false);
@@ -480,13 +551,57 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     setDrag({ kind: "pan", button: e.button, sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
   };
 
+  const startMarquee = (e: ReactMouseEvent) => {
+    if (e.button === 1) return startPan(e);
+    if (e.button !== 0 || !doc || drag || compact) return;
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    setPicking(false);
+    setLinkFrom(null);
+    const append = e.ctrlKey || e.metaKey || e.shiftKey;
+    const base = append ? new Set([...selectedIds, ...(selection ? [selection.id] : [])]) : new Set<Id>();
+    const lineBase = append ? new Set(selectedLines) : new Set<string>();
+    setSelectionState(null);
+    setSelectedIds(base);
+    setSelectedLines(lineBase);
+    setDrag({ kind: "marquee", sx: e.clientX, sy: e.clientY, start: worldAt(e.clientX, e.clientY), base, lineBase, lines: canvasLinePolylines(world.current) });
+  };
+
+  const selectLine = (e: ReactMouseEvent, key: string) => {
+    e.stopPropagation();
+    if (e.button !== 0 || drag || compact) return;
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const append = e.ctrlKey || e.metaKey || e.shiftKey;
+    const lines = append ? new Set(selectedLines) : new Set<string>();
+    if (append && lines.has(key)) lines.delete(key); else lines.add(key);
+    setSelectedIds(append ? new Set([...selectedIds, ...(selection ? [selection.id] : [])]) : new Set());
+    setSelectionState(null);
+    setSelectedLines(lines);
+    setLinkFrom(null);
+  };
+
   const startDrag = (e: ReactMouseEvent, kind: "node" | "group-move" | "group-resize", id: Id) => {
-    if (e.button !== 0 || !doc) return;
+    if (e.button !== 0 || !doc || drag) return;
     e.preventDefault();
     e.stopPropagation();
     (document.activeElement as HTMLElement | null)?.blur?.(); // commit any open field (e.g. the group name)
-    setSelection({ kind: kind === "node" ? "node" : "group", id });
-    setDrag({ kind, id, sx: e.clientX, sy: e.clientY, base: doc, moved: false });
+    if (kind === "node" || kind === "group-move") {
+      let ids = selectedIds.has(id) ? [...selectedIds] : [id];
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        const next = new Set([...selectedIds, ...(selection ? [selection.id] : [])]);
+        const removing = next.has(id);
+        if (removing) next.delete(id); else next.add(id);
+        setSelectionState(null);
+        setSelectedIds(next);
+        if (removing) return;
+        ids = [...next];
+      } else if (!selectedIds.has(id)) setSelection({ kind: kind === "node" ? "node" : "group", id });
+      setDrag({ kind, id, ids, sx: e.clientX, sy: e.clientY, base: doc, moved: false });
+    } else {
+      setSelection({ kind: "group", id });
+      setDrag({ kind, id, sx: e.clientX, sy: e.clientY, base: doc, moved: false });
+    }
   };
 
   /** A point of the canvas (world coordinates) under the pointer, or the middle of the view. */
@@ -590,12 +705,14 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     else setNotice({ text: "这个会话不在任何任务里，任务页打不开它", error: true });
   };
   const setItemStatus = (id: Id, status: ReviewStatus) => edit((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id && n.kind === "item" ? { ...n, status } : n)) }));
-  /** An item goes with the bubbles still out on it. */
-  const deleteItem = (id: Id) => {
-    edit((d) => ({ ...d, nodes: d.nodes.filter((n) => n.id !== id) }));
-    for (const c of callouts) if (c.target === id && c.state !== "closed") closeCallout(c);
-    if (selection?.kind === "node" && selection.id === id) setSelectionState(null);
+  /** Task cards leave the canvas; review items go with their open bubbles, just as in their context menu. */
+  const deleteNodes = (ids: ReadonlySet<Id>, lines: ReadonlySet<string> = new Set()) => {
+    const items = new Set(latestDoc.current?.nodes.filter((n) => ids.has(n.id) && n.kind === "item").map((n) => n.id));
+    edit((d) => ({ ...d, groups: d.groups.filter((g) => !ids.has(g.id)), nodes: d.nodes.filter((n) => !ids.has(n.id)).map((n) => n.groupId && ids.has(n.groupId) ? { ...n, groupId: null } : n), links: (d.links ?? []).filter((l) => !lines.has(`link:${l.id}`) && !ids.has(l.from) && !ids.has(l.to)), edges: d.edges.filter((e) => !lines.has(`edge:${e.id}`)) }));
+    for (const c of callouts) if (items.has(c.target) && c.state !== "closed") closeCallout(c);
+    setSelection(null);
   };
+  const deleteItem = (id: Id) => deleteNodes(new Set([id]));
   /** 就这条展开聊: a new session on this item, opened at once. */
   const openingDiscussions = useRef(new Set<string>());
   const discuss = (it: CanvasItem) => {
@@ -719,7 +836,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const linkMenu = (e: ReactMouseEvent, l: CanvasLink) => {
     openMenu(e, "连线", [
       item(l.label ? "编辑文字" : "添加文字", () => setEditingLink(l.id), { testId: "menu-link-label" }),
-      ...(l.kind === "collaboration" ? [] : [item("反过来", () => edit((d) => reverseLink(d, l.id)))]),
+      item("反过来", () => edit((d) => reverseLink(d, l.id))),
       SEP,
       item("删除连线", () => edit((d) => removeLink(d, l.id)), { danger: true, testId: "menu-link-delete" }),
     ]);
@@ -779,7 +896,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         </div>
       )}
       </div>
-      {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["collaboration", "协作 ··· 点线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => setRelations((cur) => ({ ...cur, [key]: e.target.checked }))} />{label}</label>)}<label title="自动显示问题来源和展开的讨论，不改变管理归属"><input type="checkbox" checked={showReviewRelations} onChange={(e) => { setShowReviewRelations(e.target.checked); writeKey("amo.canvasReviewRelations", e.target.checked ? "1" : "0"); }} />来源与讨论 · 点划线</label>{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}<span className="dim">协作仅在选中相关任务时显示</span></div>}
+      {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => changeRelation(key, e.target.checked)} />{label}</label>)}<label title="自动显示问题来源和展开的讨论，不改变管理归属"><input type="checkbox" checked={showReviewRelations} onChange={(e) => { setShowReviewRelations(e.target.checked); writeKey("amo.canvasReviewRelations", e.target.checked ? "1" : "0"); }} />来源与讨论 · 点划线</label>{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}</div>}
       {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
       {!compact && reviewChanges.size > 0 && <div className="canvas-review-changes" role="group" aria-label="审阅变化" data-testid="canvas-review-changes">
         <span title="与本机上次标为已看时比较；包含标题、正文、结论、状态和引用的变化">审阅变化 {reviewChanges.size} 条</span>
@@ -804,7 +921,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         className={drag?.kind === "pan" ? "canvas-viewport panning" : "canvas-viewport"}
         ref={viewport}
         style={gridStyle(view)}
-        onMouseDown={startPan}
+        onMouseDown={startMarquee}
         onContextMenu={canvasMenu}
         data-testid="canvas-viewport"
         data-linking={linkFrom ? "true" : undefined}
@@ -819,7 +936,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           {shown?.groups.map((g) => (
             <div
               key={g.id}
-              className={selection?.kind === "group" && selection.id === g.id ? "canvas-group selected" : "canvas-group"}
+              className={(selection?.kind === "group" && selection.id === g.id) || selectedIds.has(g.id) ? "canvas-group selected" : "canvas-group"}
               style={{ left: g.rect.x, top: g.rect.y, width: g.rect.w, height: g.rect.h }}
               data-testid="canvas-group"
               data-group-id={g.id}
@@ -897,15 +1014,16 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               if (!from || !to || !visibleNode(from) || !visibleNode(to)) return null;
               const { d } = linkCurve(sidePoint(rectOf(from), l.fromSide), l.fromSide, sidePoint(rectOf(to), l.toSide), l.toSide);
               return (
-                <g key={l.id} className={selectedScope && l.kind !== "collaboration" && ![from, to].every((n) => (n.kind === "task" || n.kind === "ref") && selectedScope.has(n.taskId)) ? "management-dimmed" : undefined}>
-                  <path d={d} className={`canvas-link${l.kind === "collaboration" ? " canvas-collaboration-line" : ""}`} markerEnd={l.kind === "collaboration" ? undefined : "url(#amo-link-arrow)"} data-testid={l.kind === "collaboration" ? "canvas-collaboration-line" : "canvas-link"} data-link-id={l.id} />
+                <g key={l.id} className={!selectedLines.has(`link:${l.id}`) && selectedScope && ![from, to].every((n) => (n.kind === "task" || n.kind === "ref") && selectedScope.has(n.taskId)) ? "management-dimmed" : undefined}>
+                  <path d={d} className={`canvas-link${selectedLines.has(`link:${l.id}`) ? " selected" : ""}`} markerEnd="url(#amo-link-arrow)" data-testid="canvas-link" data-link-id={l.id} />
                   <path
                     d={d}
                     className="canvas-edge-hit canvas-link-hit"
-                    onMouseDown={(ev) => ev.stopPropagation()}
+                    onMouseDown={(ev) => selectLine(ev, `link:${l.id}`)}
                     onDoubleClick={() => setEditingLink(l.id)}
                     onContextMenu={(ev) => linkMenu(ev, l)}
                     data-testid="canvas-link-hit"
+                    data-line-selection={`link:${l.id}`}
                   />
                 </g>
               );
@@ -922,17 +1040,17 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               if (!from || !to) return null;
               const { a, b } = arrowBetween(from, to);
               return (
-                <g key={e.id} className={selectedScope && !(selectedScope.has(e.from) && selectedScope.has(e.to)) ? "management-dimmed" : undefined}>
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge" markerEnd="url(#amo-arrow)" data-testid="canvas-edge" />
+                <g key={e.id} className={!selectedLines.has(`edge:${e.id}`) && selectedScope && !(selectedScope.has(e.from) && selectedScope.has(e.to)) ? "management-dimmed" : undefined}>
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`canvas-edge${selectedLines.has(`edge:${e.id}`) ? " selected" : ""}`} markerEnd="url(#amo-arrow)" data-testid="canvas-edge" data-edge-id={e.id} />
                   {/* A wider, invisible line takes the right-click. */}
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge-hit" data-testid="canvas-edge-hit" onMouseDown={(ev) => ev.stopPropagation()} onContextMenu={(ev) => edgeMenu(ev, e.id, e.from, e.to)} />
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="canvas-edge-hit" data-testid="canvas-edge-hit" data-line-selection={`edge:${e.id}`} onMouseDown={(ev) => selectLine(ev, `edge:${e.id}`)} onContextMenu={(ev) => edgeMenu(ev, e.id, e.from, e.to)} />
                 </g>
               );
             })}
           </svg>
           {shown?.nodes.map((node) => {
             if (!visibleNode(node)) return null;
-            const selected = selection?.kind === "node" && selection.id === node.id;
+            const selected = (selection?.kind === "node" && selection.id === node.id) || selectedIds.has(node.id);
             if (node.kind === "note") {
               return <NoteCard key={node.id} node={node} selected={selected} flag={flags.get(node.id)} handles={handlesOf(node.id)} onMouseDown={(e) => startDrag(e, "node", node.id)} onContextMenu={(e) => noteMenu(e, node)} onEdit={editNote} />;
             }
@@ -1062,10 +1180,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             return (
               <div
                 key={l.id}
-                className="canvas-link-label"
+                className={`canvas-link-label${selectedLines.has(`link:${l.id}`) ? " selected" : ""}`}
                 style={{ left: mid.x, top: mid.y }}
                 title="双击修改文字，右键看更多"
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => selectLine(e, `link:${l.id}`)}
                 onDoubleClick={() => setEditingLink(l.id)}
                 onContextMenu={(e) => linkMenu(e, l)}
                 data-testid="canvas-link-label"
@@ -1076,6 +1194,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           })}
           {reviewModel && <ReviewRelations model={reviewModel} onOpen={onOpenTask} />}
           <CalloutLayer callouts={callouts} sessions={sessions} anchor={anchorOf} onOpen={focusCallout} onClose={closeCallout} onMore={() => showTab("talk")} />
+          {selectionBox && <div className="canvas-selection-box" data-testid="canvas-selection-box" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }} />}
         </div>
 
         <div className="canvas-tools" onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
@@ -1149,7 +1268,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             复位
           </button>
         </div>
-        {!compact && <div className="canvas-hint">拖空白处或按住中键移动视角 · 滚轮缩放 · 从卡片边上的圆点拖出连线 · 单击看详情 · 右键看更多操作 · 双击打开任务</div>}
+        {!compact && <div className="canvas-hint">中键移动视角 · 左键拖动卡片 · 空白处框选 · Ctrl／Shift 点击或框选多选 · 滚轮缩放 · Del 删除 · 双击打开任务 · 右键更多操作</div>}
         {!compact && (
           <button
             type="button"
@@ -1175,7 +1294,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             anchor={detailAnchor}
             avoid={detailAvoid}
             area={area}
-            hidden={!!preview}
+            hidden={!!preview || multiSelecting}
             onClose={() => setSelectionState(null)}
             doc={shown}
             selection={selection}
@@ -1227,6 +1346,11 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       </div>
       {menu && <CanvasMenu x={menu.x} y={menu.y} label={menu.label} entries={menu.entries} onClose={closeMenu} />}
       {describedTask && <DescriptionDialog link={link} task={describedTask} onClose={() => setDescribing(null)} />}
+      {deletingSelection && doc && <DeleteSelectionDialog doc={doc} selection={deletingSelection} onCancel={() => setDeletingSelection(null)} onConfirm={() => {
+        const pending = deletingSelection;
+        setDeletingSelection(null);
+        deleteNodes(pending.nodes, pending.lines);
+      }} />}
       {deletingGroup && doc?.groups.some((g) => g.id === deletingGroup) && (
         <DeleteGroupDialog
           key={deletingGroup}

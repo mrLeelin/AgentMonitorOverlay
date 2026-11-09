@@ -97,7 +97,7 @@ test("ordinary lines: real drags reject cross-side duplicates, self links and cy
   await expect(page.getByTestId("canvas-link")).toHaveCount(3);
 });
 
-test("dependencies: details allow a diamond; reverse and direct API reject cycles atomically; collaboration is undirected", async () => {
+test("dependencies: details allow a diamond; reverse and direct API reject cycles atomically", async () => {
   const { topic, tasks, canvas, card, open } = await seed(["甲：策划", "乙：程序", "丙：美术", "丁：集成"]);
   const { page, app } = studio!;
   const doc = await canvas();
@@ -136,16 +136,11 @@ test("dependencies: details allow a diamond; reverse and direct API reject cycle
   await expect(studio!.api("PUT", `/api/topics/${topic.id}/canvas`, { ...before, nodes: before.nodes.map((n) => ({ ...n, pos: { x: n.pos.x + 11, y: n.pos.y } })), edges: [...before.edges, edge("da", 3, 0)] })).rejects.toThrow(/400.*循环/);
   expect(await canvas()).toEqual(before);
 
-  const node = (i: number) => before.nodes.find((n) => n.kind === "task" && n.taskId === tasks[i]!.id)!;
-  for (const [from, to] of [[0, 1], [1, 3], [3, 0]]) {
-    await page.keyboard.press("Escape");
-    await card(from!).click();
-    await page.getByRole("combobox", { name: "添加协作任务", exact: true }).selectOption(node(to!).id);
-  }
-  await expect.poll(async () => (await canvas()).links?.filter((l) => l.kind === "collaboration").length).toBe(3);
-  await expect(page.getByTestId("canvas-collaboration-line").first()).not.toHaveAttribute("marker-end");
+  await expect(page.getByRole("combobox", { name: "添加协作任务", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /协作/ })).toHaveCount(0);
   await expect(page.getByTestId("canvas-edge")).toHaveCount(5);
-  await screenshot(app, "studio", "canvas-relations-dependency-collaboration", page);
+  await page.getByRole("button", { name: "关闭提示", exact: true }).click();
+  await screenshot(app, "studio", "canvas-relations-dependency-only", page);
 });
 
 test("legacy dirty board: readable and movable; locatable repairs preserve distinct labels until explicitly removed", async () => {

@@ -28,6 +28,8 @@
 
 ## 还开着的事
 
+- 画布协作点线已整项移除：界面、MCP、HTTP、协议与校验已清理，新增升级迁移仅清除旧协作线，管理/依赖与普通注释保持；定向单测、类型检查、构建及 7 条隔离 mock Electron 验证通过（`plans/done/remove-canvas-collaboration.md`）。未提交、发布或加载当前运行的 Host，待之后重启生效；本轮未启动教学实测。
+- 主控带队与逐层交付：自动拆分、二级主控、依赖启动、交付验收/退回和业务问题逐层上报已实现，完成定向测试及隔离 mock Electron 验证（`plans/done/managed-workflow.md`）；尚未加载当前使用中的 Host，未提交或发布。全仓测试受资源不足中止，过程中失败的 DSH 单项与发布脚本单项独立复测通过。
 - 画布讨论与变化提醒：关联卡上下文、变化标记、来源关系和讨论展开已实现；11-09 新增确认自动回传和整轮自动继续，已完成隔离 mock Electron 验证并重启开发版加载（`plans/done/canvas-review-returns.md`），待用户手动验收。本批改动在 `codex/canvas-review-workflow` 分支，未发布；连带复查和 Focus 聚合仍待推进。
 - 画布连线纠错与管理树布局：本工作区已完成共享去重/防环、旧问题逐线定位修复和树形折线布局（`plans/done/canvas-relations.md`）；已做定向测试及隔离 Electron 拖线/反向/修复/布局验证，尚未提交、发布或加载用户使用中的 Studio/Host。
 - 主控归属与画板关系：本工作区已完成代码、定向测试和隔离 Electron 验收（`plans/done/lead-management.md`），未提交、发布或加载用户使用中的 Host；旧任务保持未分配，需由用户或专题入口明确设置直属主控。

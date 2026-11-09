@@ -6,7 +6,6 @@ export function canvasRoutes(service: HostService): Route[] {
   return [
     route("GET /api/topics/:id/canvas", ({ params }) => service.canvases.canvas(params.id!)),
     route("PUT /api/topics/:id/canvas", ({ params, body }) => service.canvases.saveCanvas(params.id!, body)),
-    route("POST /api/topics/:id/canvas/collaboration", ({ params, body }) => service.canvases.canvasCollaborate(params.id!, obj(body))),
     route("GET /api/topics/:id/canvas/outline", ({ params }) => service.canvases.canvasOutline(params.id!)),
     route("PUT /api/tasks/:id/canvas", ({ params, body }) => service.canvases.setTaskOnCanvas(params.id!, obj(body))),
   ];

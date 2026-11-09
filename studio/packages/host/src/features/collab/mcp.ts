@@ -64,14 +64,14 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       name: "decision_request",
       title: "请求决策",
       description:
-        "Ask the person to decide something you should not decide alone (offer short options when you can). It is shown in the workbench's question popup and the Focus window; it does not block your turn. While your turn goes on, the answer comes back as mail (mailbox_read); if your turn has ended before the person answers (or you have not read it by then), it comes into this conversation as a message.",
+        "Ask for a business decision (offer short options). In a managed task it automatically goes to your direct manager, who answers with task_decision_answer; only the root lead asks the person directly. It does not block your turn. The answer returns by mail during your turn and automatically through your inbox afterward. CLI security approvals and native tool questions remain separate.",
       inputSchema: { question: z.string(), options: z.array(z.string()).optional() },
       readOnly: false,
       autoApprove: true,
       run: (args) =>
         write(caller, (c) => {
           const d = service.collab.requestDecisionFromSession(c.sessionId, args.question, args.options);
-          return { id: d.id, state: d.state, note: "During this turn the answer arrives as mail (mailbox_read); after the turn it comes in as a message." };
+          return { id: d.id, state: d.state, routedToTaskId: d.routedToTaskId ?? null, note: d.routedToTaskId ? "问题已交直属主控，答案将自动回到本会话。" : "问题已交给人决定，答案将自动回到本会话。" };
         }),
     },
     {

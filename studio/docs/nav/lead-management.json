@@ -3,10 +3,10 @@
   "topics": [{
     "id": "studio.leadManagement",
     "label": "主控管理层级与画板关系",
-    "aliases": ["直属主控", "归属", "managerTaskId", "下辖", "转交", "管理线", "协作线", "画板"],
+    "aliases": ["直属主控", "归属", "managerTaskId", "下辖", "转交", "管理线", "画板"],
     "category": "host",
-    "purpose": "任务持久化单一直属主控，多级管理树统一查询和后台授权；画布分别展示派生管理虚线、持久协作点线与依赖实线，旧普通线和标签保留。",
-    "steps": ["新增管理操作必须复用 managesTask 检查下辖范围，不能用同专题或协作授权。", "提案任务的归属和说明必须先落库再启动首会话。生命周期与永久删除须检查保留任务的归属。", "改统计和高亮时复用 taskManagement，管理线不能写入 edges。"],
+    "purpose": "任务持久化单一直属主控，多级管理树统一查询和后台授权；画布展示派生管理虚线与依赖实线，普通注释线和标签保留。协作点线已移除，升级迁移清除旧协作数据。",
+    "steps": ["新增管理操作必须复用 managesTask 检查下辖范围，不能用同专题或注释连线授权。", "提案任务的归属和说明必须先落库再启动首会话。生命周期与永久删除须检查保留任务的归属。", "改统计和高亮时复用 taskManagement，管理线不能写入 edges。"],
     "anchors": [
       { "label": "管理树", "path": "studio/packages/protocol/src/task-management.ts", "anchor": "export function taskManagement" },
       { "label": "后台授权", "path": "studio/packages/host/src/core/role.ts", "anchor": "export function managesTask" },
@@ -15,6 +15,6 @@
       { "label": "归属与管理树界面", "path": "studio/packages/ui/src/task/TaskManagement.tsx", "anchor": "export function TaskManagement" }
     ],
     "related": ["studio.leadPermissions", "studio.topics", "studio.canvas"],
-    "next": ["studio/plans/done/lead-management.md", "studio/packages/host/src/features/tasks/management.test.ts"]
+    "next": ["studio/plans/done/lead-management.md", "studio/plans/done/remove-canvas-collaboration.md", "studio/packages/host/src/features/tasks/management.test.ts"]
   }]
 }

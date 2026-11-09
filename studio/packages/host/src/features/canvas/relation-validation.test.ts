@@ -70,14 +70,20 @@ describe("canvas relationship validation at Host boundaries", () => {
     expect(current()).toEqual(dirty);
   });
 
-  it("keeps ordinary, collaboration and dependency graphs separate and accepts dependency joins", () => {
-    const links = [ordinary("ab", "a", "b"), ordinary("bc", "b", "c"), ordinary("collab-ca", "c", "a", { kind: "collaboration" }), ordinary("collab-ab", "a", "b", { kind: "collaboration" }), ordinary("collab-bc", "b", "c", { kind: "collaboration" })];
+  it("keeps ordinary annotations and dependency graphs separate and accepts dependency joins", () => {
+    const links = [ordinary("ab", "a", "b"), ordinary("bc", "b", "c")];
     const edges = [dependency("db-a", 1, 0), dependency("db-c", 1, 2), dependency("da-d", 0, 3), dependency("dc-d", 2, 3)];
     const next = service.canvases.saveCanvas(topicId, { ...current(), links, edges });
     expect(next.links).toEqual(links);
     expect(next.edges).toEqual(edges);
+  });
+
+  it("does not expose the removed collaboration tool or route and rejects old collaboration writes atomically", () => {
+    expect(canvasTools(toolContext(service, { sessionId: leadSessionId })).some((tool) => tool.name === "canvas_collaborate")).toBe(false);
+    expect(canvasRoutes(service).some((route) => route.path === "/api/topics/:id/canvas/collaboration")).toBe(false);
     const before = current();
-    expect(() => saveLinks([...links, ordinary("collab-ba", "b", "a", { kind: "collaboration", fromSide: "top" })])).toThrow(/重复|已存在|duplicate|already exists/);
+    const legacy = { ...ordinary("old-collaboration", "a", "b"), kind: "collaboration" };
+    expect(() => service.canvases.saveCanvas(topicId, { ...before, nodes: before.nodes.map((node) => ({ ...node, pos: { x: 123, y: 456 } })), links: [legacy] })).toThrow(/kind|协作|collaboration/);
     expect(current()).toEqual(before);
   });
 
@@ -152,9 +158,9 @@ describe("canvas relationship validation at Host boundaries", () => {
     expect(current().edges).toHaveLength(2);
   });
 
-  it.each(["ordinary", "collaboration", "dependency"] as const)("lets a legacy %s self-connection be explicitly removed without blocking movement", (kind) => {
+  it.each(["ordinary", "dependency"] as const)("lets a legacy %s self-connection be explicitly removed without blocking movement", (kind) => {
     const before = current();
-    const self = ordinary("self", "a", "a", { label: "旧自连说明", ...(kind === "collaboration" ? { kind: "collaboration" as const } : {}) });
+    const self = ordinary("self", "a", "a", { label: "旧自连说明" });
     const dirty = kind === "dependency" ? { ...before, edges: [dependency("self", 0, 0)] } : { ...before, links: [self] };
     expect(() => service.canvases.saveCanvas(topicId, dirty)).toThrow();
     expect(current()).toEqual(before);

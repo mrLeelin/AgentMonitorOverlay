@@ -1,6 +1,6 @@
 import type { CanvasDoc, Id, Task } from "./entities.js";
 
-type Relation = { id: Id; from: Id; to: Id; kind: "link" | "collaboration" | "dependency"; source: "link" | "edge" };
+type Relation = { id: Id; from: Id; to: Id; kind: "link" | "dependency"; source: "link" | "edge" };
 export interface CanvasRelationIssue {
   kind: Relation["kind"];
   code: "duplicate" | "self" | "cycle";
@@ -14,10 +14,10 @@ export class CanvasRelationError extends Error {
 }
 
 const relations = (doc: CanvasDoc): Relation[] => [
-  ...(doc.links ?? []).map((l): Relation => ({ id: l.id, from: l.from, to: l.to, kind: l.kind === "collaboration" ? "collaboration" : "link", source: "link" })),
+  ...(doc.links ?? []).map((l): Relation => ({ id: l.id, from: l.from, to: l.to, kind: "link", source: "link" })),
   ...doc.edges.map((e): Relation => ({ id: e.id, from: e.from, to: e.to, kind: "dependency", source: "edge" })),
 ];
-const signature = (r: Relation) => JSON.stringify([r.kind, ...(r.kind === "collaboration" ? [r.from, r.to].sort() : [r.from, r.to])]);
+const signature = (r: Relation) => JSON.stringify([r.kind, r.from, r.to]);
 
 /** A shortest return path, scoped to one relation type. Existing unrelated cycles do not block new legal branches. */
 function returnPath(edges: Relation[], start: Id, end: Id): { path: Id[]; ids: Id[] } | null {
@@ -42,7 +42,7 @@ function returnPath(edges: Relation[], start: Id, end: Id): { path: Id[]; ids: I
 export function canvasRelationIssues(doc: CanvasDoc): CanvasRelationIssue[] {
   const all = relations(doc);
   const issues: CanvasRelationIssue[] = [];
-  for (const kind of ["link", "collaboration", "dependency"] as const) {
+  for (const kind of ["link", "dependency"] as const) {
     const list = all.filter((r) => r.kind === kind);
     const pairs = new Map<string, Relation>();
     const cycles = new Set<string>();
@@ -52,7 +52,6 @@ export function canvasRelationIssues(doc: CanvasDoc): CanvasRelationIssue[] {
       const key = signature(r); const first = pairs.get(key);
       if (first) issues.push({ ...base, code: "duplicate", ids: [first.id, r.id], path: [r.from, r.to] });
       else pairs.set(key, r);
-      if (kind === "collaboration") continue;
       const back = returnPath(list.filter((e) => e !== r), r.to, r.from);
       if (!back) continue;
       const ids = [r.id, ...back.ids];
@@ -77,8 +76,8 @@ export function newCanvasRelationIssues(doc: CanvasDoc, previous?: CanvasDoc): C
 export function canvasRelationMessage(doc: CanvasDoc, issue: CanvasRelationIssue, tasks: readonly Pick<Task, "id" | "title">[] = []): string {
   const names = new Map(tasks.map((t) => [t.id, t.title]));
   for (const n of doc.nodes) names.set(n.id, n.kind === "task" || n.kind === "ref" ? names.get(n.taskId) ?? n.taskId : n.kind === "item" ? `#${n.num} ${n.title}` : n.kind === "note" && typeof n.text === "string" ? n.text.slice(0, 32) || n.id : n.id);
-  const title = issue.kind === "link" ? "普通线" : issue.kind === "dependency" ? "依赖" : "协作";
-  const path = issue.path.map((id) => names.get(id) ?? id).join(issue.kind === "collaboration" ? " ↔ " : " → ");
+  const title = issue.kind === "link" ? "普通线" : "依赖";
+  const path = issue.path.map((id) => names.get(id) ?? id).join(" → ");
   return `${title}${issue.code === "duplicate" ? "已存在" : issue.code === "self" ? "不能连接自身" : "会形成循环"}：${path}（连线 ${issue.ids.join("、")}）`;
 }
 
