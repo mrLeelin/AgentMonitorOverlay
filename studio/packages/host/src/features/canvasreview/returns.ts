@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { REVIEW_STATUSES, type CanvasDoc, type CanvasItem, type CanvasReturnReceipt, type CanvasReturnStatus, type Id, type MailMessage } from "@amo-studio/protocol";
+import { REVIEW_STATUSES, splitRoleUpdate, type CanvasDoc, type CanvasItem, type CanvasReturnReceipt, type CanvasReturnStatus, type Id, type MailMessage } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { newId } from "../../store/store.js";
 
@@ -7,7 +7,7 @@ const KEY = "canvas.review-returns";
 const fingerprint = (item: CanvasItem) => createHash("sha256").update(JSON.stringify([item.title, item.body ?? "", item.status, item.conclusion ?? "", item.refs ?? []])).digest("hex");
 const settled = (item: CanvasItem) => item.status === "confirmed" || item.status === "done" || item.status === "parked";
 const roundKey = (item: CanvasItem) => JSON.stringify([item.sessionId, item.groupId]);
-type Round = { signature: string; itemIds: Id[]; groupId: Id | null; targetSessionId: Id; messageId?: Id; text?: string; pending?: boolean; error?: string };
+type Round = { signature: string; itemIds: Id[]; groupId: Id | null; targetSessionId: Id; messageId?: Id; replacesItemId?: Id; text?: string; pending?: boolean; error?: string };
 type TopicReturns = { seen: Record<Id, string>; receipts: Record<Id, CanvasReturnReceipt>; rounds: Record<string, Round> };
 const empty = (): TopicReturns => ({ seen: {}, receipts: {}, rounds: {} });
 
@@ -98,7 +98,7 @@ export class CanvasReturns extends Feature<"sessions"> {
         if (keys.has(key) && members.every(settled) && JSON.stringify(members.map((item) => item.id).sort()) === JSON.stringify(round.itemIds)) continue;
         // A reopened/deleted question revokes a continuation that has not entered the model yet.
         const row = round.messageId ? this.store.getItem(round.messageId) : undefined;
-        if (row?.type === "user" && row.delivery === "held") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "unsent", text: "【画布继续通知已撤回】问题已重新打开或分组内容已改变，请等待最新确认；本通知不再要求实施。" }) });
+        if (row?.type === "user" && row.delivery === "held") this.f.sessions.inbox.expire(row.id, "画布继续通知已撤回：问题已重新打开或分组内容已改变，请等待最新确认；本通知不再要求实施。");
         delete state.rounds[key];
       }
       for (const key of changedRounds) {
@@ -112,12 +112,21 @@ export class CanvasReturns extends Feature<"sessions"> {
         const group = doc.groups.find((g) => g.id === groupId)?.title ?? "未分组";
         const old = state.rounds[key];
         const queued = old?.messageId ? this.store.getItem(old.messageId) : undefined;
-        const messageId = old?.pending || (queued?.type === "user" && queued.delivery === "held") ? old!.messageId! : newId("i-canvas-return");
-        state.rounds[key] = { signature, itemIds: members.map((item) => item.id).sort(), groupId, targetSessionId: source, messageId, pending: true, text: [
+        const replacing = queued?.type === "user" && queued.delivery === "held" ? queued : undefined;
+        const messageId = old?.pending && !queued ? old.messageId! : newId("i-canvas-return");
+        const replacesItemId = replacing?.id ?? (old?.pending && !queued ? old.replacesItemId : undefined);
+        // Enqueued rows are immutable. Carry the still-unheard role update into a new notification, without
+        // copying its frozen shared-context token; the inbox captures the current requirement for the new row.
+        const previousText = replacing?.text ?? (old?.pending && !queued ? old.text : undefined);
+        const contextAt = previousText?.search(/^\[AMO_SHARED_CONTEXT:/m) ?? -1;
+        const role = previousText ? splitRoleUpdate(contextAt < 0 ? previousText : previousText.slice(0, contextAt).trimEnd()).update : null;
+        if (replacing) this.f.sessions.inbox.expire(replacing.id, "画布结论已变化；此继续通知已由最新结论替代，保留历史。");
+        state.rounds[key] = { signature, itemIds: members.map((item) => item.id).sort(), groupId, targetSessionId: source, messageId, ...(replacesItemId ? { replacesItemId } : {}), pending: true, text: [
           `【画布本轮已确认】专题「${this.requireTopic(doc.id).title}」分组「${group}」的 ${members.length} 条问题已处理完。`,
           ...members.map((item) => `- #${item.num}「${item.title}」【${REVIEW_STATUSES.find((s) => s.id === item.status)!.label}】：${(item.conclusion || item.body || "仅确认状态").slice(0, 1000)}`),
           "", "请先用 canvas_read 读取最新画布（本消息可能在收件箱等待过）；只处理来源为你、属于上述分组的条目。若有重新打开的问题，先等待其确认，旧消息不代表它已确认。",
           "汇总最新结论，按原任务已经获得的授权继续推进；原任务授权实施时组织实施和测试，遵守当前角色与权限约束；只授权讨论或测试时保持原范围。搁置条目不实施，已完成的工作不重复执行；结论有变化时只处理差异。新的待决问题写回画布。无需让用户再转述已确认结论，也无需重复发邮件。",
+          ...(role ? ["", role] : []),
         ].join("\n") };
       }
       this.save();
@@ -140,7 +149,7 @@ export class CanvasReturns extends Feature<"sessions"> {
         if (!round.pending || !round.messageId || !round.text) continue;
         if (!Object.values(state.rounds).includes(round)) continue;
         try {
-          await this.f.sessions.inbox.put(round.targetSessionId, round.text, undefined, round.messageId);
+          await this.f.sessions.inbox.put(round.targetSessionId, round.text, undefined, round.messageId, { ...(round.replacesItemId ? { replacesItemId: round.replacesItemId } : {}) });
           round.pending = false;
           delete round.error;
         } catch (error) {

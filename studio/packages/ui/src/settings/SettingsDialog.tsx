@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { StateSnapshot, StudioSettings } from "@amo-studio/protocol";
+import { isCommon, type StateSnapshot, type StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { setThemePref, THEME_LABELS, useThemePref, type ThemePref } from "../lib/theme.js";
 import { ModelsPage } from "./ModelsPage.js";
@@ -24,37 +24,54 @@ import { BotArt, MascotArt, ReaderArt } from "../focus/PixelBot.js";
 import { PET_SKINS, usePetSkin, writePetSkin, type PetSkin } from "../focus/petSkin.js";
 import { pickDirectory } from "../folders/FolderPicker.js";
 import { GitEditorPage } from "./GitEditorPage.js";
+import { PromptTemplateManager } from "../attach/PromptTemplateDialog.js";
 
-/** The pages of 设置, one per area, in the left column. */
+const GROUPS = [
+  { id: "general", label: "通用" },
+  { id: "models", label: "模型与会话" },
+  { id: "tools", label: "工具与自动化" },
+  { id: "advanced", label: "高级设置" },
+  { id: "maintenance", label: "数据与维护" },
+] as const;
+type SettingsGroup = (typeof GROUPS)[number]["id"];
+
+/** Stable page ids keep links from the rest of Studio opening the right group. */
 const PAGES = [
-  { id: "ui", label: "界面" },
-  { id: "models", label: "模型" },
-  { id: "network", label: "网络" },
-  { id: "subsession", label: "子会话" },
-  { id: "quota", label: "额度" },
-  { id: "stats", label: "统计" },
-  { id: "common", label: "项目与目录" },
-  { id: "git-editor", label: "Git 编辑器" },
-  { id: "features", label: "功能" },
-  { id: "mcp", label: "MCP" },
-  { id: "experimental", label: "测试功能" },
-  { id: "duty", label: "值守" },
-  { id: "scratchpad", label: "便签" },
-  { id: "data", label: "数据管理" },
-  { id: "maintenance", label: "维护" },
+  { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 工作步骤 发送 跳到最新 建议 远程" },
+  { id: "common", group: "general", label: "项目与目录", keywords: "默认 公共 工作 文件夹 访问 权限" },
+  { id: "scratchpad", group: "general", label: "便签", keywords: "随手记 快捷键" },
+  { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 压缩" },
+  { id: "subsession", group: "models", label: "子会话", keywords: "型号 渠道 Fast 启动选项 权限 默认" },
+  { id: "prompt-templates", group: "models", label: "提示词模板", keywords: "提示词 模板 prompt template 常用 新建 编辑 全局 项目" },
+  { id: "quota", group: "models", label: "额度", keywords: "用量 余额 订阅 GPT Claude DeepSeek 左下角" },
+  { id: "stats", group: "models", label: "用量统计", keywords: "用量 token 费用 花费 消耗" },
+  { id: "mcp", group: "tools", label: "MCP", keywords: "服务 工具 stdio HTTP" },
+  { id: "git-editor", group: "tools", label: "Git 编辑器", keywords: "程序 路径 自动 检测 打开方式" },
+  { id: "duty", group: "tools", label: "值守", keywords: "调度 定时 任务 自动" },
+  { id: "network", group: "advanced", label: "网络", keywords: "连接 代理 proxy HTTP SOCKS 连通性" },
+  { id: "features", group: "advanced", label: "功能开关", keywords: "开关 命令行 Windows 适配 中转 确认 自动发送" },
+  { id: "experimental", group: "advanced", label: "测试功能", keywords: "实验 开关 开发 界面 dev UI" },
+  { id: "data", group: "maintenance", label: "数据管理", keywords: "归档 恢复 删除 清理" },
+  { id: "maintenance", group: "maintenance", label: "维护", keywords: "版本 运行方式 终端 CLI 更新 安装 Claude Codex Pi" },
 ] as const;
 export type SettingsPage = (typeof PAGES)[number]["id"];
 
 // The page last open, for the next time 设置 opens in this window.
 let lastPage: SettingsPage = "ui";
+let lastGroup: SettingsGroup | null = "general";
+const groupFor = (page: SettingsPage): SettingsGroup => PAGES.find((p) => p.id === page)!.group;
 
-/**
- * 设置, in pages: 界面 (the look, per install), 模型 (how Claude signs in, keys, 常用预设), 项目与目录 (the default project of
- * new tasks, and the common folder for sessions that belong to no single project: the scheduler's rounds, and the default
- * for cross-workspace sessions), 功能 and 便签.
- */
+/** Settings keeps one category expanded; search temporarily previews matching pages across all categories. */
 export function SettingsDialog({ link, state, settings, page: startPage, onClose, onOpenRemote }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void }) {
-  const [page, setPage] = useState<SettingsPage>(startPage ?? lastPage);
+  const [selectedPage, setPage] = useState<SettingsPage>(startPage ?? lastPage);
+  const [expanded, setExpanded] = useState<SettingsGroup | null>(startPage ? groupFor(startPage) : lastGroup);
+  const [search, setSearch] = useState("");
+  const [searchPage, setSearchPage] = useState<SettingsPage | null>(null);
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const searching = terms.length > 0;
+  const pages = PAGES.filter((p) => terms.every((term) => `${GROUPS.find((g) => g.id === p.group)!.label} ${p.label} ${p.keywords}`.toLowerCase().includes(term)));
+  // Search previews never overwrite the page/group to restore when it is cleared.
+  const page = searching ? pages.find((p) => p.id === searchPage)?.id ?? pages.find((p) => p.id === selectedPage)?.id ?? pages[0]?.id : selectedPage;
   const theme = useThemePref();
   const view = useTranscriptView();
   const jumpOnSend = useScrollOnSend();
@@ -64,6 +81,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const size = useDialogSize();
 
+  useEffect(() => { lastPage = selectedPage; lastGroup = expanded; }, [selectedPage, expanded]);
   useEffect(() => setDir(settings?.commonWorkspace?.path ?? ""), [settings?.commonWorkspace?.path]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -90,9 +108,22 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
   }
 
   function open(next: SettingsPage) {
-    lastPage = next;
-    setPage(next);
+    if (searching) setSearchPage(next);
+    else {
+      setPage(next);
+      setExpanded(groupFor(next));
+    }
     setMessage(null);
+  }
+
+  function toggleGroup(group: SettingsGroup) {
+    const next = expanded === group ? null : group;
+    setExpanded(next);
+    if (next && groupFor(selectedPage) !== next) {
+      const first = PAGES.find((p) => p.group === next)!;
+      setPage(first.id);
+      setMessage(null);
+    }
   }
 
   return (
@@ -106,31 +137,86 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
           </button>
         </div>
         <div className="settings-body">
-          <div className="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
-            {PAGES.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                role="tab"
-                id={`settings-tab-${p.id}`}
-                aria-selected={page === p.id}
-                aria-controls="settings-page"
-                className="settings-tab"
-                onClick={() => open(p.id)}
+          <div className="settings-sidebar">
+            <div className="settings-search">
+              <input
+                className="field"
+                type="search"
+                aria-label="搜索设置"
+                placeholder="搜索设置"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setSearchPage(null); }}
                 onKeyDown={(e) => {
-                  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-                  e.preventDefault();
-                  const i = PAGES.findIndex((x) => x.id === page);
-                  const next = PAGES[(i + (e.key === "ArrowDown" ? 1 : PAGES.length - 1)) % PAGES.length]!.id;
-                  open(next);
-                  document.getElementById(`settings-tab-${next}`)?.focus();
+                  if (e.key === "Escape" && search) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSearch("");
+                  }
                 }}
-              >
-                {p.label}
-              </button>
-            ))}
+              />
+              {search && <button type="button" className="settings-search-clear" aria-label="清空设置搜索" onClick={() => setSearch("")}>×</button>}
+            </div>
+            <nav className="settings-nav" aria-label="设置分类" onKeyDown={(e) => {
+              const target = e.target as HTMLElement;
+              if (!["ArrowDown", "ArrowUp", "Home", "End", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+              const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.getClientRects().length > 0);
+              const index = buttons.indexOf(target as HTMLButtonElement);
+              if (index < 0) return;
+              e.preventDefault();
+              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                if (searching) return;
+                const group = target.closest<HTMLElement>("[data-settings-group]")!.dataset.settingsGroup as SettingsGroup;
+                if (e.key === "ArrowRight" && expanded !== group) toggleGroup(group);
+                if (e.key === "ArrowLeft" && expanded === group) {
+                  document.getElementById(`settings-group-${group}`)?.focus();
+                  toggleGroup(group);
+                }
+                return;
+              }
+              const next = buttons[e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (index + (e.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]!;
+              next.focus();
+              if (next.dataset.page) open(next.dataset.page as SettingsPage);
+            }}>
+              {GROUPS.map((group) => {
+                const children = pages.filter((p) => p.group === group.id);
+                if (!children.length) return null;
+                const isOpen = searching || expanded === group.id;
+                return <div className="settings-group" data-settings-group={group.id} key={group.id}>
+                  {searching ? <div className="settings-group-label">{group.label}</div> : <button
+                    type="button"
+                    className="settings-group-toggle"
+                    id={`settings-group-${group.id}`}
+                    aria-expanded={isOpen}
+                    aria-controls={`settings-group-pages-${group.id}`}
+                    onClick={() => toggleGroup(group.id)}
+                  >
+                    <span className="settings-group-arrow" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
+                    {group.label}
+                  </button>}
+                  <div className="settings-group-pages" id={`settings-group-pages-${group.id}`} hidden={!isOpen} role="tablist" aria-label={group.label} aria-orientation="vertical">
+                    {children.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        role="tab"
+                        id={`settings-tab-${p.id}`}
+                        aria-selected={page === p.id}
+                        aria-controls="settings-page"
+                        data-page={p.id}
+                        tabIndex={page === p.id ? 0 : -1}
+                        className="settings-tab"
+                        onClick={() => open(p.id)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>;
+              })}
+            </nav>
           </div>
-          <div className="settings-page" id="settings-page" role="tabpanel" aria-labelledby={`settings-tab-${page}`} key={page}>
+          <div className="settings-page" id="settings-page" role={page ? "tabpanel" : undefined} aria-labelledby={page ? `settings-tab-${page}` : undefined} key={page}>
+            {!page && <p className="settings-search-empty" role="status">没有匹配的设置，试试其他关键词。</p>}
             {page === "network" && <NetworkPage link={link} value={settings?.network} />}
             {page === "ui" && (
               <section className="settings-section" aria-label="界面">
@@ -235,6 +321,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
 
             {page === "models" && <ModelsPage link={link} settings={settings} />}
             {page === "subsession" && <SubsessionPage link={link} settings={settings} />}
+            {page === "prompt-templates" && <PromptTemplateManager link={link} projects={state.workspaces.filter((w) => !isCommon(w))} />}
             {page === "quota" && <QuotaPage link={link} settings={settings} />}
             {page === "stats" && <StatsPage link={link} />}
 

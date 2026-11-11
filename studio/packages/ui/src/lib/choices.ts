@@ -7,7 +7,7 @@ import { readStoredJson, writeStoredJson } from "./stored.js";
 // Models, reasoning efforts and permissions a profile offers (asked from its CLI by the Host), shared by the new-task
 // page, the new-session form, the composer and the presets in 设置.
 
-export const EFFORT_LABELS: Record<string, string> = { none: "不思考", minimal: "极低", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高", ultra: "极致" };
+export const EFFORT_LABELS: Record<string, string> = { none: "不思考", off: "不思考", minimal: "极低", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高", ultra: "极致" };
 export const effortLabel = (e: string) => EFFORT_LABELS[e] ?? e;
 
 // One request per profile for the page's life; a failed one is asked again next time. 设置 → 模型 (order, defaults)
@@ -20,6 +20,12 @@ const dropChoices = () => {
   cache.clear();
   window.dispatchEvent(new Event(CHANGED));
 };
+
+/** Native CLIs can change their login and model list outside Studio, without a Host settings event. */
+export function reloadProfileChoices(profileId: string): void {
+  cache.delete(profileId);
+  window.dispatchEvent(new Event(CHANGED));
+}
 onHostEvent((e) => {
   if (e.type === "profiles.updated") return dropChoices();
   if (e.type !== "settings.updated") return;

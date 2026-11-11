@@ -114,6 +114,7 @@ type UserItem = Extract<SessionItem, { type: "user" }>;
 
 /** A person's message with its delivery set, or taken off (it reached the model). 立即发送, 2026-11-02. */
 export function withDelivery(item: UserItem, delivery: UserDelivery | undefined): UserItem {
+  if (item.delivery === "expired") return item;
   if (item.delivery === delivery) return item;
   const { delivery: _old, ...rest } = item;
   return delivery ? { ...rest, delivery } : rest;

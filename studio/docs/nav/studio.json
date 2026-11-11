@@ -6,7 +6,7 @@
       "label": "Host 进程和 feature 框架",
       "aliases": ["Host", "HostService", "feature", "Feature<", "FEATURES", "feature-deps", "host-process", "常驻后台"],
       "category": "host",
-      "purpose": "Studio 的常驻后台（会话都在里面）：host-process 组装 Store、渠道、三个 runtime 和 RuntimeRouter，再建 HostService；HostService 持有约 37 个 feature（features/<名字>/service.ts），每个 feature 在类上声明它用到的别的 feature，依赖图由测试守着。",
+      "purpose": "Studio 的常驻后台（会话都在里面）：host-process 组装 Store、渠道、四个 runtime 和 RuntimeRouter，再建 HostService；HostService 持有约 37 个 feature（features/<名字>/service.ts），每个 feature 在类上声明它用到的别的 feature，依赖图由测试守着。",
       "steps": [
         "新 feature：建 features/<名字>/（service.ts 里 `class XxxFeature extends Feature<\"用到的 feature\">`，routes.ts、可选 mcp.ts），在 HostService 上加字段，在 features/index.ts 的 FEATURES 加一行。",
         "一个 feature 要用另一个：加进它的 Feature<…>，再把这条边加进 feature-deps.test.ts 的 GRAPH；成环的不让加白名单。",
@@ -78,18 +78,19 @@
         { "label": "子会话设置页", "path": "studio/packages/ui/src/settings/SubsessionPage.tsx" }
       ],
       "related": ["runtime.common", "ui.chat", "studio.relays", "studio.teamRelay"],
-      "next": ["studio/plans/done/message-delivery.md", "studio/plans/done/send-now.md", "studio/plans/done/subsession-mention-2026-11-05.md"]
+      "next": ["studio/plans/done/message-delivery.md", "studio/plans/done/send-now.md", "studio/plans/done/subsession-mention-2026-11-05.md", "studio/plans/done/subsession-settings-layout.md"]
     },
     {
       "id": "studio.tasks",
       "label": "任务和看板",
-      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "框选", "批量拖动", "任务页", "待审阅", "未查看", "说明", "交接", "handoff", "worktree"],
+      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "序列帧", "跑步小人", "框选", "批量拖动", "任务页", "待审阅", "未查看", "说明", "交接", "handoff", "worktree"],
       "category": "host",
       "purpose": "任务（一个项目里的一件事，有自己的会话、看板列、说明、进度、交接）和项目、看板。Studio 从不替人建分支或合并（用户 10 月定）。",
       "anchors": [
         { "label": "TasksFeature", "path": "studio/packages/host/src/features/tasks/service.ts", "anchor": "export class TasksFeature" },
         { "label": "ProjectsFeature", "path": "studio/packages/host/src/features/projects/service.ts", "anchor": "export class ProjectsFeature" },
         { "label": "看板", "path": "studio/packages/ui/src/board/Board.tsx", "anchor": "export function Board" },
+        { "label": "运行中人物（Claude 新版、其余原版）", "path": "studio/packages/ui/src/board/TaskRunner.tsx", "anchor": "export function TaskRunner" },
         { "label": "看板框选", "path": "studio/packages/ui/src/board/useBoardSelection.ts", "anchor": "export function useBoardSelection" },
         { "label": "本轮待审阅查看记录", "path": "studio/packages/ui/src/board/reviewSeen.ts", "anchor": "export function useMarkReviewSeen" },
         { "label": "任务页", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "export function TaskPage" },
@@ -263,9 +264,10 @@
       "label": "提示词模板",
       "aliases": ["提示词模板", "prompt template", "prompt_template_save", "PromptTemplatesFeature"],
       "category": "host",
-      "purpose": "人存的常用提示词（全局或按项目），从输入框 @ 列表里挑；AI 可以存，删要人批准。取代了扩展包（10-31）。维护用的几份原文在 docs/prompt-templates/。",
+      "purpose": "人存的常用提示词（全局或按项目），在设置 → 提示词模板统一管理，从输入框 @ 列表里挑；AI 可以存，删要人批准。取代了扩展包（10-31）。维护用的几份原文在 docs/prompt-templates/。",
       "anchors": [
         { "label": "PromptTemplatesFeature", "path": "studio/packages/host/src/features/prompttemplates/service.ts", "anchor": "export class PromptTemplatesFeature" },
+        { "label": "设置入口与共用编辑器", "path": "studio/packages/ui/src/attach/PromptTemplateDialog.tsx", "anchor": "export function PromptTemplateManager" },
         { "label": "协议", "path": "studio/packages/protocol/src/prompt-templates.ts" },
         { "label": "维护模板原文", "path": "studio/docs/prompt-templates/maintenance-iterate.md" }
       ],
@@ -287,15 +289,15 @@
         { "label": "内置 profile", "path": "studio/packages/host/src/runtime/profiles.ts", "anchor": "BUILTIN" },
         { "label": "额度栏", "path": "studio/packages/ui/src/board/UsageFooter.tsx" }
       ],
-      "related": ["runtime.claude", "runtime.codex", "runtime.dsh", "flow.remoteUsage", "studio.config"],
+      "related": ["runtime.claude", "runtime.codex", "runtime.dsh", "runtime.pi", "flow.remoteUsage", "studio.config"],
       "next": ["studio/plans/done/stage-14.md"]
     },
     {
       "id": "studio.config",
       "label": "设置、常用预设、功能开关",
-      "aliases": ["设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY"],
+      "aliases": ["设置", "搜索设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY"],
       "category": "host",
-      "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。",
+      "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。左侧采用五类二级折叠菜单，GROUPS/PAGES 定义归类；搜索跨分类名称、页面名称和 keywords 筛选，清空恢复原页和展开状态，新增设置项时同步补充分组和关键词。",
       "anchors": [
         { "label": "ConfigFeature", "path": "studio/packages/host/src/features/config/service.ts", "anchor": "export class ConfigFeature" },
         { "label": "开关和 kv 名", "path": "studio/packages/host/src/core/shared.ts", "anchor": "EXPERIMENTAL" },
@@ -307,7 +309,7 @@
         { "label": "读设置", "path": "studio/packages/ui/src/settings/useSettings.ts" }
       ],
       "related": ["studio.channels", "studio.settingsMisc", "ui.shell"],
-      "next": ["studio/packages/app/CHANGELOG.md"]
+      "next": ["studio/packages/app/CHANGELOG.md", "studio/plans/done/settings-navigation-groups.md"]
     },
     {
       "id": "studio.gitEditor",
@@ -327,11 +329,13 @@
     {
       "id": "studio.settingsMisc",
       "label": "设置里的维护、统计、数据管理",
-      "aliases": ["维护终端", "MaintenanceFeature", "统计", "StatsFeature", "数据管理", "DataFeature", "彻底删除"],
+      "aliases": ["维护终端", "CLI 更新", "版本检测", "MaintenanceFeature", "统计", "StatsFeature", "数据管理", "DataFeature", "彻底删除"],
       "category": "host",
-      "purpose": "设置 → 维护（在源码目录开用户自己的 claude / codex 终端，不带 Studio 的模型和环境）、统计（每次打开从会话的轮次现算 token，不存）、数据管理（只删已归档的，连同只属于它的数据）。",
+      "purpose": "设置 → 维护（检查本机 Claude Code / Codex / Pi 版本并逐项更新，在源码目录开用户自己的 Claude Code / Codex 终端）、统计（每次打开从会话的轮次现算 token，不存）、数据管理（只删已归档的，连同只属于它的数据）。CLI 更新在 Host 后台执行，维护页轮询结果；Pi 复用运行时定位并按实际 npm 包名更新，不更新 SDK 自带副本。",
       "anchors": [
         { "label": "维护", "path": "studio/packages/host/src/features/maintenance/service.ts", "anchor": "export class MaintenanceFeature" },
+        { "label": "CLI 更新列表", "path": "studio/packages/ui/src/settings/CliUpdates.tsx", "anchor": "export function CliUpdates" },
+        { "label": "维护接口", "path": "studio/packages/protocol/src/maintenance.ts", "anchor": "export interface MaintenanceRoutes" },
         { "label": "统计", "path": "studio/packages/host/src/features/stats/service.ts", "anchor": "export class StatsFeature" },
         { "label": "数据管理", "path": "studio/packages/host/src/features/datamgmt/service.ts", "anchor": "export class DataFeature" },
         { "label": "统计页", "path": "studio/packages/ui/src/settings/StatsPage.tsx" }
@@ -389,14 +393,14 @@
       "label": "runtime 公共层：路由、发送、自动压缩",
       "aliases": ["runtime", "RuntimeRouter", "RuntimeBase", "agent-env", "自动压缩", "auto compact", "items"],
       "category": "runtime",
-      "purpose": "三个模型后端（Codex、Claude、DSH）共用的接口和路由：RuntimeRouter 按 profile 把会话交给对应 runtime（远程副本交给 remote runtime）；会话行（items）、自动压缩、agent 命令的环境变量和 PATH。",
+      "purpose": "四个模型后端（Codex、Claude、DSH、Pi）共用的接口和路由：RuntimeRouter 按 profile 把会话交给对应 runtime（远程副本交给 remote runtime）；会话行（items）、自动压缩、agent 命令的环境变量和 PATH。",
       "anchors": [
         { "label": "接口和路由", "path": "studio/packages/host/src/runtime/runtime.ts", "anchor": "export class RuntimeRouter" },
         { "label": "会话行", "path": "studio/packages/host/src/runtime/items.ts" },
         { "label": "自动压缩", "path": "studio/packages/host/src/runtime/compact.ts" },
         { "label": "agent 命令的环境", "path": "studio/packages/host/src/runtime/agent-env.ts" }
       ],
-      "related": ["runtime.claude", "runtime.codex", "runtime.dsh", "studio.sessions"],
+      "related": ["runtime.claude", "runtime.codex", "runtime.dsh", "runtime.pi", "studio.sessions"],
       "next": ["studio/plans/host-structure.md"]
     },
     {
@@ -448,6 +452,22 @@
       ],
       "related": ["runtime.common", "studio.channels"],
       "next": ["studio/plans/done/stage-17-dsh.md"]
+    },
+    {
+      "id": "runtime.pi",
+      "label": "Pi runtime（本机 Pi，RPC）",
+      "aliases": ["Pi", "PiRuntime", "pi-mono", "pi-coding-agent", "earendil", "mariozechner"],
+      "category": "runtime",
+      "purpose": "Pi 会话通过本机 pi --mode rpc 运行，沿用 Pi 的模型和登录；会话日志保存在 Studio 数据目录。动态读取模型列表，支持消息、图片、工具输出、排队和中断、会话恢复、扩展提问、手动压缩及 AMO MCP。Pi 暂无只读或工作区沙箱权限，不能用作只读主控；终端接管和分支暂不支持。",
+      "anchors": [
+        { "label": "PiRuntime", "path": "studio/packages/host/src/runtime/pi/pi-runtime.ts", "anchor": "export class PiRuntime" },
+        { "label": "Pi 安装与 RPC 启动", "path": "studio/packages/host/src/runtime/pi/launch.ts" },
+        { "label": "内置 Pi profile", "path": "studio/packages/host/src/runtime/profiles.ts", "anchor": "BUILTIN_PROFILES" },
+        { "label": "设置中的 Pi 说明", "path": "studio/packages/ui/src/settings/ModelsPage.tsx", "anchor": "pi-section" },
+        { "label": "子会话权限边界", "path": "studio/packages/host/src/features/sessions/service.ts", "anchor": "export function peerPermission" }
+      ],
+      "related": ["runtime.common", "studio.channels", "studio.sessions", "host.agentMcp"],
+      "next": ["studio/plans/done/pi-runtime.md", "studio/packages/host/src/runtime/pi/pi-runtime.ts"]
     },
     {
       "id": "app.shell",
@@ -502,7 +522,7 @@
       "label": "Focus 窗口（浮窗）",
       "aliases": ["Focus", "FocusApp", "置顶", "pin", "机器人", "bot", "等你", "太阳按钮", "主题切换"],
       "category": "ui",
-      "purpose": "常驻的小浮窗：哪些会话在跑、哪些在等人（审批、提问、确认），置顶一个任务，机器人形象。顶栏太阳按钮切换浅色／深色主题；右键打开 Focus 设置。",
+      "purpose": "常驻的小浮窗：哪些会话在跑、哪些在等人（审批、提问、确认），置顶一个任务，机器人形象。点击顶栏「需要你」在工作台打开第一个待处理项；太阳按钮切换浅色／深色主题；右键打开 Focus 设置。",
       "anchors": [
         { "label": "Focus 界面", "path": "studio/packages/ui/src/focus/FocusApp.tsx", "anchor": "export function FocusApp" },
         { "label": "进行中", "path": "studio/packages/ui/src/focus/FocusWorking.tsx" },
@@ -517,7 +537,7 @@
       "label": "新建任务页",
       "aliases": ["新建任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建"],
       "category": "ui",
-      "purpose": "新建任务：选项目、模型、强度，第一句话；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
+      "purpose": "新建任务：选项目、模型、强度，第一句话；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
       "anchors": [
         { "label": "新建任务页", "path": "studio/packages/ui/src/newtask/NewTaskPage.tsx", "anchor": "export function NewTaskPage" },
         { "label": "接续已有会话", "path": "studio/packages/ui/src/newtask/ResumePicker.tsx" },

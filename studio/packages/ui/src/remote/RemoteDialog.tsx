@@ -692,6 +692,7 @@ function AllowedModels({ allowed, profiles, busy, onSave }: { allowed: RemoteAll
         </button>
       </div>
       {!firstOk && <span className="form-error">默认的模型要在勾选的里面</span>}
+      {own.some((p) => p.runtime === "pi" && (!picked.length || picked.includes(p.id))) && <span className="settings-hint" data-testid="remote-pi-permission-hint">Pi 只支持完全访问。权限选「只读」或「可以改文件」时，远程无法新开 Pi 会话。</span>}
       <span className="settings-hint">远程会话的命令以这台电脑上你的用户身份运行，用的是这台电脑的模型账号。</span>
     </div>
   );

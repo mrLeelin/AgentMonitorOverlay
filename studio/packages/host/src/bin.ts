@@ -30,8 +30,9 @@ function testModelOptions(): Partial<StartHostOptions> {
   if (!url) return {};
   const claudeUrl = process.env.AMO_STUDIO_TEST_CLAUDE_URL;
   const dshAgent = process.env.AMO_STUDIO_TEST_DSH_AGENT;
+  const piAgent = process.env.AMO_STUDIO_TEST_PI_AGENT;
   // Under Electron the Host's own executable is Electron: the agent runs on the system's Node, as DSH would.
-  const node = dshAgent ? resolveNode() : null;
+  const node = dshAgent || piAgent ? resolveNode() : null;
   return {
     profiles: [
       { id: "codex-mock", label: "Mock 模型", runtime: "codex", provider: "amo-mock", model: "mock-model", credentialId: "mock" },
@@ -43,8 +44,10 @@ function testModelOptions(): Partial<StartHostOptions> {
           ]
         : []),
       ...(dshAgent ? [{ id: "dsh-mock", label: "Mock DSH", runtime: "dsh" as const, provider: "deepseek-official", model: null, credentialId: "mock" }] : []),
+      ...(piAgent ? [{ id: "pi", label: "Pi", runtime: "pi" as const, provider: null, model: null }] : []),
     ],
     ...(dshAgent && node ? { dshAgent: { command: node, args: [dshAgent] } } : {}),
+    ...(piAgent && node ? { pi: { command: { command: node, args: [piAgent] } } } : {}),
     // Claude 多账号: added accounts' dirs in the test's data folder, never the person's ~/.claude-accounts.
     claudeAccountsDir: join(dataDir, "claude-accounts"),
     // MCP 设置: the "person's" MCP servers from a file of the test's own, never the real ~/.claude.json.

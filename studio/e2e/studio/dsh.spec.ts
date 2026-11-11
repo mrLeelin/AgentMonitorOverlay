@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -149,7 +150,7 @@ test("设置 → 模型: the DSH clone's place, its version and 「检查」 (st
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="dsh-mock"]').click();
   // DSH compacts by itself; its page says so instead of a setting.
   await expect(dialog.getByTestId("auto-compact-dsh")).toContainText("80%");
@@ -199,7 +200,7 @@ test("设置 → 模型 → DeepSeek: signs in with the DSH desktop app's accoun
     const { page } = studio;
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog", { name: "设置" });
-    await dialog.getByRole("tab", { name: "模型" }).click();
+    await selectSettingsPage(dialog, "模型与渠道");
     await dialog.locator('[data-testid="channel-nav"][data-id="dsh-mock"]').click();
     const section = dialog.getByTestId("dsh-section");
     // A key is saved here: it is what DeepSeek uses until the account is chosen.

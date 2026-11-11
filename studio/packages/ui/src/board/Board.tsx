@@ -11,6 +11,7 @@ import { setGroupByTopic, useGroupByTopic } from "./prefs.js";
 import { dutyOfTask, useDuty } from "../duty/duty.js";
 import { useBoardSelection } from "./useBoardSelection.js";
 import { useReviewUnseen } from "./reviewSeen.js";
+import { TaskRunner } from "./TaskRunner.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -324,7 +325,7 @@ function TaskCard({
           <>
             <span className="dot" style={{ background: look.dot }} />
             <span style={{ color: look.text }}>{look.label}</span>
-            {status === "running" && <span className="card-runner" aria-hidden="true" />}
+            {status === "running" && <TaskRunner sessions={sessions} />}
           </>
         ) : (
           <>

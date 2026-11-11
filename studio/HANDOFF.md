@@ -28,9 +28,27 @@
 
 ## 还开着的事
 
+- 新建任务页底部操作行：开始在左侧，新增「提示词模板」直接打开并在光标处插入，「放进待办」在右下角。类型检查、构建、3 条隔离 Electron 用例及 3 条导航检查通过，已检查深浅主题和窄窗口截图 `screenshots/studio/newtask-actions-*.png`。源码版刷新窗口即可加载，未重启 Host，未提交或发布。
+
+- 设置新增「提示词模板」统一管理全局与各项目模板，复用 @ 弹窗的编辑器；修正设置搜索抢焦点及模板编辑延迟聚焦。类型检查、构建、3 条导航检查和 3 条隔离 Electron 用例通过，已检查深浅主题与小尺寸截图 `screenshots/studio/prompt-template-settings-*.png`。源码版刷新窗口即可加载，未重启 Host，未提交或发布。
+
+- 设置导航已整理为五类二级折叠菜单：单组展开、页面和展开状态记忆，跨分类搜索并在清空后恢复位置，支持方向键、Home/End 和 Esc；原页面 id 与外部快捷入口保留。类型检查、构建、3 条导航检查和 13 条隔离 Electron 测试通过，已检查深浅主题与小尺寸截图 `screenshots/studio/settings-groups-*.png`；方案 `plans/done/settings-navigation-groups.md`。源码版刷新窗口即可加载，未重启 Host，未提交或发布。
+
+- DSH「Internal error」已定位为旧 `figmaMcpRelay` HTTP MCP 返回 410（服务已改用 CLI/WebSocket）；当前 Studio 已关闭该失效 MCP，真实 DSH 使用已保存 Key 回复 OK，诊断会话已归档，无需重启。源码补充具体 MCP 失败名称和操作提示，51 条相关测试及类型检查通过，待正常重启 Host 后加载；未提交或发布。
+
+- Focus 顶栏「需要你」已可点击，在工作台打开第一个待处理项；复用机器人跳转，收起和点击穿透均可用。前端类型检查、构建及轻量浏览器验证通过（两个待处理项的首项选择、收起、穿透、非拖动区域），已检查 `screenshots/studio/focus-needs-{dark,light}.png`。完整类型检查和隔离 Electron 验证受当前系统内存不足阻止；现有 Electron 回归用例已调整，待空闲复测。未重启当前 Studio，未提交或发布。
+
+- 子会话设置已按选定的 A 版改为渠道、型号列表和编辑器分栏，支持搜索、配置状态、Fast 三态、恢复默认与清除；保留旧型号配置和 Pi 限制，连续保存与失败恢复已验证。类型检查、构建、19 条相关单测、3 条导航检查及 5 条隔离 Electron 测试通过，深浅主题截图 `screenshots/studio/subsession-layout-a-*.png`；方案 `plans/done/subsession-settings-layout.md`。源码版刷新窗口即可加载，未重启 Host，未提交或发布。
+
+- 维护页 CLI 更新列表：Claude Code / Codex / Pi 的版本检测、逐项后台更新、进度和失败重试已完成，按实际安装位置更新并复核版本；Pi 复用运行时定位，按实际 npm 包名和 prefix 更新，不切换安装包。安装器超时清理仅本次进程树。类型检查、构建、35 条维护与 Pi 定向单测、3 条导航检查及 4 条 CLI 列表隔离 Electron 测试通过，深浅主题及 Pi 更新结果截图 `screenshots/studio/cli-updates-*.png`。未实际升级本机 CLI，未提交、发布或重启当前 Host；待人在空闲时重启加载。
+
+- Claude 运行中人物：已按确认的预览接入橙发八帧跑步动画，看板、画布任务卡与引用卡共用，其他模型保留原版；类型检查、15 条相关单测、构建和 2 条隔离 Electron 测试通过，截图 `screenshots/studio/claude-runner-*.png`。只需刷新当前窗口加载，未重启 Host，未提交或发布。
+
+- Pi 已接入：本机 RPC、模型设置、消息与图片、工具结果、问答、排队/停止/恢复及 AMO MCP；仅完全访问，不能作为只读主控。方案 `plans/done/pi-runtime.md`；定向测试、类型检查、构建和隔离 Electron 验证通过，截图 `screenshots/studio/pi-*.png`。11-11 修复 `pi-mcp-adapter` 替换内置连接器导致启动失败，已用本机 Pi 离线验证适配器和原生 MCP 连接。未提交、发布或重启当前 Host，待人在空闲时重启加载。
+
 - 看板待审阅「未查看」提示：卡片橙黄色标签与左侧细色边，打开后按本轮清除，刷新保留，再次进入待审阅重新提醒。24 条相关单测、类型检查、构建和隔离 Electron 验证通过，深浅主题截图在 `screenshots/studio/board-review-unseen-*.png`。未提交、发布或加载当前使用中的 Host。
 
-- 共同需求：后台与界面已完成并通过隔离验证（`plans/done/shared-task-context.md`），待主控与独立验收复核；未提交、发布或加载用户 Host。任务页可选查看版本/采用/历史，交付保留实际版本和前置结果，画布轻量提示更新；旧未绑定任务兼容。
+- 共同需求：后台与界面及通知/询问修复已实现（`plans/done/shared-task-context.md`），待主控与独立验收复核；未提交、发布或加载用户 Host。通知保留永久过期或已送达历史、按当前有效业务重建并显示真实失败重试；结构化询问与工作跨真实回合，询问和自动状态保留验收，冷恢复派发前重核版本。旧未绑定任务与普通消息兼容；无法核验原只读权限的 DSH 询问及未协商用途的远程询问明确拒绝。
 - 画布任务流转动画：管理线顺流执行、交付回流、退回修改与验收状态，依赖线展示等待前置及后续执行；支持本机动画开关和系统减少动态效果。类型检查、构建、41 条画布单测及 4 条隔离 mock Electron 验证通过，截图在 `screenshots/studio/canvas-flow-*.png`。仅改前端，当前窗口尚未刷新加载，未提交或发布。
 - 任务自行设主控：新增 `task_set_lead`，当前轮和任务工作安定后保留并归档旧会话，自动新开同任务只读主控并交接；停止取消、在途会话/分支和恢复去重已验证，101 条相关测试、类型检查和构建通过（`plans/done/task-self-lead.md`）。未重启当前 Host，未提交或发布。
 - 画布协作点线已整项移除：界面、MCP、HTTP、协议与校验已清理，新增升级迁移仅清除旧协作线，管理/依赖与普通注释保持；定向单测、类型检查、构建及 7 条隔离 mock Electron 验证通过（`plans/done/remove-canvas-collaboration.md`）。未提交、发布或加载当前运行的 Host，待之后重启生效；本轮未启动教学实测。

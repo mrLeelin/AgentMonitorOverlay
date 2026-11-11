@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import type { Topic } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -24,7 +25,7 @@ test("turn planning off and on again", async () => {
   // Off: it goes away; the dialog lists it.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "功能", exact: true }).click();
+  await selectSettingsPage(dialog, "功能开关");
   // 扩展包 was removed (2026-10-31).
   await expect(dialog.getByTestId("feature-packs")).toHaveCount(0);
   await dialog.getByTestId("feature-planning").uncheck();
@@ -50,7 +51,7 @@ test("命令行适配 is on by default and can be turned off", async () => {
   expect((await studio.api<{ shellHelp: boolean }>("GET", "/api/settings")).shellHelp).toBe(true);
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "功能", exact: true }).click();
+  await selectSettingsPage(dialog, "功能开关");
   const box = dialog.getByTestId("shell-help");
   await box.scrollIntoViewIfNeeded();
   await expect(box).toBeChecked();

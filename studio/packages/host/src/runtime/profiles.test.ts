@@ -31,6 +31,10 @@ describe("codexServerSpec", () => {
     expect(BUILTIN_PROFILES.filter((p) => p.runtime === "codex").map((p) => p.id)).toEqual(["codex-default"]);
   });
 
+  it("uses Pi's own model and login without a Studio credential", () => {
+    expect(byId("pi")).toEqual({ id: "pi", label: "Pi", runtime: "pi", provider: null, model: null });
+  });
+
   it("makes a routed profile the server default and passes the key only through env", () => {
     const spec = codexServerSpec(RELAY, PROFILES, creds, OPTS);
     const c = config(spec.configArgs);

@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -39,7 +40,7 @@ test("the title bar's 便签 starts the 便签 program, which takes Studio's pag
   // Not started by Studio in tests until asked; 设置 → 便签 says so.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "便签" }).click();
+  await selectSettingsPage(dialog, "便签");
   const section = dialog.getByTestId("notes-link");
   await expect(section.getByTestId("notes-link-state")).toHaveText("没有在运行");
   await expect(section.getByTestId("notes-start")).toBeVisible();
@@ -63,7 +64,7 @@ test("the title bar's 便签 starts the 便签 program, which takes Studio's pag
 
   // 设置 → 便签 now: running, with its shortcut, and the buttons to it.
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "便签" }).click();
+  await selectSettingsPage(dialog, "便签");
   await expect(section.getByTestId("notes-link-state")).toHaveText("运行中");
   await expect(section).toContainText("快捷键 Ctrl + Shift + F12");
   await expect(section.getByRole("button", { name: "显示便签" })).toBeVisible();

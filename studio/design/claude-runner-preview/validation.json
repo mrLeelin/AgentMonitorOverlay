@@ -1,0 +1,59 @@
+﻿{
+    "Frames":  8,
+    "SheetWidth":  768,
+    "SheetHeight":  96,
+    "FrameSize":  96,
+    "DisplaySize":  24,
+    "DurationSeconds":  0.8,
+    "SharedScale":  0.31541218637992829,
+    "SourceBoxes":  [
+                        {
+                            "X":  20,
+                            "Y":  216,
+                            "Width":  229,
+                            "Height":  278
+                        },
+                        {
+                            "X":  291,
+                            "Y":  216,
+                            "Width":  229,
+                            "Height":  278
+                        },
+                        {
+                            "X":  563,
+                            "Y":  216,
+                            "Width":  229,
+                            "Height":  279
+                        },
+                        {
+                            "X":  829,
+                            "Y":  216,
+                            "Width":  235,
+                            "Height":  259
+                        },
+                        {
+                            "X":  1105,
+                            "Y":  217,
+                            "Width":  230,
+                            "Height":  277
+                        },
+                        {
+                            "X":  1376,
+                            "Y":  216,
+                            "Width":  229,
+                            "Height":  278
+                        },
+                        {
+                            "X":  1648,
+                            "Y":  216,
+                            "Width":  230,
+                            "Height":  278
+                        },
+                        {
+                            "X":  1913,
+                            "Y":  216,
+                            "Width":  237,
+                            "Height":  258
+                        }
+                    ]
+}

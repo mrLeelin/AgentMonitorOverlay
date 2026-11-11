@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude 跑步序列帧预览</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:40px;background:#111722;color:#edf1f7;font:15px/1.6 "Microsoft YaHei",sans-serif}main{max-width:880px;margin:auto}h1{font-size:26px;margin:0 0 8px}p{color:#abb8cb;margin:0 0 24px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:18px}.panel{padding:24px;border:1px solid #344055;border-radius:16px;background:#1b2432}.panel h2{font-size:17px;margin:0}.stage{height:230px;display:grid;place-items:center}.sprite{--size:160px;width:var(--size);height:var(--size);background-image:var(--art);background-size:calc(var(--size)*8) var(--size);background-repeat:repeat-x;animation:run .8s steps(8) infinite}.new{--art:url('./claude-run-8x96.png')}.old{--art:url('../../packages/ui/src/board/assets/chibi-run.png')}.badge{display:flex;align-items:center;gap:8px;color:#afbccf;height:38px}.badge .sprite{--size:24px;margin-left:-4px}.dot{width:7px;height:7px;background:#55c995;border-radius:50%}.light{background:#fafbff;color:#485367;border-radius:8px;padding:6px 12px;margin-top:10px}.light .badge{color:#485367}small{color:#8999b0}button{margin:24px 10px 24px 0;padding:8px 16px;background:#28394e;border:1px solid #51617a;border-radius:7px;color:white;cursor:pointer}body.paused .sprite{animation-play-state:paused}.strip{width:100%;height:auto;background:#1b2432;border-radius:12px}a{color:#a6caff}footer{margin-top:18px;color:#8999b0}@keyframes run{to{background-position-x:calc(var(--size)*-8)}}@media(max-width:620px){body{padding:20px}.comparison{grid-template-columns:1fr}}
+</style>
+<main>
+<h1>Claude 跑步序列帧</h1>
+<p>透明底 · 8 帧 · 每轮 0.8 秒。下方同时展示放大动作和 24px 实际大小。</p>
+<div class="comparison">
+<section class="panel"><h2>Claude · 橙发人物新版</h2><div class="stage"><div class="sprite new"></div></div><div class="badge"><i class="dot"></i>运行中<div class="sprite new"></div></div><div class="light"><div class="badge"><i class="dot"></i>运行中<div class="sprite new"></div></div></div></section>
+<section class="panel"><h2>其他模型 · 保留原版</h2><div class="stage"><div class="sprite old"></div></div><div class="badge"><i class="dot"></i>运行中<div class="sprite old"></div></div><div class="light"><div class="badge"><i class="dot"></i>运行中<div class="sprite old"></div></div></div></section>
+</div>
+<button id="pause">暂停动画</button><small>已于 2026-11-11 确认并接入看板和画布。</small>
+<img class="strip" src="./claude-run-8x96.png" alt="橙发人物的八帧跑步序列图">
+<footer><a href="./preview.gif">查看 GIF 动态对比</a> · <a href="./claude-run-8x96.png">查看透明 PNG 序列图</a></footer>
+</main>
+<script>document.getElementById('pause').onclick=function(){const paused=document.body.classList.toggle('paused');this.textContent=paused?'继续动画':'暂停动画'};</script>
+</html>

@@ -1,0 +1,17 @@
+# Claude 跑步序列帧预览
+
+状态：2026-11-11 用户确认预览后已接入正式资源 `packages/ui/src/board/assets/claude-run.png`；看板和画布（含引用卡）共用 `TaskRunner`，Claude 使用新版，其余保留原版。类型检查、15 条相关单测、构建和 2 条隔离 Electron 测试通过，截图在 `screenshots/studio/claude-runner-*.png`。当前用户窗口刷新后加载，未重启 Host，未提交或发布。
+
+2026-11-10 用户要求：图 1 的橙发人物做成图 2 状态标记使用的同款跑步序列帧；后续仅 Claude 使用新版，其他模型保留旧版；先展示序列帧。
+
+使用内置 imagegen 工具，以用户原图和现有 `packages/ui/src/board/assets/chibi-run.png` 为参考，一次生成整条八帧。随后做边缘清理编辑，并用 System.Drawing 按统一比例、统一垂直原点装入八个 96px 方格，保留帧间上下起伏。GIF 是本地按每秒 10 帧合成的预览。
+
+导出：`claude-run-8x96.png` 为 768×96 RGBA，界面显示 24×24，八帧循环 0.8 秒；`preview.html` 提供新旧版对比、深浅背景和暂停；`preview.gif` 为动态对比。`validation.json` 记录源图每格边界与统一缩放值。
+
+## 首次生成提示词
+
+Use case: identity-preserve. Asset type: production transparent running animation spritesheet for a tiny desktop task status indicator. Image 1 is CHARACTER IDENTITY reference: only the orange-haired chibi girl in the foreground. Ignore its blue border, the background and the other girl. Preserve her warm orange long hair with straight bangs, orange flower with dark ribbons on the right of her head, warm happy face, white puff sleeves and white blouse with small dark bow, brown corset bodice, cream skirt with brown and orange trim, pale legs and brown shoes. Image 2 is MOVEMENT, CAMERA, PROPORTION and SHEET LAYOUT reference: an 8-frame single horizontal row, three-quarter facing RIGHT in-place running loop. Make the girl from image 1 perform this exact same type of running cycle as image 2. Draw EIGHT FULL-BODY FRAMES in EXACTLY EIGHT equal square cells in ONE HORIZONTAL ROW, no second row, transparent canvas aspect ratio 8:1, ideal 2048x256. Use the same polished hand-drawn anime chibi sprite treatment as image 2, oversized head, small body, highly readable when reduced to 24px. Same character size in all frames. Same stationary horizontal center in each cell and consistent ground baseline. Right facing three-quarter view throughout. A coherent 8 phase run cycle: contact, recoil, passing, high point, opposite contact, opposite recoil, opposite passing, opposite high point. Arms and legs alternate clearly, feet lift. Hair and skirt bounce and trail left with the motion. Maintain the flower, palette, face and outfit consistently in every cell. One seamless loop, last frame leads naturally back to first. Leave at least 8 percent transparent padding in each cell. NO labels, numbers, grid lines, scenery, shadow, blue border, UI badge, text, watermarks, second character. Actual alpha transparency, no checkerboard painted into image.
+
+## 边缘清理提示词
+
+Precise-object-edit of this production 8-frame animation sprite strip. ONLY clean the bright pure-red and yellow-green matte contamination / speckled jagged colored halos immediately OUTSIDE the hair, flower, dress, legs and shoes of all eight sprites. These bright red pixel patches are unwanted background-removal artifacts. Replace those unwanted outline/matte speckles with full alpha transparency and leave clean smooth anti-aliased orange-brown / cream edges that work on BOTH dark and light backgrounds. Keep all EIGHT frames, exact frame order, character identity, positions, poses, proportions, colors, orange flower, natural orange hair, cream/brown costume, happy closed-eye expression and running movement absolutely unchanged. Keep a single horizontal row and the same transparent canvas. Do not add anything. Do not paint a background, checkerboard or ground shadow. All empty area must be true transparent alpha. This is edge cleanup ONLY.

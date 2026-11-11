@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -272,7 +273,7 @@ test("without the AMO platform's login, 远程 says where to log in and the rest
   await s.page.getByRole("button", { name: "设置" }).first().click();
   const dialog = s.page.getByRole("dialog", { name: "设置" });
   await expect(dialog.getByRole("tab", { name: /远程/ })).toHaveCount(0);
-  await dialog.getByRole("tab", { name: "界面" }).click();
+  await selectSettingsPage(dialog, "界面");
   await expect(dialog.getByTestId("settings-remote-moved")).toContainText("远程功能在顶栏的「远程」里");
   await dialog.getByTestId("settings-open-remote").click();
   await expect(dialog).toHaveCount(0);

@@ -14,6 +14,25 @@ export interface StudioSource {
 
 /** Which CLI the maintenance terminal runs. */
 export type MaintenanceCli = "claude" | "codex";
+/** Updating supports Pi as well; the maintenance terminal still opens only Claude Code or Codex. */
+export type MaintenanceUpdateCli = MaintenanceCli | "pi";
+
+export interface MaintenanceCliStatus {
+  cli: MaintenanceUpdateCli;
+  name: string;
+  path: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  canUpdate: boolean;
+  updateCommand: string | null;
+  state: "idle" | "checking" | "updating" | "updated" | "error";
+  message: string | null;
+}
+
+export interface MaintenanceCliList {
+  items: MaintenanceCliStatus[];
+}
 
 export interface MaintenanceInfo {
   /** "source": started from a git checkout (start-studio.cmd, npm start); "packaged": the portable build. */
@@ -44,6 +63,9 @@ export interface MaintenanceTerminalResult {
 /** 设置 → 维护 (2026-10-20): how Studio was started, a model's CLI in a terminal at the repo. */
 export interface MaintenanceRoutes {
   "GET /api/maintenance": { req: void; res: MaintenanceInfo };
+  "GET /api/maintenance/clis": { req: void; res: MaintenanceCliList };
+  "POST /api/maintenance/clis/check": { req: void; res: MaintenanceCliList };
+  "POST /api/maintenance/clis/update": { req: { cli: MaintenanceUpdateCli }; res: MaintenanceCliStatus };
   /** Opens a terminal in the Studio repo running the person's own CLI (Claude Code or Codex); 400 when not run from source or the CLI is not found. */
   "POST /api/maintenance/terminal": { req: MaintenanceTerminalRequest; res: MaintenanceTerminalResult };
 }

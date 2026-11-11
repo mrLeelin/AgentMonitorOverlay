@@ -35,6 +35,7 @@ import { ClaudeAccounts } from "./accounts.js";
 import { ClaudeWake } from "./wake-control.js";
 import { adoptedKey, isCompactSummary, listOutsideSessions, previewOutsideSession, sameFolder } from "./outside.js";
 import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
+import { currentMessagePurpose, queueMessagePurpose } from "../message-purpose.js";
 
 export { claudeCommands, localCommandText } from "./commands.js";
 export { askedQuestions, describeToolUse, retryReason } from "./tool-use.js";
@@ -186,7 +187,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- operations -------------------------------------------------------------------------------------------------
 
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; resumeFrom?: string }): Promise<Session> {
+  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session> {
     const profile = this.profile(input.profileId);
     if (input.resumeFrom) return this.resumeOutside(input, profile, input.resumeFrom);
     // Fail early (missing provider, key or login) rather than on the first message.
@@ -205,7 +206,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
     });
     rememberSessionLogin(this.store, session.id, home.login);
-    if (input.text) await this.sendMessage(session.id, input.text);
+    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
     return this.store.getSession(session.id)!;
   }
 
@@ -250,7 +251,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * sits beside the original (its folder is the original's); the CLI finds it by id from the project folder Studio runs
    * it in (checked 2026-11-05). The conversation since its last compaction is imported, as the model will see it.
    */
-  private async resumeOutside(input: { taskId: Id | null; topicId: Id | null; workspace: Workspace; title?: string; text?: string; options?: SessionOptions }, profile: ModelProfile, ref: string): Promise<Session> {
+  private async resumeOutside(input: { taskId: Id | null; topicId: Id | null; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }, profile: ModelProfile, ref: string): Promise<Session> {
     const { home, info } = await this.outsideSource(profile.id, ref);
     const original = (info.customTitle || info.summary || info.firstPrompt || "").trim().slice(0, 100);
     const title = (input.title?.trim() || original || "接续的会话").slice(0, 100);
@@ -278,7 +279,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     ];
     this.appendItem(session.id, { type: "notice", level: "info", message: parts.filter(Boolean).join("") });
     importTranscript(this.core, session.id, input.workspace.path, messages.filter((m) => !isCompactSummary(m)));
-    if (input.text) await this.sendMessage(session.id, input.text);
+    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
     return this.store.getSession(session.id)!;
   }
 
@@ -294,7 +295,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
     return this.deliver(session, content, options, (mode, delivery) => {
       const shown = images.map((a) => ({ id: a.id, path: a.path }));
-      return this.appendItem(sessionId, { type: "user", text, ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) }, { method: mode === "queue" ? "user/queued" : "user" }).id;
+      return this.appendItem(sessionId, { type: "user", text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) }, { method: mode === "queue" ? "user/queued" : "user" }).id;
     });
   }
 
@@ -303,24 +304,43 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * until command_lifecycle says the model got it — only when the CLI reports msg_lifecycle_v1, else it would never
    * clear). `item` makes the message's row (or brings one back, for 重新发送) and returns its id.
    */
-  private async deliver(session: Session, content: SDKUserMessage["message"]["content"], options: SendOptions, item: (mode: SendMode, delivery: UserDelivery | undefined) => Id): Promise<{ mode: SendMode }> {
+  private async deliver(session: Session, content: SDKUserMessage["message"]["content"], options: SendOptions, item: (mode: SendMode, delivery: UserDelivery | undefined) => Id, again?: Id): Promise<{ mode: SendMode }> {
     const sessionId = session.id;
     await this.closing.get(sessionId);
+    options.beforeDispatch?.();
+    if (again) this.assertCurrentMessage(sessionId, again);
     const live = this.ensureLive(this.writable(sessionId));
     const mode: SendMode = live.running ? "queue" : "start";
-    if (!live.running) this.turns.started(sessionId, live, "person");
-    const itemId = item(mode, mode === "queue" && live.capabilities.has("msg_lifecycle_v1") ? "waiting" : undefined);
+    if (!live.running) { queueMessagePurpose(this.store, sessionId, options.purpose ?? "work", false); this.turns.started(sessionId, live, "person"); }
+    const delivery = mode === "queue" && live.capabilities.has("msg_lifecycle_v1") ? "waiting" : undefined;
+    const itemId = item(mode, "held");
     const uuid = randomUUID();
     live.undelivered.set(uuid, itemId);
     this.clearIdle(live);
     // Goes in once the permission mode is in force, without waiting for it here: a new session's process takes a few
     // seconds to come up, and the caller (开始, 新会话) is not held for it (2026-10-23). Sends queue up in order on it.
     void live.ready.then(() => {
+      this.assertCurrentMessage(sessionId, itemId);
+      options.beforeDispatch?.();
+      this.updateItem(itemId, (row) => row.type === "user" ? withDelivery(row, delivery) : row);
       live.push({ content, uuid });
       // Older CLIs have no consumed-message acknowledgement: report transport delivery only after the process is ready.
       if (!live.capabilities.has("msg_lifecycle_v1")) {
         const row = this.store.getItem(itemId);
+        if (mode === "start") this.messagePurposeConsumed(sessionId, itemId);
         if (row?.type === "user") this.emit("message-delivered", sessionId, row.text);
+      }
+    }).catch((error: unknown) => {
+      live.undelivered.delete(uuid);
+      const row = this.store.getItem(itemId);
+      if (row?.type !== "user" || row.delivery !== "expired") {
+        this.updateItem(itemId, (current) => current.type === "user" ? { ...withDelivery(current, "unsent"), deliveryReason: error instanceof Error ? error.message : String(error) } : current);
+        this.emit("log", `Claude message dispatch failed for ${sessionId}: ${String(error)}`);
+      }
+      if (mode === "start" && !live.undelivered.size) {
+        this.turns.end(live, "interrupted");
+        live.running = false;
+        this.setStatus(sessionId, "idle");
       }
     });
     // 立即发送 from the composer (Ctrl+Enter, 2026-11-02): the running turn gives way to it, as the button under a
@@ -354,6 +374,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       live.onAtCli.delete(uuid);
       if (!live.undelivered.has(uuid) || !live.running || live.finished) return;
     }
+    this.assertCurrentMessage(sessionId, itemId);
     live.givingWay = true;
     const request = (live.q as unknown as { request?: (r: Record<string, unknown>) => Promise<{ response?: { send_now?: unknown } } | undefined> }).request;
     try {
@@ -384,9 +405,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (item.delivery !== "unsent" && item.delivery !== "held") return { mode: this.live.get(sessionId)?.running ? "queue" : "start" };
     const content = messageContent(item.text, images);
     return this.deliver(session, content, options, (_mode, delivery) => {
+      this.assertCurrentMessage(sessionId, itemId);
       this.updateItem(itemId, (it) => (it.type === "user" ? withDelivery(it, delivery) : it));
       return itemId;
-    });
+    }, itemId);
   }
 
   /**
@@ -749,10 +771,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         // conversation, and its output counts come closer to the real ones.
         forwardSubagentText: true,
         promptSuggestions: readChatSettings(this.store).promptSuggestions,
-        canUseTool: (toolName, toolInput, ctx) => this.isLead(session.id) && !leadToolAllowed(toolName)
+        canUseTool: (toolName, toolInput, ctx) => (this.isLead(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry") && !leadToolAllowed(toolName)
           ? Promise.resolve({ behavior: "deny" as const, message: LEAD_READ_ONLY_REASON })
           : this.asks.askPerson(session.id, live, toolName, toolInput, ctx),
-        hooks: { PreToolUse: [...(leadReadOnlyHooks(() => this.isLead(session.id)).PreToolUse ?? []), ...(STRIP_SUBAGENT_MODE.PreToolUse ?? [])] },
+        hooks: { PreToolUse: [...(leadReadOnlyHooks(() => this.isLead(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry").PreToolUse ?? []), ...(STRIP_SUBAGENT_MODE.PreToolUse ?? [])] },
         ...this.mcpOptions(session.id, plan, live),
         // MCP 设置 (2026-11-04): in the person's own config dir the CLI loads their servers itself (OAuth, plugins and
         // its approvals as in a terminal); those turned off are denied to this process only (managedSettings is the

@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import type { Session, StateSnapshot, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -42,7 +43,7 @@ test("projects and topics are archived from the left column; 数据管理 restor
   // 设置 → 数据管理 lists both, newest first.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "数据管理" }).click();
+  await selectSettingsPage(dialog, "数据管理");
   const rows = dialog.getByTestId("data-row");
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText("数值");

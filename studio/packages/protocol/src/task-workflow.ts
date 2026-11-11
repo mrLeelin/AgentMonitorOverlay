@@ -41,4 +41,6 @@ export interface TaskWorkflow {
   results: TaskResult[];
   decisions: DecisionRequest[];
   deliveryIssues: Array<{ id: Id; taskId: Id; detail: string }>;
+  /** Durable transport history. Expired notices are historical, never delivery failures. */
+  deliveryNotices?: Array<{ id: Id; taskId: Id; state: "waiting" | "delivered" | "expired" | "failed"; detail: string; replacesNoticeId?: Id }>;
 }

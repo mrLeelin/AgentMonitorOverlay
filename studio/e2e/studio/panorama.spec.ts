@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test, type Page } from "@playwright/test";
 import type { CanvasDoc, Session, StateSnapshot, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -87,7 +88,7 @@ test("全景: off by default, turned on in 测试功能, opened from the left co
   // 设置 → 测试功能 → 全景.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "测试功能" }).click();
+  await selectSettingsPage(dialog, "测试功能");
   const toggle = dialog.getByTestId("experimental-panorama");
   await expect(toggle).not.toBeChecked();
   await toggle.check();
@@ -209,7 +210,7 @@ test("全景: off by default, turned on in 测试功能, opened from the left co
 
   // Off again: the entry goes, and the page in front falls back to the board.
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "测试功能" }).click();
+  await selectSettingsPage(dialog, "测试功能");
   await dialog.getByTestId("experimental-panorama").uncheck();
   await page.keyboard.press("Escape");
   await expect(entry).toHaveCount(0);

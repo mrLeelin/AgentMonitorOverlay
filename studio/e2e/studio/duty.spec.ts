@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
@@ -16,7 +17,7 @@ test("值守: make a command item and a session item, run them now, edit and rem
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "值守" }).click();
+  await selectSettingsPage(dialog, "值守");
   await expect(dialog.getByTestId("duty-list")).toContainText("还没有值守项");
 
   // A command, every 2 minutes.
@@ -115,7 +116,7 @@ test("值守: an item hangs under another, shown under it; the parent off turns 
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "值守" }).click();
+  await selectSettingsPage(dialog, "值守");
   const make = async (name: string, under?: string) => {
     await dialog.getByTestId("duty-new").click();
     const form = dialog.getByTestId("duty-form");

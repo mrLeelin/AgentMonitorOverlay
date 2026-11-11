@@ -195,7 +195,7 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
   private tellLead(plan: TaskPlan, text: string): void {
     try {
       this.f.collab.sendMail(null, { kind: "session", sessionId: plan.fromSessionId }, text);
-      if (plan.fromTaskId) void this.f.sessions.inbox.put(plan.fromSessionId, text, undefined, `i-taskplan-${plan.id}-${createHash("sha256").update(text).digest("hex").slice(0, 20)}`).catch((error: unknown) => this.log(`task plan notification: ${String(error)}`));
+      if (plan.fromTaskId) void this.f.sessions.inbox.put(plan.fromSessionId, text, undefined, `i-taskplan-${plan.id}-${createHash("sha256").update(text).digest("hex").slice(0, 20)}`, { purpose: "notification", rebaseOnContextUpgrade: true }).catch((error: unknown) => this.log(`task plan notification: ${String(error)}`));
     } catch {
       // The 主控's session is gone: the proposal still records the decision.
     }

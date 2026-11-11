@@ -396,13 +396,6 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               ) : (
                 <span className="drawer-note">正在读取这个模型的选项…</span>
               )}
-              <span className="spacer" />
-              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume} title={resume ? "接续的会话不能放进待办" : "只建任务，放进待办，不开会话"}>
-                放进待办 <kbd>Ctrl ↵</kbd>
-              </button>
-              <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId} data-testid="draft-start">
-                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : "开始"} <kbd>↵</kbd>
-              </button>
             </div>
             {/* DeepSeek · DSH with 工作区可写 in a project not set up for its sandbox (2026-10-23). */}
             <SandboxHint
@@ -428,6 +421,17 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                   })}
               </div>
             )}
+            <div className="cbar draft-actions">
+              <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId} data-testid="draft-start">
+                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : "开始"} <kbd>↵</kbd>
+              </button>
+              <button type="button" className="btn-ghost draft-templates" onClick={() => mentions.askTemplate(input.current?.selectionStart ?? draft.text.length)} disabled={busy} title="打开提示词模板，选择后插入第一句话" data-testid="draft-templates">
+                提示词模板
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume} title={resume ? "接续的会话不能放进待办" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
+                放进待办 <kbd>Ctrl ↵</kbd>
+              </button>
+            </div>
           </div>
 
           <div className="foot-hints">

@@ -48,7 +48,7 @@ export function ContextHint({
   const cacheGone = session.runtime === "claude" && idle > CACHE_GONE_MS;
   // DSH compacts by itself at 80% of the model's window (stage 17) and has no command for it; the setting is the CLIs'.
   const dsh = session.runtime === "dsh";
-  const auto = dsh ? (context.window ? Math.round(context.window * 0.8) : null) : settings ? autoCompactFor(settings, session.profileId) : null;
+  const auto = dsh ? (context.window ? Math.round(context.window * 0.8) : null) : session.runtime === "pi" ? null : settings ? autoCompactFor(settings, session.profileId) : null;
   const dismiss = () => {
     writeStored(dismissKey(session.id), String(context.used));
     setDismissed(context.used);

@@ -191,6 +191,7 @@ describe("stored management ownership", () => {
     expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
     service.tasks.setManager(worker.id, peer.id);
     await expect(service.sessions.sendNow(targetSession.id, row!.id)).rejects.toThrow(/原主控/);
+    expect(store.getItem(row!.id)).toMatchObject({ type: "user", delivery: "expired", deliveryReason: expect.stringContaining("原主控"), text: expect.stringContaining("等当前轮结束后执行") });
     expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
     // A new inbox has no in-memory knowledge of the relay: its source must come from the stored message row.
     const runtime = new CodexRuntime({ store, servers, profiles: PROFILES });
@@ -198,8 +199,9 @@ describe("stored management ownership", () => {
     const resumed = new HostService(store, runtime, PROFILES, { commonDir: join(root, "common") });
     store.updateSession(targetSession.id, { status: "idle" });
     await resumed.sessions.inbox.flush(targetSession.id);
-    await vi.waitFor(() => expect(store.getItem(row!.id)).toMatchObject({ type: "user", delivery: "unsent", relayFromSessionId: subSession.id }));
+    expect(store.getItem(row!.id)).toMatchObject({ type: "user", delivery: "expired", relayFromSessionId: subSession.id });
     await expect(resumed.sessions.resend(targetSession.id, row!.id)).rejects.toThrow(/原主控/);
+    expect(store.getItem(row!.id)).toMatchObject({ delivery: "expired" });
     expect(resumedResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
     expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
   });

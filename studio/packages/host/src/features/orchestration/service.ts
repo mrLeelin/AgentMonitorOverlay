@@ -5,7 +5,7 @@ import { newId } from "../../store/store.js";
 
 const RESULTS_KEY = "task-results:";
 const OUTBOX_KEY = "orchestration.outbox";
-type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; targetSessionId?: Id; messageId?: Id; sent?: boolean; error?: string; decisionId?: Id; resultId?: Id; turnId?: Id; direction: "up" | "down" };
+type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; rootTaskId?: Id; targetSessionId?: Id; messageId?: Id; sent?: boolean; error?: string; expiredAt?: string; expiredReason?: string; retiredAt?: string; replacesNoticeId?: Id; replacesItemId?: Id; decisionId?: Id; resultId?: Id; turnId?: Id; direction: "up" | "down" };
 
 /** The management tree runs work; the inbox remains the sole automatic conversation delivery path. */
 export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab" | "sharedContext"> {
@@ -19,11 +19,15 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       rootTaskId: managementRoot(tasks, taskId)?.id ?? null,
       results: [...ids].flatMap((id) => this.results(id)).filter((r) => !this.store.getTask(r.taskId)?.archivedAt),
       decisions: this.store.listDecisions({ state: "open" }).filter((d) => d.routedToTaskId === taskId),
-      deliveryIssues: this.notices().filter((n) => ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)).flatMap((n) => {
-        if (!this.valid(n)) return [];
+      deliveryNotices: this.notices().filter((n) => ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)).map((n) => {
+        const row = this.store.getItem(n.messageId ?? n.id);
+        const state = n.expiredAt || row?.type === "user" && row.delivery === "expired" ? "expired" as const : row?.type === "user" ? row.delivery === "unsent" ? "failed" as const : row.delivery === "held" ? "waiting" as const : "delivered" as const : n.error ? "failed" as const : "waiting" as const;
+        return { id: n.id, taskId: n.targetTaskId, state, detail: state === "expired" || state === "failed" ? n.expiredReason || (row?.type === "user" ? row.deliveryReason : undefined) || n.error || "通知发送失败。" : state === "waiting" ? "等待目标会话空闲后发送。" : "已送入会话。", ...(n.replacesNoticeId ? { replacesNoticeId: n.replacesNoticeId } : {}) };
+      }),
+      deliveryIssues: this.notices().filter((n) => (ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)) && this.valid(n)).flatMap((n) => {
         const row = this.store.getItem(n.messageId ?? n.id);
         const unsent = row?.type === "user" && row.delivery === "unsent";
-        return unsent || (!row && n.error) ? [{ id: n.id, taskId: n.targetTaskId, detail: n.error || "通知未送达，请进入目标任务的会话重新发送。" }] : [];
+        return unsent || (!row && n.error) ? [{ id: n.id, taskId: n.targetTaskId, detail: (row?.type === "user" ? row.deliveryReason : undefined) || n.error || "通知未送达，请进入目标任务的会话重新发送。" }] : [];
       }),
     };
   }
@@ -32,6 +36,64 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   private saveResults(taskId: Id, results: TaskResult[]): void { this.store.setKv(RESULTS_KEY + taskId, JSON.stringify(results)); }
   private notices(): Notice[] { return JSON.parse(this.store.getKv(OUTBOX_KEY)?.value ?? "[]") as Notice[]; }
   private saveNotices(notices: Notice[]): void { this.store.setKv(OUTBOX_KEY, JSON.stringify(notices)); }
+
+  /** Run before inbox recovery: migrate only facts recoverable from durable producer records. */
+  prepareInbox(): void {
+    for (const notice of this.notices()) {
+      if (notice.expiredAt || notice.retiredAt) continue;
+      let row = this.store.getItem(notice.messageId ?? notice.id);
+      // Revocation precedes provenance inference: later returned/accepted states never revive an old terminal row.
+      if (row && this.f.sessions.inbox.expireLegacy(row)) { this.expireNotice(notice, "旧管理通知已永久作废，禁止根据后来的业务状态重新生成。"); continue; }
+      if (!notice.rootTaskId && !notice.expiredAt) {
+        const tokens = row?.type === "user" ? [...row.text.matchAll(/^\[AMO_SHARED_CONTEXT:([^\]]+)\]\r?$/gm)].map((m) => m[1]) : [];
+        const receipts = row ? this.f.sharedContext.receipts(row.sessionId).filter((r) => tokens.includes(r.requirementId)) : [];
+        const roots = [...new Set(receipts.map((r) => r.rootTaskId))];
+        if (tokens.length && receipts.length === tokens.length && roots.length === 1) this.patchNotice(notice.id, { rootTaskId: roots[0] });
+        else {
+          const pending = !row || row.type === "user" && (row.delivery === "held" || row.delivery === "unsent");
+          const valid = this.valid(notice), root = managementRoot(this.store.listTasks(), notice.sourceTaskId)?.id;
+          const currentText = valid && pending ? this.currentBusiness(notice) : null;
+          this.store.transaction(() => {
+            this.expireNotice(notice, `历史管理根缺少可核验依据，原通知永久终止。${notice.error ? `原发送记录：${notice.error}` : ""}`);
+            if (currentText && root) this.queue({ id: `${notice.id}-reconciled-${root}`, sourceTaskId: notice.sourceTaskId, targetTaskId: notice.targetTaskId, rootTaskId: root, direction: notice.direction, resultId: notice.resultId, decisionId: notice.decisionId, text: currentText, replacesNoticeId: notice.id, replacesItemId: row?.id });
+          });
+          continue;
+        }
+      }
+      const current = this.notices().find((n) => n.id === notice.id)!;
+      if (current.expiredAt || current.retiredAt) continue;
+      if (!this.valid(current)) { this.expireNotice(current, "任务归属、交付或问题状态已变化；原通知永久作废。"); continue; }
+      row = this.store.getItem(notice.messageId ?? notice.id);
+      if (row?.type === "user" && !row.messagePurpose && (row.delivery === "held" || row.delivery === "unsent")) this.store.replaceItem({ ...row, messagePurpose: notice.direction === "down" ? "work" : "notification" });
+    }
+  }
+
+  private currentBusiness(notice: Notice): string | null {
+    if (notice.decisionId) {
+      const d = this.store.getDecision(notice.decisionId);
+      return d?.state === "open" && d.routedToTaskId === notice.targetTaskId ? `【当前直属任务待决问题】${d.question}\n${d.options.join("\n")}\n问题 ${d.id}\n请用 task_workflow 核对当前归属和最新问题，再按原角色处理。此通知从当前问题记录重新生成，未重放旧通知正文。` : null;
+    }
+    if (notice.resultId) {
+      const result = this.results(notice.direction === "up" ? notice.sourceTaskId : notice.targetTaskId).at(-1);
+      if (!result || result.id !== notice.resultId || result.managerTaskId !== (notice.direction === "up" ? notice.targetTaskId : notice.sourceTaskId)) return null;
+      return notice.direction === "up" ? `【当前下级交付待验收】结果 ${result.id}\n${result.summary}\n验证：${result.verification}\n请用 task_workflow 核对当前要求、归属和实际依据，再用 task_review_result 验收或退回。此通知从当前结果记录重新生成。` : `【当前直属主控退回交付】结果 ${result.id}\n${result.review ?? "请核对最新退回结论。"}\n请读取 task_workflow，按当前要求修改和验证后重新交付。`;
+    }
+    return `【当前任务状态核对】「${this.requireTask(notice.sourceTaskId).title}」当前状态为 ${this.requireTask(notice.sourceTaskId).column}。原历史通知来源无法核验，已永久终止；请通过 task_workflow 查看当前交付和待决问题。此状态通知不代表重新派工，也不包含旧回合正文。`;
+  }
+
+  async retry(taskId: Id, noticeId: Id): Promise<void> {
+    this.requireTask(taskId);
+    const ids = new Set([taskId, ...taskManagement(this.store.listTasks(), taskId).descendants.map((t) => t.id)]);
+    const notice = this.notices().find((n) => n.id === noticeId && (ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)));
+    if (!notice || !this.valid(notice)) throw new HostError("conflict", "这条管理通知已过期或不属于当前管理范围，不能重试。");
+    const row = this.store.getItem(notice.messageId ?? notice.id);
+    if (row?.type === "user") {
+      if (row.delivery !== "unsent") throw new HostError("conflict", "只有发送失败的通知可以重试；等待中的通知请在会话里立即发送。");
+      await this.f.sessions.resend(row.sessionId, row.id);
+      this.patchNotice(notice.id, { error: undefined, sent: true });
+    } else { this.patchNotice(notice.id, { error: undefined, sent: false }); this.deliver(); }
+    this.changed(notice.targetTaskId);
+  }
 
   private own(sessionId: Id): { session: Session; task: Task } {
     const session = this.requireSession(sessionId);
@@ -141,6 +203,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         this.deliver();
       }
       if (event.type === "session.upserted") { this.reportTurn(event.session); this.deliver(); }
+      if (event.type === "item.updated" && event.item.type === "user") this.deliver();
     });
     // Only explicit pending work resumes; installation never replays historical session completions.
     this.reconcileDecisions();
@@ -183,12 +246,14 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   private queue(notice: Notice): void {
     const notices = this.notices();
     if (notices.some((n) => n.id === notice.id)) return;
-    this.saveNotices([...notices, notice]);
+    this.saveNotices([...notices, { ...notice, rootTaskId: notice.rootTaskId ?? managementRoot(this.store.listTasks(), notice.sourceTaskId)?.id }]);
   }
 
   private valid(notice: Notice): boolean {
+    if (notice.expiredAt || notice.retiredAt) return false;
     const source = this.store.getTask(notice.sourceTaskId), target = this.store.getTask(notice.targetTaskId);
     if (!source || !target || source.archivedAt || target.archivedAt || !managementRoot(this.store.listTasks(), source.id)) return false;
+    if (notice.rootTaskId && managementRoot(this.store.listTasks(), source.id)?.id !== notice.rootTaskId) return false;
     if (notice.direction === "up" ? source.managerTaskId !== target.id : target.managerTaskId !== source.id) return false;
     if (notice.decisionId) { const d = this.store.getDecision(notice.decisionId); if (d?.state !== "open" || d.routedToTaskId !== target.id) return false; }
     if (notice.resultId) {
@@ -204,12 +269,27 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 
   private deliver(): void {
     for (const notice of this.notices()) {
+      if (notice.expiredAt || notice.retiredAt) continue;
       if (this.sending.has(notice.id)) continue;
+      const row = this.store.getItem(notice.messageId ?? notice.id);
+      // Old Hosts wrote these exact system rows as unsent. Migrate through this same terminal-state service.
+      const legacyExpired = !!row && this.f.sessions.inbox.expireLegacy(row);
+      if (legacyExpired) { this.expireNotice(notice, "旧管理通知已作废，保留历史且不再重放。"); continue; }
       if (!this.valid(notice)) {
-        if (notice.targetSessionId) {
-          const row = this.store.getItem(notice.messageId ?? notice.id);
-          if (row?.type === "user" && row.delivery === "held") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "unsent", text: "【管理通知已失效】任务归属或问题状态已变化，请以 task_workflow 最新内容为准。" }) });
-        }
+        this.expireNotice(notice, "任务归属、交付或问题状态已变化；原通知永久作废。");
+        continue;
+      }
+      if (row?.type === "user" && (row.delivery === "expired" || (row.delivery === "held" || row.delivery === "unsent") && !this.f.sharedContext.validateMessage(row.sessionId, row.id))) {
+        const view = this.f.sharedContext.get(notice.targetTaskId);
+        const tokens = [...row.text.matchAll(/^\[AMO_SHARED_CONTEXT:([^\]]+)\]\r?$/gm)].map((m) => m[1]);
+        const historical = this.f.sharedContext.receipts(row.sessionId).find((r) => tokens.includes(r.requirementId));
+        const root = managementRoot(this.store.listTasks(), notice.sourceTaskId)?.id;
+        const replacement = view.validBinding && view.binding && !!historical && historical.rootTaskId === root && view.binding.rootTaskId === root && historical.requirementId !== view.binding.id;
+        this.store.transaction(() => {
+          this.expireNotice(notice, "共同需求绑定已升级或失效；旧通知终止，历史正文保持冻结。");
+          if (replacement) this.queue({ ...notice, id: `${notice.id}-context-${view.binding!.id}`, sent: false, error: undefined, expiredAt: undefined, expiredReason: undefined, targetSessionId: undefined, messageId: undefined, replacesNoticeId: notice.id, replacesItemId: row.id });
+        });
+        if (replacement) queueMicrotask(() => this.deliver());
         continue;
       }
       const previous = notice.targetSessionId ? this.store.getSession(notice.targetSessionId) : undefined;
@@ -217,9 +297,14 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         const row = this.store.getItem(notice.messageId ?? notice.id);
         // A notice already consumed by the model must never replay in another conversation.
         if (row?.type === "user" && row.delivery !== "held" && row.delivery !== "unsent") continue;
-        if (row?.type === "user" && row.delivery === "held") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "unsent", text: "【管理通知已转交新会话】旧会话已归档，以任务当前主会话中的通知为准。" }) });
-        Object.assign(notice, { sent: false, error: undefined, targetSessionId: undefined, messageId: undefined });
-        this.patchNotice(notice.id, notice);
+        const replacementSession = this.store.listSessions({ taskId: notice.targetTaskId }).filter((s) => s.kind === "main" && !s.archivedAt && s.runtime !== "remote" && s.writer !== "archived" && s.writer !== "terminal-handoff").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+        if (!replacementSession) continue;
+        this.store.transaction(() => {
+          this.expireNotice(notice, "旧会话已归档，通知转交当前主会话。");
+          this.queue({ ...notice, id: `${notice.id}-${replacementSession.id}`, sent: false, error: undefined, targetSessionId: undefined, messageId: undefined, replacesNoticeId: notice.id, replacesItemId: row?.id });
+        });
+        queueMicrotask(() => this.deliver());
+        continue;
       }
       if (notice.sent || notice.error) continue;
       if (notice.resultId && notice.direction === "up" && this.store.listSessions({ taskId: notice.sourceTaskId }).some(sessionMoving)) continue;
@@ -233,15 +318,33 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         const messageId = notice.messageId ?? (original && original.sessionId !== target.id ? `${notice.id}-${target.id}` : notice.id);
         this.patchNotice(notice.id, { targetSessionId: target.id, messageId });
         try {
-          await this.f.sessions.inbox.put(target.id, notice.text, undefined, messageId);
+          await this.f.sessions.inbox.put(target.id, notice.text, undefined, messageId, { purpose: notice.direction === "down" ? "work" : "notification", ...(notice.replacesItemId ? { replacesItemId: notice.replacesItemId } : {}) });
           const row = this.store.getItem(messageId);
-          if (row?.type === "user" && row.delivery === "unsent") this.patchNotice(notice.id, { error: "通知未送达，请进入目标任务的会话重新发送。" });
+          if (row?.type === "user" && row.delivery === "unsent") this.patchNotice(notice.id, { error: row.deliveryReason ?? "通知未送达，请进入目标任务的会话重新发送。" });
           else this.patchNotice(notice.id, { sent: true, error: undefined });
         } catch (error) { this.patchNotice(notice.id, { error: String(error) }); }
         const current = this.notices().find((n) => n.id === notice.id);
         if (current?.error) this.changed(notice.targetTaskId);
-      }).catch((error: unknown) => this.log(`managed delivery: ${String(error)}`)).finally(() => this.sending.delete(notice.id));
+      }).catch((error: unknown) => this.log(`managed delivery: ${String(error)}`)).finally(() => {
+        this.sending.delete(notice.id);
+        // A binding/ownership update can arrive while put waits for a cold runtime. Reconcile that change after
+        // releasing the per-notice lock; unrelated failures and missing sessions never spin in a retry loop.
+        const current = this.notices().find((n) => n.id === notice.id), row = current ? this.store.getItem(current.messageId ?? current.id) : undefined;
+        if (current && !current.expiredAt && !current.retiredAt && (!this.valid(current) || row?.type === "user" && row.delivery === "expired")) queueMicrotask(() => this.deliver());
+      });
     }
+  }
+
+  private expireNotice(notice: Notice, reason: string): void {
+    // Save the producer terminal state before emitting the row event, which can re-enter reconciliation.
+    const row = this.store.getItem(notice.messageId ?? notice.id);
+    if (row?.type === "user" && (row.delivery === undefined || row.delivery === "waiting")) {
+      // A later business-state change cannot rewrite successful transport history as expiration.
+      this.patchNotice(notice.id, { retiredAt: new Date().toISOString(), sent: true, error: undefined });
+      return;
+    }
+    this.patchNotice(notice.id, { expiredAt: new Date().toISOString(), expiredReason: reason, error: undefined });
+    this.f.sessions.inbox.expire(notice.messageId ?? notice.id, reason);
   }
 
   private patchNotice(id: Id, patch: Partial<Notice>): void { this.saveNotices(this.notices().map((n) => n.id === id ? { ...n, ...patch } : n)); }

@@ -45,10 +45,10 @@ describe("managed delivery workflow", () => {
     expect(() => service.orchestration.submit(topSession.id, "全部完成", "检查过")).toThrow(/先验收/);
     const first = service.orchestration.submit(coinSession.id, "生成投币音效", "试听：爆音");
     expect(store.getTask(coin.id)?.column).toBe("review");
-    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(audioSession.id, expect.stringContaining(first.id), undefined, `i-${first.id}-submit`));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(audioSession.id, expect.stringContaining(first.id), undefined, `i-${first.id}-submit`, { purpose: "notification" }));
     const returned = service.orchestration.review(audioSession.id, first.id, false, "去掉爆音");
     expect(returned.state).toBe("returned");
-    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(coinSession.id, expect.stringContaining("去掉爆音"), undefined, `i-${first.id}-return`));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(coinSession.id, expect.stringContaining("去掉爆音"), undefined, `i-${first.id}-return`, { purpose: "work" }));
     const second = service.orchestration.submit(coinSession.id, "修复投币音效", "试听无爆音，时长0.3秒");
     expect(() => service.orchestration.review(audioSession.id, first.id, true, "通过")).toThrow(/最新/);
     service.orchestration.review(audioSession.id, second.id, true, "试听通过");
@@ -109,7 +109,7 @@ describe("managed delivery workflow", () => {
     const st = session(top), sm = session(middle), sc = session(child);
     const question = service.collab.requestDecisionFromSession(sc.id, "需要什么音色？", ["卡通", "写实"]);
     expect(question.routedToTaskId).toBe(middle.id);
-    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining(question.id), undefined, expect.any(String)));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining(question.id), undefined, expect.any(String), { purpose: "notification" }));
     expect(service.orchestration.workflow(middle.id).decisions).toHaveLength(1);
     const escalate = service.collab.requestDecisionFromSession(sm.id, "投币音色需要总主控决定", ["卡通", "写实"]);
     expect(escalate.routedToTaskId).toBe(top.id);
@@ -142,7 +142,7 @@ describe("managed delivery workflow", () => {
     const result = service.orchestration.submit(worker.id, "完成", "验证通过");
     await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)).toHaveLength(1));
     service.tasks.updateTask(child.id, { managerTaskId: other.id });
-    expect(store.getItem(`i-${result.id}-submit`)).toHaveProperty("delivery", "unsent");
+    expect(store.getItem(`i-${result.id}-submit`)).toHaveProperty("delivery", "expired");
     const q = service.collab.requestDecisionFromSession(worker.id, "哪里保存？", []);
     expect(q.routedToTaskId).toBe(other.id);
     service.tasks.updateTask(child.id, { managerTaskId: null });
@@ -161,7 +161,7 @@ describe("managed delivery workflow", () => {
     store.updateSession(next.id, { status: "running" });
     service.publish({ type: "session.upserted", session: store.getSession(next.id)! });
     await vi.waitFor(() => expect(service.sessions.inbox.held(next.id)).toHaveLength(1));
-    expect(store.getItem(`i-${result.id}-submit`)).toHaveProperty("delivery", "unsent");
+    expect(store.getItem(`i-${result.id}-submit`)).toHaveProperty("delivery", "expired");
     expect(store.getItem(`i-${result.id}-submit-${next.id}`)).toHaveProperty("delivery", "held");
   });
 

@@ -93,8 +93,10 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "remote.images", scope: "global", owner: "features/remote/copy-images.ts", what: "远程会话里的图片 → 本机的附件" },
   // Per session, task, project: deleted with it (Store.purge)
   { key: "role-stamp:", scope: "session", owner: "core/role.ts", what: "会话上次看到的角色卡" },
+  { key: "message-purpose:", scope: "session", owner: "runtime/message-purpose.ts", what: "结构化消息用途和实际回合用途，旧消息默认继续工作" },
   { key: "codex-lead-readonly:", scope: "session", owner: "runtime/codex/codex-runtime.ts", what: "Codex 主控只读会话的运行时标识" },
   { key: "dsh-lead-readonly:", scope: "session", owner: "runtime/dsh/dsh-runtime.ts", what: "DSH 主控只读会话的运行时标识" },
+  { key: "dsh-session-readonly:", scope: "session", owner: "runtime/dsh/dsh-runtime.ts", what: "DSH 创建时只读权限的可核验标识，询问不能仅依赖后改设置" },
   { key: "annotation-seq:", scope: "session", owner: "features/review/service.ts", what: "批注编号" },
   { key: "report-turn:", scope: "session", owner: "features/sessions/service.ts", what: "已汇报过的那一轮" },
   { key: "claude.login:", scope: "session", owner: "runtime/claude/claude-login.ts", what: "会话用的 Claude 登录方式" },

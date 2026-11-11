@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -21,7 +22,7 @@ test("设置 follows what changed while the Host was away", async () => {
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.getByTestId("models-nav-presets").click();
   await expect(dialog.getByTestId("preset-row")).toHaveCount(0);
 
@@ -47,7 +48,7 @@ test("设置 follows what changed while the Host was away", async () => {
 
   await expect(page.getByTestId("host-error")).toContainText("Host 意外退出，已自动重新启动", { timeout: 30_000 });
   await expect(dialog.getByTestId("preset-row")).toContainText("断线时加的预设", { timeout: 15_000 });
-  await dialog.getByRole("tab", { name: "值守" }).click();
+  await selectSettingsPage(dialog, "值守");
   await expect(dialog.getByTestId("duty-item").filter({ hasText: "断线时加的值守" })).toBeVisible({ timeout: 15_000 });
   await screenshot(app, "studio", "reconnect-settings", page);
 });

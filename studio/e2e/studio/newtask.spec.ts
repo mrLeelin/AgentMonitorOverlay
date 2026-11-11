@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -342,7 +343,7 @@ test("设置 → 默认路径: 选择文件夹 starts there when adding a projec
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "项目与目录" }).click();
+  await selectSettingsPage(dialog, "项目与目录");
   await expect(dialog.getByRole("radiogroup", { name: "默认项目" })).toHaveCount(0);
   const field = dialog.getByRole("textbox", { name: "默认路径" });
   await expect(field).toHaveValue("");
@@ -392,7 +393,7 @@ test("设置 → 默认路径: 选择文件夹 starts there when adding a projec
 
   // Cleared: from beside the folder picked last.
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "项目与目录" }).click();
+  await selectSettingsPage(dialog, "项目与目录");
   await expect(field).toHaveValue(root);
   await dialog.getByRole("region", { name: "默认路径" }).getByRole("button", { name: "清除" }).click();
   await expect(field).toHaveValue("");

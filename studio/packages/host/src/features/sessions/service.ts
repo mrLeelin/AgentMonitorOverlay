@@ -8,6 +8,7 @@ import { roleUpdate } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { SessionInbox } from "./inbox.js";
 import { readSetups, rememberSetups } from "./setups.js";
+import { newId } from "../../store/store.js";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -99,12 +100,29 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     }
     if (Date.now() - started >= SLOW_SEND_MS) this.log(`${sessionId} (${runtime}): the message went in after ${Date.now() - started} ms (${result.mode})`);
     update.told();
-    // The person wrote: what the inbox held since they stopped the session goes in with it (inbox.ts, pause).
-    this.inbox.resume(sessionId);
+    // A read-only question or automatic notice does not authorize resuming work the person deliberately paused.
+    if (options.purpose !== "inquiry" && options.purpose !== "notification") this.inbox.resume(sessionId);
     return result;
   }
 
-  /** 立即发送 (2026-11-02): a message still waiting is read by the model now (see SessionRuntimeApi.sendNow). */
+  /** A purpose change waits durably for an independent native turn and permission boundary. */
+  async deferMessage(sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions): Promise<{ mode: SendMode }> {
+    const itemId = options.deferredItemId ?? newId("i");
+    if (options.deferredItemId) {
+      const row = this.store.getItem(itemId);
+      if (row?.type !== "user" || row.sessionId !== sessionId) throw new HostError("not_found", "待送消息不存在。");
+      this.inbox.checkSource(row);
+      if (row.delivery === "unsent") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "held" }) });
+    }
+    await this.inbox.put(sessionId, text, undefined, itemId, { purpose: options.purpose ?? "work", images: images.map((image) => ({ id: image.id, path: image.path })) });
+    if (options.now) {
+      if (!this.runtime.resend) throw new HostError("bad_request", "此运行时不支持立即发送。");
+      await this.wrap(() => this.runtime.resend!(sessionId, itemId, images, { now: true }));
+    }
+    return { mode: "queue" };
+  }
+
+  /** 立即发送 a waiting message, crossing purpose boundaries only after the previous turn ends. */
   async sendNow(sessionId: Id, itemId: Id): Promise<void> {
     this.requireSession(sessionId);
     const item = this.store.getItem(itemId);
@@ -121,7 +139,16 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const item = this.store.getItem(itemId);
     if (item?.type !== "user" || item.sessionId !== sessionId) throw new HostError("not_found", `message ${itemId} not found`);
     this.inbox.checkSource(item);
-    const images = (item.images ?? []).flatMap((i) => {
+    const images = this.retainedImages(item);
+    const rt = this.runtime;
+    if (!rt.resend) throw new HostError("bad_request", "this Host cannot send a message again");
+    return this.wrap(() => rt.resend!(sessionId, itemId, images));
+  }
+
+  /** The inbox and manual resend use the same retained attachments, including deferred purpose changes. */
+  retainedImages(item: SessionItem): Attachment[] {
+    if (item.type !== "user") return [];
+    return (item.images ?? []).flatMap((i) => {
       if (!i.id) return [];
       try {
         return [this.f.attachments.get(i.id)];
@@ -129,9 +156,6 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
         return [];
       }
     });
-    const rt = this.runtime;
-    if (!rt.resend) throw new HostError("bad_request", "this Host cannot send a message again");
-    return this.wrap(() => rt.resend!(sessionId, itemId, images));
   }
 
   /** The uploaded images a message carries, checked: known ids, at most MAX_MESSAGE_IMAGES. */
@@ -229,7 +253,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const reply = questionReply(body);
     const fits =
       reply.action === "dismiss" ||
-      (reply.action === "answer" && (item.source === "claude-ask" || item.source === "codex-input" || item.source === "codex-async")) ||
+      (reply.action === "answer" && (item.source === "claude-ask" || item.source === "codex-input" || item.source === "codex-async" || item.source === "pi-input")) ||
       (reply.action === "submit" && item.source === "mcp-form") ||
       ((reply.action === "approve" || reply.action === "revise") && item.source === "plan-review");
     if (!fits) throw new HostError("bad_request", `a ${item.source} question cannot take "${reply.action}"`);
@@ -475,6 +499,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     if (personChose && level) return peerPermission(null, runtime, level, choices);
     const callerPermission = isPeerRuntime(from.runtime) ? from.options.permission || (await this.f.config.choices(from.profileId).catch(() => null))?.defaultPermission || "" : "";
     const caller = isPeerRuntime(from.runtime) && callerPermission ? { runtime: from.runtime, permission: callerPermission } : null;
+    if (runtime === "pi" && !caller) throw new HostError("bad_request", "无法核验当前会话的权限，不能开启具有完全访问权限的 Pi 会话；请先明确设置当前会话的权限。");
     return peerPermission(caller, runtime, level, choices);
   }
 
@@ -624,7 +649,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       text = mailed ? `【你开的会话${name}这一轮做完了，它已经用留言把结果发给你】` : `【你开的会话${name}这一轮做完了】\n${excerpt || "（它没有回复文字）"}`;
     }
     // Into the caller's inbox (2026-11-04): it goes in once the caller is free, rather than into its running turn.
-    this.inbox.put(to, text).catch(() => {
+    this.inbox.put(to, text, undefined, undefined, { purpose: "notification", rebaseOnContextUpgrade: true }).catch(() => {
       // The caller is gone or archived: it can still read it as mail.
       try {
         this.f.collab.sendMail(s.id, { kind: "session", sessionId: to }, text);
@@ -645,12 +670,14 @@ const PERMISSIONS: Record<PeerRuntime, Record<PermissionLevel, string>> = {
   // 帮我审批 and than Codex's and DSH's write, which run commands in their folder without asking.
   claude: { "read-only": "plan", write: "auto", full: "bypassPermissions" },
   dsh: { "read-only": "read-only", write: "workspace-write", full: "full-access" },
+  pi: { "read-only": "read-only", write: "workspace-write", full: "full-access" },
 };
 /** Each runtime's permission options, narrowest first (for 「不比开它的会话宽」 on the same CLI). */
 const PERMISSION_ORDER: Record<PeerRuntime, string[]> = {
   codex: ["read-only", "ask", "workspace-write", "auto-review", "on-request", "full-auto"],
   claude: ["plan", "default", "acceptEdits", "auto", "bypassPermissions"],
   dsh: ["read-only", "workspace-write", "full-access"],
+  pi: ["full-access"],
 };
 
 function isPeerRuntime(runtime: string): runtime is PeerRuntime {
@@ -674,6 +701,12 @@ function widerPermission(runtime: PeerRuntime, permission: string, callerRuntime
 
 /** 开会话's permission for a session of `runtime` (see SessionService.peerPermission); undefined = the model's default. */
 export function peerPermission(caller: { runtime: PeerRuntime; permission: string } | null, runtime: PeerRuntime, level: PermissionLevel | null, choices: Pick<ProfileChoices, "permissions" | "defaultPermission"> | null): string | undefined {
+  // Pi exposes no sandbox: a narrower caller must never silently start a fully privileged Pi session.
+  if (runtime === "pi") {
+    if (level && level !== "full") throw new HostError("bad_request", "Pi 暂不支持只读或工作区沙箱权限，请选择支持这些权限的模型；Pi 只能使用完全访问。");
+    if (caller && permissionLevel(caller.runtime, caller.permission) < 2) throw new HostError("bad_request", `你自己的权限是 ${caller.permission}，开的 Pi 会话不能比你宽；Pi 只能使用完全访问，请选择支持只读或工作区沙箱的模型。`);
+    return caller || level ? "full-access" : undefined;
+  }
   const usable = (id: string) => !choices || choices.permissions.some((p) => p.id === id && !p.unavailable);
   const forLevel = (l: PermissionLevel) => {
     const id = PERMISSIONS[runtime][l];

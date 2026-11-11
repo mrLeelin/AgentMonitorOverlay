@@ -141,6 +141,7 @@ class RpcError extends Error {
   constructor(
     readonly code: number,
     message: string,
+    readonly data?: unknown,
   ) {
     super(message);
   }
@@ -328,6 +329,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (method === "session/new" || method === "session/resume") {
     for (const [i, server] of ((params.mcpServers as McpServer[]) ?? []).entries()) {
       if (!server.url && !isAbsolute(server.command ?? "")) throw new RpcError(-32602, `Invalid params: mcpServers[${i}].command must be an absolute path`);
+      if (server.url === "https://fake-acp.invalid/mcp-failure") throw new RpcError(-32603, "Internal error", { details: `mcp-client(${server.name}): initial connection or tool synchronization failed`, debug: "secret-test-do-not-display" });
     }
   }
   switch (method) {
@@ -393,7 +395,7 @@ process.stdin.on("data", (chunk: string) => {
       const id = msg.id;
       handle(msg.method, msg.params ?? {}).then(
         (result) => send({ jsonrpc: "2.0", id, result }),
-        (err: unknown) => send({ jsonrpc: "2.0", id, error: { code: err instanceof RpcError ? err.code : -32603, message: String((err as Error).message ?? err) } }),
+        (err: unknown) => send({ jsonrpc: "2.0", id, error: { code: err instanceof RpcError ? err.code : -32603, message: String((err as Error).message ?? err), ...(err instanceof RpcError && err.data !== undefined ? { data: err.data } : {}) } }),
       );
     }
   }

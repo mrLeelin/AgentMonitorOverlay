@@ -8,6 +8,7 @@ import { DSH_DEFAULT_PERMISSION, DSH_PERMISSIONS, dshPermissionMode } from "../c
 import type { CredentialReader } from "../credentials.js";
 import { RuntimeBase, STOP_GRACE_MS, type SendMode, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
 import { withDelivery } from "../items.js";
+import { currentMessagePurpose, mergeMessagePurposes, queueMessagePurpose } from "../message-purpose.js";
 import { AcpConnection, AcpError } from "./acp.js";
 import { allTurnStats, dshLogText, dshTurnStats, type DshTurnStats } from "./session-log.js";
 import {
@@ -265,7 +266,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- operations -------------------------------------------------------------------------------------------------
 
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions }): Promise<Session> {
+  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
     const profile = this.profile(input.profileId);
     // A channel's own model when none was picked (DSH's catalog id, `deepseek-official/<model>`).
     const options = { ...(profile.model && !input.options?.model ? { model: profile.model } : {}), ...(input.options ?? {}) };
@@ -299,21 +300,23 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (token) this.options.identities!.bind(token, session.id);
     // DSH persists its original sandbox in its own session. Options alone cannot prove an old session is read-only.
     if (lead) this.store.setKv(`dsh-lead-readonly:${session.id}`, session.runtimeRef!);
+    if (permission === "read-only") this.store.setKv(`dsh-session-readonly:${session.id}`, session.runtimeRef!);
     const live = this.adopt(session, conn, {}, permission, image, options.model);
     live.mcpKey = extra.key;
     await this.applyOptions(session.id, live);
-    if (input.text) await this.sendMessage(session.id, input.text);
+    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
     return this.store.getSession(session.id)!;
   }
 
   async sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const session = this.writable(sessionId);
+    this.assertInquiryReadOnly(session);
     // Read the images first: a missing file fails the send before anything is shown or queued.
     const blocks = imageBlocks(images);
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
     const shown = images.map((a) => ({ id: a.id, path: a.path }));
     return this.deliver(session, blocks, text, options, (mode, live, delivery) => {
-      const item = { type: "user" as const, text, ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) };
+      const item = { type: "user" as const, text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) };
       // Queued: shown in the running turn (as Claude's queued messages are), so that turn still reads as running.
       return this.appendItem(sessionId, item, mode === "queue" ? { method: "user/queued", ...live.transcript.turnRef() } : { method: "user" }).id;
     });
@@ -328,6 +331,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const sessionId = session.id;
     let live = await this.ensureLive(session);
     if (blocks.length) live = await this.takesImages(session, live);
+    options.beforeDispatch?.();
     if (live.inflight) {
       const itemId = item("queue", live, "waiting");
       live.queue.push({ itemId, text, images: blocks });
@@ -336,8 +340,8 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     }
     // DSH going on by itself: that turn ends here; DSH takes the message in when its step is done.
     if (live.auto) this.endAuto(sessionId, live, "end_turn", true);
-    item("start", live, undefined);
-    await this.prompt(sessionId, live, text, blocks);
+    const itemId = item("start", live, "held");
+    await this.prompt(sessionId, live, text, blocks, [itemId], options.beforeDispatch);
     return { mode: "start" };
   }
 
@@ -349,6 +353,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     this.writable(sessionId);
     const live = this.live.get(sessionId);
     if (!live?.inflight || !live.queue.some((q) => q.itemId === itemId)) return;
+    this.assertCurrentMessage(sessionId, itemId);
     for (const w of live.waiting.values()) this.settleWaiting(sessionId, live, w, "cancelled");
     live.conn.notify("session/cancel", { sessionId: live.acpId });
   }
@@ -356,13 +361,22 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   /** 重新发送 a message DSH never read (没送到), or one of Studio's inbox: the same row goes again, with its `images`. */
   async resend(sessionId: Id, itemId: Id, images: readonly Attachment[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const session = this.writable(sessionId);
+    this.assertInquiryReadOnly(session);
     const it = this.store.getItem(itemId);
     if (it?.type !== "user" || it.sessionId !== sessionId) throw Object.assign(new Error(`message ${itemId} not found`), { code: "not_found" });
     if (it.delivery !== "unsent" && it.delivery !== "held") return { mode: this.live.get(sessionId)?.inflight ? "queue" : "start" };
     return this.deliver(session, imageBlocks(images), it.text, options, (_mode, _live, delivery) => {
+      this.assertCurrentMessage(sessionId, itemId);
       this.updateItem(itemId, (x) => (x.type === "user" ? withDelivery(x, delivery) : x));
       return itemId;
     });
+  }
+
+  /** DSH resumes the sandbox saved with its session; a message flag cannot safely narrow an older writable one. */
+  private assertInquiryReadOnly(session: Session): void {
+    if (currentMessagePurpose(this.store, session.id) === "inquiry" && this.store.getKv(`dsh-session-readonly:${session.id}`)?.value !== session.runtimeRef && this.store.getKv(`dsh-lead-readonly:${session.id}`)?.value !== session.runtimeRef) {
+      throw Object.assign(new Error("这个 DSH 会话保存的是可写权限，无法保证本轮只读询问；消息未发送。请在只读 DSH 会话中询问，或由主控明确以 work/reopen 继续工作。"), { code: "read_only" });
+    }
   }
 
   /**
@@ -862,23 +876,35 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- turns ------------------------------------------------------------------------------------------------------
 
-  private async prompt(sessionId: Id, live: Live, text: string, images: readonly ImageBlock[] = [], sent: readonly Id[] = []): Promise<void> {
+  private async prompt(sessionId: Id, live: Live, text: string, images: readonly ImageBlock[] = [], sent: readonly Id[] = [], beforeDispatch?: () => void): Promise<void> {
     live.inflight = true;
     live.killedOnStop = false;
-    // Queued messages going now: on their way to the model.
-    for (const id of sent) this.updateItem(id, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
     if (live.idleTimer) clearTimeout(live.idleTimer);
     await this.applyOptions(sessionId, live).catch((err: unknown) => this.emit("log", `dsh set options failed for ${sessionId}: ${String(err)}`));
     // Role or archive may have changed while the CLI was applying options. Check again with no await before prompt.
     try {
       const current = this.writable(sessionId);
+      for (const id of sent) this.assertCurrentMessage(sessionId, id);
+      beforeDispatch?.();
+      if (sent.length) queueMessagePurpose(this.store, sessionId, mergeMessagePurposes(sent.map((id) => { const row = this.store.getItem(id); return row?.type === "user" ? row.messagePurpose ?? "work" : "work"; })), false);
+      this.assertInquiryReadOnly(current);
       if (this.isLead(current) && this.store.getKv(`dsh-lead-readonly:${sessionId}`)?.value !== current.runtimeRef) {
         throw Object.assign(new Error("旧 DSH 会话不能继续作为主控运行，请新开一个会话。"), { code: "read_only" });
       }
     } catch (err) {
       live.inflight = false;
+      const reason = err instanceof Error ? err.message : String(err);
+      let failed = false;
+      for (const id of sent) this.updateItem(id, (row) => {
+        if (row.type !== "user" || row.delivery === "expired") return row;
+        failed = true;
+        return { ...withDelivery(row, "unsent"), deliveryReason: reason };
+      });
+      this.setStatus(sessionId, failed ? "error" : "idle");
       throw err;
     }
+    for (const id of sent) this.updateItem(id, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
+    for (const id of sent) this.messagePurposeConsumed(sessionId, id);
     live.transcript.openTurn();
     this.setStatus(sessionId, "running");
     live.conn
@@ -1086,7 +1112,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const entry = [...this.live.entries()].find(([, l]) => l.acpId === p.sessionId);
     if (!entry) return { outcome: { outcome: "cancelled" } };
     const [sessionId, live] = entry;
-    if (this.isLead(this.requireSession(sessionId))) {
+    if (this.isLead(this.requireSession(sessionId)) || currentMessagePurpose(this.store, sessionId) === "inquiry") {
       const reject = (p.options ?? []).find((o) => o.kind === DSH_REJECT);
       return { outcome: reject ? { outcome: "selected", optionId: reject.optionId } : { outcome: "cancelled" } };
     }
@@ -1254,6 +1280,13 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   /** A readable error: DSH's own message, or what went wrong talking to it. */
   private explain(err: unknown): Error {
     if (err instanceof Error && (err as { code?: unknown }).code === "bad_request") return err;
+    // DSH puts MCP startup failures in error.data, leaving only "Internal error" in message. Only recognize its
+    // known diagnostic; arbitrary data can include request headers or credentials and must not enter the transcript.
+    if (err instanceof AcpError && err.data && typeof err.data === "object") {
+      const details = (err.data as { details?: unknown }).details;
+      const mcp = typeof details === "string" ? /^mcp-client\(([A-Za-z0-9_.-]{1,64})\): initial connection or tool synchronization failed$/.exec(details) : null;
+      if (mcp) return Object.assign(new Error(`DSH 的 MCP「${mcp[1]}」连接或同步工具失败：请检查该服务是否可用；暂时不用可在 设置 → MCP 中关闭后重试`), { code: "runtime_error" });
+    }
     const message = err instanceof Error ? err.message : String(err);
     return Object.assign(new Error(message.startsWith("DSH") ? message : `DSH：${message}`), { code: "runtime_error" });
   }

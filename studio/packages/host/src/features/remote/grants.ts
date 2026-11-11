@@ -56,6 +56,7 @@ export const PERMISSION_OF: Record<Exclude<ModelProfile["runtime"], "remote">, R
   codex: { "read-only": "read-only", write: "workspace-write", full: "full-auto" },
   claude: { "read-only": "plan", write: "acceptEdits", full: "bypassPermissions" },
   dsh: { "read-only": "read-only", write: "workspace-write", full: "full-access" },
+  pi: { "read-only": "read-only", write: "workspace-write", full: "full-access" },
 };
 
 /** An item small enough for one frame: its long texts cut, saying so. */
@@ -167,6 +168,7 @@ export class RemoteGrants {
   permissionFor(profileId: Id): string | undefined {
     const level = this.allowed().permission;
     const p = this.ctx.host.profiles.find((x) => x.id === profileId);
+    if (p?.runtime === "pi" && level && level !== "full") throw new HostError("bad_request", "Pi 不支持远程设置要求的只读或工作区沙箱权限；请选择其他模型，或在本机明确允许完全访问。");
     return level && p && p.runtime !== "remote" ? PERMISSION_OF[p.runtime][level] : undefined;
   }
 

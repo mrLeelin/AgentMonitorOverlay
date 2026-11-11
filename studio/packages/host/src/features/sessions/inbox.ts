@@ -1,4 +1,4 @@
-import { inTurn, splitRoleUpdate, type Id, type Session, type SessionItem } from "@amo-studio/protocol";
+import { inTurn, managementRoot, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
 import { newId, type SessionItemInput } from "../../store/store.js";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
@@ -83,7 +83,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
    * A message from an agent or from Studio into `sessionId`: shown at once, sent now when the session is free, else
    * when it is. `delivered`: it went in now; `waiting`: how many of the session's are still held.
    */
-  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id): Promise<{ delivered: boolean; waiting: number }> {
+  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[] } = {}): Promise<{ delivered: boolean; waiting: number }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt || s.writer === "archived") throw new HostError("read_only", "这个会话已归档，不能再往里发消息");
     if (s.kind === "sub") throw new HostError("read_only", "子 agent 不能单独接收消息");
@@ -96,22 +96,14 @@ export class SessionInbox extends Feature<"sharedContext"> {
     const existing = messageId ? this.store.getItem(messageId) : undefined;
     if (existing && (existing.sessionId !== sessionId || existing.type !== "user")) throw new HostError("conflict", "inbox message id belongs to another message");
     const role = this.sessions.roleUpdate(sessionId);
-    const item = existing ?? this.append(s, this.sessions.withContext(sessionId, this.sessions.withRole(text, role.lines)), relayFromSessionId, messageId);
-    if (existing?.type === "user" && existing.delivery === "held") {
-      // Its role update was marked told at enqueue time, but the model has not seen it yet.
-      const previousUpdate = splitRoleUpdate(existing.text).update;
-      const base = this.sessions.withRole(previousUpdate ? `${text}\n\n${previousUpdate}` : text, role.lines);
-      const contextStart = existing.text.indexOf("[AMO_SHARED_CONTEXT:");
-      const frozen = contextStart >= 0 ? existing.text.slice(contextStart) : "";
-      const replacement = frozen && !base.includes("[AMO_SHARED_CONTEXT:") ? `${base}\n\n${frozen}` : this.sessions.withContext(sessionId, base);
-      if (existing.text !== replacement) this.publish({ type: "item.updated", item: this.store.replaceItem({ ...existing, text: replacement }) });
-    }
-    role.told();
+    // A durable id freezes its text, purpose and requirement. A replacement always has a new id and source link.
+    const item = existing ?? this.append(s, this.sessions.withContext(sessionId, this.sessions.withRole(text, role.lines)), relayFromSessionId, messageId, options);
+    if (!existing) role.told();
     this.remember(sessionId);
     if (this.pauses().has(sessionId)) this.tellPaused(sessionId);
     await this.flush(sessionId);
     const now = this.store.getItem(item.id);
-    return { delivered: !(now?.type === "user" && now.delivery === "held"), waiting: this.held(sessionId).length };
+    return { delivered: now?.type === "user" && (now.delivery === undefined || now.delivery === "waiting"), waiting: this.held(sessionId).length };
   }
 
   /** 立即发送 on a held row: it goes now — into the running turn as the person's would, which then gives way to it. */
@@ -121,7 +113,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
     this.checkSource(item);
     const rt = this.runtime;
     if (!rt.resend) throw new HostError("bad_request", "this Host cannot send a held message");
-    await this.wrap(() => rt.resend!(sessionId, itemId, [], { now: true }));
+    await this.wrap(() => rt.resend!(sessionId, itemId, this.sessions.retainedImages(item), { now: true }));
   }
 
   /** Watches sessions get free; sends what the last Host left held, and moves session_send's old queue in. */
@@ -133,8 +125,9 @@ export class SessionInbox extends Feature<"sharedContext"> {
     this.host.on("event", (e) => {
       if (e.type === "session.upserted" && this.ids().has(e.session.id)) void this.flush(e.session.id).catch(() => undefined);
       if (e.type === "session.upserted" && resumed.has(e.session.id)) this.queueContext(e.session);
-      if (e.type === "task.upserted") for (const session of this.store.listSessions({ taskId: e.task.id })) this.queueContext(session);
+      if (e.type === "task.upserted") for (const session of this.store.listSessions()) { this.reconcile(session.id); if (session.taskId === e.task.id) this.queueContext(session); }
     });
+    for (const session of this.store.listSessions()) this.reconcile(session.id);
     for (const id of this.ids()) void this.flush(id).catch(() => undefined);
     for (const session of this.store.listSessions()) this.queueContext(session);
   }
@@ -147,7 +140,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
     void (async () => {
       for (const notice of notices) {
         this.f.sharedContext.markQueued(session.id, notice.id);
-        await this.put(session.id, notice.text, undefined, notice.id);
+        await this.put(session.id, notice.text, undefined, notice.id, { purpose: "notification" });
       }
     })().catch((error: unknown) => this.log(`shared context inbox: ${String(error)}`)).finally(() => {
       this.contextQueueing.delete(session.id);
@@ -178,6 +171,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
   }
 
   private async deliver(sessionId: Id, withTurn = false): Promise<void> {
+    this.reconcile(sessionId);
     const s = this.store.getSession(sessionId);
     const held = s ? this.held(sessionId) : [];
     if (!s || !held.length) return this.forget(sessionId);
@@ -200,10 +194,12 @@ export class SessionInbox extends Feature<"sharedContext"> {
       try {
         this.checkSource(current);
         if (!rt.resend) throw new Error("this Host cannot send a held message");
-        await rt.resend(sessionId, it.id, []);
+        await rt.resend(sessionId, it.id, this.sessions.retainedImages(current));
       } catch (err) {
-        this.mark(it.id, "unsent");
+        before = null; // No turn was started by a failed dispatch; do not delay the next independent message.
         const why = err instanceof Error ? err.message : String(err);
+        if (this.store.getItem(it.id)?.type === "user" && (this.store.getItem(it.id) as Extract<SessionItem, { type: "user" }>).delivery === "expired") continue;
+        this.mark(it.id, "unsent", why);
         this.publish({ type: "item.appended", item: this.store.appendItem(this.row(s, { type: "notice", level: "warning", message: `这条消息没能送进会话：${why}。可以点它下面的「重新发送」再试。` }, "inbox/failed")) });
       }
     }
@@ -227,14 +223,58 @@ export class SessionInbox extends Feature<"sharedContext"> {
 
   /** Rechecked at actual dispatch, including held messages surviving a Host restart or manual retry. */
   checkSource(item: SessionItem): void {
-    if (!this.f.sharedContext.validateMessage(item.sessionId, item.id)) throw new HostError("read_only", "共同需求通知已失效，请读取当前任务的共同需求。");
+    if (item.type === "user" && item.delivery === "expired") throw new HostError("read_only", item.deliveryReason ?? "这条通知已过期，不能重新发送。");
+    if (!this.f.sharedContext.validateMessage(item.sessionId, item.id)) { this.expire(item.id, "共同需求通知已失效，请读取当前任务的共同需求。"); throw new HostError("read_only", "共同需求通知已失效，请读取当前任务的共同需求。"); }
     if (item.type !== "user" || !item.relayFromSessionId) return;
     const taskId = this.store.getSession(item.sessionId)?.taskId;
-    if (!taskId || !managesTask(this.host, item.relayFromSessionId, taskId)) throw new HostError("read_only", "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。");
+    if (!taskId || !managesTask(this.host, item.relayFromSessionId, taskId)) { this.expire(item.id, "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。"); throw new HostError("read_only", "原主控已不在此任务的管理范围，这条待送传话已失效；请由当前主控重新发送。"); }
   }
 
-  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id): SessionItem {
-    const row = this.row(s, { type: "user", text, delivery: "held", ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox");
+  /** Permanent transport terminal state; frozen historical text remains inspectable. */
+  expire(itemId: Id, reason: string): void {
+    const item = this.store.getItem(itemId);
+    if (item?.type !== "user" || item.delivery === "expired" || (item.delivery !== "held" && item.delivery !== "unsent")) return;
+    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, delivery: "expired", deliveryReason: reason, deliveryEndedAt: new Date().toISOString() }) });
+  }
+
+  /** The previous Host's exact system representation is already a permanent revocation, not reissuable work. */
+  expireLegacy(item: SessionItem): boolean {
+    if (item.type !== "user" || item.raw?.method !== "user/inbox" || !["held", "unsent", "expired"].includes(item.delivery ?? "") || (item.text !== "【管理通知已失效】任务归属或问题状态已变化，请以 task_workflow 最新内容为准。" && item.text !== "【管理通知已转交新会话】旧会话已归档，以任务当前主会话中的通知为准。")) return false;
+    this.expire(item.id, "旧管理通知已作废或转交，保留历史且禁止重新发送。");
+    return true;
+  }
+
+  /** Validate even while paused/busy. Only an explicit same-tree upgrade can replace still-authorised relay work. */
+  reconcile(sessionId: Id): void {
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+    for (const item of [...this.store.findItems(sessionId, "user", { delivery: "held" }), ...this.store.findItems(sessionId, "user", { delivery: "unsent" })]) {
+      if (item.type !== "user" || (item.delivery !== "held" && item.delivery !== "unsent")) continue;
+      if (this.expireLegacy(item)) continue;
+      // Recognise durable system producers before validating the version, including same-version old rows.
+      const automatic = !item.relayFromSessionId && (item.rebaseOnContextUpgrade || this.store.listTaskPlans().some((p) => p.fromSessionId === sessionId && p.fromTaskId === session.taskId && item.id.startsWith(`i-taskplan-${p.id}-`)) || this.store.listRelays().some((r) => r.fromSessionId === sessionId && r.fromTaskId === session.taskId && item.id.startsWith(`i-relay-receipt-${r.id}`)));
+      if (!item.messagePurpose && (automatic || item.id.startsWith("i-context-") && this.f.sharedContext.validateMessage(sessionId, item.id))) this.store.replaceItem({ ...item, messagePurpose: "notification", ...(automatic ? { rebaseOnContextUpgrade: true } : {}) });
+      const token = [...item.text.matchAll(/^\[AMO_SHARED_CONTEXT:([^\]]+)\]\r?$/gm)].map((m) => m[1]);
+      const validSource = !item.relayFromSessionId || !!session.taskId && managesTask(this.host, item.relayFromSessionId, session.taskId);
+      if (validSource && this.f.sharedContext.validateMessage(sessionId, item.id)) continue;
+      const view = session.taskId ? this.f.sharedContext.get(session.taskId) : null;
+      const old = this.f.sharedContext.receipts(sessionId).find((r) => token.includes(r.requirementId));
+      const root = session.taskId ? managementRoot(this.store.listTasks(), session.taskId)?.id : undefined;
+      // Legacy receipt rows can be recognised by their persisted producer, never by guessing message intent.
+      const replace = (!!item.relayFromSessionId || automatic) && validSource && view?.validBinding && view.binding && !!old && old.rootTaskId === root && view.binding.rootTaskId === root && old.requirementId !== view.binding.id;
+      this.store.transaction(() => {
+        this.expire(item.id, validSource ? "共同需求已升级或原绑定已失效；此通知保留为历史。" : "原主控已不在当前管理范围；此通知永久撤回。");
+        if (replace && !session.archivedAt && session.writer !== "archived") {
+          const start = item.text.search(/^\[AMO_SHARED_CONTEXT:/m);
+          const business = start < 0 ? item.text : item.text.slice(0, start).trimEnd();
+          void this.put(sessionId, business, item.relayFromSessionId, `${item.id}-context-${view.binding!.id}`, { purpose: automatic ? "notification" : item.messagePurpose, replacesItemId: item.id, images: item.images, ...(automatic ? { rebaseOnContextUpgrade: true } : {}) }).catch((error: unknown) => this.log(`replacement inbox: ${String(error)}`));
+        }
+      });
+    }
+  }
+
+  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[] } = {}): SessionItem {
+    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", ...(options.images?.length ? { images: options.images } : {}), ...(options.replacesItemId ? { replacesItemId: options.replacesItemId } : {}), ...(options.rebaseOnContextUpgrade ? { rebaseOnContextUpgrade: true } : {}), ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox");
     const item = this.store.appendItem({ ...row, ...(messageId ? { id: messageId } : {}) });
     this.publish({ type: "item.appended", item });
     return item;
@@ -247,10 +287,10 @@ export class SessionInbox extends Feature<"sharedContext"> {
     return { ...body, id: newId("i"), sessionId: s.id, createdAt: new Date().toISOString(), raw: { runtime: s.runtime, method, ...(turnId ? { turnId } : {}) } } as SessionItemInput;
   }
 
-  private mark(itemId: Id, delivery: "unsent"): void {
+  private mark(itemId: Id, delivery: "unsent", reason = "会话已归档，消息未发送。"): void {
     const it = this.store.getItem(itemId);
     if (it?.type !== "user" || it.delivery !== "held") return;
-    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...it, delivery }) });
+    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...it, delivery, deliveryReason: reason }) });
   }
 
   private ids(): Set<Id> {

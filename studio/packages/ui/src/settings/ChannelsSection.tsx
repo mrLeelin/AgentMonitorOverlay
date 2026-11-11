@@ -19,6 +19,7 @@ const BUILTIN_SUB: Record<string, string> = {
   "claude-glm": "Claude Code · 智谱 GLM Coding Plan",
   "claude-subscription": "Claude Code · Claude 订阅",
   "dsh-deepseek": "DSH · DeepSeek 官方（桌面版登录的账号或 API Key）",
+  pi: "Pi · 本机 Pi 的模型和登录",
 };
 
 /** A third-party channel's scheme, as the list and the page call it. */

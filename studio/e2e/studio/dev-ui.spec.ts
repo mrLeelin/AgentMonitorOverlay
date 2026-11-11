@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { cpSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -24,7 +25,7 @@ test("开发界面目录: a folder without index.html is refused, a UI build is 
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "测试功能" }).click();
+  await selectSettingsPage(dialog, "测试功能");
   const field = dialog.getByTestId("dev-ui-dir");
   await field.fill(empty);
   await dialog.getByTestId("dev-ui-use").click();

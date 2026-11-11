@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -18,17 +19,17 @@ test("维护 shows the source checkout and opens Claude Code or Codex at the rep
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "维护" }).click();
+  await selectSettingsPage(dialog, "维护");
   await expect(dialog.getByTestId("maintenance-mode")).toContainText("源码 · git 工程");
   await expect(dialog.getByTestId("maintenance-claude")).toContainText(/claude\.(exe|cmd)/);
   await screenshot(app, "studio", "settings-maintenance", page);
   await dialog.getByTestId("maintenance-open-claude").click();
-  await expect(dialog.getByRole("status")).toContainText("打开 Claude Code");
+  await expect(dialog.getByRole("status").filter({ hasText: "打开 Claude Code" })).toBeVisible();
   // 2026-10-28: the person's own codex from PATH, when there is one on this machine; else the button says why it is off.
   const codex = dialog.getByTestId("maintenance-open-codex");
   if (await codex.isEnabled()) {
     await codex.click();
-    await expect(dialog.getByRole("status")).toContainText("打开 Codex");
+    await expect(dialog.getByRole("status").filter({ hasText: "打开 Codex" })).toBeVisible();
   } else {
     await expect(dialog.getByTestId("maintenance-codex-missing")).toContainText("没有找到 Codex");
   }
@@ -42,7 +43,7 @@ test("维护 says plainly when there is no codex on PATH, and its button stays o
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "维护" }).click();
+  await selectSettingsPage(dialog, "维护");
   await expect(dialog.getByTestId("maintenance-codex")).toHaveText("没有找到");
   await expect(dialog.getByTestId("maintenance-codex-missing")).toContainText("PATH 上没有 codex");
   await expect(dialog.getByTestId("maintenance-open-codex")).toBeDisabled();

@@ -1,5 +1,6 @@
 import { asyncPrompts, type Id, type Session, type TurnRetry, type TurnState } from "@amo-studio/protocol";
 import { messageImage, withDelivery } from "../items.js";
+import { currentMessagePurpose } from "../message-purpose.js";
 import type { ServerNotification } from "./rpc-client.js";
 import type { CodexServerHandle } from "./server-manager.js";
 import type { CodexAsks } from "./asks.js";
@@ -367,6 +368,7 @@ export class CodexEvents {
         const sent = typeof clientId === "string" ? st.sent.get(clientId) : undefined;
         if (sent) {
           st.sent.delete(clientId as string);
+          this.core.messagePurposeConsumed(s.id, sent.itemId);
           this.core.updateItem(sent.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
           const row = this.core.store.getItem(sent.itemId);
           if (row?.type === "user") this.core.messageDelivered(s.id, row.text);
@@ -375,7 +377,7 @@ export class CodexEvents {
         const content = (item.content ?? []) as Array<{ type?: string; text?: unknown; path?: unknown }>;
         const text = content.map((c) => (c && typeof c === "object" && typeof c.text === "string" ? c.text : "")).join("");
         const images = content.filter((c) => c?.type === "localImage" && typeof c.path === "string").map((c) => messageImage(c.path as string));
-        this.core.appendItem(s.id, { type: "user", text, ...(images.length ? { images } : {}) }, raw);
+        this.core.appendItem(s.id, { type: "user", text, messagePurpose: currentMessagePurpose(this.core.store, s.id), ...(images.length ? { images } : {}) }, raw);
         this.core.messageDelivered(s.id, text);
         return;
       }

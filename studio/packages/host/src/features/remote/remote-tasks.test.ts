@@ -140,6 +140,10 @@ describe("remote tasks between two Hosts (step 2)", () => {
     expect(b.service.snapshot().profiles.find((p) => p.id === remoteProfileId(aDevice, "p"))).toMatchObject({ label: "Codex · P", runtime: "remote", hidden: true });
 
     // A message from B runs on A, and its reply comes back to B.
+    const beforePurpose = items(a, session.id).length;
+    await expect(b.service.sessions.sendMessage(session.id, "不能静默降为工作", [], [], { purpose: "inquiry" })).rejects.toThrow(/尚未协商消息用途能力/);
+    await expect(b.service.sessions.sendMessage(session.id, "不能静默重新开始", [], [], { purpose: "reopen" })).rejects.toThrow(/尚未协商消息用途能力/);
+    expect(items(a, session.id)).toHaveLength(beforePurpose);
     await b.service.sessions.sendMessage(session.id, "从 B 发的");
     await until(() => agentTexts(a, session.id), (t) => t.includes("FAKE: 从 B 发的"), "A replies");
     await until(() => agentTexts(b, session.id), (t) => t.includes("FAKE: 从 B 发的"), "B sees the reply");
@@ -156,6 +160,7 @@ describe("remote tasks between two Hosts (step 2)", () => {
     await expect(b.service.sessions.respondApproval(session.id, pending.approvalId, "decline")).rejects.toThrow(/已经处理过|not pending/);
 
     // A new session from B: only on a model A allows (by default those the task already uses).
+    await expect(b.service.tasks.addSession(task.id, { profileId: remoteProfileId(aDevice, "p"), text: "只读新会话", purpose: "inquiry" })).rejects.toThrow(/尚未协商消息用途能力/);
     await expect(b.service.tasks.addSession(task.id, { profileId: remoteProfileId(aDevice, "q") })).rejects.toThrow("不在 A-PC 允许远程使用的模型里");
     await expect(b.service.tasks.addSession(task.id, { profileId: "p" })).rejects.toThrow("不在 A-PC 允许远程使用的模型里");
     const second = await b.service.tasks.addSession(task.id, { profileId: remoteProfileId(aDevice, "p"), text: "B 开的会话" });

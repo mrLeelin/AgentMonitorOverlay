@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,7 +34,7 @@ test("MCP: settings page, a project's .mcp.json, a session's own choice", async 
   // 设置 → MCP: the person's own servers (amo-relay off by default), and one added by pasting a whole mcpServers block.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "MCP" }).click();
+  await selectSettingsPage(dialog, "MCP");
   await expect(dialog.getByTestId("mcp-load-local")).toBeChecked();
   await expect(dialog.getByTestId("mcp-entry-figma")).toContainText("本机 · 用户级");
   await expect(dialog.getByTestId("mcp-entry-amo-relay")).toContainText("默认不启用");
@@ -47,6 +48,7 @@ test("MCP: settings page, a project's .mcp.json, a session's own choice", async 
   await dialog.getByTestId("mcp-edit-img").click();
   await expect(dialog.getByTestId("mcp-form-json")).not.toHaveValue(/sk-test/);
   await dialog.getByRole("button", { name: "取消" }).click();
+  await selectSettingsPage(dialog, "界面");
   await dialog.getByRole("button", { name: "关闭设置" }).click();
 
   // A DSH session gets amo, Studio's and the person's servers; not the unapproved .mcp.json one.
@@ -83,4 +85,9 @@ test("MCP: settings page, a project's .mcp.json, a session's own choice", async 
   await page.getByTestId("switch-mcp").click();
   await page.getByTestId("mcp-manage").click();
   await expect(page.getByRole("dialog", { name: "设置" }).getByRole("tab", { name: "MCP" })).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.getByRole("button", { name: "工具与自动化", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await dialog.getByRole("button", { name: "关闭设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(dialog.getByRole("tab", { name: "MCP", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.getByRole("button", { name: "工具与自动化", exact: true })).toHaveAttribute("aria-expanded", "true");
 });

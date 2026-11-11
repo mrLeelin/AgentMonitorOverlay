@@ -290,6 +290,8 @@ describe("the session inbox", () => {
       const it = store.getItem(itemId)!;
       if (it.type === "user") sent.push(`${sessionId}:${it.text}`);
       store.replaceItem({ ...it, delivery: undefined } as never);
+      runtime.emit("event", store.appendEvent({ type: "session.upserted", session: store.updateSession(sessionId, { status: "running" })! }));
+      runtime.emit("event", store.appendEvent({ type: "session.upserted", session: store.updateSession(sessionId, { status: "idle" })! }));
       return { mode: "start" };
     };
     new HostService(store, runtime, PROFILES, { commonDir: join(root, "common") });
@@ -311,7 +313,7 @@ describe("the session inbox", () => {
       rt.resend = resend;
       throw new Error("渠道的 Key 没了");
     };
-    expect(await service.sessions.sendPeer(caller.id, { sessionId: s.id, text: "阶段 2" })).toMatchObject({ delivered: true, waiting: 0 });
+    expect(await service.sessions.sendPeer(caller.id, { sessionId: s.id, text: "阶段 2" })).toMatchObject({ delivered: false, waiting: 0 });
     expect(deliveries(s.id)).toEqual([undefined, "unsent"]);
     expect(store.listItems(s.id).some((i) => i.type === "notice" && i.message.includes("渠道的 Key 没了"))).toBe(true);
     const row = store.listItems(s.id).filter((i) => i.type === "user")[1]!;

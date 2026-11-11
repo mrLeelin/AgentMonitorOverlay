@@ -3,7 +3,7 @@
   "providers": {
     "deepseek": {
       "limit": 1000,
-      "used": 50
+      "used": 51
     },
     "glm": {
       "limit": 5000,
@@ -457,6 +457,11 @@
       "at": "2026-11-08T15:50:20.465Z",
       "provider": "gpt",
       "note": "用户授权画布小测试：确认示例结论并写回"
+    },
+    {
+      "at": "2026-11-11T08:45:11.435Z",
+      "provider": "deepseek",
+      "note": "DSH Internal error repair: one short connectivity reply through current Studio"
     }
   ]
 }

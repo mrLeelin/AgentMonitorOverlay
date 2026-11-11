@@ -192,6 +192,11 @@ export function useComposerMentions(input: {
     },
     /** 提示词模板…'s window is up. */
     askingTemplate: templateAt !== null,
+    /** Open directly from a composer button, keeping the current insertion position. */
+    askTemplate(at: number) {
+      setCaret(null);
+      setTemplateAt(at);
+    },
     /** The window's answer: the template's text where @ was typed (on a new line after other text); the caret after it (null when cancelled). */
     finishTemplate(body: string | null): number | null {
       const at = Math.min(templateAt ?? text.length, text.length);

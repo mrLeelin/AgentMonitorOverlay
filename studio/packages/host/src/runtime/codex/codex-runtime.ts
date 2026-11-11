@@ -8,6 +8,7 @@ import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
 import { RuntimeBase, STOP_GRACE_MS, type RuntimeEvents, type SendOptions } from "../runtime.js";
 import { withDelivery } from "../items.js";
+import { queueMessagePurpose } from "../message-purpose.js";
 import type { CodexServerHandle } from "./server-manager.js";
 import { codexUsage, reviewTarget, STANDARD_TIER, toModelOption, type CodexModel, type CodexSkill, type GetAccountRateLimitsResponse } from "./account.js";
 import { CodexAsks } from "./asks.js";
@@ -111,7 +112,7 @@ export class CodexRuntime extends RuntimeBase {
   // ---- operations -------------------------------------------------------------------------------------------------
 
   /** Creates a main session in a task and starts its Codex thread; sends `text` as the first turn when given. */
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions }): Promise<Session> {
+  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
     const token = this.options.identities?.issue();
@@ -142,7 +143,7 @@ export class CodexRuntime extends RuntimeBase {
     if (lead.config) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (developerInstructions) this.options.roleGiven?.(session.id);
-    if (input.text) await this.sendMessage(session.id, input.text);
+    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
     return this.store.getSession(session.id)!;
   }
 
@@ -161,6 +162,8 @@ export class CodexRuntime extends RuntimeBase {
     this.requireLeadThread(session);
     const handle = await this.handleFor(session.profileId);
     this.requireLeadThread(this.writable(sessionId));
+    options.beforeDispatch?.();
+    if (again) this.assertCurrentMessage(sessionId, again);
     const st = this.sessionState(sessionId);
     const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra];
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
@@ -174,11 +177,13 @@ export class CodexRuntime extends RuntimeBase {
       if (row) setDelivery(row, "waiting");
       else {
         const pictures = images.map((a) => ({ id: a.id, path: a.path }));
-        row = this.appendItem(sessionId, { type: "user", text, ...(pictures.length ? { images: pictures } : {}), delivery: "waiting" }, { method: "user/steer", turnId: st.activeTurnId }).id;
+        row = this.appendItem(sessionId, { type: "user", text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(pictures.length ? { images: pictures } : {}), delivery: "waiting" }, { method: "user/steer", turnId: st.activeTurnId }).id;
       }
       const entry = { itemId: row, kind: "steer" as const, input };
       st.sent.set(clientId, entry);
       try {
+        this.assertCurrentMessage(sessionId, row);
+        options.beforeDispatch?.();
         await handle.client.request("turn/steer", { threadId: session.runtimeRef!, expectedTurnId: st.activeTurnId, input, clientUserMessageId: clientId });
         // An async question answered while its turn still runs: the session runs again (unless something else waits).
         if (this.store.getSession(sessionId)?.status === "awaiting-answer") this.asks.afterAnswer(sessionId);
@@ -199,7 +204,6 @@ export class CodexRuntime extends RuntimeBase {
     // A row shown already goes with an id, so its echo settles it rather than adding another.
     const clientId = row ? randomUUID() : undefined;
     if (row && clientId) {
-      setDelivery(row, undefined);
       st.sent.set(clientId, { itemId: row, kind: "start", input });
     }
     // Status and the active turn come from turn/started and turn/completed: a short turn can finish before this
@@ -207,7 +211,11 @@ export class CodexRuntime extends RuntimeBase {
     try {
       const tier = await this.serviceTier(session);
       this.requireLeadThread(this.writable(sessionId));
-      await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
+      if (row) { this.assertCurrentMessage(sessionId, row); setDelivery(row, undefined); }
+      options.beforeDispatch?.();
+      const purpose = options.purpose ?? "work";
+      queueMessagePurpose(this.store, sessionId, purpose, false);
+      await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(this.requireSession(sessionId).options, session.taskId, purpose), ...tier });
     } catch (err) {
       if (row && clientId) {
         st.sent.delete(clientId);
@@ -229,6 +237,7 @@ export class CodexRuntime extends RuntimeBase {
     const waiting = [...st.sent.values()].some((m) => m.itemId === itemId && m.kind === "steer");
     if (!waiting || !st.activeTurnId || !session.runtimeRef) return;
     const handle = await this.handleFor(session.profileId);
+    this.assertCurrentMessage(sessionId, itemId);
     await handle.client.request("turn/interrupt", { threadId: session.runtimeRef, turnId: st.activeTurnId });
   }
 
@@ -263,13 +272,16 @@ export class CodexRuntime extends RuntimeBase {
     const rest = left.slice(1).map(([clientId, m]) => [clientId, { ...m }] as const);
     st.sent.set(firstId, { ...first, kind: "start" });
     for (const [clientId, m] of rest) st.sent.set(clientId, m);
-    this.updateItem(first.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
     let handle: CodexServerHandle;
     try {
       handle = await this.handleFor(session.profileId);
       const tier = await this.serviceTier(session);
       this.requireLeadThread(this.writable(sessionId));
-      await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId), ...tier });
+      this.assertCurrentMessage(sessionId, first.itemId);
+      const firstRow = this.store.getItem(first.itemId);
+      queueMessagePurpose(this.store, sessionId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work", false);
+      this.updateItem(first.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
+      await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work"), ...tier });
     } catch (err) {
       this.emit("log", `could not send the unread messages of ${sessionId}: ${String(err)}`);
       for (const [clientId] of left) st.sent.delete(clientId);
@@ -280,6 +292,7 @@ export class CodexRuntime extends RuntimeBase {
       // The new turn is over already (a short one): what is left starts the next.
       if (!st.activeTurnId) return void this.afterTurn(sessionId);
       try {
+        this.assertCurrentMessage(sessionId, m.itemId);
         await handle.client.request("turn/steer", { threadId: session.runtimeRef, expectedTurnId: st.activeTurnId, input: m.input, clientUserMessageId: clientId });
       } catch {
         if (!st.activeTurnId && st.sent.get(clientId) === m) void this.afterTurn(sessionId);
@@ -624,8 +637,8 @@ export class CodexRuntime extends RuntimeBase {
    * effort (they stick for later turns too), and reasoning summaries — models that keep their thinking private (GPT)
    * still show what they thought about.
    */
-  private turnOptions(options: SessionOptions, taskId: Id | null) {
-    const { approvalPolicy, sandbox, reviewer } = this.permissionOf(options, taskId);
+  private turnOptions(options: SessionOptions, taskId: Id | null, purpose: SendOptions["purpose"] = "work") {
+    const { approvalPolicy, sandbox, reviewer } = purpose === "inquiry" ? { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const } : this.permissionOf(options, taskId);
     const sandboxPolicy: codex.v2.SandboxPolicy =
       sandbox === "danger-full-access"
         ? { type: "dangerFullAccess" }

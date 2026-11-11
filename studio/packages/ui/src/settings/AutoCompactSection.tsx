@@ -19,6 +19,14 @@ export function AutoCompactSection({ link, settings, profile }: { link: HostLink
   useEffect(() => setText(current ? k(current) : ""), [current]);
   if (!settings) return null;
 
+  if (profile.runtime === "pi")
+    return (
+      <section className="settings-section" aria-label="自动压缩点">
+        <span className="settings-heading">自动压缩点</span>
+        <span className="settings-hint" data-testid="auto-compact-pi">Pi 自己管理自动压缩，沿用 Pi 的设置；也可以在会话中手动压缩。</span>
+      </section>
+    );
+
   if (profile.runtime === "dsh")
     return (
       <section className="settings-section" aria-label="自动压缩点">

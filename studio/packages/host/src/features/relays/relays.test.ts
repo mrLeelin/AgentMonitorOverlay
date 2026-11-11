@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
@@ -40,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await servers.close();
   store.close();
   removeTempDir(root);
@@ -53,6 +54,17 @@ const lastMail = () => service.collab.readMailFromSession(leadSession.id).at(-1)
 const userTexts = (sessionId: string) => store.listItems(sessionId).flatMap((i) => (i.type === "user" ? [i.text] : []));
 
 describe("relays (传话)", () => {
+  it("reports an actual inbox runtime failure as failed with its reason instead of claiming delivery or waiting", async () => {
+    vi.spyOn(service.runtime, "resend").mockRejectedValue(new Error("runtime transport is unavailable"));
+    const sent = service.relays.send(leadSession.id, { taskId: target.id, text: "需要送达" });
+    const result = await service.relays.deliver(sent.id);
+    expect(result).toMatchObject({ state: "failed", error: "runtime transport is unavailable" });
+    expect(store.getItem(`i-relay-${sent.id}`)).toMatchObject({ delivery: "unsent", deliveryReason: "runtime transport is unavailable" });
+    const receipt = lastMail();
+    expect(receipt).toContain("传话没能送到");
+    expect(receipt).toContain("runtime transport is unavailable");
+  });
+
   it("takes a relay only from a 主控, for a task of its topic", () => {
     expect(() => service.relays.send(workerSession.id, { taskId: target.id, text: "x" })).toThrow(/只有主控/);
     const outside = store.listTasks().find((t) => t.title === "别处")!;

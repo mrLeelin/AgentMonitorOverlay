@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import type { Session, Task, TokenStats, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -26,7 +27,7 @@ test("设置 → 统计 counts the turns' tokens by model, as a line, an area or
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "统计" }).click();
+  await selectSettingsPage(dialog, "用量统计");
   await expect(dialog.getByTestId("stats-counted")).toContainText("打开时已重新统计");
   await expect(dialog.getByTestId("stats-tile")).toHaveCount(4);
   await expect(dialog.getByTestId("stats-tile").first()).toContainText("今天");

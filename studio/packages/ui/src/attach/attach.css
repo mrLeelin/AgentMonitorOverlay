@@ -158,6 +158,15 @@ button.file-chip:hover { border-color: var(--border-strong); }
 .prompt-empty { padding: 6px 2px; }
 .prompt-new { margin-right: auto; }
 .prompt-keys { margin-right: 4px; }
+/* The same editor inside settings has less horizontal space than the picker dialog. */
+.prompt-manager { container-type: inline-size; }
+.prompt-manager .prompt-body { height: 360px; flex: none; }
+.prompt-manager .prompt-side { width: 190px; }
+@container (max-width: 520px) {
+  .prompt-manager .prompt-body { flex-direction: column; height: 480px; }
+  .prompt-manager .prompt-side { width: auto; height: 150px; }
+  .prompt-manager .prompt-main { min-height: 0; }
+}
 .subsession-field { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
 .subsession-field > .settings-label { flex: none; width: 76px; padding-top: 5px; }
 .subsession-field > .model-row, .subsession-field > .model-drawer { flex: 1; min-width: 0; }

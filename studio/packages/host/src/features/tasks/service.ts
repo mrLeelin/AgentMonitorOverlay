@@ -9,6 +9,8 @@ import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
+import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
+import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
 export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions"> {
@@ -17,6 +19,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
   reviewSettleMs = 4000;
   private readonly movingBefore = new Map<Id, boolean>();
+  private readonly purposeBefore = new Map<Id, boolean>();
   private readonly settling = new Map<Id, NodeJS.Timeout>();
 
   /**
@@ -34,7 +37,15 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       const moving = sessionMoving(s);
       const before = this.movingBefore.get(s.id) ?? false;
       this.movingBefore.set(s.id, moving);
-      if (moving === before || !s.taskId) return;
+      const preserves = keepsAcceptance(currentMessagePurpose(this.store, s.id));
+      const preservedBefore = this.purposeBefore.get(s.id) ?? false;
+      this.purposeBefore.set(s.id, preserves);
+      if (!s.taskId) return;
+      if (preserves) return;
+      if (moving === before) {
+        if (moving && preservedBefore && this.followsSessions(s.taskId, "done")) this.sessionStarted(s.taskId);
+        return;
+      }
       if (moving) this.sessionStarted(s.taskId);
       else this.sessionStopped(s.taskId);
     });
@@ -221,6 +232,9 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtimeRef && (s.runtime === "codex" || s.runtime === "dsh"))) {
         throw new HostError("conflict", "已有 Codex 或 DSH 会话不能安全切成主控；请先归档这些旧会话，再标记主控并新开只读会话。旧对话仍可读取。");
       }
+      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtime === "pi")) {
+        throw new HostError("conflict", "Pi 暂不支持只读主控会话；请先归档 Pi 会话，再标记主控并选择支持只读的模型。旧对话仍可读取。");
+      }
       clean.lead = patch.lead;
     }
     if (patch.relayAuto !== undefined) {
@@ -398,6 +412,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
+    const purpose = publicMessagePurpose(input.purpose);
     this.leadPromotion.assertAvailable(owner.taskId);
     const options = await this.withDefaults(input.profileId, sessionOptions(input.options));
     // MCP 设置 (2026-11-04): no level of its own for a task; a new session goes on with the task's latest choices.
@@ -409,8 +424,9 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     // A first message with images goes as an ordinary message once the session exists (the runtimes start with text only).
     const resumeFrom = this.resumeFrom(input);
     this.leadPromotion.assertAvailable(owner.taskId);
-    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(input.text && !images.length ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
-    if (images.length) await this.f.sessions.sendMessage(session.id, input.text ?? "", images);
+    const deferredFirst = purpose === "inquiry" || purpose === "reopen" || images.length > 0;
+    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(input.text && !deferredFirst ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
+    if (deferredFirst && (input.text?.trim() || images.length)) await this.f.sessions.sendMessage(session.id, input.text ?? "", images, [], purpose ? { purpose } : {});
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });
     else if (owner.topicId) this.publish({ type: "topic.upserted", topic: this.store.updateTopic(owner.topicId, {}) });

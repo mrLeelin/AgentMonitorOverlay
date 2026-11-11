@@ -185,11 +185,12 @@ export function SubSessionDialog({
         <summary>更多：权限（现在：{LEVELS.find((l) => l.id === (chosenPermission ?? null))!.label}）</summary>
         <div className="settings-row" role="group" aria-label="权限">
           {LEVELS.map((l) => (
-            <button key={l.label} type="button" className="chip small" title={l.hint} aria-pressed={(chosenPermission ?? null) === l.id} onClick={() => setPermission(l.id)}>
+            <button key={l.label} type="button" className="chip small" title={profile?.runtime === "pi" && l.id && l.id !== "full" ? "Pi 不支持只读或工作区沙箱" : l.hint} disabled={profile?.runtime === "pi" && l.id !== null && l.id !== "full"} aria-pressed={(chosenPermission ?? null) === l.id} onClick={() => setPermission(l.id)}>
               {l.label}
             </button>
           ))}
         </div>
+        {profile?.runtime === "pi" && <span className="settings-hint">Pi 仅支持完全访问。从只读或工作区会话开启时，默认会拒绝；选择「完全放开」表示你明确允许完全访问。</span>}
       </details>
       {spec && (
         <span className="subsession-preview" data-testid="subsession-preview">

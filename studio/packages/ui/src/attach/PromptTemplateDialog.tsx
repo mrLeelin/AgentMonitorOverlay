@@ -40,8 +40,25 @@ export const remoteTaskTemplates = (link: HostLink, taskId: string, name: string
   projectLabel: "这个任务的项目",
 });
 
-export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDone }: { link: HostLink; workspaceId: string | null; projects: readonly Workspace[]; /** Another computer's templates too, or only those. */ remote?: ThereTemplates; onDone(text: string | null): void }) {
-  const local = usePromptTemplates(link, workspaceId);
+interface TemplateProps {
+  link: HostLink;
+  workspaceId: string | null;
+  projects: readonly Workspace[];
+  remote?: ThereTemplates;
+  onDone(text: string | null): void;
+}
+
+export function PromptTemplateDialog(props: TemplateProps) {
+  return <PromptTemplates {...props} />;
+}
+
+/** Settings manages every local template; it shares the composer's editor without its paste actions. */
+export function PromptTemplateManager({ link, projects }: Pick<TemplateProps, "link" | "projects">) {
+  return <PromptTemplates link={link} projects={projects} workspaceId={null} manage onDone={() => undefined} />;
+}
+
+function PromptTemplates({ link, workspaceId, projects, remote, onDone, manage = false }: TemplateProps & { manage?: boolean }) {
+  const local = usePromptTemplates(link, manage ? undefined : workspaceId);
   const only = !!remote?.only;
   const [there, setThere] = useState<PromptTemplate[] | null>(null);
   const [thereError, setThereError] = useState("");
@@ -67,8 +84,7 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const search = useRef<HTMLInputElement>(null);
-  const title = useRef<HTMLInputElement>(null);
-  useEffect(() => search.current?.focus(), []);
+  useEffect(() => { if (!manage) search.current?.focus(); }, [manage]);
   // Escape leaves the form, else closes — also when the focus is nowhere (after 删除; lib/Modal.tsx).
   const escape = () => (editing ? closeEdit() : onDone(null));
 
@@ -88,7 +104,6 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
   const edit = (next: Editing) => {
     setError("");
     setEditing(next);
-    requestAnimationFrame(() => title.current?.focus());
   };
   const closeEdit = () => {
     setEditing(null);
@@ -133,11 +148,8 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
   // The scopes a template can have: everywhere, or one project (this one first).
   const scopes = [...projects].sort((a, b) => Number(b.id === workspaceId) - Number(a.id === workspaceId));
 
-  return (
-    <Modal portal className="prompt-modal" labelledBy="prompt-title" testId="prompt-dialog" onClose={escape} onBackdrop={() => onDone(null)}>
-      <span className="modal-title" id="prompt-title">
-        提示词模板
-      </span>
+  const contents = (
+    <>
       <div className="prompt-body">
         <div className="prompt-side">
           <input
@@ -155,7 +167,7 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
                 move(e.key === "ArrowDown" ? 1 : -1);
-              } else if (e.key === "Enter" && !e.nativeEvent.isComposing && picked) {
+              } else if (!manage && e.key === "Enter" && !e.nativeEvent.isComposing && picked) {
                 e.preventDefault();
                 onDone(picked.body);
               }
@@ -171,7 +183,7 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
                 className="prompt-item"
                 disabled={!!editing}
                 onClick={() => setPickedId(t.id)}
-                onDoubleClick={() => onDone(t.body)}
+                onDoubleClick={() => !manage && onDone(t.body)}
                 data-testid="prompt-item"
               >
                 <span className="prompt-item-title">{t.title}</span>
@@ -192,7 +204,7 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
         <div className="prompt-main">
           {editing ? (
             <div className="prompt-form" data-testid="prompt-form">
-              <input ref={title} className="field" value={editing.title} maxLength={PROMPT_TEMPLATE_LIMITS.title} placeholder="标题，比如：每日巡检" aria-label="模板标题" onChange={(e) => setEditing({ ...editing, title: e.target.value })} />
+              <input autoFocus className="field" value={editing.title} maxLength={PROMPT_TEMPLATE_LIMITS.title} placeholder="标题，比如：每日巡检" aria-label="模板标题" onChange={(e) => setEditing({ ...editing, title: e.target.value })} />
               <label className="settings-row">
                 <span className="settings-label">在哪里出现</span>
                 <select value={editing.workspaceId ?? ""} aria-label="在哪里出现" onChange={(e) => setEditing({ ...editing, workspaceId: e.target.value || null })}>
@@ -272,16 +284,34 @@ export function PromptTemplateDialog({ link, workspaceId, projects, remote, onDo
                 新建模板
               </button>
             )}
-            <span className="settings-hint prompt-keys">↑↓ 选，回车粘进输入框</span>
-            <button type="button" className="btn-ghost small" onClick={() => onDone(null)}>
-              取消
-            </button>
-            <button type="button" className="btn-primary small" disabled={!picked} onClick={() => picked && onDone(picked.body)} data-testid="prompt-ok">
-              粘进输入框
-            </button>
+            {!manage && <>
+              <span className="settings-hint prompt-keys">↑↓ 选，回车粘进输入框</span>
+              <button type="button" className="btn-ghost small" onClick={() => onDone(null)}>
+                取消
+              </button>
+              <button type="button" className="btn-primary small" disabled={!picked} onClick={() => picked && onDone(picked.body)} data-testid="prompt-ok">
+                粘进输入框
+              </button>
+            </>}
           </>
         )}
       </div>
+    </>
+  );
+
+  if (manage) return (
+    <section className="settings-section prompt-manager" aria-label="提示词模板" data-testid="prompt-manager" onKeyDown={(e) => {
+      if (e.key === "Escape" && editing) { e.stopPropagation(); closeEdit(); }
+    }}>
+      <span className="settings-heading">提示词模板</span>
+      <span className="settings-hint">管理全局和各项目的常用提示词。在输入框中输入 @，选择「提示词模板…」即可粘入。</span>
+      {contents}
+    </section>
+  );
+  return (
+    <Modal portal className="prompt-modal" labelledBy="prompt-title" testId="prompt-dialog" onClose={escape} onBackdrop={() => onDone(null)}>
+      <span className="modal-title" id="prompt-title">提示词模板</span>
+      {contents}
     </Modal>
   );
 }

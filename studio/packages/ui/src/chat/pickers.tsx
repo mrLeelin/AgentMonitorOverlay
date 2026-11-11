@@ -8,6 +8,7 @@ import { effortLabel, modelName } from "../lib/choices.js";
 /** The account behind a profile, as a two-letter mark with its own tone. */
 export function profileMark(p: ModelProfile | undefined): { text: string; tone: string } {
   const key = `${p?.id ?? ""} ${p?.provider ?? ""} ${p?.label ?? ""}`.toLowerCase();
+  if (p?.runtime === "pi") return { text: "Pi", tone: "pi" };
   if (key.includes("mock")) return { text: "M", tone: "mock" };
   if (key.includes("deepseek")) return { text: "DS", tone: "ds" };
   if (key.includes("glm")) return { text: "Z", tone: "glm" };

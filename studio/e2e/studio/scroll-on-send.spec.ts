@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test, type Page } from "@playwright/test";
 import type { Session, Task, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -40,7 +41,7 @@ test("sending jumps to the end of the conversation, unless turned off in 设置 
   // Off: the place being read stays.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "界面" }).click();
+  await selectSettingsPage(dialog, "界面");
   await dialog.getByTestId("scroll-on-send-off").click();
   await expect(dialog.getByTestId("scroll-on-send-off")).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");

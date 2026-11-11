@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import type { Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
@@ -24,7 +25,7 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
   // A preset in 设置: full access (no more approvals) with low effort.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.getByTestId("models-nav-presets").click();
   const presets = dialog.getByRole("region", { name: "常用预设" });
   await presets.getByLabel("预设名称").fill("快速全自动");
@@ -152,7 +153,7 @@ test("设置 → 模型: models in the person's order, their default model, effo
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-mock"]').click();
   const section = dialog.getByRole("region", { name: "型号顺序和默认" });
   const rows = section.getByTestId("model-order-row");

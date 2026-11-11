@@ -20,10 +20,16 @@ function fixture(name: Exclude<SessionRuntime, "remote"> = "codex") {
   const profiles: ModelProfile[] = [{ id: "mock", label: "mock", runtime: name, provider: null, model: "mock" }];
   let sequence = 0;
   const create = (owner: Task): Session => store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: name, profileId: "mock", workspaceId: workspace.id, title: owner.title, status: "idle", writer: "workbench", runtimeRef: `mock-ref-${owner.id}-${++sequence}` });
+  const started = (sessionId: string): { mode: "start" } => {
+    // A successful native start emits lifecycle separately from transport provision, as each real adapter does.
+    native.emit("event", store.appendEvent({ type: "session.upserted", session: store.updateSession(sessionId, { status: "running" })! }));
+    native.emit("event", store.appendEvent({ type: "session.upserted", session: store.updateSession(sessionId, { status: "idle" })! }));
+    return { mode: "start" };
+  };
   const native = Object.assign(new EventEmitter<RuntimeEvents>(), {
     startSession: vi.fn(async (input: Parameters<SessionRuntimeApi["startSession"]>[0]) => create(store.getTask(input.taskId!)!)),
-    sendMessage: vi.fn(async () => ({ mode: "start" as const })),
-    resend: vi.fn(async () => ({ mode: "start" as const })),
+    sendMessage: vi.fn(async (sessionId: string) => started(sessionId)),
+    resend: vi.fn(async (sessionId: string) => started(sessionId)),
     interrupt: vi.fn(async () => undefined),
   });
   const runtime = new RuntimeRouter(store, profiles, { [name]: native as unknown as SessionRuntimeApi });
@@ -58,9 +64,9 @@ describe("shared context transport", () => {
     expect(reference).not.toContain(body);
     expect(reference.length).toBeLessThan(1000);
     await service.sessions.sendMessage(worker.id, "下一轮");
-    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `下一轮\n\n${reference}`, [], {});
+    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `下一轮\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
     await service.sessions.sendMessage(worker.id, "恢复后继续");
-    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `恢复后继续\n\n${reference}`, [], {});
+    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `恢复后继续\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
     f.native.emit("message-delivered", worker.id, reference);
     expect(service.sharedContext.receipts(worker.id)).toEqual(before);
     await f.runtime.resend(worker.id, oldQueue.id);
@@ -143,7 +149,7 @@ describe("shared context transport", () => {
     const s = await f.runtime.startSession({ taskId: task.id, topicId: null, workspace: f.workspace, profileId: "mock", text: "first" });
     expect(f.native.startSession.mock.calls[0]![0].text).toBe(`first\n\n${body}`);
     await f.runtime.sendMessage(s.id, "next");
-    expect(f.native.sendMessage).toHaveBeenCalledWith(s.id, `next\n\n${body}`, [], {});
+    expect(f.native.sendMessage).toHaveBeenCalledWith(s.id, `next\n\n${body}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
     expect(receipts).not.toHaveBeenCalled();
     const queued = f.store.appendItem({ id: "queued-v1", sessionId: s.id, type: "user", text: `queued\n\n${body}`, delivery: "held", createdAt: new Date().toISOString(), raw: { runtime: name, method: "test" } });
     body = "[AMO_SHARED_CONTEXT:requirement-v2]\nversion two";

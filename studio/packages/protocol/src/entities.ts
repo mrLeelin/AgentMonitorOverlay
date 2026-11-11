@@ -85,13 +85,14 @@ export interface Topic {
 }
 
 /**
- * `dsh`: DeepSeek through a DeepSeek Harness source clone over ACP (stage 17, plans/done/stage-17-dsh.md). `remote`
+ * `dsh`: DeepSeek through a DeepSeek Harness source clone over ACP (stage 17, plans/done/stage-17-dsh.md).
+ * `pi`: the person's installed Pi CLI over RPC, with Pi's own provider login and model configuration. `remote`
  * (远程, step 2, 2026-10-29): this computer's copy of a session that runs on a paired device; what is sent to it goes
  * there through the team server (features/remote/).
  */
-export type SessionRuntime = "codex" | "claude" | "dsh" | "remote";
+export type SessionRuntime = "codex" | "claude" | "dsh" | "pi" | "remote";
 /** How the runtime is named next to a profile ("Codex · DeepSeek", "DSH · DeepSeek"). */
-export const RUNTIME_LABELS: Record<SessionRuntime, string> = { codex: "Codex", claude: "Claude", dsh: "DSH", remote: "远程" };
+export const RUNTIME_LABELS: Record<SessionRuntime, string> = { codex: "Codex", claude: "Claude", dsh: "DSH", pi: "Pi", remote: "远程" };
 export type SessionKind = "main" | "fork" | "sub";
 
 /**
@@ -347,7 +348,10 @@ export interface MessageImage {
  * sends it again. `held` (2026-11-04, plans/done/message-delivery.md): from an agent or from Studio (中转回复, 值守, 传话,
  * session_send…), in the session's inbox until the session is free — then it goes in by itself.
  */
-export type UserDelivery = "waiting" | "unsent" | "held";
+export type UserDelivery = "waiting" | "unsent" | "held" | "expired";
+
+/** Explicit dispatch intent; absent on older messages means ordinary work. */
+export type MessagePurpose = "inquiry" | "work" | "reopen" | "notification";
 
 /**
  * What a notice offers to do (2026-10-23). `folder-access`: DSH's write sandbox cannot be set up on the session's
@@ -392,13 +396,13 @@ export type SessionItem =
    * ran and not read by the model yet (Claude reads it after the next tool call or at the turn's end, Codex at its next
    * step); `unsent` — its process went before it was read (it can be sent again). Absent: it reached the model.
    */
-  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; relayFromSessionId?: Id })
+  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; deliveryReason?: string; deliveryEndedAt?: Timestamp; replacesItemId?: Id; messagePurpose?: MessagePurpose; rebaseOnContextUpgrade?: boolean; relayFromSessionId?: Id })
   | (ItemBase & { type: "agent"; markdown: string; streaming: boolean })
   /** The model's thinking before or between steps. */
   | (ItemBase & { type: "reasoning"; text: string; streaming: boolean; durationMs?: number })
   | (ItemBase & { type: "tool" } & ToolFields)
   /** Metadata of one turn (not shown as a row): when it ran, how it ended, what it used. */
-  | (ItemBase & { type: "turn"; turnId: string; state: TurnState; startedAt: Timestamp; endedAt?: Timestamp; usage?: TurnUsage; decode?: TurnDecode; error?: string; retry?: TurnRetry })
+  | (ItemBase & { type: "turn"; turnId: string; state: TurnState; startedAt: Timestamp; endedAt?: Timestamp; usage?: TurnUsage; decode?: TurnDecode; error?: string; retry?: TurnRetry; messagePurpose?: MessagePurpose })
   | (ItemBase & { type: "approval"; approvalId: string; kind: ApprovalKind; summary: string; detail?: string; state: ApprovalState })
   /** A question to the person, a form, or a plan to review (stage 12; see questions.ts). */
   | (ItemBase & { type: "question" } & QuestionFields)
@@ -547,7 +551,8 @@ export interface Relay {
   fromTaskId: Id | null;
   toTaskId: Id;
   text: string;
-  state: "pending" | "delivered" | "dismissed" | "failed";
+  purpose?: MessagePurpose;
+  state: "pending" | "delivered" | "dismissed" | "failed" | "expired";
   createdAt: Timestamp;
   decidedAt: Timestamp | null;
   /** The session it went into. */

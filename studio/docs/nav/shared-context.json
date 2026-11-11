@@ -9,7 +9,8 @@
       "purpose": "显式管理根的共同需求草稿/不可变发布版本，按任务绑定要求版本，区分排队/送达/声明采用；统一三运行时输入，错版交付保存待处理，验收事务及前置accepted依据检查。旧未绑定任务不猜版本。",
       "steps": [
         "改数据或接口：先读 protocol/shared-context.ts 和 plans/done/shared-task-context.md；普通 topicdocs 不强制版本化。",
-        "改通知：复用 SessionInbox 持久held消息与暂停规则；归属变化旧token不可重放。",
+        "改通知：复用 SessionInbox 持久held/expired终态与暂停规则；归属变化旧token不可重放。升级只重建同树有效业务，保留冻结旧行和替代来源；面板区分等待、过期、真实失败并支持重试。",
+        "改询问与派工：task_message purpose显式区分inquiry/work/reopen；用途持久到实际回合，自动状态用notification。询问保持验收但不绕过角色、版本、依赖和只读权限。",
         "改启动/交付：同时核查 RuntimeRouter、orchestration 和 taskplans，不能用done代替真实accepted或把enqueue代替adopt。",
         "改界面：TaskContext 提供可选查看和根主控高级编辑，HTTP查看不代执行者声明采用；TaskWorkflow 同时展示实际与当前要求，画布只提示明确绑定待采用，不加共享连线。"
       ],
@@ -20,6 +21,8 @@
         { "label": "AI工具", "path": "studio/packages/host/src/features/sharedcontext/mcp.ts", "anchor": "export function sharedContextTools" },
         { "label": "统一运行时入口", "path": "studio/packages/host/src/runtime/runtime.ts", "anchor": "setMessageContext" },
         { "label": "持久收件箱", "path": "studio/packages/host/src/features/sessions/inbox.ts", "anchor": "private queueContext" },
+        { "label": "通知永久终态", "path": "studio/packages/host/src/features/sessions/inbox.ts", "anchor": "expire(itemId" },
+        { "label": "结构化询问回合", "path": "studio/packages/host/src/runtime/message-purpose.ts", "anchor": "currentMessagePurpose" },
         { "label": "交付验收", "path": "studio/packages/host/src/features/orchestration/service.ts", "anchor": "assertAcceptable" },
         { "label": "依赖启动", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "isPrerequisiteCurrent" },
         { "label": "任务页共同需求", "path": "studio/packages/ui/src/task/TaskContext.tsx", "anchor": "export function TaskContext" },

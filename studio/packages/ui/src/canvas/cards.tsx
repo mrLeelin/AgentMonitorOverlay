@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { taskWhere, type CanvasNode, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { relativeTime, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
 import type { ContextHint } from "./useContextHints.js";
+import { TaskRunner } from "../board/TaskRunner.js";
 
 // The canvas's cards (stage 16 split out of CanvasPage.tsx): a task of the topic, a reference to another topic's task,
 // and a note. A task's description shows on its card (two lines); a colour mark is its outline (data-color).
@@ -88,6 +89,7 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
           <>
             <span className="dot" style={{ background: look?.dot ?? "var(--muted-dot)" }} />
             <span style={{ color: look?.text ?? "var(--text-dim)" }}>{look?.label ?? "未开始"}</span>
+            {status === "running" && <TaskRunner sessions={own} />}
             {contextHint ? <span className="canvas-context-hint" data-testid="canvas-context-hint" title={contextHint.detail}>{contextHint.label}</span> : <span>· {[where, live ? `${live} 个会话` : ""].filter(Boolean).join(" · ")}</span>}
           </>
         )}
@@ -106,7 +108,8 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
 
 export function RefCard({ node, target, topics, sessions, workspaces, selected, flag, handles, onOpen, onMouseDown, onContextMenu }: CardEvents & { node: CanvasNode; target: Task | undefined; topics: readonly Topic[]; sessions: readonly Session[]; workspaces: readonly Workspace[]; onOpen(): void }) {
   const gone = !target ? "任务不存在" : target.archivedAt ? "任务已归档" : "";
-  const refStatus = target && !gone ? taskStatus(taskSessions(target, sessions)) : null;
+  const own = target && !gone ? taskSessions(target, sessions) : [];
+  const refStatus = target && !gone ? taskStatus(own) : null;
   const refLook = refStatus ? SESSION_LOOK[refStatus] : null;
   const home = target ? `${topics.find((t) => t.id === target.topicId)?.title ?? "不在专题里"} / ${taskWhere(target, workspaces)}` : "";
   const described = !gone && target?.description;
@@ -137,6 +140,7 @@ export function RefCard({ node, target, topics, sessions, workspaces, selected, 
       <span className="canvas-card-meta">
         {!gone && <span className="dot" style={{ background: refLook?.dot ?? "var(--muted-dot)" }} />}
         {!gone && <span style={{ color: refLook?.text ?? "var(--text-dim)" }}>{refLook?.label ?? "未开始"}</span>}
+        {refStatus === "running" && <TaskRunner sessions={own} />}
         <span className="ref-home">{gone ? "可以删掉这张卡片" : `· ${home}`}</span>
       </span>
       {described && lines > 0 && (

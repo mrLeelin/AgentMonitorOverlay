@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import type { Session, SessionItem, StateSnapshot, Task, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, windowState, type Studio } from "../support/studio.js";
@@ -104,12 +105,22 @@ test("Focus lists what needs me, approves in place and opens the workbench", asy
   expect(await focusIgnore(studio)).toBe(false);
   await screenshot(app, "stage-3", "S3-07-focus", focus, "focus");
 
-  // "在工作台打开" shows that session in the workbench.
-  await focus.getByRole("button", { name: "在工作台打开" }).click();
+  // The header count opens the first pending session even while compact and passing other clicks through.
+  await focus.getByTestId("focus-compact").click();
+  await focus.getByTestId("focus-theme-toggle").click({ button: "right" });
+  await focus.getByTestId("focus-menu-through").click();
+  await focus.getByTestId("focus-menu-close").click();
+  const needs = focus.getByRole("button", { name: "需要你 1", exact: true });
+  await expect(needs).toHaveCSS("-webkit-app-region", "no-drag");
+  await needs.hover();
+  await expect.poll(() => focusIgnore(studio!)).toBe(false);
+  await screenshot(app, "studio", "focus-needs-compact", focus, "focus");
+  await needs.click();
   await expect(page.getByTestId("task-title")).toHaveText("掉落表校验");
   await expect(page.getByTestId("approval").first()).toHaveAttribute("data-state", "pending");
 
   // Approve in place.
+  await focus.getByTestId("focus-compact").click();
   await focus.getByRole("button", { name: "批准", exact: true }).click();
   await expect(page.getByTestId("approval").first()).toHaveAttribute("data-state", "accepted");
   await expect(focus.getByTestId("focus-needs")).toHaveText("没有待处理", { timeout: 30_000 });
@@ -365,7 +376,7 @@ test("Focus 桌宠: the robot by default; 「看书的 Claude 娘」 picked in �
   // The robot by default.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "界面" }).click();
+  await selectSettingsPage(dialog, "界面");
   await expect(dialog.getByTestId("pet-skin-robot")).toHaveAttribute("aria-checked", "true");
   await expect(dialog.getByTestId("pet-skin-preview").locator("svg")).toHaveCount(1);
   await dialog.getByTestId("pet-skin-reader").click();
@@ -411,7 +422,7 @@ test("Focus 桌宠 「AMO 娘」: her faces on Focus, and the top-left and windo
   await expect(focus.getByTestId("focus-needs")).toHaveText("没有待处理", { timeout: 30_000 });
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "界面" }).click();
+  await selectSettingsPage(dialog, "界面");
   await dialog.getByTestId("pet-skin-mascot").click();
   await expect(dialog.getByTestId("mascot-art")).toBeVisible();
   await expect(dialog.getByTestId("pet-skin-mascot-hint")).toContainText("任务栏");
@@ -436,7 +447,7 @@ test("Focus 桌宠 「AMO 娘」: her faces on Focus, and the top-left and windo
 
   // Another pet: the icons are the app's again.
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "界面" }).click();
+  await selectSettingsPage(dialog, "界面");
   await dialog.getByTestId("pet-skin-robot").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("brand-mark")).toHaveAttribute("src", "./icon.svg");

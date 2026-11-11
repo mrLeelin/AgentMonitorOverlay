@@ -10,6 +10,7 @@ import { DshSection } from "./DshSection.js";
 import { ClaudeCodeSection } from "./ClaudeCodeSection.js";
 import { ClaudeAccountsSection } from "./ClaudeAccountsSection.js";
 import { useProfiles } from "../lib/balance.js";
+import { reloadProfileChoices } from "../lib/choices.js";
 
 /** What each 「+ … 方案」 adds. */
 const ADD_HINT = {
@@ -62,6 +63,14 @@ export function ModelsPage({ link, settings }: { link: HostLink; settings: Studi
       </>
     ) : profile && !profile.custom && profile.runtime === "dsh" ? (
       <DshSection link={link} credentialId={profile.credentialId} />
+    ) : profile?.runtime === "pi" ? (
+      <section className="settings-section" aria-label="Pi 配置" data-testid="pi-section">
+        <span className="settings-heading">本机 Pi</span>
+        <span className="settings-hint">沿用本机 Pi 的模型和登录。在终端运行 pi，用 /login 登录；第三方接口在 Pi 的 models.json 中配置。改完登录或配置后，点「重新读取型号」。</span>
+        <span className="settings-hint">Pi 的文件和命令可以完全访问本机；暂不支持 Studio 的只读会话和终端接管。</span>
+        <button type="button" className="btn-ghost small" onClick={() => reloadProfileChoices(profile.id)} data-testid="pi-models-reload">重新读取型号</button>
+        {profile.unavailable && <span className="form-error">{profile.unavailable}</span>}
+      </section>
     ) : undefined;
 
   const select = (v: View) => {

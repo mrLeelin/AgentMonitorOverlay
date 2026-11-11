@@ -49,6 +49,8 @@ export interface NewSessionInput {
   workspaceId?: Id;
   /** First user message; when present the session starts a turn right away. */
   text?: string;
+  /** Explicit first-message intent; omitted keeps legacy work behavior. Internal notification is not public. */
+  purpose?: "inquiry" | "work" | "reopen";
   /** Images uploaded with POST /api/attachments that go with the first message (2026-10-19). */
   attachments?: Id[];
   /** Model, effort and permissions; the profile's defaults otherwise. */
@@ -699,6 +701,7 @@ export interface HostRoutes
   "PATCH /api/tasks/:id": { req: { title?: string; description?: string; firstMessage?: string; lead?: boolean; managerTaskId?: Id | null; relayAuto?: boolean; column?: TaskColumn; workspaceId?: Id | null; topicId?: Id | null }; res: Task };
   "GET /api/tasks/:id/management": { req: void; res: TaskManagement };
   "GET /api/tasks/:id/workflow": { req: void; res: TaskWorkflow };
+  "POST /api/tasks/:id/workflow/retry-notice": { req: { noticeId: Id }; res: { ok: true } };
   "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string } & ContextSubmissionInput; res: TaskResult };
   "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
   "GET /api/tasks/:id/context": { req: void; res: SharedContextView };
@@ -748,7 +751,7 @@ export interface HostRoutes
    * `now` (立即发送, 2026-11-02; Claude and Codex): while a turn runs, the model reads the message at once — the turn's
    * current step gives way (Ctrl+Enter); `mode` stays what the message would have been without it.
    */
-  "POST /api/sessions/:id/messages": { req: { text: string; attachments?: Id[]; annotations?: Id[]; now?: boolean; subsessions?: SubsessionSetup[] }; res: { mode: "start" | "steer" | "queue" } };
+  "POST /api/sessions/:id/messages": { req: { text: string; attachments?: Id[]; annotations?: Id[]; now?: boolean; purpose?: "inquiry" | "work" | "reopen"; subsessions?: SubsessionSetup[] }; res: { mode: "start" | "steer" | "queue" } };
   "POST /api/sessions/:id/interrupt": { req: void; res: { ok: true } };
   /** 立即发送 on a message still waiting (delivery `waiting`): the running turn gives way and the model reads it now. Nothing when it is not waiting any more. */
   "POST /api/sessions/:id/items/:itemId/send-now": { req: void; res: { ok: true } };

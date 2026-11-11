@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
@@ -27,7 +28,7 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await expect(dialog.getByTestId("channel-nav")).not.toHaveCount(0);
 
   await dialog.getByTestId("channel-add-codex").click();
@@ -70,7 +71,7 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
 
   // Hidden: gone from the new-task tiles and the drawer, still the label of its session.
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await nav.click();
   await card.getByTestId("channel-hidden").check();
   await expect(nav).toHaveClass(/hidden/);
@@ -114,7 +115,7 @@ test("设置 → 额度: which accounts show at the bottom of the left column (F
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "额度" }).click();
+  await selectSettingsPage(dialog, "额度");
   const row = dialog.locator(`[data-testid="quota-row"][data-id="${channel.id}"]`);
   await expect(row).toContainText("余额 · 余额 $12.50");
   await expect(row.getByTestId("quota-footer")).toBeChecked();
@@ -135,7 +136,7 @@ test("设置 → 模型 → 快速选择: the automatic row, dragged into the pe
   await page.evaluate(() => localStorage.setItem("amo.recentModels", JSON.stringify([{ profileId: "claude-mock", model: "mock-claude" }, { profileId: "claude-mock", model: null }])));
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.getByTestId("models-nav-quick").click();
   const section = dialog.getByRole("region", { name: "快速选择" });
   const rows = section.getByTestId("quick-row");
@@ -183,7 +184,7 @@ test("设置 → 模型 → a channel's 自动压缩点: 272k by default, its ow
   const own = async () => (await studio!.api<StudioSettings>("GET", "/api/settings")).autoCompactProfiles["codex-mock"];
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="codex-mock"]').click();
   const section = dialog.getByRole("region", { name: "自动压缩点" });
   const input = section.getByTestId("auto-compact-input");
@@ -231,7 +232,7 @@ test("a third-party DeepSeek channel run by DSH: its address, its own key and th
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.getByTestId("channel-add-dsh").click();
   const form = page.getByTestId("channel-dialog");
   await expect(form.getByTestId("channel-kind-dsh")).toHaveAttribute("aria-checked", "true");
@@ -272,7 +273,7 @@ test("a third-party DeepSeek channel run by DSH: its address, its own key and th
   await expect(tray).toHaveText(["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-ocr"]);
   await page.getByTestId("switch-model").click();
   await page.getByRole("button", { name: "设置" }).click();
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator(`[data-testid="channel-nav"][data-id="${channel.id}"]`).click();
   const rows = dialog.getByRole("region", { name: "型号顺序和默认" }).getByTestId("model-order-row");
   await expect(rows).toHaveCount(2);
@@ -292,7 +293,7 @@ test("without a Claude Code client the Claude channels are unavailable, and 设�
   // 设置 → 模型: the channel is marked, its page says what is missing and how to install it.
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   const nav = dialog.locator('[data-testid="channel-nav"][data-id="claude-mock"]');
   await expect(nav).toContainText("不可用");
   await nav.click();
@@ -318,7 +319,7 @@ test("a Claude channel's page names the Claude Code its sessions run on", async 
   const { page } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-mock"]').click();
   const section = dialog.getByTestId("channel-page").getByTestId("claude-code-section");
   await expect(section).toHaveAttribute("data-found", "1");
@@ -352,7 +353,7 @@ test("hiding the picked model moves 新建任务 to the default; Claude 订阅 s
   );
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-subscription"]').click();
   const endpoint = dialog.getByTestId("channel-page").getByTestId("channel-endpoint");
   await expect(endpoint.getByTestId("channel-endpoint-url").first()).toHaveText("https://relay.example.com/claude");

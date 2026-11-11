@@ -93,6 +93,7 @@ agent 改完代码，可以把要你看的东西放进一个窗口：未提交�
 - **Codex**（通过 Codex app-server）：你自己的 GPT 订阅（用本机 Codex 的登录），或 DeepSeek 等兼容渠道。需要先 `npm i -g @openai/codex`。
 - **Claude**（通过 Claude Agent SDK）：你自己的 Claude 订阅（默认用本机 Claude Code 的登录，也可以改用 `claude setup-token` 生成的令牌），或 GLM 等兼容渠道。需要先装好 Claude Code（PowerShell 里运行 `irm https://claude.ai/install.ps1 | iex`），Portable 版不自带；没装时这些渠道在 设置 → 模型 里显示为不可用。
 - **DSH · DeepSeek**：用你本机的 DeepSeek Harness 源码运行。
+- **Pi**（通过本机 Pi RPC）：沿用 Pi 的模型与登录，支持会话、工具输出、图片、扩展问答与恢复。先安装 `@earendil-works/pi-coding-agent` 并在 Pi 中登录；Pi 暂只支持完全访问，不能用作只读主控。
 
 渠道和密钥在 设置 → 模型 里配置。
 

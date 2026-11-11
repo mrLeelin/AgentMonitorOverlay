@@ -40,7 +40,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
   }
 
   /** An authorised lead dispatches directly; topic-only coordination still waits for confirmation. */
-  send(fromSessionId: Id, input: { taskId?: unknown; text?: unknown }): Relay {
+  send(fromSessionId: Id, input: { taskId?: unknown; text?: unknown; purpose?: unknown }): Relay {
     const facts = roleFacts(this.host, fromSessionId);
     if (facts.role !== "lead" && facts.role !== "topic") throw new HostError("bad_request", "只有主控（或专题会话）能传话：要找别的任务，用 mailbox_send 留言。");
     const target = this.store.getTask(String(input.taskId ?? ""));
@@ -51,7 +51,9 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     const text = typeof input.text === "string" ? input.text.trim() : "";
     if (!text) throw new HostError("bad_request", "text is required");
     if (text.length > RELAY_TEXT_MAX) throw new HostError("bad_request", `text is limited to ${RELAY_TEXT_MAX} characters`);
-    const relay = this.save({ id: newId("relay"), fromSessionId, fromTaskId: facts.task?.id ?? null, toTaskId: target.id, text, state: "pending", createdAt: new Date().toISOString(), decidedAt: null });
+    const purpose = input.purpose ?? "work";
+    if (purpose !== "inquiry" && purpose !== "work" && purpose !== "reopen") throw new HostError("bad_request", "purpose must be inquiry, work or reopen");
+    const relay = this.save({ id: newId("relay"), fromSessionId, fromTaskId: facts.task?.id ?? null, toTaskId: target.id, text, purpose, state: "pending", createdAt: new Date().toISOString(), decidedAt: null });
     if (facts.role === "lead" || target.relayAuto) void Promise.resolve().then(() => this.deliver(relay.id)).catch(() => undefined);
     return relay;
   }
@@ -75,7 +77,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       `【主控「${lead?.title || "主控"}」传话】`,
       relay.text,
       "",
-      `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给${relay.fromTaskId ? `任务 ${relay.fromTaskId}` : `会话 ${relay.fromSessionId}`}。）`,
+      relay.purpose === "inquiry" ? "（这是主控通过 AMO Studio 发来的只读询问：仅回答问题，不继续实施、不重新提交交付，也不撤销已有验收。）" : `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给${relay.fromTaskId ? `任务 ${relay.fromTaskId}` : `会话 ${relay.fromSessionId}`}。）`,
     ].join("\n");
     try {
       if (!target || target.archivedAt) throw new HostError("bad_request", "the task is gone or archived");
@@ -85,13 +87,20 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       let held = false;
       if (session) {
         // The session's inbox (2026-11-04): it goes in once the session's turn is over, not into the running one.
-        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId, `i-relay-${relay.id}`)).delivered;
+        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId, `i-relay-${relay.id}`, { purpose: relay.purpose ?? "work" })).delivered;
         sessionId = session.id;
       } else {
         const workspace = this.requireWorkspace(target.workspaceId);
         const profileId = from?.profileId ?? this.profiles[0]!.id;
         sessionId = (await this.f.tasks.startSession({ taskId: target.id, topicId: null }, workspace, { profileId })).id;
-        held = !(await this.f.sessions.inbox.put(sessionId, message, relay.fromSessionId, `i-relay-${relay.id}`)).delivered;
+        held = !(await this.f.sessions.inbox.put(sessionId, message, relay.fromSessionId, `i-relay-${relay.id}`, { purpose: relay.purpose ?? "work" })).delivered;
+      }
+      const row = this.store.getItem(`i-relay-${relay.id}`);
+      if (row?.type === "user" && row.delivery === "unsent") throw new HostError("conflict", row.deliveryReason || "消息运行时发送失败，请在会话中查看原因并重试。");
+      if (row?.type === "user" && row.delivery === "expired") {
+        const expired = this.save({ ...this.requireRelay(id), state: "expired", decidedAt: new Date().toISOString(), sessionId, error: row.deliveryReason });
+        this.tellLead(relay, `这份传话已过期：${row.deliveryReason || "任务归属或要求已变化"}。请以当前任务通知和 task_workflow 为准。`);
+        return expired;
       }
       const delivered = this.save({ ...this.requireRelay(id), state: "delivered", decidedAt: new Date().toISOString(), sessionId });
       this.tellLead(relay, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : `传话已送到「${target.title || "未命名任务"}」。`);
@@ -116,7 +125,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
   private tellLead(relay: Relay, text: string): void {
     try {
       this.f.collab.sendMail(null, { kind: "session", sessionId: relay.fromSessionId }, text);
-      if (relay.fromTaskId) void this.f.sessions.inbox.put(relay.fromSessionId, text, undefined, `i-relay-receipt-${relay.id}`).catch((error: unknown) => this.log(`relay receipt: ${String(error)}`));
+      if (relay.fromTaskId) void this.f.sessions.inbox.put(relay.fromSessionId, text, undefined, `i-relay-receipt-${relay.id}`, { purpose: "notification", rebaseOnContextUpgrade: true }).catch((error: unknown) => this.log(`relay receipt: ${String(error)}`));
     } catch {
       // The 主控's session is gone: the relay still records what happened.
     }

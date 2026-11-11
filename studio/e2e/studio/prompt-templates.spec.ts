@@ -34,8 +34,10 @@ test("prompt templates: write one, paste it into a session's composer, project-o
 
   // Written in the window: global by default.
   await dialog.getByTestId("prompt-new").click();
+  await expect(dialog.getByLabel("模板标题")).toBeFocused();
   await dialog.getByLabel("模板标题").fill("每日巡检");
   await dialog.getByLabel("模板内容").fill("看一遍昨天的提交\n列出有风险的改动");
+  await expect(dialog.getByLabel("模板内容")).toHaveValue("看一遍昨天的提交\n列出有风险的改动");
   await dialog.getByTestId("prompt-save").click();
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await expect(dialog.getByTestId("prompt-preview")).toContainText("列出有风险的改动");

@@ -213,6 +213,8 @@ export class ClaudeMessages {
     live.atCli.delete(uuid);
     live.onAtCli.get(uuid)?.();
     const delivery = m.state === "cancelled" ? "unsent" : undefined;
+    const consumed = this.core.store.getItem(itemId);
+    if (m.state !== "cancelled" && consumed?.type === "user") this.core.messagePurposeConsumed(consumed.sessionId, itemId, live.running);
     this.core.updateItem(itemId, (it) => (it.type === "user" && it.delivery ? withDelivery(it, delivery) : it));
     const row = this.core.store.getItem(itemId);
     if (m.state !== "cancelled" && row?.type === "user") this.core.messageDelivered(row.sessionId, row.text);

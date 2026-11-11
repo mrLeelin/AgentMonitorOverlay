@@ -20,6 +20,7 @@
 .card-title { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-title); line-height: 1.35; overflow-wrap: anywhere; }
 .card-status { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-dim); }
 .card-runner { flex: none; width: 24px; height: 24px; margin: -3px 0 -3px -4px; background: url("./assets/chibi-run.png") 0 0 / 192px 24px repeat-x; animation: card-runner-frames 0.8s steps(8) infinite; }
+.card-runner[data-skin="claude"] { background-image: url("./assets/claude-run.png"); }
 @keyframes card-runner-frames { to { background-position-x: -192px; } }
 @media (prefers-reduced-motion: reduce) { .card-runner { animation: none; } }
 .card-meta { font-size: var(--fs-cap); color: var(--text-faint); }

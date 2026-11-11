@@ -177,6 +177,7 @@ export class SharedContextFeature extends Feature {
   validateMessage(sessionId: Id, itemId: Id): boolean {
     const s = this.store.getSession(sessionId), b = s?.taskId ? this.binding(s.taskId) : null;
     const item = this.store.getItem(itemId);
+    if (item?.type === "user" && item.delivery === "expired") return false;
     const tokens = item?.type === "user" ? [...item.text.matchAll(/^\[AMO_SHARED_CONTEXT:([^\]]+)\]\r?$/gm)].map((m) => m[1]) : [];
     // Every queued producer carries the same frozen block; stale ordinary relays must not survive a transfer either.
     if (tokens.length && (!b || !this.valid(b) || tokens.some((id) => id !== b.id))) return false;

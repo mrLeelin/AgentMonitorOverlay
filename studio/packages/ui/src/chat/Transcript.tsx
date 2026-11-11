@@ -373,7 +373,7 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
           </span>
         )}
       </div>
-      {item.delivery && <DeliveryLine itemId={item.id} delivery={item.delivery} />}
+      {item.delivery && <DeliveryLine itemId={item.id} delivery={item.delivery} reason={item.deliveryReason} />}
     </div>
   );
 }
@@ -382,18 +382,19 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
  * 立即发送 (2026-11-02): a message sent while the model worked and not read yet (Claude: after its next tool call or at
  * the turn's end; Codex: at its next step), or one whose process went before reading it.
  */
-function DeliveryLine({ itemId, delivery }: { itemId: string; delivery: NonNullable<Extract<SessionItem, { type: "user" }>["delivery"]> }) {
+function DeliveryLine({ itemId, delivery, reason }: { itemId: string; delivery: NonNullable<Extract<SessionItem, { type: "user" }>["delivery"]>; reason?: string }) {
   const { onDelivery, givingWay, waitsForSubagents } = useContext(DeliveryContext);
   const [asked, setAsked] = useState(false);
   useEffect(() => setAsked(false), [delivery]);
   // `held` (2026-11-04): from an agent or from Studio (中转回复, 值守, 传话…), in the session's inbox until its turn is over;
   // 立即发送 puts it in now, as a waiting message's does.
   const held = delivery === "held";
+  const expired = delivery === "expired";
   const waiting = delivery === "waiting" || held;
   // 问题 #16: once 立即发送 is under way (this button, or Ctrl+Enter in the composer) the row says so until it is read.
   const interrupting = delivery === "waiting" && (asked || givingWay);
   const forSubagents = delivery === "waiting" && waitsForSubagents;
-  const title = interrupting
+  const title = expired ? reason ?? "此通知已永久过期，保留历史且不能重新发送。" : interrupting
     ? "正在让模型停下当前这一步，停下后马上读到这条（它手上的命令或输出可能要几秒才收得住）"
     : held
       ? "这条是 AMO 替别处转来的（中转回复、值守、传话、子会话的回报…）：等会话这一轮做完再送进去，不打断它；Studio 重启了也会接着送"
@@ -405,9 +406,10 @@ function DeliveryLine({ itemId, delivery }: { itemId: string; delivery: NonNulla
   return (
     <div className={`msg-delivery ${delivery}${interrupting ? " interrupting" : ""}`} data-testid="msg-delivery" data-delivery={interrupting ? "interrupting" : delivery}>
       <span className="msg-delivery-state" title={title}>
-        {interrupting ? "◐ 正在打断当前这一步，停下后马上发出…" : held ? (asked ? "◐ 正在送进去…" : "◐ 等这一轮结束后送进去") : forSubagents ? "◐ 等子 agent 跑完后送到" : waiting ? "◐ 等待送达" : "! 没送到"}
+        {expired ? "已过期 · 保留历史" : interrupting ? "◐ 正在打断当前这一步，停下后马上发出…" : held ? (asked ? "◐ 正在送进去…" : "◐ 等这一轮结束后送进去") : forSubagents ? "◐ 等子 agent 跑完后送到" : waiting ? "◐ 等待送达" : "! 没送到"}
       </span>
-      {onDelivery && !interrupting && (
+      {reason && <span className="dim">{reason}</span>}
+      {onDelivery && !interrupting && !expired && (
         <button
           type="button"
           className="msg-delivery-btn"

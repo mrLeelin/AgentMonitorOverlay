@@ -11,6 +11,7 @@ import { CLAUDE_CODE_MISSING, findClaudeCode } from "./runtime/claude/executable
 import { DshRuntime } from "./runtime/dsh/dsh-runtime.js";
 import type { FolderAccess } from "./runtime/dsh/folder-access.js";
 import { dshUnavailable } from "./runtime/dsh/install.js";
+import { PiRuntime, piUnavailable, type PiOptions } from "./runtime/pi/pi-runtime.js";
 import { localClaudeHome as localClaudeHomeOf } from "./runtime/claude/claude-login.js";
 import { RuntimeRouter } from "./runtime/runtime.js";
 import { personClaudeConfig } from "./features/mcp/local.js";
@@ -68,6 +69,8 @@ export interface StartHostOptions {
   dshAgent?: { command: string; args: readonly string[] };
   /** Variables DSH processes start from (default: process.env). */
   dshEnv?: NodeJS.ProcessEnv;
+  /** Tests: replace Pi's RPC command and environment; regular sessions use the person's local Pi installation. */
+  pi?: Omit<PiOptions, "dir">;
   /** Tests: what reads and fixes a DSH session's folder permissions (folder-access.ts); null for none. */
   dshFolderAccess?: FolderAccess | null;
   /** Tests: the wait between a set-up folder's scans after write turns. */
@@ -182,6 +185,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
   let manager: CodexServerManager | undefined;
   let claude: ClaudeRuntime | undefined;
   let dsh: DshRuntime | undefined;
+  let pi: PiRuntime | undefined;
   try {
     // An earlier Host's 「asked to stop」 mark: this one has not been asked.
     rmSync(paths.exit, { force: true });
@@ -215,7 +219,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
       // DSH sessions need a built clone (设置 → 模型), Claude sessions a Claude Code (the portable build ships none); until
       // then the profile stays out of the pickers.
       unavailable: (p) =>
-        p.runtime === "dsh" && !options.dshAgent ? (dshUnavailable(liveKv) ?? undefined) : p.runtime === "claude" && !findClaudeCode() ? CLAUDE_CODE_MISSING : undefined,
+        p.runtime === "dsh" && !options.dshAgent ? (dshUnavailable(liveKv) ?? undefined) : p.runtime === "claude" && !findClaudeCode() ? CLAUDE_CODE_MISSING : p.runtime === "pi" && !options.pi?.command ? (piUnavailable() ?? undefined) : undefined,
     });
     const profiles = channels.profiles;
     manager = options.servers
@@ -308,7 +312,14 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
       ...(options.stopGraceMs !== undefined ? { stopGraceMs: options.stopGraceMs } : {}),
       ...(options.dshAutoStallMs !== undefined ? { autoStallMs: options.dshAutoStallMs } : {}),
     });
-    const runtime = new RuntimeRouter(store, profiles, { codex, claude, dsh });
+    pi = new PiRuntime(store, profiles, {
+      dir: join(options.dataDir, "pi"),
+      mcp: () => mcp,
+      identities,
+      mcpServers: { launch: (target, native): McpLaunch => service.mcp.launch(target, native) },
+      ...options.pi,
+    });
+    const runtime = new RuntimeRouter(store, profiles, { codex, claude, dsh, pi });
     const liveStore = store;
     const service = new HostService(store, runtime, profiles, {
       launcher: options.launcher ?? new WindowsTerminalLauncher(),
@@ -371,6 +382,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
     const finalManager = manager;
     const finalClaude = claude;
     const finalDsh = dsh;
+    const finalPi = pi;
     // 2026-10-27: DSH turns that ended without their tokens and speed get them from DSH's logs, once the Host settled.
     setTimeout(() => {
       if (stopped) return;
@@ -405,6 +417,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
         await finalHttp.close();
         await finalClaude.closeAll();
         await finalDsh.closeAll();
+        await finalPi.closeAll();
         const s = finalManager ?? options.servers;
         if (keepServers) s?.detachAll?.();
         else await s?.stopAll?.();
@@ -417,6 +430,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
   } catch (err) {
     await http?.close();
     await dsh?.closeAll();
+    await pi?.closeAll();
     await manager?.stopAll();
     store?.close();
     release();

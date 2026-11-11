@@ -288,7 +288,7 @@ export function FocusApp() {
     goTo(sessionId, taskId);
   };
 
-  /** The robot's click: the first thing that needs the person, in the workbench. */
+  /** The robot and header count open the first thing that needs the person in the workbench. */
   const openFirst = () => {
     acknowledge();
     const s = list[0];
@@ -343,9 +343,11 @@ export function FocusApp() {
             <img src="./icon.svg" alt="" aria-hidden="true" />
             <span className="focus-name">Focus</span>
           </button>
-          <span className={needs ? "focus-needs" : "focus-dim"} data-testid="focus-needs">
-            {needs ? `需要你 ${needs}` : "没有待处理"}
-          </span>
+          {needs ? (
+            <button type="button" className="focus-needs" title="在工作台打开第一个待处理项" onClick={openFirst} data-testid="focus-needs">需要你 {needs}</button>
+          ) : (
+            <span className="focus-dim" data-testid="focus-needs">没有待处理</span>
+          )}
           <span className="focus-dim">· 运行中 {running}</span>
           <span className="spacer" />
           {passthrough && (

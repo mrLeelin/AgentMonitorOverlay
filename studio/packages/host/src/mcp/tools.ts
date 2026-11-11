@@ -4,6 +4,7 @@ import type { Task } from "@amo-studio/protocol";
 import { isRemoteCopy } from "../core/shared.js";
 import { fail, toolContext, type AmoTool, type McpCaller } from "./tool-kit.js";
 import { LEAD_MANAGEMENT_TOOLS } from "./names.js";
+import { currentMessagePurpose } from "../runtime/message-purpose.js";
 
 // The AMO MCP tools, defined once: the Host serves them over HTTP at /mcp (Codex sessions), and Claude sessions get the
 // same tools in-process through the SDK, so no token has to reach the Claude CLI.
@@ -76,6 +77,7 @@ function keepLeadReadOnly(service: HostService, caller: McpCaller | null, tool: 
     autoApprove: tool.autoApprove || (isLeadCaller(service, caller) && leadMayUse(tool)),
     run: (args) => {
       if (caller) {
+        if (!tool.readOnly && currentMessagePurpose(service.store, caller.sessionId) === "inquiry") return fail("本轮是只读询问，不能修改任务、提交交付或执行其他写操作；需要继续工作时由主控明确派工。");
         const session = service.store.getSession(caller.sessionId);
         const task = session?.taskId ? service.store.getTask(session.taskId) : null;
         const topic = session?.topicId ? service.store.getTopic(session.topicId) : task?.topicId ? service.store.getTopic(task.topicId) : null;

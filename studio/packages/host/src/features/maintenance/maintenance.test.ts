@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MaintenanceInfo, MaintenanceTerminalResult, ModelProfile } from "@amo-studio/protocol";
+import type { MaintenanceCliStatus, MaintenanceInfo, MaintenanceTerminalResult, ModelProfile } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { installedClaudeExe } from "../../runtime/claude/transcripts.js";
@@ -28,13 +28,14 @@ let store: Store;
 let servers: FakeServers;
 let launcher: RecordingTerminalLauncher;
 let http: HostServer;
+let service: HostService;
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "amo-studio-test-maintenance-"));
   store = new Store(join(root, "studio.db"));
   servers = new FakeServers(PROFILES);
   launcher = new RecordingTerminalLauncher();
-  const service = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { launcher });
+  service = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { launcher });
   http = await startHostServer({ service, token: TOKEN, allowedOrigins: [] });
 });
 
@@ -56,6 +57,25 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<{ s
 }
 
 describe("maintenance", () => {
+  it("accepts Pi updates through the update route while keeping Pi out of the maintenance terminal", async () => {
+    const result: MaintenanceCliStatus = { cli: "pi", name: "Pi", path: "C:/pi/cli.js", currentVersion: "0.100.0", latestVersion: "0.101.0", updateAvailable: true, canUpdate: true, updateCommand: "mock Pi update", state: "updating", message: "mock update" };
+    const update = vi.spyOn(service.maintenance.clis, "update").mockResolvedValue(result);
+    try {
+      const response = await api<MaintenanceCliStatus>("POST", "/api/maintenance/clis/update", { cli: "pi" });
+      expect(response).toEqual({ status: 200, data: result });
+      expect(update).toHaveBeenCalledExactlyOnceWith("pi");
+      expect((await api("POST", "/api/maintenance/terminal", { cli: "pi" })).status).toBe(400);
+      expect(launcher.launches).toHaveLength(0);
+    } finally { update.mockRestore(); }
+  });
+
+  it("rejects arbitrary update commands and missing CLI selections before running anything", async () => {
+    for (const body of [{}, { cli: "npm" }, { cli: "codex; calc.exe" }, { cli: "C:/other/tool.exe" }]) {
+      expect((await api("POST", "/api/maintenance/clis/update", body)).status).toBe(400);
+    }
+    expect(launcher.launches).toHaveLength(0);
+  });
+
   it("tells this checkout apart from the portable build and says which claude the terminal runs", async () => {
     const { status, data } = await api<MaintenanceInfo>("GET", "/api/maintenance");
     expect(status).toBe(200);

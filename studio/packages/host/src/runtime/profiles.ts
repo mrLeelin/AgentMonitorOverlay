@@ -43,6 +43,8 @@ export const BUILTIN_PROFILES: readonly ModelProfile[] = [
   // DeepSeek account of the desktop app or with this key (2026-11-03, dsh/install.ts DSH_AUTH_KEY). Sessions of the
   // retired `codex-deepseek-flash` (DeepSeek on Codex, removed 2026-11-03) stay readable but cannot go on.
   { id: "dsh-deepseek", label: "DeepSeek", runtime: "dsh", provider: "deepseek-official", model: null, credentialId: "deepseek-v4" },
+  // Pi keeps its own provider login and model configuration in ~/.pi/agent.
+  { id: "pi", label: "Pi", runtime: "pi", provider: null, model: null },
 ];
 
 /** Built-in profiles whose site tells the balance (设置 → 模型, 左下角额度). */

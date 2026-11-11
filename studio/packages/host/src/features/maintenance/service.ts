@@ -8,6 +8,7 @@ import { git } from "../gitreview/git.js";
 import { codexOnPath } from "@amo-studio/locate";
 import { installedClaudeExe } from "../../runtime/claude/transcripts.js";
 import { findClaudeCode } from "../../runtime/claude/executable.js";
+import { CliUpdates } from "./cli-updates.js";
 
 // src/ and dist/ sit at the same depth: studio/packages/host/{src,dist}/features/maintenance.
 const STUDIO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..");
@@ -29,6 +30,7 @@ const NOT_PASSED_ON = /^(ELECTRON_RUN_AS_NODE|AMO_STUDIO_.*|CLAUDE.*|ANTHROPIC_.
  * 2026-10-28: or the person's own Codex (the one on PATH), started with the same environment as the Claude one.
  */
 export class MaintenanceFeature extends Feature {
+  readonly clis = new CliUpdates();
   /** The repo above studio/; the portable build's app folder has none. */
   private repoRoot(): string | null {
     const root = dirname(STUDIO_ROOT);

@@ -8,8 +8,8 @@ export function relaysTools({ service, caller }: ToolContext): AmoTool[] {
       name: "task_message",
       title: "传话",
       description:
-        "主控 assigns work or changes a plan in a managed task's session automatically, without asking the person again. It goes into the task's latest main session once the current turn ends, or starts one. Management is rechecked at delivery. Topic sessions without a lead still need confirmation unless the task accepts relays. The delivery receipt automatically returns to the lead's conversation. Submit completed work with task_submit_result for the direct lead to review; mailbox_send is for notes.",
-      inputSchema: { taskId: z.string(), text: z.string() },
+        "主控 sends an explicit-purpose message to a managed task automatically. purpose=inquiry only asks for a read-only answer and preserves acceptance; purpose=work (default for older calls) continues work; purpose=reopen explicitly restarts work. Intent is structured, never inferred from text. It goes into the task's latest main session once its current turn ends, or starts one. Management, shared requirements and prerequisite evidence remain checked at actual dispatch. Topic-only coordination retains confirmation. A delivery receipt returns to the lead. Only completed work is submitted with task_submit_result; inquiries do not submit or reopen accepted results.",
+      inputSchema: { taskId: z.string(), text: z.string(), purpose: z.enum(["inquiry", "work", "reopen"]).optional().describe("inquiry 只读询问并保留已验收结果；work 继续派工；reopen 明确重新开始。旧调用默认 work。") },
       readOnly: false,
       autoApprove: true,
       run: (args) =>

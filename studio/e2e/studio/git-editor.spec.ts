@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, normalize } from "node:path";
@@ -28,7 +29,7 @@ test("Git 编辑器点击自动检测会重新查找，并显示检测进度和�
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "Git 编辑器", exact: true }).click();
+  await selectSettingsPage(dialog, "Git 编辑器");
   await expect(dialog.getByRole("radio", { name: "自动检测", exact: true })).toBeEnabled();
   await dialog.getByRole("radio", { name: "自动检测", exact: true }).click();
   await expect.poll(() => reads, { timeout: 2000, message: "点击自动检测应发起新的检测请求" }).toBe(2);
@@ -65,7 +66,7 @@ test("Git 编辑器遇到尚未加载接口的后台，提示会话结束后重�
   });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "Git 编辑器", exact: true }).click();
+  await selectSettingsPage(dialog, "Git 编辑器");
   await expect(dialog.getByRole("alert")).toContainText("当前后台尚未加载 Git 编辑器功能");
   await dialog.getByRole("radio", { name: "自动检测", exact: true }).click();
   await expect.poll(() => reads).toBe(2);
@@ -88,7 +89,7 @@ test("Git 编辑器保存程序、重载保留，分支入口打开对应仓库�
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "Git 编辑器", exact: true }).click();
+  await selectSettingsPage(dialog, "Git 编辑器");
   await expect(dialog.getByRole("radio", { name: "指定程序" })).toBeEnabled();
   await dialog.getByRole("radio", { name: "指定程序" }).click();
   await dialog.getByRole("button", { name: "选择程序…" }).click();
@@ -101,7 +102,7 @@ test("Git 编辑器保存程序、重载保留，分支入口打开对应仓库�
 
   await page.reload();
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await dialog.getByRole("tab", { name: "Git 编辑器", exact: true }).click();
+  await selectSettingsPage(dialog, "Git 编辑器");
   await expect(dialog.getByLabel("程序路径", { exact: true })).toHaveValue(exe);
   await dialog.getByRole("radio", { name: "自动检测", exact: true }).click();
   await expect(dialog.getByRole("status")).toContainText(/检测到|未检测到/);

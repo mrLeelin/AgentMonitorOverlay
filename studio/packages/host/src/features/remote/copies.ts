@@ -441,8 +441,9 @@ export class RemoteCopies {
   }
 
   /** A message, its pictures and files sent first (2026-10-29 evening: they were refused before). */
-  async send(sessionId: Id, text: string, images: readonly Attachment[], options: { now?: boolean } = {}): Promise<{ mode: SendMode }> {
+  async send(sessionId: Id, text: string, images: readonly Attachment[], options: { now?: boolean; purpose?: import("@amo-studio/protocol").MessagePurpose } = {}): Promise<{ mode: SendMode }> {
     const { peer } = this.target(sessionId);
+    if (options.purpose && options.purpose !== "work") throw new HostError("bad_request", "远程端尚未协商消息用途能力，不能保证只读询问或重新开始的回合边界；请在任务所在电脑操作。普通工作消息保持原行为。");
     const along = await sendAlong((p, k, b, ms, off) => this.ask(p, k, b, ms, off), peer, this.ctx.peer(peer)?.name ?? peer.account, text, images);
     // A's copy of the message names its own attachments: this computer's go in their place (copy-images.ts).
     this.images.sent(sessionId, images.map((a) => a.id));
@@ -522,6 +523,7 @@ export class RemoteCopies {
 
   /** 新会话 in a copy: on A, on a model A allows (the first message goes with it); the copy of it comes back. */
   async start(task: Task, input: NewSessionInput): Promise<Session> {
+    if (input.purpose && input.purpose !== "work") throw new HostError("bad_request", "远程端尚未协商消息用途能力，请在任务所在电脑使用只读询问或重新开始。");
     const r = task.remote!;
     if (r.state !== "active") throw new HostError("read_only", "授权已收回，不能再开会话");
     const ref = parseRemoteProfileId(input.profileId);

@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
 import { launchStudio, screenshot } from "../support/studio.js";
 import type { StudioSettings } from "@amo-studio/protocol";
@@ -8,7 +9,7 @@ test("network settings validate, save, reload and test without changing the save
     const { page, app } = studio;
     await page.getByRole("button", { name: "设置", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "设置" });
-    await dialog.getByRole("tab", { name: "网络", exact: true }).click();
+    await selectSettingsPage(dialog, "网络");
     await expect(dialog.getByLabel("连接方式")).toHaveValue("inherit");
     await dialog.getByLabel("连接方式").selectOption("manual");
     await dialog.getByLabel("代理地址").fill("bad");
@@ -22,7 +23,7 @@ test("network settings validate, save, reload and test without changing the save
     await screenshot(app, "studio", "settings-network", page);
     await page.reload();
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("tab", { name: "网络", exact: true }).click();
+    await selectSettingsPage(page.getByRole("dialog", { name: "设置", exact: true }), "网络");
     await expect(page.getByLabel("代理地址")).toHaveValue("http://127.0.0.1:7890");
     await page.getByLabel("代理地址").fill("bad");
     await page.getByRole("button", { name: "测试连接", exact: true }).click();

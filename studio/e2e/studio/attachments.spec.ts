@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -309,19 +310,22 @@ test("@ 开子会话…: the model's own options, its usage and this round's wor
   const dir = studio.workspace("alpha");
   const { session } = await openTask(studio, dir);
   // 设置 → 子会话: per model, its usage note and its defaults as a sub-session (2026-11-05).
-  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   const settingsDialog = page.getByRole("dialog", { name: "设置" });
-  await settingsDialog.getByRole("tab", { name: "子会话" }).click();
-  // Each channel lists its models as chips (10-26, no dropdowns): 「整个渠道」 of the session's channel.
+  await selectSettingsPage(settingsDialog, "子会话");
+  // A 版分栏：顶部选渠道，左侧选通用设置，右侧只显示当前配置。
   const channel = settingsDialog.locator(`[data-testid="subsession-channel"][data-profile="${session.profileId}"]`);
-  await channel.getByTestId("subsession-chip").first().click();
-  await expect(channel.getByTestId("subsession-note-text")).toBeFocused();
+  await channel.click();
+  const common = settingsDialog.locator('[data-testid="subsession-chip"][data-model=""]');
+  await common.click();
+  await expect(common).toHaveAttribute("aria-current", "page");
+  await expect(settingsDialog.getByTestId("subsession-note-text")).toBeVisible();
   await settingsDialog.getByTestId("subsession-note-text").fill("适合照计划改代码");
   await settingsDialog.getByTestId("subsession-note-text").blur();
   await expect.poll(async () => (await studio!.api<{ subsessionNotes: Array<{ note: string }> }>("GET", "/api/settings")).subsessionNotes.map((n) => n.note)).toEqual(["适合照计划改代码"]);
-  await expect(channel.getByTestId("subsession-chip").first()).toHaveAttribute("aria-pressed", "true");
+  await expect(common).toHaveAttribute("aria-pressed", "true");
   // Its default permission, saved at once.
-  await channel.getByTestId("subsession-defaults").getByRole("button", { name: "完全放开" }).click();
+  await settingsDialog.getByTestId("subsession-defaults").getByRole("button", { name: "完全访问", exact: true }).click();
   await expect.poll(async () => (await studio!.api<{ subsessionNotes: Array<{ permission?: string }> }>("GET", "/api/settings")).subsessionNotes.map((n) => n.permission)).toEqual(["full"]);
   await screenshot(studio.app, "studio", "subsession-settings", page);
   await settingsDialog.getByRole("button", { name: "关闭设置" }).click();

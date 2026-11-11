@@ -7,7 +7,7 @@
  * Where a question came from. `codex-async` is Codex's request_user_input_async: the model asks and carries on (the
  * turn does not wait); the answer goes back as the person's next message.
  */
-export type QuestionSource = "claude-ask" | "codex-input" | "codex-async" | "mcp-form" | "plan-review";
+export type QuestionSource = "claude-ask" | "codex-input" | "codex-async" | "pi-input" | "mcp-form" | "plan-review";
 
 /**
  * - pending: waiting for the person

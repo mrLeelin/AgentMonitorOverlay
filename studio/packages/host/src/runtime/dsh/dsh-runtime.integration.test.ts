@@ -87,14 +87,85 @@ afterEach(async () => {
 });
 
 describe("DSH runtime", () => {
+  it("fails writable DSH inquiries closed with a retryable inbox reason and preserves accepted work", async () => {
+    const host = await boot();
+    const s = await start(host, "历史可写会话");
+    await idle(host, s.id);
+    const store = host.service.store;
+    const top = store.createTask({ title: "主控", workspaceId: s.workspaceId, lead: true });
+    const lead = await host.service.tasks.addSession(top.id, { profileId: "p-ds" });
+    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id });
+    const result = host.service.orchestration.submit(s.id, "完成", "验证通过");
+    host.service.orchestration.review(lead.id, result.id, true, "通过");
+    await host.service.sessions.inbox.put(s.id, "只读询问", lead.id, "i-dsh-inquiry", { purpose: "inquiry" });
+    const row = store.getItem("i-dsh-inquiry");
+    expect(row).toMatchObject({ delivery: "unsent", deliveryReason: expect.stringContaining("无法保证本轮只读询问") });
+    expect(store.getTask(s.taskId!)?.column).toBe("done");
+    expect(host.service.orchestration.results(s.taskId!).at(-1)?.state).toBe("accepted");
+    await expect(host.service.sessions.resend(s.id, "i-dsh-inquiry")).rejects.toThrow(/无法保证本轮只读询问/);
+    // Selecting stricter options is not proof of the sandbox saved by DSH.
+    await host.service.sessions.updateSessionOptions(s.id, { permission: "read-only" });
+    await expect(host.service.sessions.resend(s.id, "i-dsh-inquiry")).rejects.toThrow(/无法保证本轮只读询问/);
+  });
+
+  it("answers inquiries in a DSH session proven read-only at creation", async () => {
+    const host = await boot();
+    const ws = await call<Workspace>(host, "POST", "/api/workspaces", { path: join(root, "ws") });
+    const { session: s } = await call<{ session: Session }>(host, "POST", "/api/tasks", { title: "只读执行", workspaceId: ws.id, firstSession: { profileId: "dsh-deepseek", options: { permission: "read-only" } } });
+    await host.service.sessions.inbox.put(s.id, "[[ask: New-Item forbidden.txt]]", undefined, "i-dsh-read-inquiry", { purpose: "inquiry" });
+    await idle(host, s.id);
+    await until(() => items(host, s.id), (list) => replies(list).some((r) => r === "REJECTED New-Item forbidden.txt"));
+    expect(host.service.store.listItems(s.id).find((i) => i.type === "turn")).toHaveProperty("messagePurpose", "inquiry");
+  });
+
   it("reports transport delivery for the context after sending an ACP prompt", async () => {
     const host = await boot({ port: 47991 });
     const received = vi.fn();
     host.service.runtime.on("message-delivered", received);
-    const text = "[AMO_SHARED_CONTEXT:dsh-requirement]\n共同需求正文";
-    const s = await start(host, text);
-    await until(() => received.mock.calls, (calls) => calls.some(([id, body]) => id === s.id && body === text));
+    const s = await start(host, "");
+    const top = host.service.store.createTask({ title: "主控", workspaceId: s.workspaceId, lead: true });
+    const lead = await host.service.tasks.addSession(top.id, { profileId: "p-ds" });
+    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id });
+    const draft = host.service.sharedContext.save(lead.id, { rootTaskId: top.id, baseRevision: 0, title: "共同需求", body: "共同需求正文", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户" }] });
+    host.service.sharedContext.publishVersion(lead.id, draft.id, draft.revision);
+    const [binding] = host.service.sharedContext.apply(lead.id, { contextId: draft.id, version: 1, taskIds: [s.taskId!] });
+    await until(() => received.mock.calls, (calls) => calls.some(([id, body]) => id === s.id && body.includes(`[AMO_SHARED_CONTEXT:${binding!.id}]`) && body.includes("共同需求正文")));
     await idle(host, s.id);
+  });
+
+  it("rechecks queued DSH inquiry intent at the actual prompt after send-now interrupts writable work", async () => {
+    const host = await boot();
+    const s = await start(host, "[[slow]] 工作尚未结束");
+    await until(() => status(host, s.id), (value) => value === "running");
+    await host.service.sessions.inbox.put(s.id, "排队的单独询问", undefined, "i-dsh-queued-inquiry", { purpose: "inquiry" });
+    await expect(host.service.sessions.inbox.sendNow(s.id, "i-dsh-queued-inquiry")).rejects.toThrow(/无法保证本轮只读询问/);
+    await until(() => host.service.store.getItem("i-dsh-queued-inquiry"), (row) => row?.type === "user" && row.delivery === "unsent");
+    expect(host.service.store.getItem("i-dsh-queued-inquiry")).toMatchObject({ deliveryReason: expect.stringContaining("无法保证本轮只读询问") });
+    expect(replies(await items(host, s.id)).some((text) => text.includes("排队的单独询问"))).toBe(false);
+  });
+
+  it.each([["work", "inquiry"], ["inquiry", "work"]] as const)("keeps queued DSH %s/%s in independent batches and delivers valid work despite inquiry refusal", async (first, second) => {
+    const host = await boot();
+    const s = await start(host, "[[slow]] 先等一下");
+    await until(() => status(host, s.id), (value) => value === "running");
+    await host.service.sessions.inbox.put(s.id, "排队工作", undefined, "i-dsh-mixed-work", { purpose: "work" });
+    await host.service.sessions.inbox.put(s.id, "排队询问", undefined, "i-dsh-mixed-inquiry", { purpose: "inquiry" });
+    await Promise.allSettled([host.service.sessions.inbox.sendNow(s.id, `i-dsh-mixed-${first}`), host.service.sessions.inbox.sendNow(s.id, `i-dsh-mixed-${second}`)]);
+    await until(() => items(host, s.id), (list) => replies(list).some((text) => text.includes("排队工作")) && list.some((row) => row.id === "i-dsh-mixed-inquiry" && row.type === "user" && row.delivery === "unsent"));
+    expect(replies(await items(host, s.id)).some((text) => text.includes("排队询问"))).toBe(false);
+    const turns = (await items(host, s.id)).filter((item) => item.type === "turn");
+    expect(turns.at(-1)).toHaveProperty("messagePurpose", "work");
+  });
+
+  it("delivers queued DSH notifications independently when a writable session refuses a neighboring inquiry", async () => {
+    const host = await boot();
+    const s = await start(host, "[[slow]] 工作尚未结束");
+    await until(() => status(host, s.id), (value) => value === "running");
+    await host.service.sessions.inbox.put(s.id, "合法自动通知", undefined, "i-dsh-valid-notification", { purpose: "notification" });
+    await host.service.sessions.inbox.put(s.id, "拒绝独立询问", undefined, "i-dsh-invalid-inquiry", { purpose: "inquiry" });
+    await host.service.sessions.inbox.sendNow(s.id, "i-dsh-valid-notification");
+    await until(() => items(host, s.id), (list) => replies(list).some((text) => text.includes("合法自动通知")) && list.some((row) => row.id === "i-dsh-invalid-inquiry" && row.type === "user" && row.delivery === "unsent"));
+    expect(replies(await items(host, s.id)).some((text) => text.includes("拒绝独立询问"))).toBe(false);
   });
 
   it("keeps a lead read-only, denies escalation and cannot unlock it through session options", async () => {
@@ -321,6 +392,24 @@ describe("DSH runtime", () => {
     await call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "[[mcp-list]]" });
     await until(() => items(host, s.id), (l) => replies(l).length === 2);
     expect(replies(await items(host, s.id))[1]).toBe("MCP-LIST amo:http,amo-relay:stdio,img:stdio");
+  });
+
+  it("explains DSH's Internal error when an MCP cannot connect, and starts once it is disabled", async () => {
+    const claudeDir = join(root, "claude-local");
+    mkdirSync(claudeDir);
+    writeFileSync(join(claudeDir, ".claude.json"), JSON.stringify({ mcpServers: { figmaMcpRelay: { type: "http", url: "https://fake-acp.invalid/mcp-failure" } } }));
+    const host = await boot({ localClaudeHome: claudeDir });
+    const ws = await call<Workspace>(host, "POST", "/api/workspaces", { path: join(root, "ws") });
+    const { task } = await call<{ task: Task }>(host, "POST", "/api/tasks", { title: "MCP failure", workspaceId: ws.id });
+    const newSession = () => call<Session>(host, "POST", `/api/tasks/${task.id}/sessions`, { profileId: "dsh-deepseek", text: "hello" });
+    const failure = await newSession().catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("DSH 的 MCP「figmaMcpRelay」连接或同步工具失败");
+    expect((failure as Error).message).toContain("设置 → MCP");
+    expect((failure as Error).message).not.toContain("secret-test-do-not-display");
+    await call(host, "PUT", "/api/mcp", { choices: { figmaMcpRelay: false } });
+    const s = await newSession();
+    await idle(host, s.id);
   });
 
   it("reports an unavailable MCP by name on the next launch after settings change", async () => {
@@ -705,7 +794,8 @@ describe("DSH runtime", () => {
     expect(list.some((i) => i.type === "notice" && i.message.includes("DSH 还没停下"))).toBe(true);
     expect(list.some((i) => i.type === "error" && list.indexOf(i) > list.indexOf(userRow(list, "[[stuck]]")!))).toBe(false);
     expect(userRow(list, "第三件事")).toMatchObject({ delivery: "unsent" });
-  });
+    // Failure, a resend and forced CLI shutdown share this case; BelowNormal runs can cross Vitest's 5 s default.
+  }, 15_000);
 
   it("a message waiting when the Host stops is 没送到 after the restart, and can be sent again (2026-11-04)", async () => {
     let host = await boot();

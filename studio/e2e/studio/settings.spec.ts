@@ -1,3 +1,4 @@
+import { selectSettingsPage } from "../support/settings.js";
 import { existsSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -96,7 +97,7 @@ test("the common folder: where work without a project runs, moved in settings", 
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "项目与目录" }).click();
+  await selectSettingsPage(dialog, "项目与目录");
   // By default it sits in the data folder.
   await expect(dialog.getByRole("textbox", { name: "公共目录" })).toHaveValue(/common$/);
   await dialog.getByRole("textbox", { name: "公共目录" }).fill(elsewhere);
@@ -121,7 +122,7 @@ test("设置 → 模型: the Claude subscription signs in through Claude Code it
   const { page, app } = studio;
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-subscription"]').click();
   await expect(dialog.getByTestId("claude-accounts")).toBeVisible();
   await expect(dialog.getByRole("radio", { name: /令牌/ })).toHaveCount(0);
@@ -148,7 +149,7 @@ test("the Claude subscription on the local Claude Code login: found in 设置, t
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-subscription"]').click();
   // The local login is found (the stand-in here); there is nothing to choose and no token row.
   const own = dialog.locator('[data-testid="claude-account"][data-id="default"]');
@@ -198,7 +199,7 @@ test("Claude 多账号: a second account in 设置, the quota per account at the
 
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
-  await dialog.getByRole("tab", { name: "模型" }).click();
+  await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator('[data-testid="channel-nav"][data-id="claude-subscription"]').click();
   await expect(dialog.getByTestId("claude-account")).toHaveCount(2);
   const workRow = dialog.locator(`[data-testid="claude-account"][data-id="${work.id}"]`);

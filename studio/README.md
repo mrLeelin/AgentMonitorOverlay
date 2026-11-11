@@ -1,6 +1,6 @@
 # AMO Studio
 
-由人主导、agent 也能参与的项目推进工作台。看板管任务，画布看全局，每个任务下面是若干个和模型的会话（Codex、Claude、DeepSeek），你在工作台里对话、审阅、批注，需要时一键交给原版终端。
+由人主导、agent 也能参与的项目推进工作台。看板管任务，画布看全局，每个任务下面是若干个和模型的会话（Codex、Claude、DeepSeek、Pi），你在工作台里对话、审阅、批注，需要时一键交给原版终端。
 
 - 愿景与架构：[../docs/next-gen-vision-architecture-2026-10.md](../docs/next-gen-vision-architecture-2026-10.md)；实际实现：[design/architecture.md](design/architecture.md)
 - 已确认的交互：[design/interaction-notes.md](design/interaction-notes.md)
@@ -18,6 +18,8 @@
 Studio 包不带 Claude Code（它是 Anthropic 的程序，也占了一半体积）：Claude 订阅、智谱 GLM 和「Claude 方案」的第三方渠道用你本机装的 Claude Code（`irm https://claude.ai/install.ps1 | iex` 或 `npm i -g @anthropic-ai/claude-code`）。Studio 依次找 `AMO_STUDIO_CLAUDE`、SDK 附带的那份（只有源码运行才有）、PATH 上的 `claude`、`~\.localin\claude.exe`、npm 全局安装的那份；都没有时这些渠道在 设置 → 模型 里标「不可用」，渠道页写着怎么安装，装好后点「重新检测」，不用重启。
 
 每个 zip 里都有 `使用说明.txt`。便签的设置和页面在 `%APPDATA%\AMO Notes`，Studio 带的和独立版共用一份；独立 Reviewer 的批注记录在 `%APPDATA%\AMO Reviewer`。
+
+Pi 使用本机安装的 `pi`（`npm i -g @earendil-works/pi-coding-agent`，已验证 1.4.0）。在 Pi 中登录或配置模型后，Studio 的「Pi」入口会读取这些型号；设置 → 模型 → Pi 可重新读取型号。会话保存在 Studio 数据目录，Pi 的个人配置不变。Pi 暂只支持完全访问，不能用作只读主控；暂不支持终端接管和分支。
 
 Studio 的首次启动：
 
