@@ -13,6 +13,8 @@ export type SendMode = "start" | "steer" | "queue";
 
 /** `now` (立即发送, 2026-11-02): while a turn runs, the model reads the message at once (the turn's step gives way). */
 export interface SendOptions {
+  /** Host-only original composer text, before role/shared context is appended. */
+  skillText?: string;
   now?: boolean;
   purpose?: MessagePurpose;
   /** Host-only frozen-input guard, not accepted from HTTP. */
@@ -34,7 +36,7 @@ export interface SessionRuntimeApi {
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
-  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session>;
+  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session>;
   /** Claude only (接续已有会话, 2026-11-05): sessions started outside Studio that a new task can go on from. */
   outsideSessions?(): Promise<OutsideSessionList>;
   /** Claude only: the end of one of those, to recognise it; null when it has no conversation. */
@@ -88,6 +90,8 @@ export interface SessionRuntimeApi {
   reclaim?(sessionId: Id): Promise<Session>;
   /** The runtime's own `/` commands and skills for the session (stage 12, S12-E); Studio's are added by the Host. */
   listCommands?(sessionId: Id): Promise<SlashCommandList>;
+  /** First-message discovery in the selected project; no persisted session or model prompt. */
+  listProfileCommands?(profileId: Id, workspace: Workspace): Promise<SlashCommandList>;
   /** Runs one (`compact` included); see `POST /api/sessions/:id/commands`. */
   runCommand?(sessionId: Id, name: string, args: string): Promise<SlashCommandResult>;
   /** Stops a background command (Claude only). */
@@ -109,7 +113,7 @@ export interface SessionRuntimeApi {
 }
 
 /** The optional operations: a router made `around` one runtime offers only those that runtime has. */
-const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "outsideSessions", "outsidePreview", "checkResume"] as const;
+const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "listProfileCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "outsideSessions", "outsidePreview", "checkResume"] as const;
 
 /**
  * Routes calls to the runtime of the session, or of the profile for new sessions. The Host's own (host-process.ts) has
@@ -212,12 +216,13 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const context = input.taskId ? this.context?.task(input.taskId) ?? "" : "";
     const text = input.text && input.taskId ? this.withContext(input.text, context) : input.text;
     const beforeDispatch = this.frozenInputGuard(text ?? "", context, () => input.taskId ? this.context?.task(input.taskId) ?? "" : "", () => { if (input.taskId) this.context?.checkStart?.(input.taskId, false); }, input.beforeDispatch);
-    return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text } : {}), beforeDispatch });
+    return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch });
   }
   sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}) {
     const taskId = this.store.getSession(sessionId)?.taskId;
     if (taskId) this.context?.checkStart?.(taskId, false);
     const context = this.context?.session(sessionId) ?? "", input = this.withContext(text, context);
+    options = { ...options, skillText: options.skillText ?? text };
     const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
     const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";
     if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && inTurn(session.status) && purpose !== currentMessagePurpose(this.store, sessionId)))) {
@@ -404,6 +409,10 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   async listCommands(sessionId: Id): Promise<SlashCommandList> {
     const r = this.forSession(sessionId);
     return r.listCommands ? r.listCommands(sessionId) : { commands: [] };
+  }
+  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
+    const r = this.requireProfileRuntime(profileId);
+    return r.listProfileCommands ? r.listProfileCommands(profileId, workspace) : { commands: [], note: "这个模型的技能列表需在会话启动后读取" };
   }
   runCommand(sessionId: Id, name: string, args: string): Promise<SlashCommandResult> {
     const r = this.forSession(sessionId);

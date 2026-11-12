@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { DATA_KIND_LABEL, type ArchivedEntry, type DataKind, type PurgeSummary } from "@amo-studio/protocol";
+import { DATA_KIND_LABEL, type ArchivedEntry, type DataKind, type PurgeSummary, type PurgeBatchSummary } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { onHostEvent } from "../host/events.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
@@ -38,12 +38,33 @@ function takes(s: PurgeSummary): string {
   return parts.length ? parts.join("、") : "没有别的内容";
 }
 
+function batchTakes(s: PurgeBatchSummary): string {
+  return [[s.workspaces, "个项目"], [s.topics, "个专题"], [s.tasks, "个任务"], [s.sessions, "个会话"], [s.items, "条对话记录"], [s.attachments, "张贴进对话的图片"]].filter(([n]) => n).map(([n, label]) => `${n} ${label}`).join("、");
+}
+
 export function DataPage({ link }: { link: HostLink }) {
   const [entries, setEntries] = useState<ArchivedEntry[] | null>(null);
   const [filter, setFilter] = useState<DataKind | "all">("all");
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const [confirm, setConfirm] = useState<{ entry: ArchivedEntry; summary: PurgeSummary } | null>(null);
+  const [batchConfirm, setBatchConfirm] = useState<{ entries: ArchivedEntry[]; summary: PurgeBatchSummary; legacy?: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [retentionDays, setRetentionDays] = useState<1 | 3 | 5 | 7 | null>(7);
+  const [retentionLoaded, setRetentionLoaded] = useState(false);
+  const [retentionSaving, setRetentionSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setRetentionLoaded(false);
+    call(link, "GET /api/data/retention").then((settings) => {
+      if (!active) return;
+      setRetentionDays(settings.taskRetentionDays);
+      setRetentionLoaded(true);
+    }).catch((err: unknown) => {
+      if (active) setMessage({ text: `读取自动删除设置失败：${err instanceof HostApiError ? err.message : String(err)}`, error: true });
+    });
+    return () => { active = false; };
+  }, [link]);
 
   const load = useCallback(() => {
     call(link, "GET /api/data/archived")
@@ -66,6 +87,21 @@ export function DataPage({ link }: { link: HostLink }) {
   }, [load]);
 
   const fail = (err: unknown) => setMessage({ text: err instanceof HostApiError ? err.message : String(err), error: true });
+
+  async function saveRetention(value: string) {
+    const days = value === "never" ? null : Number(value) as 1 | 3 | 5 | 7;
+    setRetentionSaving(true);
+    setMessage(null);
+    try {
+      const settings = await call(link, "PUT /api/data/retention", {}, { taskRetentionDays: days });
+      setRetentionDays(settings.taskRetentionDays);
+      setMessage({ text: days === null ? "已关闭归档任务自动删除" : `已设置归档任务 ${days} 天后自动删除` });
+    } catch (err) {
+      fail(err);
+    } finally {
+      setRetentionSaving(false);
+    }
+  }
 
   async function onRestore(e: ArchivedEntry) {
     setBusy(e.id);
@@ -108,6 +144,79 @@ export function DataPage({ link }: { link: HostLink }) {
     }
   }
 
+  async function askDeleteAll() {
+    if (!entries?.length || busy) return;
+    setBusy("batch");
+    setMessage(null);
+    try {
+      try {
+        const summary = await call(link, "POST /api/data/purge-preview", {}, { entries });
+        setBatchConfirm({ entries, summary });
+      } catch (err) {
+        // A renderer refresh can precede a Host restart. Only an absent route enables compatibility mode.
+        if (!(err instanceof HostApiError && err.status === 404 && err.message.includes("no route for POST /api/data/purge-preview"))) throw err;
+        const summary: PurgeBatchSummary = { workspaces: 0, topics: 0, tasks: 0, sessions: 0, items: 0, attachments: 0 };
+        const keys = { workspace: "workspaces", topic: "topics", task: "tasks", session: "sessions" } as const;
+        for (const entry of entries) summary[keys[entry.kind]]++;
+        setBatchConfirm({ entries, summary, legacy: true });
+      }
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDeleteAll() {
+    if (!batchConfirm || busy) return;
+    setBusy("batch");
+    try {
+      if (batchConfirm.legacy) {
+        let deleted = 0;
+        let pending = batchConfirm.entries;
+        while (pending.length) {
+          const deferred: ArchivedEntry[] = [];
+          const reasons: string[] = [];
+          for (const entry of pending) {
+            try {
+              await call(link, "POST /api/data/purge", {}, { kind: entry.kind, id: entry.id });
+              deleted++;
+            } catch (err) {
+              if (err instanceof HostApiError && err.code === "conflict") {
+                deferred.push(entry);
+                reasons.push(`${DATA_KIND_LABEL[entry.kind]}「${entry.title}」：${err.message}`);
+                continue;
+              }
+              // An earlier owner deletion may already have removed an overlapping archived entry.
+              if (err instanceof HostApiError && err.status === 404 && err.code === "not_found" && !err.message.includes("no route")) {
+                deleted++;
+                continue;
+              }
+              setMessage({ text: `已删除 ${deleted} 项，剩余 ${batchConfirm.entries.length - deleted} 项未处理。删除${DATA_KIND_LABEL[entry.kind]}「${entry.title}」失败：${err instanceof Error ? err.message : String(err)}`, error: true });
+              return;
+            }
+          }
+          // Retry blocked owners only after some of their dependencies have actually been removed.
+          if (deferred.length === pending.length) {
+            setMessage({ text: `已删除 ${deleted} 项，剩余 ${deferred.length} 项未处理。仍有依赖阻止删除：${reasons.slice(0, 3).join("；")}。`, error: true });
+            return;
+          }
+          pending = deferred;
+        }
+        setMessage({ text: `已彻底删除：${batchTakes(batchConfirm.summary)}及其所属记录。` });
+      } else {
+        const done = await call(link, "POST /api/data/purge-batch", {}, { entries: batchConfirm.entries });
+        setMessage({ text: `已彻底删除：${batchTakes(done)}。` });
+      }
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBatchConfirm(null);
+      setBusy(null);
+      load();
+    }
+  }
+
   const shown = (entries ?? []).filter((e) => filter === "all" || e.kind === filter);
   const count = (k: DataKind | "all") => (entries ?? []).filter((e) => k === "all" || e.kind === k).length;
 
@@ -117,12 +226,24 @@ export function DataPage({ link }: { link: HostLink }) {
       <span className="settings-hint">
         已归档的项目、专题、任务和会话。恢复后回到原处；彻底删除后找不回来。项目文件夹里的文件，以及 Codex、Claude Code 自己保存的对话记录，都不会被删除。
       </span>
-      <div role="radiogroup" aria-label="类型" className="chips">
-        {FILTERS.map((f) => (
-          <button key={f.id} type="button" role="radio" className="chip" aria-checked={filter === f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
-            {f.label} {count(f.id)}
-          </button>
-        ))}
+      <label className="settings-row">
+        <span className="settings-label">归档任务自动删除</span>
+        <select className="field" aria-label="归档任务自动删除" value={retentionDays ?? "never"} disabled={!retentionLoaded || retentionSaving} onChange={(e) => void saveRetention(e.target.value)}>
+          {[1, 3, 5, 7].map((days) => <option key={days} value={days}>{days} 天后自动删除</option>)}
+          <option value="never">不自动删除</option>
+        </select>
+        {retentionSaving && <span className="settings-hint" role="status">保存中…</span>}
+      </label>
+      <span className="settings-hint">从任务归档时开始计时，已有的归档任务也适用。到期后彻底删除任务及所属的已归档会话，删除后不能恢复；提前恢复任务可取消自动删除。</span>
+      <div className="data-toolbar">
+        <div role="radiogroup" aria-label="类型" className="chips">
+          {FILTERS.map((f) => (
+            <button key={f.id} type="button" role="radio" className="chip" aria-checked={filter === f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
+              {f.label} {count(f.id)}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn-ghost small danger" disabled={!entries?.length || busy !== null} onClick={() => void askDeleteAll()} data-testid="data-delete-all" title="彻底删除所有类型的已归档内容">全部删除</button>
       </div>
       {message && (
         <span className={message.error ? "form-error" : "settings-hint"} role={message.error ? "alert" : "status"} data-testid="data-message">
@@ -145,16 +266,27 @@ export function DataPage({ link }: { link: HostLink }) {
                 <span className="data-meta">{[e.context, `${formatDay(e.archivedAt)} 归档`].filter(Boolean).join(" · ")}</span>
               </span>
               <span className="data-actions">
-                <button type="button" className="btn-ghost small" disabled={busy === e.id} onClick={() => void onRestore(e)} data-testid="data-restore">
+                <button type="button" className="btn-ghost small" disabled={busy !== null} onClick={() => void onRestore(e)} data-testid="data-restore">
                   恢复
                 </button>
-                <button type="button" className="btn-ghost small danger" disabled={busy === e.id} onClick={() => void askDelete(e)} data-testid="data-delete">
+                <button type="button" className="btn-ghost small danger" disabled={busy !== null} onClick={() => void askDelete(e)} data-testid="data-delete">
                   彻底删除
                 </button>
               </span>
             </li>
           ))}
         </ul>
+      )}
+      {batchConfirm && (
+        <ConfirmDialog title="彻底删除全部已归档内容？" action="全部删除" danger busy={busy === "batch"} onCancel={() => setBatchConfirm(null)} onConfirm={() => void onDeleteAll()} testId="data-delete-all-confirm">
+          <ul className="confirm-risks">
+            <li>删除所有类型的已归档内容，不受当前类型筛选影响：{batchTakes(batchConfirm.summary)}。</li>
+            {batchConfirm.legacy && <li>当前后台使用逐项删除，所属记录一并清理；依赖阻挡的条目会暂缓，删除其他条目后重试。仍有依赖的内容会保留，其他失败会停止；已经删除的内容不会恢复。</li>}
+            <li>只删除 Studio 里的记录，项目文件夹本身和里面的文件不动。</li>
+            <li>Codex、Claude Code 自己保存的对话记录不会被删除。</li>
+            <li>删除后不能恢复。仅删除本次确认的条目及其所属记录。</li>
+          </ul>
+        </ConfirmDialog>
       )}
       {confirm && (
         <ConfirmDialog

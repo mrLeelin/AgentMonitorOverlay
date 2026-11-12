@@ -112,7 +112,7 @@ export class CodexRuntime extends RuntimeBase {
   // ---- operations -------------------------------------------------------------------------------------------------
 
   /** Creates a main session in a task and starts its Codex thread; sends `text` as the first turn when given. */
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
+  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; skillText?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
     const token = this.options.identities?.issue();
@@ -143,7 +143,7 @@ export class CodexRuntime extends RuntimeBase {
     if (lead.config) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (developerInstructions) this.options.roleGiven?.(session.id);
-    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
+    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
     return this.store.getSession(session.id)!;
   }
 
@@ -165,7 +165,20 @@ export class CodexRuntime extends RuntimeBase {
     options.beforeDispatch?.();
     if (again) this.assertCurrentMessage(sessionId, again);
     const st = this.sessionState(sessionId);
-    const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra];
+    // Mentions inserted by either composer must carry the same native skill input as /skill commands.
+    // RuntimeRouter supplies the original composer text; examples in appended role/business data are not selections.
+    const skillText = options.skillText ?? (again ? "" : text.split(/\r?\n\r?\n(?=\[AMO_SHARED_CONTEXT:)/, 1)[0]!);
+    const names = new Set([...skillText.matchAll(/(?:^|\s)\$([A-Za-z0-9][\w:.-]*)/g)].map((match) => match[1]!));
+    const firstSkill = /^\s*\/([A-Za-z0-9][\w:.-]*)(?:\s|$)/.exec(skillText)?.[1];
+    if (firstSkill) names.add(firstSkill);
+    const mentioned: codex.v2.UserInput[] = [];
+    if (names.size) {
+      const supplied = new Set(extra.flatMap((input) => input.type === "skill" ? [input.name] : []));
+      for (const skill of await this.skills(session).catch(() => [])) {
+        if (names.has(skill.name) && !supplied.has(skill.name)) { mentioned.push({ type: "skill", name: skill.name, path: skill.path }); supplied.add(skill.name); }
+      }
+    }
+    const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra, ...mentioned];
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
     // The person's next message is the answer to request_user_input_async (the card, or typed by hand).
     this.asks.closeAsync(sessionId);
@@ -460,21 +473,31 @@ export class CodexRuntime extends RuntimeBase {
    */
   async listCommands(sessionId: Id): Promise<SlashCommandList> {
     const session = this.requireSession(sessionId);
-    const commands: SlashCommand[] = [
+    const workspace = this.store.getWorkspace(session.workspaceId);
+    return workspace ? this.commandsFor(session.profileId, workspace, true) : { commands: [] };
+  }
+
+  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
+    return this.commandsFor(profileId, workspace, false);
+  }
+
+  private async commandsFor(profileId: Id, workspace: Workspace, review: boolean): Promise<SlashCommandList> {
+    this.profile(profileId);
+    const commands: SlashCommand[] = review ? [
       {
         name: "code-review",
         description: "让 Codex 审查改动：默认审查未提交的改动，也可以写 base <分支>、commit <提交> 或你的审查要求",
         argumentHint: "[base <分支> | commit <提交> | 要求]",
         group: "runtime",
       },
-    ];
+    ] : [];
     try {
-      for (const skill of await this.skills(session)) {
-        commands.push({ name: skill.name, description: (skill.shortDescription || skill.description).replace(/\s+/g, " ").trim(), group: "skill" });
+      for (const skill of await this.profileSkills(profileId, workspace.path)) {
+        commands.push({ name: skill.name, description: (skill.shortDescription || skill.description).replace(/\s+/g, " ").trim(), group: "skill", skillPath: skill.path });
       }
       return { commands };
     } catch (err) {
-      this.emit("log", `skills/list failed for ${sessionId}: ${String(err)}`);
+      this.emit("log", `skills/list failed for ${profileId}: ${String(err)}`);
       return { commands, note: `读不到 Codex 的 skills：${String((err as Error).message ?? err)}` };
     }
   }
@@ -482,10 +505,14 @@ export class CodexRuntime extends RuntimeBase {
   private async skills(session: Session): Promise<CodexSkill[]> {
     const cwd = this.store.getWorkspace(session.workspaceId)?.path;
     if (!cwd) return [];
-    const key = `${session.profileId}|${cwd}`;
+    return this.profileSkills(session.profileId, cwd);
+  }
+
+  private async profileSkills(profileId: Id, cwd: string): Promise<CodexSkill[]> {
+    const key = `${profileId}|${cwd}`;
     const cached = this.skillCache.get(key);
     if (cached && Date.now() - cached.at < 60_000) return cached.skills;
-    const handle = await this.handleFor(session.profileId);
+    const handle = await this.handleFor(profileId);
     const r = (await handle.client.request("skills/list", { cwds: [cwd] })) as unknown as { data: Array<{ skills: CodexSkill[] }> };
     const skills = r.data.flatMap((e) => e.skills).filter((s) => s.enabled !== false);
     this.skillCache.set(key, { at: Date.now(), skills });

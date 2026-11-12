@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { createSdkMcpServer, forkSession, getSessionInfo, getSessionMessages, query, renameSession, tool, type HookCallbackMatcher, type HookEvent, type SDKMessage, type SDKUserMessage, type SlashCommand as SdkSlashCommand } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, forkSession, getSessionInfo, getSessionMessages, query, renameSession, tool, type HookCallbackMatcher, type HookEvent, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { inTurn, parseSlashCommand, type ApprovalDecision, type Attachment, type ChatSettings, type Id, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionReply, type Session, type SessionItem, type SessionOptions, type UserDelivery, type SlashCommandList, type SlashCommandResult, type Workspace, type AccountUsage, type McpApply, type OutsideSessionList, type OutsideSessionPreview } from "@amo-studio/protocol";
 import { readChatSettings } from "../chat-settings.js";
 import { CLAUDE_BUILTIN_MODELS, CLAUDE_DEFAULT_PERMISSION, CLAUDE_PERMISSIONS, claudePermissionMode } from "../choices.js";
@@ -24,7 +24,7 @@ import { BLOCKED_COMMANDS, claudeCommands } from "./commands.js";
 import type { ClaudeCore } from "./core.js";
 import { newLive, type Live, type LiveInput } from "./live.js";
 import { ClaudeMessages } from "./messages.js";
-import { askCommands, askModels, CLI_SETTING_SOURCES, withTimeout } from "./probe.js";
+import { askCommandList, askModels, CLI_SETTING_SOURCES, withTimeout } from "./probe.js";
 import { ClaudeSubagents } from "./subagents.js";
 import { firstLine } from "./tool-use.js";
 import { requireClaudeCode } from "./executable.js";
@@ -36,6 +36,7 @@ import { ClaudeWake } from "./wake-control.js";
 import { adoptedKey, isCompactSummary, listOutsideSessions, previewOutsideSession, sameFolder } from "./outside.js";
 import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
 import { currentMessagePurpose, queueMessagePurpose } from "../message-purpose.js";
+import { claudeSkillPaths } from "./skill-paths.js";
 
 export { claudeCommands, localCommandText } from "./commands.js";
 export { askedQuestions, describeToolUse, retryReason } from "./tool-use.js";
@@ -116,7 +117,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   /** Skill names per profile, from the CLI's init message (its command list does not tell skills apart). */
   private readonly skillNames = new Map<Id, Set<string>>();
   /** Command lists asked without a session (profile and folder -> list). */
-  private readonly commandCache = new Map<string, { at: number; list: SdkSlashCommand[] }>();
+  private readonly draftCommandCache = new Map<string, { at: number; list: SlashCommandList }>();
   /** The `/` command a session was last sent, to name the output of a command that runs without the model. */
   private readonly lastCommand = new Map<Id, string>();
 
@@ -659,24 +660,36 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const profile = this.profile(session.profileId);
     const live = this.live.get(sessionId);
     try {
-      const list = live?.commands ?? (live ? await withTimeout(live.q.supportedCommands(), 15_000) : await this.probeCommands(session));
-      return { commands: claudeCommands(list, this.skillNames.get(profile.id)) };
+      if (!live) {
+        const workspace = this.store.getWorkspace(session.workspaceId);
+        if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
+        return this.commandsIn(profile, workspace, this.homeOf(sessionId));
+      }
+      const list = live.commands ?? await withTimeout(live.q.supportedCommands(), 15_000);
+      return { commands: await claudeSkillPaths(claudeCommands(list, this.skillNames.get(profile.id)), this.store.getWorkspace(session.workspaceId)?.path ?? "", this.homeOf(sessionId).dir) };
     } catch (err) {
       this.emit("log", `could not ask Claude Code for its commands (${sessionId}): ${firstLine(err)}`);
       return { commands: [], note: `读不到 Claude Code 的命令列表：${firstLine(err)}` };
     }
   }
 
-  private async probeCommands(session: Session): Promise<SdkSlashCommand[]> {
-    const workspace = this.store.getWorkspace(session.workspaceId);
-    if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
-    const key = `${session.profileId}|${workspace.path}`;
-    const cached = this.commandCache.get(key);
-    if (cached && Date.now() - cached.at < 10 * 60_000) return cached.list;
-    const env = claudeEnv(this.profile(session.profileId), this.options.providers, this.options.credentials, this.homeOf(session.id), this.options.baseEnv);
-    const list = await askCommands(env, workspace.path);
-    this.commandCache.set(key, { at: Date.now(), list });
-    return list;
+  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
+    const profile = this.profile(profileId);
+    return this.commandsIn(profile, workspace, this.newHome(profile));
+  }
+
+  private async commandsIn(profile: ModelProfile, workspace: Workspace, home: ClaudeHome): Promise<SlashCommandList> {
+    const key = `${profile.id}|${home.login}|${home.dir}|${workspace.path}`;
+    const cached = this.draftCommandCache.get(key);
+    if (cached && Date.now() - cached.at < 60_000) return cached.list;
+    try {
+      const env = claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv);
+      const list = await askCommandList(env, workspace.path);
+      this.draftCommandCache.set(key, { at: Date.now(), list });
+      return list;
+    } catch (error) {
+      return { commands: [], note: `读不到 Claude Code 的命令和技能列表：${firstLine(error)}` };
+    }
   }
 
   /** Every command goes to Claude Code as the text `/name args` (compact included); it answers as for a message. */

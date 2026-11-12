@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@amo-studio/protocol";
-import { matchScore, matchSlash, slashAt, slashGroups } from "./slash.js";
+import { commandAt, matchScore, matchSlash, slashAt, slashGroups } from "./slash.js";
 
 const COMMANDS: SlashCommand[] = [
   { name: "compact", description: "压缩上下文", group: "studio" },
@@ -13,6 +13,15 @@ const COMMANDS: SlashCommand[] = [
 ];
 
 describe("slash menu", () => {
+  it("finds skill mentions at the caret without consuming the surrounding request", () => {
+    expect(commandAt("$", 1)).toEqual({ query: "", start: 0, end: 1, trigger: "$" });
+    expect(commandAt("请用 $rel 检查", 7)).toEqual({ query: "rel", start: 3, end: 7, trigger: "$" });
+    expect(commandAt("先检查\n$code-review", 15)?.trigger).toBe("$");
+    expect(commandAt("foo$rel", 7)).toBeNull();
+    expect(commandAt("$rel 说明", 7)).toBeNull();
+    expect(commandAt("/", 1)?.trigger).toBe("/");
+    expect(commandAt("  /co", 5)).toEqual({ query: "co", start: 2, end: 5, trigger: "/" });
+  });
   it("opens only while the name at the start is being typed", () => {
     expect(slashAt("/", 1)).toEqual({ query: "", end: 1 });
     expect(slashAt("/com", 4)).toEqual({ query: "com", end: 4 });

@@ -6,6 +6,11 @@ import type { Id, Timestamp } from "./entities.js";
 
 export type DataKind = "workspace" | "topic" | "task" | "session";
 
+export interface ArchiveRetention {
+  /** Days since task archival; null disables automatic deletion. */
+  taskRetentionDays: 1 | 3 | 5 | 7 | null;
+}
+
 export const DATA_KIND_LABEL: Record<DataKind, string> = { workspace: "项目", topic: "专题", task: "任务", session: "会话" };
 
 /**
@@ -36,10 +41,19 @@ export interface PurgeSummary {
   attachments: number;
 }
 
+export type PurgeBatchSummary = Omit<PurgeSummary, "kind" | "id" | "title">;
+export interface PurgeBatchRequest {
+  entries: { kind: DataKind; id: Id }[];
+}
+
 // ---- Host routes (declared here, part of api.ts's HostRoutes) --------------------------------------------------
 
 /** 设置 → 数据管理 (2026-10-14): archived things and deleting them for good. */
 export interface DataRoutes {
+  "POST /api/data/purge-preview": { req: PurgeBatchRequest; res: PurgeBatchSummary };
+  "POST /api/data/purge-batch": { req: PurgeBatchRequest; res: PurgeBatchSummary };
+  "GET /api/data/retention": { req: void; res: ArchiveRetention };
+  "PUT /api/data/retention": { req: ArchiveRetention; res: ArchiveRetention };
   /** Archived projects, topics, tasks and sessions (top level only), most recently archived first. */
   "GET /api/data/archived": { req: void; res: ArchivedEntry[] };
   /** What deleting `?kind=&id=` would take with it; 409 when it is not archived or something live hangs on it. */

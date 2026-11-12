@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelProfile, Session, SessionItem } from "@amo-studio/protocol";
 import { removeTempDir, TINY_PNG_BASE64 } from "@amo-studio/testkit";
 import { Store } from "../../store/store.js";
-import { PiRuntime } from "./pi-runtime.js";
+import { PiRuntime, piCommands } from "./pi-runtime.js";
 
 const profiles: ModelProfile[] = [{ id: "pi", label: "Pi", runtime: "pi", provider: null, model: null }];
 const command = { command: process.execPath, args: [fileURLToPath(new URL("../../../../testkit/scripts/mock-pi.mjs", import.meta.url))] };
@@ -36,6 +36,27 @@ beforeEach(() => {
 afterEach(async () => { await runtime.closeAll(); store.close(); removeTempDir(root); });
 
 describe("Pi sessions against a subprocess RPC peer", () => {
+  it("returns the native skill source path and omits synthetic or unknown sources", () => {
+    const file = join(root, "skill", "SKILL.md");
+    expect(piCommands({ commands: [
+      { name: "skill:release", source: "skill", sourceInfo: { path: file } },
+      { name: "skill:unknown", source: "skill" },
+      { name: "skill:inline", source: "skill", sourceInfo: { path: "<inline:skill>" } },
+      { name: "extension", source: "extension", sourceInfo: { path: file } },
+    ] })).toEqual([
+      { name: "skill:release", description: "", group: "skill", skillPath: file },
+      { name: "skill:unknown", description: "", group: "skill" },
+      { name: "skill:inline", description: "", group: "skill" },
+      { name: "extension", description: "", group: "custom" },
+    ]);
+  });
+
+  it("reads first-message commands with no persisted session or model prompt", async () => {
+    const result = await runtime.listProfileCommands("pi", workspace);
+    expect(result.commands).toEqual([{ name: "mock-command", description: "模拟扩展命令", group: "custom" }]);
+    expect(store.listSessions()).toHaveLength(0);
+  });
+
   it("lists configured models and records a complete reply, tool result, and token usage", async () => {
     const choices = await runtime.choices("pi");
     expect(choices.models.map((m) => m.id)).toContain("mock/pi-test");

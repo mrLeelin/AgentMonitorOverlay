@@ -64,9 +64,9 @@ describe("shared context transport", () => {
     expect(reference).not.toContain(body);
     expect(reference.length).toBeLessThan(1000);
     await service.sessions.sendMessage(worker.id, "下一轮");
-    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `下一轮\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
+    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `下一轮\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work", skillText: "下一轮" });
     await service.sessions.sendMessage(worker.id, "恢复后继续");
-    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `恢复后继续\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
+    expect(f.native.sendMessage).toHaveBeenLastCalledWith(worker.id, `恢复后继续\n\n${reference}`, [], { beforeDispatch: expect.any(Function), purpose: "work", skillText: "恢复后继续" });
     f.native.emit("message-delivered", worker.id, reference);
     expect(service.sharedContext.receipts(worker.id)).toEqual(before);
     await f.runtime.resend(worker.id, oldQueue.id);
@@ -148,8 +148,9 @@ describe("shared context transport", () => {
     f.runtime.on("message-delivered", receipts);
     const s = await f.runtime.startSession({ taskId: task.id, topicId: null, workspace: f.workspace, profileId: "mock", text: "first" });
     expect(f.native.startSession.mock.calls[0]![0].text).toBe(`first\n\n${body}`);
+    expect(f.native.startSession.mock.calls[0]![0].skillText).toBe("first");
     await f.runtime.sendMessage(s.id, "next");
-    expect(f.native.sendMessage).toHaveBeenCalledWith(s.id, `next\n\n${body}`, [], { beforeDispatch: expect.any(Function), purpose: "work" });
+    expect(f.native.sendMessage).toHaveBeenCalledWith(s.id, `next\n\n${body}`, [], { beforeDispatch: expect.any(Function), purpose: "work", skillText: "next" });
     expect(receipts).not.toHaveBeenCalled();
     const queued = f.store.appendItem({ id: "queued-v1", sessionId: s.id, type: "user", text: `queued\n\n${body}`, delivery: "held", createdAt: new Date().toISOString(), raw: { runtime: name, method: "test" } });
     body = "[AMO_SHARED_CONTEXT:requirement-v2]\nversion two";

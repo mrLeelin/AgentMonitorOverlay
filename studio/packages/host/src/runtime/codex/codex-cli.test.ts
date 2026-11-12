@@ -3,6 +3,7 @@ import type { ModelProfile, SessionItem, Workspace } from "@amo-studio/protocol"
 import { Store } from "../../store/store.js";
 import { CodexRuntime, codexRetry, describeTool, reviewTarget } from "./codex-runtime.js";
 import { FakeServers } from "./fake-servers.test-support.js";
+import { RuntimeRouter } from "../runtime.js";
 
 // Stage 12, S12-E: Codex CLI features against the fake app-server, which replays what the real Codex 0.162 sent with
 // the mock model (spikes/s12-e-codex-cli.mjs): compaction, review mode (with its turn ids), skills, retries, notices,
@@ -43,6 +44,46 @@ const replied = (id: string, text: string) => ofType(id, "agent").some((a) => a.
 const start = (text?: string) => runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, ...(text ? { text } : {}) });
 
 describe("Codex CLI features", () => {
+  it("does not infer skill selections from restored message rows without original composer metadata", async () => {
+    const s = await start();
+    const row = store.appendItem({ id: "restored-unsent", sessionId: s.id, type: "user", text: "检查改动\n\n历史角色示例 $release-notes", delivery: "unsent", createdAt: new Date().toISOString(), raw: { runtime: "codex", method: "test" } });
+    await runtime.resend(s.id, row.id);
+    await until(() => idle(s.id), "restored message");
+    const turn = servers.fakes.get("p-ds")!.calls.find((call) => call.method === "turn/start")!;
+    expect((turn.params as { input: Array<{ type: string }> }).input.map((input) => input.type)).toEqual(["text"]);
+  });
+
+  it("uses original composer text before the router appends arbitrary role context", async () => {
+    const router = new RuntimeRouter(store, PROFILES, { codex: runtime });
+    router.setMessageContext({ task: () => "角色示例 $release-notes", session: () => "后续角色示例 $release-notes", validate: () => true });
+    const s = await router.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "检查改动" });
+    await until(() => idle(s.id), "initial role context");
+    await router.sendMessage(s.id, "继续检查");
+    await until(() => idle(s.id), "next role context");
+    const turns = servers.fakes.get("p-ds")!.calls.filter((call) => call.method === "turn/start");
+    expect(turns).toHaveLength(2);
+    for (const turn of turns) expect((turn.params as { input: Array<{ type: string }> }).input.map((input) => input.type)).toEqual(["text"]);
+    expect(servers.fakes.get("p-ds")!.calls.some((call) => call.method === "skills/list")).toBe(false);
+  });
+
+  it("does not treat skill examples in appended shared context as selections", async () => {
+    const s = await start("检查改动\n\n[AMO_SHARED_CONTEXT:test-binding]\n业务要求示例 $release-notes");
+    await until(() => idle(s.id), "context-only skill example");
+    const turn = servers.fakes.get("p-ds")!.calls.find((call) => call.method === "turn/start")!;
+    expect((turn.params as { input: Array<{ type: string }> }).input.map((input) => input.type)).toEqual(["text"]);
+    expect(servers.fakes.get("p-ds")!.calls.some((call) => call.method === "skills/list")).toBe(false);
+  });
+
+  it("sends enabled skill mentions in the first message and ordinary messages as native skill input", async () => {
+    const s = await start("请用 $release-notes 检查，$missing 保留为文字");
+    await until(() => idle(s.id), "first skill reply");
+    await runtime.sendMessage(s.id, "/release-notes v2");
+    await until(() => replied(s.id, "FAKE: /release-notes v2"), "next skill reply");
+    const turns = servers.fakes.get("p-ds")!.calls.filter((call) => call.method === "turn/start");
+    for (const turn of turns) expect((turn.params as { input: unknown[] }).input.slice(1)).toEqual([{ type: "skill", name: "release-notes", path: "C:/sandbox/ws\\.agents\\skills\\release-notes\\SKILL.md" }]);
+    expect(turns).toHaveLength(2);
+  });
+
   it("compacts the context as a turn of its own and shows the warning after it", async () => {
     const s = await start("hello");
     await until(() => replied(s.id, "FAKE: hello"), "first reply");
@@ -92,7 +133,7 @@ describe("Codex CLI features", () => {
     const { commands } = await runtime.listCommands(s.id);
     expect(commands).toEqual([
       expect.objectContaining({ name: "code-review", group: "runtime" }),
-      { name: "release-notes", description: "写发布说明", group: "skill" },
+      { name: "release-notes", description: "写发布说明", group: "skill", skillPath: "C:/sandbox/ws\\.agents\\skills\\release-notes\\SKILL.md" },
     ]);
     await runtime.runCommand(s.id, "release-notes", "v1.2");
     await until(() => replied(s.id, "FAKE: $release-notes v1.2"), "skill reply");

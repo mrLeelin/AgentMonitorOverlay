@@ -15,6 +15,19 @@ export function slashAt(text: string, caret: number): { query: string; end: numb
   return { query: m[1]!, end };
 }
 
+/** `$` mentions can appear within a request; `/` commands belong at the start of the message. */
+export function commandAt(text: string, caret: number): { query: string; start: number; end: number; trigger: "/" | "$" } | null {
+  const start = text.length - text.trimStart().length;
+  const slash = slashAt(text.slice(start), caret - start);
+  if (slash) return { ...slash, start, end: start + slash.end, trigger: "/" };
+  for (const match of text.matchAll(/(^|\s)\$([\w:.-]*)/g)) {
+    const start = match.index! + match[1]!.length;
+    const end = start + 1 + match[2]!.length;
+    if (caret > start && caret <= end) return { query: match[2]!, start, end, trigger: "$" };
+  }
+  return null;
+}
+
 /** How well a command matches what was typed (lower is better), or null when it does not. */
 export function matchScore(command: SlashCommand, query: string): number | null {
   const q = query.toLowerCase();

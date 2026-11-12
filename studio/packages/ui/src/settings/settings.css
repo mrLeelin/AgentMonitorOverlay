@@ -86,6 +86,8 @@
 .model-default[aria-pressed="true"] { border-color: var(--primary); background: var(--tint); color: var(--primary); font-weight: 600; cursor: default; }
 
 /* 设置 → 数据管理: archived things, restored or deleted for good. */
+.data-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.data-toolbar > button { flex: none; margin-left: auto; }
 .data-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .data-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--panel); }
 .data-kind { flex: none; min-width: 32px; padding: 1px 6px; border-radius: 4px; background: var(--panel-raised); color: var(--text-dim); font-size: var(--fs-cap); text-align: center; }

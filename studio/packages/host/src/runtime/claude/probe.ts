@@ -1,6 +1,10 @@
 import { query, type SDKUserMessage, type SlashCommand as SdkSlashCommand } from "@anthropic-ai/claude-agent-sdk";
-import type { ModelOption, ModelProfile } from "@amo-studio/protocol";
+import type { ModelOption, ModelProfile, SlashCommandList } from "@amo-studio/protocol";
 import { requireClaudeCode } from "./executable.js";
+import { claudeCommands } from "./commands.js";
+import { claudeSkillPaths } from "./skill-paths.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // Starting Claude Code with no prompt just to ask it something (stage 16 split out of claude-runtime.ts): no model
 // request is made, and the process is closed right after.
@@ -51,4 +55,19 @@ export function askModels(profile: ModelProfile, env: Record<string, string | un
 /** Claude Code's commands and skills in a project folder (its settings and skills read as in a terminal). */
 export function askCommands(env: Record<string, string | undefined>, cwd: string): Promise<SdkSlashCommand[]> {
   return asking({ cwd, env, settingSources: CLI_SETTING_SOURCES, permissionMode: "default" }, (q) => withTimeout(q.supportedCommands(), 20_000));
+}
+
+/** Native discovery also identifies skills before the first prompt emits system/init. */
+export function askCommandList(env: Record<string, string | undefined>, cwd: string): Promise<SlashCommandList> {
+  return asking({ cwd, env, settingSources: CLI_SETTING_SOURCES, permissionMode: "default" }, async (q) => {
+    const list = await withTimeout(q.supportedCommands(), 20_000);
+    try {
+      const skills = await withTimeout(q.reloadSkills(), 20_000);
+      const commands = claudeCommands(list, new Set(skills.skills.map((skill) => skill.name)));
+      return { commands: await claudeSkillPaths(commands, cwd, env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")) };
+    } catch (error) {
+      // Older local CLIs can still advertise commands even if they do not support skill-only discovery yet.
+      return { commands: claudeCommands(list), note: `Claude Code 未能读取独立技能列表：${String((error as Error).message ?? error).split(/\r?\n/)[0]}` };
+    }
+  });
 }

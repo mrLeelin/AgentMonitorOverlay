@@ -1,10 +1,12 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { collectSubtreeIds, isCommon, type ArchivedEntry, type DataKind, type Id, type PurgeSummary, type Session, type Task } from "@amo-studio/protocol";
+import { collectSubtreeIds, isCommon, type ArchiveRetention, type ArchivedEntry, type DataKind, type Id, type PurgeSummary, type Session, type Task } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 
 const KINDS: readonly DataKind[] = ["workspace", "topic", "task", "session"];
+const RETENTION_KEY = "settings:archived-task-retention-days";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** What one deletion takes: the ids by kind, plus its title. */
 interface PurgeSet {
@@ -21,6 +23,55 @@ interface PurgeSet {
  * session, a restored task of a deleted project). Files in projects and the CLIs' own records are never touched.
  */
 export class DataFeature extends Feature<"attachments" | "projects"> {
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
+
+  retention(): ArchiveRetention {
+    const raw = this.store.getKv(RETENTION_KEY)?.value;
+    if (raw === "null") return { taskRetentionDays: null };
+    const days = Number(raw);
+    return { taskRetentionDays: days === 1 || days === 3 || days === 5 || days === 7 ? days : 7 };
+  }
+
+  setRetention(value: unknown): ArchiveRetention {
+    if (value !== null && value !== 1 && value !== 3 && value !== 5 && value !== 7) throw new HostError("bad_request", "自动删除天数只能为 1、3、5、7 或不自动删除");
+    this.store.setKv(RETENTION_KEY, JSON.stringify(value));
+    return this.retention();
+  }
+
+  start(): void {
+    if (this.cleanupTimer) return;
+    const sweep = () => {
+      try { this.cleanupExpiredTasks(); }
+      catch (err) { this.log(`Archived task cleanup failed: ${String(err)}`); }
+    };
+    this.cleanupTimer = setInterval(sweep, 60_000);
+    this.cleanupTimer.unref();
+    sweep();
+  }
+
+  stop(): void {
+    clearInterval(this.cleanupTimer);
+    this.cleanupTimer = undefined;
+  }
+
+  /** Reuse manual deletion's dependency checks and attachment cleanup, including tasks hidden under archived owners. */
+  cleanupExpiredTasks(now = Date.now()): Id[] {
+    const { taskRetentionDays } = this.retention();
+    if (taskRetentionDays === null) return [];
+    const deleted: Id[] = [];
+    for (const task of this.store.listTasks()) {
+      if (!task.archivedAt || Date.parse(task.archivedAt) > now - taskRetentionDays * DAY_MS || !Number.isFinite(Date.parse(task.archivedAt))) continue;
+      try {
+        this.purge("task", task.id);
+        deleted.push(task.id);
+      } catch (err) {
+        // A restored session or a managed task must keep its owner; retry on the next sweep after it is resolved.
+        if (!(err instanceof HostError && err.code === "conflict")) this.log(`Archived task cleanup skipped ${task.id}: ${String(err)}`);
+      }
+    }
+    return deleted;
+  }
+
   archived(): ArchivedEntry[] {
     const workspaces = this.store.listWorkspaces();
     const topics = this.store.listTopics();
@@ -59,7 +110,26 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
 
   purge(kind: unknown, id: unknown): PurgeSummary {
     const { k, set } = this.resolve(kind, id);
-    const summary = this.summary(k, String(id), set);
+    return this.execute(k, String(id), set);
+  }
+
+  batch(entries: unknown, execute: boolean) {
+    if (!Array.isArray(entries) || !entries.length) throw new HostError("bad_request", "请选择要删除的归档内容");
+    const combined: PurgeSet = { title: "全部已归档内容", workspaceIds: [], topicIds: [], taskIds: [], sessionIds: [] };
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") throw new HostError("bad_request", "归档条目格式无效");
+      const { set } = this.resolve(entry.kind, entry.id, false);
+      for (const key of ["workspaceIds", "topicIds", "taskIds", "sessionIds"] as const) combined[key].push(...set[key]);
+    }
+    for (const key of ["workspaceIds", "topicIds", "taskIds", "sessionIds"] as const) combined[key] = [...new Set(combined[key])];
+    // Validate the union: archived managers and their managed tasks can be removed together, never partially.
+    this.checkNothingLive(combined, this.store.listSessions(), this.store.listTasks());
+    const { kind, id, title, ...summary } = execute ? this.execute("workspace", "batch", combined) : this.summary("workspace", "batch", combined);
+    return summary;
+  }
+
+  private execute(k: DataKind, id: Id, set: PurgeSet): PurgeSummary {
+    const summary = this.summary(k, id, set);
     const { attachmentIds } = this.store.countItems(set.sessionIds);
     this.store.purge(set);
     for (const ws of set.workspaceIds) this.f.projects.dropHints(ws);
@@ -86,7 +156,7 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
   }
 
   /** The ids a deletion takes, after checking it is archived and nothing live depends on it. */
-  private resolve(kind: unknown, id: unknown): { k: DataKind; set: PurgeSet } {
+  private resolve(kind: unknown, id: unknown, validate = true): { k: DataKind; set: PurgeSet } {
     if (typeof kind !== "string" || !(KINDS as readonly string[]).includes(kind)) throw new HostError("bad_request", "kind must be workspace, topic, task or session");
     if (typeof id !== "string" || !id) throw new HostError("bad_request", "id is required");
     const k = kind as DataKind;
@@ -114,7 +184,7 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
       const taskIds = tasks.filter((t) => t.workspaceId === ws.id).map((t) => t.id);
       set = { title: ws.name, workspaceIds: [ws.id], topicIds: [], taskIds, sessionIds: sessions.filter((x) => x.workspaceId === ws.id || (x.taskId && taskIds.includes(x.taskId))).map((x) => x.id) };
     }
-    this.checkNothingLive(set, sessions, tasks);
+    if (validate) this.checkNothingLive(set, sessions, tasks);
     return { k, set };
   }
 

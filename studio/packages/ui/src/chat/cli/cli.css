@@ -4,6 +4,7 @@
 /* ---- / menu (shares .suggest's box with the @ list) -------------------------------------------------------------- */
 
 .composer-card .slash-menu { width: min(620px, calc(100% - 24px)); max-width: none; max-height: 360px; overflow-y: auto; }
+.draft-composer .slash-menu { max-height: min(300px, 40vh); overflow-y: auto; }
 .slash-menu .suggest-h { position: sticky; top: -4px; z-index: 1; background: var(--menu-bg); }
 .slash-menu .suggest-h:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--divider); padding-top: 8px; }
 .slash-menu button { gap: 8px; }

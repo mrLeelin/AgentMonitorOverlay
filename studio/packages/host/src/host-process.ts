@@ -410,6 +410,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
         if (stopped) return;
         stopped = true;
         clearInterval(pruning);
+        service.data.stop();
         service.duty.stop();
         service.teamRelay.stop();
         service.remote.stop();
@@ -426,6 +427,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
         release();
       },
     };
+    service.data.start();
     return self;
   } catch (err) {
     await http?.close();

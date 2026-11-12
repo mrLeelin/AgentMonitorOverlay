@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { inTurn, storedAnswers, type ApprovalDecision, type Attachment, type Id, type McpApply, type McpServerSpec, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionAnswer, type QuestionReply, type Session, type SessionOptions, type SlashCommandList, type SlashCommandResult } from "@amo-studio/protocol";
+import { isAbsolute, join } from "node:path";
+import { inTurn, storedAnswers, type ApprovalDecision, type Attachment, type Id, type McpApply, type McpServerSpec, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionAnswer, type QuestionReply, type Session, type SessionOptions, type SlashCommand, type SlashCommandList, type SlashCommandResult, type Workspace } from "@amo-studio/protocol";
 import type { Store } from "../../store/store.js";
 import { MCP_SESSION_HEADER, type McpIdentities } from "../../mcp/identity.js";
 import { RuntimeBase, STOP_GRACE_MS, type SendMode, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
@@ -50,6 +50,16 @@ const CONFIGURE = "Pi 没有可用的模型：请先在 Pi 中登录模型服务
 const unsupported = (message: string) => Object.assign(new Error(message), { code: "bad_request" });
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const modelId = (model: Value | undefined) => model && typeof model.provider === "string" && typeof model.id === "string" ? `${model.provider}/${model.id}` : undefined;
+
+/** Pi's get_commands reports each skill's actual source file in sourceInfo.path. */
+export function piCommands(result: Value): SlashCommand[] {
+  return (Array.isArray(result.commands) ? result.commands : []).filter((command: Value) => typeof command.name === "string" && command.name !== "compact").map((command: Value) => ({
+    name: command.name,
+    description: typeof command.description === "string" ? command.description : "",
+    group: command.source === "skill" ? "skill" as const : "custom" as const,
+    ...(command.source === "skill" && typeof command.sourceInfo?.path === "string" && isAbsolute(command.sourceInfo.path) ? { skillPath: command.sourceInfo.path } : {}),
+  }));
+}
 
 /** Pi keeps its own native session; Studio owns message validity and queue boundaries. */
 export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
@@ -224,8 +234,17 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     return this.serial(sessionId, async () => {
       const live = await this.ensureLive(this.writable(sessionId));
       const result = await live.conn.request<Value>("get_commands");
-      return { commands: [{ name: "compact", description: "压缩 Pi 的会话上下文", group: "runtime" }, ...(Array.isArray(result.commands) ? result.commands : []).filter((command: Value) => typeof command.name === "string" && command.name !== "compact").map((command: Value) => ({ name: command.name, description: typeof command.description === "string" ? command.description : "", group: command.source === "skill" ? "skill" as const : "custom" as const }))] };
+      return { commands: [{ name: "compact", description: "压缩 Pi 的会话上下文", group: "runtime" }, ...piCommands(result)] };
     });
+  }
+
+  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
+    this.profile(profileId);
+    const conn = this.spawn(workspace.path, ["--mode", "rpc", "--no-session", "--no-mcp"]);
+    try {
+      const result = await conn.request<Value>("get_commands");
+      return { commands: piCommands(result) };
+    } finally { await conn.close(); }
   }
 
   async runCommand(sessionId: Id, name: string, args: string): Promise<SlashCommandResult> {

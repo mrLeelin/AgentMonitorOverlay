@@ -51,7 +51,7 @@ const PAGES = [
   { id: "network", group: "advanced", label: "网络", keywords: "连接 代理 proxy HTTP SOCKS 连通性" },
   { id: "features", group: "advanced", label: "功能开关", keywords: "开关 命令行 Windows 适配 中转 确认 自动发送" },
   { id: "experimental", group: "advanced", label: "测试功能", keywords: "实验 开关 开发 界面 dev UI" },
-  { id: "data", group: "maintenance", label: "数据管理", keywords: "归档 恢复 删除 清理" },
+  { id: "data", group: "maintenance", label: "数据管理", keywords: "归档 恢复 删除 清理 自动删除 保留天数" },
   { id: "maintenance", group: "maintenance", label: "维护", keywords: "版本 运行方式 终端 CLI 更新 安装 Claude Codex Pi" },
 ] as const;
 export type SettingsPage = (typeof PAGES)[number]["id"];

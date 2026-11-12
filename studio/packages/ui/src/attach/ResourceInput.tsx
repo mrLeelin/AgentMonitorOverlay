@@ -1,6 +1,7 @@
 import { useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type CSSProperties, type DragEventHandler, type KeyboardEvent, type Ref } from "react";
 import "./resourceInput.css";
 import { replaceResources } from "./inlineResources.js";
+import { skillTokens } from "./skillTokens.js";
 
 export const RESOURCE_CLIPBOARD_MIME = "application/x-amo-composer-text";
 
@@ -37,6 +38,8 @@ export interface ResourceInputProps {
   "data-testid"?: string;
   resources: readonly InputResource[];
   mentions?: readonly string[];
+  skills?: readonly { name: string; description?: string; skillPath?: string }[];
+  onOpenSkill?(name: string): void;
   onOpen?(token: string): void;
   onRemove?(token: string): void;
 }
@@ -123,6 +126,7 @@ export function ResourceInput(props: ResourceInputProps) {
   const composing = useRef(false);
   const signature = useRef("");
   const emitted = useRef<string | null>(null);
+  const restoreOnFocus = useRef(false);
 
   function remember(next: Snapshot) {
     const current = history.current[historyAt.current]!;
@@ -133,6 +137,8 @@ export function ResourceInput(props: ResourceInputProps) {
 
   function track() {
     if (!root.current) return held.current;
+    // A background metadata redraw removes the old DOM range; keep its text offsets until the input regains focus.
+    if (restoreOnFocus.current && document.activeElement !== root.current) return held.current;
     held.current = selectionAt(root.current, held.current);
     latest.current.onSelect?.({ selectionStart: held.current.start });
     return held.current;
@@ -144,12 +150,26 @@ export function ResourceInput(props: ResourceInputProps) {
     const scroll = el.scrollTop;
     const resources = [...latest.current.resources].filter((r) => r.token).sort((a, b) => b.token.length - a.token.length);
     const names = [...(latest.current.mentions ?? [])].sort((a, b) => b.length - a.length);
+    const skills = skillTokens(text, latest.current.skills ?? []);
     const fragment = document.createDocumentFragment();
-    const plain = (text: string) => {
+    const plain = (text: string, offset: number) => {
       let at = 0;
       while (at < text.length) {
+        const skill = skills.find((skill) => skill.start === offset + at);
         const name = names.find((name) => text.startsWith(`@${name}`, at));
-        if (name) {
+        if (skill) {
+          const span = document.createElement("span");
+          const source = latest.current.skills?.find((item) => item.name === skill.name);
+          span.className = "skill-token";
+          span.dataset.inputSkill = skill.name;
+          span.setAttribute("role", "link");
+          span.setAttribute("aria-label", `打开技能 ${skill.name}`);
+          span.tabIndex = 0;
+          span.title = `${source?.description || skill.name}\n点击打开技能${source?.skillPath ? `：${source.skillPath}` : ""}`;
+          span.textContent = text.slice(at, skill.end - offset);
+          fragment.append(span);
+          at = skill.end - offset;
+        } else if (name) {
           const span = document.createElement("span");
           span.className = "mention-token";
           span.textContent = `@${name}`;
@@ -158,6 +178,8 @@ export function ResourceInput(props: ResourceInputProps) {
         } else {
           let end = text.indexOf("@", at + 1);
           if (end < 0) end = text.length;
+          const nextSkill = skills.find((skill) => skill.start > offset + at && skill.start < offset + end);
+          if (nextSkill) end = nextSkill.start - offset;
           fragment.append(document.createTextNode(text.slice(at, end)));
           at = end;
         }
@@ -171,7 +193,7 @@ export function ResourceInput(props: ResourceInputProps) {
         const index = text.indexOf(resource.token, at);
         if (index >= 0 && index < pos) { pos = index; next = resource; }
       }
-      plain(text.slice(at, pos));
+      plain(text.slice(at, pos), at);
       if (!next) break;
       const atom = document.createElement("span");
       atom.className = `resource-atom resource-${next.kind}`;
@@ -229,6 +251,7 @@ export function ResourceInput(props: ResourceInputProps) {
     el.replaceChildren(fragment);
     el.dataset.empty = text ? "false" : "true";
     if (restore) setSelection(el, selection.start, selection.end);
+    restoreOnFocus.current = !restore;
     el.scrollTop = scroll;
   }
 
@@ -285,10 +308,11 @@ export function ResourceInput(props: ResourceInputProps) {
   useLayoutEffect(() => {
     const el = root.current;
     if (!el || composing.current) return;
-    const nextSignature = JSON.stringify([props.resources, props.mentions]);
+    // Editable skill spans must be redrawn as names change, including punctuation typed at their boundary.
+    const nextSignature = JSON.stringify([props.resources, props.mentions, props.skills, props.skills?.length ? props.value : null]);
     const current = readNode(el);
     const focused = document.activeElement === el;
-    let selection = selectionAt(el, held.current);
+    let selection = restoreOnFocus.current && !focused ? held.current : selectionAt(el, held.current);
     if (current !== props.value) {
       const ownChange = emitted.current === props.value;
       if (!ownChange) {
@@ -312,6 +336,12 @@ export function ResourceInput(props: ResourceInputProps) {
 
   function keyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (composing.current || event.nativeEvent.isComposing) return;
+    const skill = event.target instanceof HTMLElement && event.target !== root.current ? event.target.dataset.inputSkill : undefined;
+    if (skill && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      props.onOpenSkill?.(skill);
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y") {
         event.preventDefault();
@@ -375,7 +405,13 @@ export function ResourceInput(props: ResourceInputProps) {
       onKeyDown={keyDown}
       onSelect={track}
       onBlur={track}
-      onFocus={track}
+      onFocus={() => {
+        if (restoreOnFocus.current && root.current) {
+          setSelection(root.current, held.current.start, held.current.end);
+          restoreOnFocus.current = false;
+        }
+        track();
+      }}
       onBeforeInput={(event) => {
         const type = (event.nativeEvent as InputEvent).inputType;
         if (type === "historyUndo" || type === "historyRedo") { event.preventDefault(); undo(type === "historyUndo" ? -1 : 1); }
@@ -420,10 +456,12 @@ export function ResourceInput(props: ResourceInputProps) {
       onCopy={(event) => copy(event, false)}
       onCut={(event) => copy(event, true)}
       onMouseDown={(event) => {
-        if ((event.target as Element).closest(".resource-atom button")) event.preventDefault();
+        if ((event.target as Element).closest(".resource-atom button, [data-input-skill]")) event.preventDefault();
       }}
       onClick={(event) => {
         const target = event.target as Element;
+        const skill = target.closest<HTMLElement>("[data-input-skill]")?.dataset.inputSkill;
+        if (skill) { props.onOpenSkill?.(skill); return; }
         const atom = target.closest<HTMLElement>("[data-resource-token]");
         const token = atom?.dataset.resourceToken;
         if (!token) return;

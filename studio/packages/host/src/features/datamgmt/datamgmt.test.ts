@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectWorkspaces, type CanvasDoc, type ModelProfile, type Session, type Task } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
@@ -28,6 +28,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  host?.data.stop();
+  vi.useRealTimers();
   store?.close();
   await servers?.close();
   removeTempDir(root);
@@ -70,6 +72,98 @@ async function setup() {
 
 const task = (id: string): Task | undefined => store.getTask(id);
 
+describe("archived task retention", () => {
+  const day = 86_400_000;
+
+  it("defaults to seven days and rejects unsupported values without changing the setting", () => {
+    expect(host.data.retention().taskRetentionDays).toBe(7);
+    for (const bad of [undefined, "1", 0, 2, 30, false]) expect(() => host.data.setRetention(bad)).toThrow();
+    expect(host.data.retention().taskRetentionDays).toBe(7);
+  });
+
+  it.each([1, 3, 5, 7] as const)("deletes at the %i day boundary, including its sessions, but retains live tasks", async (days) => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t3.id);
+    const at = Date.parse(task(x.t3.id)!.archivedAt!);
+    host.data.setRetention(days);
+    expect(host.data.cleanupExpiredTasks(at + days * day - 1)).toEqual([]);
+    expect(host.data.cleanupExpiredTasks(at + days * day)).toEqual([x.t3.id]);
+    expect(store.getSession(x.s3.id)).toBeUndefined();
+    expect(task(x.t1.id)).toBeDefined();
+    expect(existsSync(join(root, "beta"))).toBe(true);
+  });
+
+  it("persists disabled cleanup and applies a changed period to existing archives", async () => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t3.id);
+    const at = Date.parse(task(x.t3.id)!.archivedAt!);
+    host.data.setRetention(null);
+    const fresh = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
+    expect(fresh.data.retention().taskRetentionDays).toBeNull();
+    expect(fresh.data.cleanupExpiredTasks(at + 100 * day)).toEqual([]);
+    fresh.data.setRetention(1);
+    expect(fresh.data.cleanupExpiredTasks(at + day)).toEqual([x.t3.id]);
+  });
+
+  it("retains restored tasks and restarts the clock when archived again", async () => {
+    const x = await setup();
+    vi.useFakeTimers();
+    const at = Date.now();
+    await host.tasks.archiveTask(x.t3.id);
+    await host.tasks.unarchiveTask(x.t3.id);
+    expect(host.data.cleanupExpiredTasks(at + 10 * day)).toEqual([]);
+    vi.setSystemTime(at + 10 * day);
+    await host.tasks.archiveTask(x.t3.id);
+    expect(host.data.cleanupExpiredTasks(at + 16 * day)).toEqual([]);
+    expect(host.data.cleanupExpiredTasks(at + 17 * day)).toEqual([x.t3.id]);
+  });
+
+  it("checks hidden tasks under archived owners without deleting the project or topic", async () => {
+    const x = await setup();
+    await host.projects.archiveWorkspace(x.beta.id);
+    const at = Date.parse(task(x.t3.id)!.archivedAt!);
+    expect(host.data.cleanupExpiredTasks(at + 7 * day)).toEqual([x.t3.id]);
+    expect(store.getWorkspace(x.beta.id)).toBeDefined();
+    expect(store.getTopic(x.topic.id)).toBeDefined();
+  });
+
+  it("skips a restored session and continues cleaning other expired tasks", async () => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t2.id);
+    await host.tasks.archiveTask(x.t3.id);
+    store.db.prepare("UPDATE sessions SET archived_at = NULL WHERE id = ?").run(x.s2.id);
+    expect(host.data.cleanupExpiredTasks(Date.now() + 8 * day)).toEqual([x.t3.id]);
+    expect(task(x.t2.id)).toBeDefined();
+  });
+
+  it("sweeps on startup and every minute, and stops its timer", async () => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t3.id);
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 8 * day);
+    host.data.start();
+    expect(task(x.t3.id)).toBeUndefined();
+    const sweep = vi.spyOn(host.data, "cleanupExpiredTasks");
+    host.data.start();
+    vi.advanceTimersByTime(60_000);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    host.data.stop();
+    vi.advanceTimersByTime(60_000);
+    expect(sweep).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a manager while any retained task still belongs to it", async () => {
+    const x = await setup();
+    const manager = (await host.tasks.createTask({ title: "主控", workspaceId: x.alpha.id, lead: true })).task;
+    host.tasks.setManager(x.t2.id, manager.id);
+    const at = new Date().toISOString();
+    store.updateTask(manager.id, { archivedAt: at });
+    expect(host.data.cleanupExpiredTasks(Date.parse(at) + 8 * day)).toEqual([]);
+    expect(task(manager.id)).toBeDefined();
+    expect(task(x.t2.id)?.managerTaskId).toBe(manager.id);
+  });
+});
+
 describe("archived projects", () => {
   it("take their tasks and topic sessions along, leave every list, and come back with what went with them", async () => {
     const x = await setup();
@@ -98,6 +192,53 @@ describe("archived projects", () => {
 });
 
 describe("数据管理", () => {
+  it("batch previews deduplicate overlapping owners and delete the union without touching live data", async () => {
+    const x = await setup();
+    await host.topics.archiveTopic(x.topic.id);
+    await host.projects.archiveWorkspace(x.alpha.id);
+    const entries = host.data.archived();
+    const preview = host.data.batch([...entries, ...entries], false);
+    expect(preview).toMatchObject({ workspaces: 1, topics: 1, tasks: 2, sessions: 4 });
+    expect(store.getTask(x.t1.id)).toBeDefined();
+    expect(host.data.batch(entries, true)).toEqual(preview);
+    expect(host.data.archived()).toEqual([]);
+    expect(store.getTask(x.t3.id)).toBeDefined();
+    expect(store.getSession(x.s3.id)).toBeDefined();
+    expect(existsSync(join(root, "alpha"))).toBe(true);
+  });
+
+  it("batch removes archived managers and their managed tasks together", async () => {
+    const x = await setup();
+    const manager = store.createTask({ title: "主控", workspaceId: x.alpha.id, lead: true });
+    const child = store.createTask({ title: "执行", workspaceId: x.beta.id, managerTaskId: manager.id });
+    for (const t of [manager, child]) store.updateTask(t.id, { archivedAt: new Date().toISOString() });
+    expect(host.data.batch(host.data.archived(), true).tasks).toBe(2);
+    expect(store.getTask(manager.id)).toBeUndefined();
+    expect(store.getTask(child.id)).toBeUndefined();
+  });
+
+  it("batch revalidates after preview and refuses the entire deletion when an entry was restored", async () => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t2.id);
+    await host.tasks.archiveTask(x.t3.id);
+    const entries = host.data.archived();
+    expect(host.data.batch(entries, false).tasks).toBe(2);
+    await host.tasks.unarchiveTask(x.t3.id);
+    expect(() => host.data.batch(entries, true)).toThrow(/已归档/);
+    expect(store.getTask(x.t2.id)).toBeDefined();
+    expect(store.getTask(x.t3.id)).toBeDefined();
+  });
+
+  it("batch refuses all entries if live dependencies remain and rejects malformed input", async () => {
+    const x = await setup();
+    await host.tasks.archiveTask(x.t2.id);
+    await host.tasks.archiveTask(x.t3.id);
+    store.db.prepare("UPDATE sessions SET archived_at = NULL WHERE id = ?").run(x.s3.id);
+    expect(() => host.data.batch(host.data.archived(), true)).toThrow(/还没归档/);
+    expect(store.getTask(x.t2.id)).toBeDefined();
+    for (const entries of [null, [], [null], [{ kind: "nope", id: "x" }]]) expect(() => host.data.batch(entries, true)).toThrow();
+  });
+
   it("lists archived things at the top of what would go with them", async () => {
     const x = await setup();
     await host.tasks.archiveTask(x.t3.id);

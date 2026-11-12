@@ -330,7 +330,7 @@
     {
       "id": "studio.settingsMisc",
       "label": "设置里的维护、统计、数据管理",
-      "aliases": ["维护终端", "CLI 更新", "版本检测", "MaintenanceFeature", "统计", "StatsFeature", "数据管理", "DataFeature", "彻底删除"],
+        "aliases": ["维护终端", "CLI 更新", "版本检测", "MaintenanceFeature", "统计", "StatsFeature", "数据管理", "DataFeature", "彻底删除", "归档", "自动删除", "保留天数"],
       "category": "host",
       "purpose": "设置 → 维护（检查本机 Claude Code / Codex / Pi 版本并逐项更新，在源码目录开用户自己的 Claude Code / Codex 终端）、统计（每次打开从会话的轮次现算 token，不存）、数据管理（只删已归档的，连同只属于它的数据）。CLI 更新在 Host 后台执行，维护页轮询结果；Pi 复用运行时定位并按实际 npm 包名更新，不更新 SDK 自带副本。",
       "anchors": [
@@ -338,7 +338,9 @@
         { "label": "CLI 更新列表", "path": "studio/packages/ui/src/settings/CliUpdates.tsx", "anchor": "export function CliUpdates" },
         { "label": "维护接口", "path": "studio/packages/protocol/src/maintenance.ts", "anchor": "export interface MaintenanceRoutes" },
         { "label": "统计", "path": "studio/packages/host/src/features/stats/service.ts", "anchor": "export class StatsFeature" },
-        { "label": "数据管理", "path": "studio/packages/host/src/features/datamgmt/service.ts", "anchor": "export class DataFeature" },
+          { "label": "数据管理（任务默认归档满7天删除，可选1/3/5/7天或关闭；启动及每分钟检查，复用删除保护）", "path": "studio/packages/host/src/features/datamgmt/service.ts", "anchor": "export class DataFeature" },
+          { "label": "归档保留设置与列表、全部删除（跨类型确认；新 Host 整批删除，旧 Host 兼容逐项删除并报告部分成功）", "path": "studio/packages/ui/src/settings/DataPage.tsx", "anchor": "export function DataPage" },
+          { "label": "批量删除合并与依赖保护", "path": "studio/packages/host/src/features/datamgmt/service.ts", "anchor": "batch(entries: unknown, execute: boolean)" },
         { "label": "统计页", "path": "studio/packages/ui/src/settings/StatsPage.tsx" }
       ],
       "related": ["studio.config", "host.store"],
@@ -363,17 +365,18 @@
     },
     {
       "id": "studio.cli",
-      "label": "对话里的命令（/ 菜单、后台命令）",
-      "aliases": ["/ 菜单", "slash", "CliFeature", "后台命令", "background command"],
+      "label": "对话里的命令与技能（/ 和 $ 菜单、后台命令）",
+      "aliases": ["/ 菜单", "$", "技能", "Skills", "快速指令", "快捷指令", "slash", "CliFeature", "后台命令", "background command"],
       "category": "host",
-      "purpose": "对话里的 / 菜单（Studio 的命令加 runtime 自己的）、运行命令、后台命令的停止和输出、对话设置。",
+      "purpose": "会话输入框 / 列出 Studio 与 runtime 的快捷指令和技能，$ 在光标处搜索并插入技能；新建任务第一句话按所选项目与模型发现可用于首条消息的指令与技能，不创建会话或调用模型。完整技能引用自动高亮，可点击打开真实 SKILL.md；手动输入与草稿恢复同样生效。支持筛选、键盘选择和补全。还包括运行命令、后台命令的停止和输出、对话设置。",
       "anchors": [
         { "label": "CliFeature", "path": "studio/packages/host/src/features/cli/service.ts", "anchor": "export class CliFeature" },
         { "label": "协议", "path": "studio/packages/protocol/src/cli.ts" },
-        { "label": "界面", "path": "studio/packages/ui/src/chat/cli" }
+        { "label": "菜单与光标", "path": "studio/packages/ui/src/chat/cli/SlashMenu.tsx", "anchor": "export function useSlashCommands" },
+        { "label": "触发位置", "path": "studio/packages/ui/src/chat/cli/slash.ts", "anchor": "export function commandAt" }
       ],
       "related": ["ui.chat", "runtime.claude"],
-      "next": ["studio/plans/done/stage-12.md"]
+      "next": ["studio/plans/done/composer-command-skills.md", "studio/plans/done/stage-12.md"]
     },
     {
       "id": "studio.planning",

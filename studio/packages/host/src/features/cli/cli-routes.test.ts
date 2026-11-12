@@ -15,7 +15,7 @@ import { startHostServer, type HostServer } from "../../http/server.js";
 // Stage 12, S12-E: the `/` command routes, background output and the chat settings, over HTTP.
 
 const fetch = (url: string, init: RequestInit = {}) => globalThis.fetch(url, { ...init, headers: { connection: "close", ...(init.headers as Record<string, string> | undefined) } });
-const PROFILES: ModelProfile[] = [{ id: "p-ds", label: "DS", runtime: "codex", provider: "amo-ds", model: "ds-model" }];
+const PROFILES: ModelProfile[] = [{ id: "p-ds", label: "DS", runtime: "codex", provider: "amo-ds", model: "ds-model" }, { id: "p-other", label: "Other", runtime: "codex", provider: "amo-other", model: "other-model" }];
 const TOKEN = "test-host-token";
 
 let root: string;
@@ -57,6 +57,31 @@ async function session(folder: string): Promise<Session> {
 }
 
 describe("/ commands over HTTP", () => {
+  it("discovers first-message skills for the selected profile and project without creating a session", async () => {
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: join(root, "plain") })).data;
+    const result = await api<SlashCommandList>("POST", "/api/commands", { profileId: "p-other", workspaceId: ws.id });
+    expect(result.status).toBe(200);
+    expect(result.data.commands).toEqual([{ name: "release-notes", description: "写发布说明", group: "skill", skillPath: expect.stringContaining("SKILL.md") }]);
+    expect(store.listSessions()).toHaveLength(0);
+    expect(servers.fakes.has("p-ds")).toBe(false);
+    const calls = servers.fakes.get("p-other")!.calls;
+    expect(calls.find((call) => call.method === "skills/list")?.params).toEqual({ cwds: [ws.path] });
+    expect(calls.some((call) => /^(thread|turn)\//.test(call.method))).toBe(false);
+  });
+
+  it("uses the common workspace for an unassigned first message and validates ids before discovery", async () => {
+    expect((await api("POST", "/api/commands", {})).status).toBe(400);
+    expect((await api("POST", "/api/commands", { profileId: "missing" })).status).toBe(400);
+    expect((await api("POST", "/api/commands", { profileId: "p-ds", workspaceId: "missing" })).status).toBe(400);
+    expect(servers.fakes.size).toBe(0);
+    const result = await api<SlashCommandList>("POST", "/api/commands", { profileId: "p-ds" });
+    expect(result.status).toBe(200);
+    expect(result.data.commands.some((command) => command.group === "skill")).toBe(true);
+    expect(store.listSessions()).toHaveLength(0);
+    const cwd = (servers.fakes.get("p-ds")!.calls.find((call) => call.method === "skills/list")?.params as { cwds: string[] }).cwds[0];
+    expect(store.listWorkspaces().some((workspace) => workspace.path === cwd)).toBe(true);
+  });
+
   it("puts Studio's commands first, /review only in a git project", async () => {
     const plain = await session("plain");
     const list = (await api<SlashCommandList>("GET", `/api/sessions/${plain.id}/commands`)).data;

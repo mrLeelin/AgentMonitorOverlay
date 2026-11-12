@@ -4,6 +4,10 @@ import { route, type Route, obj } from "../../http/route.js";
 /** The HTTP routes of this feature (see protocol/src/api.ts for each route's request and response). */
 export function dataRoutes(service: HostService): Route[] {
   return [
+    route("POST /api/data/purge-preview", ({ body }) => service.data.batch(obj(body).entries, false)),
+    route("POST /api/data/purge-batch", ({ body }) => service.data.batch(obj(body).entries, true)),
+    route("GET /api/data/retention", () => service.data.retention()),
+    route("PUT /api/data/retention", ({ body }) => service.data.setRetention(obj(body).taskRetentionDays)),
     route("GET /api/data/archived", () => service.data.archived()),
     route("GET /api/data/purge", ({ query }) => service.data.preview(query.get("kind"), query.get("id"))),
     route("POST /api/data/purge", ({ body }) => {

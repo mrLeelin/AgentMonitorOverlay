@@ -167,8 +167,8 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     inlineFiles: true,
     ...(projects ? { projects } : {}),
   });
-  // `/` at the start: the command menu (stage 12, S12-E).
-  const slash = useSlashCommands({ link, session, text: draft, setText: setDraft, onRun: (command, args) => void runCommand(command, args) });
+  // `/` opens commands and skills; `$` completes skill mentions at the caret.
+  const slash = useSlashCommands({ link, session, text: draft, setText: setDraft, onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)), onRun: (command, args) => void runCommand(command, args) });
   const chat = useChatSettings(link);
   const suggestion = useMemo(() => latestSuggestion(items), [items]);
   const compacting = useMemo(() => items.some((i) => i.type === "compaction" && i.state === "running"), [items]);
@@ -725,6 +725,8 @@ ${d}` : restored));
                   slash.track(selection);
                 }}
                 mentions={mentions.names}
+                skills={slash.skills}
+                onOpenSkill={slash.openSkill}
                 disabled={readOnly}
                 rows={2}
                 placeholder={placeholder}

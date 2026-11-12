@@ -21,6 +21,7 @@ import { SubSessionDialog } from "../attach/SubSessionDialog.js";
 import { subSessionSetups } from "../attach/mentions.js";
 import { useAttachments } from "../attach/useAttachments.js";
 import { AttachmentInput } from "../attach/AttachmentInput.js";
+import { SlashMenu, useSlashCommands } from "../chat/cli/SlashMenu.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
 import { IconPaperclip } from "../attach/icons.js";
@@ -83,6 +84,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
   const input = useRef<ResourceInputHandle>(null);
+  const slash = useSlashCommands({ link, session: null, draft: { profileId: draft.pick.profileId, workspaceId: draft.projectId }, text: draft.text, setText: (text) => update({ text }), onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)) });
   // Images and files pasted, dropped or picked go with the first sentence (2026-10-19); they are not kept in the draft.
   const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
   const picker = useRef<HTMLInputElement>(null);
@@ -352,9 +354,12 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               onChange={(text) => {
                 update({ text });
               }}
-              onSelect={mentions.track}
+              onSelect={(selection) => { mentions.track(selection); slash.track(selection); }}
               mentions={mentions.names}
+              skills={slash.skills}
+              onOpenSkill={slash.openSkill}
               onKeyDown={(e) => {
+                if (slash.onKeyDown(e)) return;
                 if (mentions.onKeyDown(e)) return;
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -363,6 +368,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               }}
             />
             <MentionList mentions={mentions} />
+            <SlashMenu slash={slash} inline />
             <div className="cbar">
               <button type="button" className="round-btn attach" aria-label="添加图片或文件" title="添加图片或文件（也可以粘贴或拖进来）" onClick={() => picker.current?.click()}>
                 <IconPaperclip />

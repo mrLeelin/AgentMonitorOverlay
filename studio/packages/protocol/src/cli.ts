@@ -22,6 +22,8 @@ export interface SlashCommand {
   /** What it takes after the name (e.g. "<file>"); empty when nothing. */
   argumentHint?: string;
   group: SlashCommandGroup;
+  /** Absolute source SKILL.md path when the runtime or a verified local source identifies it. */
+  skillPath?: string;
   /** Other names that run the same command. */
   aliases?: string[];
   /** Handled by the UI itself instead of the Host: `open-review` opens the project's Git Review window. */
@@ -71,6 +73,8 @@ export function parseSlashCommand(text: string): { name: string; args: string } 
 
 /** CLI features in the conversation (stage 12, S12-E): / commands, compaction, background commands. */
 export interface CliRoutes {
+  /** Commands and skills for a first message, without creating a session or making a model request. */
+  "POST /api/commands": { req: { profileId: string; workspaceId?: string | null }; res: SlashCommandList };
   /** The `/` menu for a session: Studio's commands, the runtime's (Claude Code's list, Codex review), its skills. */
   "GET /api/sessions/:id/commands": { req: void; res: SlashCommandList };
   /**

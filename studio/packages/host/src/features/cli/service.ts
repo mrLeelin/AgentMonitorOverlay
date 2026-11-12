@@ -15,6 +15,21 @@ const REVIEW_COMMAND: SlashCommand = { name: "review", description: "打开这�
  * command, background commands (stop, output) and the conversation settings.
  */
 export class CliFeature extends Feature<"gitReview"> {
+  async listProfileCommands(body: unknown): Promise<SlashCommandList> {
+    const b = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    if (typeof b.profileId !== "string" || !b.profileId.trim()) throw new HostError("bad_request", "profileId must be a model profile id");
+    this.requireProfile(b.profileId);
+    const workspaceId = this.optionalWorkspace(b.workspaceId);
+    const workspace = workspaceId ? this.requireLiveWorkspace(workspaceId) : this.commonWorkspace();
+    try {
+      const runtime = await this.wrap(() => this.runtime.listProfileCommands?.(b.profileId as string, workspace) ?? Promise.resolve({ commands: [], note: "这个模型的技能列表需在会话启动后读取" }));
+      // Context compaction and opening review are session actions; first messages can select runtime commands/skills.
+      return runtime;
+    } catch (error) {
+      return { commands: [], note: `读不到命令和技能列表：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   async listCommands(sessionId: Id): Promise<SlashCommandList> {
     const session = this.requireSession(sessionId);
     const [runtime, repo] = await Promise.all([

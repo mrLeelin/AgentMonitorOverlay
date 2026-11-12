@@ -43,6 +43,8 @@ beforeAll(async () => {
   const wsDir = join(root, "workspace");
   mkdirSync(wsDir, { recursive: true });
   writeFileSync(join(wsDir, "pic.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
+  mkdirSync(join(wsDir, ".claude", "skills", "studio-source-fixture"), { recursive: true });
+  writeFileSync(join(wsDir, ".claude", "skills", "studio-source-fixture", "SKILL.md"), "---\nname: studio-source-fixture\ndescription: Studio 本地技能定位验证\n---\n读取当前项目。", "utf8");
   mock = await startMockAnthropic();
   store = new Store(join(root, "studio.db"));
   runtime = new ClaudeRuntime({ store, profiles: PROFILES, providers: { mock: mockClaudeProvider(mock.baseUrl) }, credentials: new StaticCredentialReader({ mock: "mock-key" }), claudeHome: join(root, "claude-home") });
@@ -66,6 +68,7 @@ describe("Claude Code CLI features", () => {
     expect(names).toEqual(expect.arrayContaining(["context", "usage", "init", "code-review"]));
     for (const hidden of ["clear", "model", "effort", "compact", "rename", "agents"]) expect(names).not.toContain(hidden);
     expect(commands.find((c) => c.name === "usage")).toMatchObject({ group: "runtime", aliases: ["cost", "stats"] });
+    expect(commands.find((c) => c.name === "studio-source-fixture")).toMatchObject({ group: "skill", skillPath: join(workspace.path, ".claude", "skills", "studio-source-fixture", "SKILL.md") });
   }, 60_000);
 
   it("shows a local command's output as a record, and compacts the context", async () => {
