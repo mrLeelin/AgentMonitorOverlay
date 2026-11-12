@@ -502,6 +502,12 @@ export const TOPIC_DOC_TITLE_MAX = 120;
  * them on the topic's canvas with their dependencies, and tells the 主控 which tasks they became.
  */
 export interface TaskPlan {
+  /** Specific object and goal for a new topic; an existing topic is never renamed. */
+  topicTitle?: string;
+  /** Immutable normalized request fingerprint; accepting edits must not break retry deduplication. */
+  requestKey?: string;
+  /** The actual originating turn, or a caller-supplied operation key; content alone never identifies an operation. */
+  operationId?: string;
   id: Id;
   /** The topic the tasks go into (the 主控's topic); null when the 主控's task is in none (its project's board). */
   topicId: Id | null;

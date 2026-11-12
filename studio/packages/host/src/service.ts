@@ -56,6 +56,7 @@ import { HostError, type HostServiceEvents } from "./core/shared.js";
 export { HostError, PROPOSALS_PER_ROUND, TERMINAL_TOKEN_ENV, type HostServiceEvents } from "./core/shared.js";
 
 export class HostService extends EventEmitter<HostServiceEvents> {
+  private transactionEvents: HostEvent[] | null = null;
   /** Studio windows listening to the event socket (the HTTP server counts them): 外部打开 Review needs one. */
   liveWindows = 0;
   readonly projects: ProjectsFeature = new ProjectsFeature(this);
@@ -255,9 +256,22 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     }
   }
 
+  /** Synchronous feature changes and their window notifications share one durable commit boundary. */
+  transaction<T>(fn: () => T): T {
+    if (this.transactionEvents) return fn();
+    const events: HostEvent[] = [];
+    this.transactionEvents = events;
+    let result: T;
+    try { result = this.store.transaction(fn); }
+    finally { this.transactionEvents = null; }
+    for (const event of events) this.emit("event", event);
+    return result;
+  }
+
   publish(event: HostEventInput): HostEvent {
     const persisted = this.store.appendEvent(event);
-    this.emit("event", persisted);
+    if (this.transactionEvents) this.transactionEvents.push(persisted);
+    else this.emit("event", persisted);
     return persisted;
   }
 

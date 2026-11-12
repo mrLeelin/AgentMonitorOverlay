@@ -45,6 +45,7 @@ beforeEach(() => {
   const workerTask = store.createTask({ title: "执行", workspaceId: alpha.id, topicId: topic.id });
   const session = (taskId: string) => store.createSession({ taskId, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: alpha.id, title: "", status: "idle", writer: "workbench", runtimeRef: `thr-${taskId}` });
   leadSession = session(leadTask.id);
+  turn(leadSession.id, "lead-initial-turn");
   worker = session(workerTask.id);
 });
 
@@ -64,6 +65,10 @@ const proposal = {
   ],
 };
 
+function turn(sessionId: string, id: string) {
+  return store.appendItem({ id, sessionId, createdAt: new Date().toISOString(), type: "turn", turnId: id, state: "running", startedAt: new Date().toISOString() });
+}
+
 /** Already-open proposals from an older Host remain editable and acceptable after upgrading. */
 async function legacyProposal(input: Parameters<typeof service.taskPlans.propose>[1] = proposal) {
   const s = store.createSession({ ...leadSession, id: undefined, taskId: null, topicId: topic.id, runtimeRef: null });
@@ -80,6 +85,177 @@ function acceptPrerequisite(taskId: string): void {
 }
 
 describe("task plans (拆任务提案)", () => {
+  it("retries one dispatch in its turn but creates new work in a new turn after the old work is accepted", async () => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    turn(leadSession.id, "dispatch-first-turn");
+    const input = { summary: "再次检查分支并提交风险报告", tasks: [{ title: "执行交叉检查" }] };
+    const first = await service.taskPlans.propose(leadSession.id, input);
+    acceptPrerequisite(first.created![0]!.taskId);
+    expect(store.getTask(first.created![0]!.taskId)?.column).toBe("done");
+    expect((await service.taskPlans.propose(leadSession.id, input)).id).toBe(first.id);
+    turn(leadSession.id, "dispatch-second-turn");
+    const second = await service.taskPlans.propose(leadSession.id, input);
+    expect(second.id).not.toBe(first.id);
+    expect(second.created![0]!.taskId).not.toBe(first.created![0]!.taskId);
+    expect(store.getTask(second.created![0]!.taskId)?.column).toBe("doing");
+  });
+
+  it("uses an explicit operation key for cross-turn retries and rejects reusing it for changed work", async () => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    const input = { summary: "明确的一次检查请求", operationKey: "review-operation-1", tasks: [{ title: "检查分支" }] };
+    const first = await service.taskPlans.propose(leadSession.id, input);
+    turn(leadSession.id, "later-turn-with-retry");
+    const { TaskPlansFeature } = await import("./service.js");
+    const recovered = new TaskPlansFeature(service);
+    expect((await recovered.propose(leadSession.id, input)).id).toBe(first.id);
+    await expect(recovered.propose(leadSession.id, { ...input, topicTitle: "改成另一份专题目标" })).rejects.toThrow(/operationKey/);
+    const second = await recovered.propose(leadSession.id, { ...input, operationKey: "review-operation-2" });
+    expect(second.id).not.toBe(first.id);
+    for (const child of first.created!) expect(store.listSessions({ taskId: child.taskId })).toHaveLength(1);
+  });
+
+  it("keeps no-turn legacy callers usable without guessing a permanent session-wide dispatch identity", async () => {
+    const legacy = store.createSession({ ...leadSession, id: undefined, taskId: null, topicId: topic.id, runtimeRef: null });
+    const input = { summary: "没有可识别回合的旧调用", tasks: [{ title: "确认分工" }] };
+    const first = await service.taskPlans.propose(legacy.id, input);
+    const second = await service.taskPlans.propose(legacy.id, input);
+    expect(second.id).not.toBe(first.id);
+    expect(first.operationId).toBeUndefined();
+    expect(second.operationId).toBeUndefined();
+    await expect(service.taskPlans.propose(legacy.id, { ...input, operationKey: " " })).rejects.toThrow(/operationKey/);
+  });
+
+  it("initializes an already-lead task's missing canvas with a meaningful legacy title when topicTitle is omitted", async () => {
+    store.updateTask(leadTask.id, { topicId: null, title: "投币按钮" });
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "拆资源与音效并交付验收", tasks: [{ title: "资源交付" }, { title: "音效交付" }] });
+    expect(store.getTopic(plan.topicId!)?.title).toBe("投币按钮");
+    expect(service.canvases.canvas(plan.topicId!).nodes).toHaveLength(3);
+    expect(plan.created!.map((c) => store.getTask(c.taskId)?.managerTaskId)).toEqual([leadTask.id, leadTask.id]);
+  });
+
+  it("places an unplaced manager with both children without inventing dependencies", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "分支交叉检查并交付风险报告", tasks: [{ title: "代码检查" }, { title: "资源检查" }] });
+    const doc = service.canvases.canvas(topic.id);
+    expect(doc.nodes.filter((n) => n.kind === "task").map((n) => n.taskId).sort()).toEqual([leadTask.id, ...plan.created!.map((c) => c.taskId)].sort());
+    expect(doc.edges).toEqual([]);
+    expect(plan.created!.map((c) => store.getTask(c.taskId)?.managerTaskId)).toEqual([leadTask.id, leadTask.id]);
+    const parent = doc.nodes.find((n) => n.kind === "task" && n.taskId === leadTask.id)!;
+    const children = doc.nodes.filter((n) => n.kind === "task" && n.taskId !== leadTask.id);
+    expect(children[0]!.pos.y).toBe(children[1]!.pos.y);
+    expect(children[0]!.pos.x).not.toBe(children[1]!.pos.x);
+    expect(children[0]!.pos.y - parent.pos.y).toBeGreaterThanOrEqual(160);
+  });
+
+  it("creates a concrete topic for an unbound lead and deduplicates concurrent and reconstructed dispatch", async () => {
+    store.updateTask(leadTask.id, { topicId: null });
+    const input = { summary: "检查代码与资源并交付合并风险报告", topicTitle: "DarkEvil-Story分支交叉检查：缺陷与合并风险报告", tasks: [{ title: "检查代码", model: "GPT Sol" }, { title: "检查资源" }] };
+    const count = store.listTopics().length;
+    const [a, b] = await Promise.all([service.taskPlans.propose(leadSession.id, input), service.taskPlans.propose(leadSession.id, input)]);
+    expect(a.id).toBe(b.id);
+    expect(store.listTopics()).toHaveLength(count + 1);
+    expect(store.getTopic(a.topicId!)?.title).toBe(input.topicTitle);
+    expect(store.getTask(leadTask.id)?.topicId).toBe(a.topicId);
+    expect(service.canvases.canvas(a.topicId!).nodes).toHaveLength(3);
+    const { TaskPlansFeature } = await import("./service.js");
+    const recovered = new TaskPlansFeature(service);
+    expect((await recovered.propose(leadSession.id, input)).id).toBe(a.id);
+    expect((await recovered.accept(a.id, { run: true })).created).toEqual(a.created);
+    for (const child of a.created!) expect(store.listSessions({ taskId: child.taskId })).toHaveLength(1);
+  });
+
+  it("keeps already placed ancestor cards, groups and coordinates, and leaves unrelated tasks unplaced", async () => {
+    const top = store.createTask({ title: "原上级", lead: true, workspaceId: alpha.id, topicId: topic.id });
+    service.tasks.setManager(leadTask.id, top.id);
+    const peer = store.createTask({ title: "旁支任务", workspaceId: alpha.id, topicId: topic.id });
+    const group = service.canvases.canvasCreateGroup(topic.id, { title: "保留分组" });
+    service.canvases.canvasPlaceTask(leadTask.id, group.groupId);
+    service.canvases.canvasMove(topic.id, { target: leadTask.id, x: 125, y: 210 });
+    const before = service.canvases.canvas(topic.id);
+    await service.taskPlans.propose(leadSession.id, { summary: "补齐管理端点", tasks: [{ title: "工作一" }, { title: "工作二" }] });
+    const after = service.canvases.canvas(topic.id);
+    expect(after.nodes.find((n) => n.kind === "task" && n.taskId === leadTask.id)).toEqual(before.nodes[0]);
+    expect(after.groups).toEqual(before.groups);
+    expect(after.nodes.filter((n) => n.kind === "task").map((n) => n.taskId)).toContain(top.id);
+    expect(after.nodes.some((n) => n.kind === "task" && n.taskId === peer.id)).toBe(false);
+    expect(store.getTask(leadTask.id)?.managerTaskId).toBe(top.id);
+  });
+
+  it("rolls back topic, binding, groups and tasks on a filing failure, then retries the same plan", async () => {
+    store.updateTask(leadTask.id, { topicId: null });
+    const before = { topics: store.listTopics().length, tasks: store.listTasks().length };
+    events.length = 0;
+    const input = { summary: "原子派工", topicTitle: "投币按钮：实现并验收", tasks: [{ title: "资源" }, { title: "音效", project: "beta" }] };
+    const place = service.canvases.canvasPlaceTask.bind(service.canvases);
+    let children = 0;
+    const failing = vi.spyOn(service.canvases, "canvasPlaceTask").mockImplementation((id, group, actor) => {
+      if (id !== leadTask.id && ++children === 2) throw new Error("mock filing failed");
+      return place(id, group, actor);
+    });
+    await expect(service.taskPlans.propose(leadSession.id, input)).rejects.toThrow("mock filing failed");
+    expect(store.listTopics()).toHaveLength(before.topics);
+    expect(store.listTasks()).toHaveLength(before.tasks);
+    expect(store.getTask(leadTask.id)?.topicId).toBeNull();
+    expect(store.getKv("taskplans.pending-starts")).toBeUndefined();
+    expect(events.filter((e) => ["topic.upserted", "task.upserted", "canvas.updated"].includes(e.type))).toEqual([]);
+    const pending = store.listTaskPlans()[0]!;
+    expect(pending.state).toBe("open");
+    failing.mockRestore();
+    const accepted = await service.taskPlans.propose(leadSession.id, input);
+    expect(accepted.id).toBe(pending.id);
+    expect(accepted.created).toHaveLength(2);
+    expect(service.canvases.canvas(accepted.topicId!).nodes).toHaveLength(3);
+    expect(store.listTopics()).toHaveLength(before.topics + 1);
+  });
+
+  it("validates all parameters and scope before creating a topic, without migrating peer trees", async () => {
+    store.updateTask(leadTask.id, { topicId: null, title: "审查" });
+    const before = store.listTopics().length;
+    await expect(service.taskPlans.propose(leadSession.id, { summary: "分工", tasks: [{ title: "检查" }] })).rejects.toThrow(/topicTitle/);
+    await expect(service.taskPlans.propose(leadSession.id, { summary: "分工", topicTitle: "分支检查：交付风险报告", tasks: [{ title: "检查", project: "不存在" }] })).rejects.toThrow(/project/);
+    expect(store.listTopics()).toHaveLength(before);
+    expect(store.listTaskPlans()).toHaveLength(0);
+    const top = store.createTask({ title: "原上级", lead: true, workspaceId: alpha.id, topicId: null });
+    service.tasks.setManager(leadTask.id, top.id);
+    await expect(service.taskPlans.propose(leadSession.id, { summary: "分工", topicTitle: "分支检查：交付风险报告", tasks: [{ title: "检查" }] })).rejects.toThrow(/根主控/);
+    expect(store.listTopics()).toHaveLength(before);
+    expect(store.getTask(top.id)?.topicId).toBeNull();
+  });
+
+  it("never leaves archived or invalid structural descendants behind when initializing a topic", async () => {
+    store.updateTask(leadTask.id, { topicId: null });
+    const child = store.createTask({ title: "已归档下属", workspaceId: alpha.id, topicId: null, managerTaskId: leadTask.id });
+    store.updateTask(child.id, { archivedAt: new Date().toISOString() });
+    const count = store.listTopics().length;
+    const input = { summary: "迁移管理树", topicTitle: "投币按钮：实现与验收", tasks: [{ title: "实现按钮" }] };
+    await expect(service.taskPlans.propose(leadSession.id, input)).rejects.toThrow(/管理树/);
+    expect(store.listTopics()).toHaveLength(count);
+    expect(store.getTask(leadTask.id)?.topicId).toBeNull();
+    store.updateTask(child.id, { archivedAt: null, topicId: topic.id });
+    await expect(service.taskPlans.propose(leadSession.id, input)).rejects.toThrow(/管理树/);
+    expect(store.listTopics()).toHaveLength(count);
+    store.updateTask(child.id, { topicId: null });
+    const grandchild = store.createTask({ title: "无效管理链下属", workspaceId: alpha.id, topicId: null, managerTaskId: child.id });
+    await expect(service.taskPlans.propose(leadSession.id, input)).rejects.toThrow(/管理树/);
+    expect(store.listTopics()).toHaveLength(count);
+    store.updateTask(child.id, { lead: true });
+    const plan = await service.taskPlans.propose(leadSession.id, input);
+    expect(store.getTask(child.id)).toMatchObject({ managerTaskId: leadTask.id, topicId: plan.topicId });
+    expect(store.getTask(grandchild.id)).toMatchObject({ managerTaskId: child.id, topicId: plan.topicId });
+    expect(store.getTask(worker.taskId!)?.topicId).toBe(topic.id);
+  });
+
+  it("replays a topic proposal's receipt even after the person accepts an edited title", async () => {
+    const session = store.createSession({ ...leadSession, id: undefined, taskId: null, topicId: topic.id, runtimeRef: null });
+    const input = { summary: "人工确认分工", operationKey: "person-confirmed-split", tasks: [{ key: "a", title: "原建议标题" }] };
+    const plan = await service.taskPlans.propose(session.id, input);
+    const accepted = await service.taskPlans.accept(plan.id, { tasks: [{ key: "a", title: "人修改后的标题" }] });
+    const replay = await service.taskPlans.propose(session.id, input);
+    expect(replay.id).toBe(accepted.id);
+    expect(replay.created).toEqual(accepted.created);
+    expect(replay.tasks[0]?.title).toBe("人修改后的标题");
+    expect(store.listTasks().filter((t) => t.title === "人修改后的标题")).toHaveLength(1);
+  });
+
   it("takes a proposal only from a 主控, and checks it", async () => {
     await expect(service.taskPlans.propose(worker.id, proposal)).rejects.toThrow(/只有主控/);
     await expect(service.taskPlans.propose(leadSession.id, { ...proposal, summary: " " })).rejects.toThrow(/summary/);
@@ -116,6 +292,7 @@ describe("task plans (拆任务提案)", () => {
     const canvas = service.canvases.canvas(topic.id);
     expect(canvas.groups.map((g) => g.title).sort()).toEqual(["alpha", "beta"]);
     expect(canvas.nodes.filter((n) => n.kind === "task").map((n) => [n.kind === "task" && n.taskId, canvas.groups.find((g) => g.id === n.groupId)?.title])).toEqual([
+      [leadTask.id, undefined],
       [data!.id, "alpha"],
       [ui!.id, "beta"],
     ]);
@@ -123,7 +300,7 @@ describe("task plans (拆任务提案)", () => {
     const mail = service.collab.readMailFromSession(leadSession.id);
     expect(mail.at(-1)!.text).toContain("建了 2 个任务（1 个没有采用）");
     expect(mail.at(-1)!.text).toContain(data!.id);
-    await expect(service.taskPlans.accept(plan.id, { run: false })).rejects.toThrow(/decided already/);
+    expect(await service.taskPlans.accept(plan.id, { run: false })).toEqual(accepted);
   });
 
   it("takes a particular model and an effort per task, checked as session_start's; the session starts with them; another account picked drops them (2026-10-26)", async () => {

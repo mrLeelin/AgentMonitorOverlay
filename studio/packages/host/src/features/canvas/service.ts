@@ -160,6 +160,45 @@ export class CanvasFeature extends Feature {
     return { taskId: task.id, groupId: group };
   }
 
+  /** System invariant after promotion/splitting: derived management lines need real card endpoints.
+   * Only fill missing cards along this task's same-topic ancestry; never reposition cards or assign ownership.
+   */
+  ensureManagementCards(taskId: Id): void {
+    const task = this.requireTask(taskId);
+    if (!task.topicId) return;
+    const chain: Task[] = [];
+    const seen = new Set<Id>();
+    let current: Task | undefined = task;
+    while (current && current.topicId === task.topicId && !current.archivedAt && !current.remote && !seen.has(current.id)) {
+      seen.add(current.id);
+      chain.unshift(current);
+      current = current.managerTaskId ? this.store.getTask(current.managerTaskId) : undefined;
+    }
+    for (const member of chain) {
+      if (!this.canvas(task.topicId).nodes.some((n) => n.kind === "task" && n.taskId === member.id)) this.canvasPlaceTask(member.id, null);
+    }
+  }
+
+  /** Only a just-filed split's new ungrouped cards: leave a clear branch row below all existing contents.
+   * The legacy 66px estimate predates management badges; reserve 120px so routing isn't hidden by those badges.
+   */
+  layoutNewManagedCards(taskIds: readonly Id[]): void {
+    if (!taskIds.length) return;
+    const task = this.requireTask(taskIds[0]!);
+    if (!task.topicId) return;
+    const ids = new Set(taskIds);
+    const doc = this.canvas(task.topicId);
+    const fresh = doc.nodes.filter((n) => n.kind === "task" && ids.has(n.taskId) && !n.groupId);
+    if (!fresh.length) return;
+    const freshIds = new Set(fresh.map((n) => n.id));
+    const occupied = doc.nodes.filter((n) => !freshIds.has(n.id));
+    const y = Math.max(0, ...doc.groups.map((g) => g.rect.y + g.rect.h), ...occupied.map((n) => n.pos.y + Math.max(nodeExtent(n).h, n.kind === "task" ? 120 : 0))) + LAYOUT.margin;
+    let x = Math.min(...fresh.map((n) => n.pos.x));
+    const positions = new Map<Id, { x: number; y: number }>();
+    for (const n of fresh) { positions.set(n.id, { x, y }); x += nodeExtent(n).w + LAYOUT.margin; }
+    this.mutateCanvas(task.topicId, (current) => ({ ...current, nodes: current.nodes.map((n) => positions.has(n.id) ? { ...n, pos: positions.get(n.id)! } : n) }));
+  }
+
   /** Reorder without changing membership: groups travel with their cards, and resized cards keep enough room. */
   canvasArrange(topicId: Id, input: { targets?: unknown; direction?: unknown }, actorSessionId?: Id) {
     if (!Array.isArray(input.targets) || !input.targets.length || input.targets.length > 200 || input.targets.some((t) => typeof t !== "string" || !t.trim())) throw new HostError("bad_request", "targets must contain between 1 and 200 card or group ids");

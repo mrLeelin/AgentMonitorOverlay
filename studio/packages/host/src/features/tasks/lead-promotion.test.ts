@@ -52,10 +52,196 @@ const settle = () => {
 };
 
 describe("task_set_lead", () => {
+  it("persists the pending title through reconstruction and rejects changing that title until cancellation", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null });
+    const topicTitle = "DarkEvil-Story：交付代码与资源风险报告";
+    const before = store.listTopics().length;
+    await tool().run({ summary, topicTitle });
+    expect(JSON.parse(store.getKv("tasks.lead-promotions")!.value)[task.id]).toMatchObject({ topicTitle, summary, state: "pending" });
+    // A stopped Host cannot keep its old scheduled processor alive alongside the reconstructed one.
+    vi.spyOn(service.tasks.leadPromotion, "flush").mockResolvedValue();
+    service.removeAllListeners("event");
+    runtime = new CodexRuntime({ store, servers, profiles: PROFILES });
+    service = new HostService(store, runtime, PROFILES, { commonDir: join(root, "common") });
+    await service.tasks.leadPromotion.flush();
+    expect(store.listTopics()).toHaveLength(before);
+    expect(await tool().run({ summary, topicTitle })).not.toHaveProperty("isError", true);
+    expect(await tool().run({ summary, topicTitle: "另一个对象：交付别的目标" })).toHaveProperty("isError", true);
+    expect(service.tasks.leadPromotion.status(task.id)?.topicTitle).toBe(topicTitle);
+    settle();
+    await service.tasks.leadPromotion.flush();
+    expect(store.getTopic(store.getTask(task.id)!.topicId!)?.title).toBe(topicTitle);
+    const receipt = service.tasks.leadPromotion.status(task.id)!;
+    expect(receipt.state, receipt.error).toBe("done");
+    const repeated = await tool(receipt.sessionId!).run({ summary, topicTitle: "已创建后也不能改专题名" });
+    expect(repeated.isError, JSON.stringify(repeated)).not.toBe(true);
+    expect(store.listTopics()).toHaveLength(before + 1);
+    expect(store.listSessions({ taskId: task.id })).toHaveLength(2);
+    expect(store.getTopic(store.getTask(task.id)!.topicId!)?.title).toBe(topicTitle);
+  });
+
+  it("freezes the resolved legacy title before settling instead of recomputing it after a task rename", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null, title: "投币按钮" });
+    await tool().run({ summary });
+    expect(service.tasks.leadPromotion.status(task.id)?.topicTitle).toBe("投币按钮");
+    store.updateTask(task.id, { title: "审查" });
+    expect(await tool().run({ summary })).not.toHaveProperty("isError", true);
+    settle();
+    await service.tasks.leadPromotion.flush();
+    expect(store.getTopic(store.getTask(task.id)!.topicId!)?.title).toBe("投币按钮");
+  });
+
+  it("creates a specific topic and places the lead only after settling", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null });
+    const title = "DarkEvil-Story分支交叉检查：定位缺陷并交付合并风险报告";
+    const before = store.listTopics().length;
+    expect(await tool().run({ summary, topicTitle: title })).not.toHaveProperty("isError", true);
+    await service.tasks.leadPromotion.flush();
+    expect(store.listTopics()).toHaveLength(before);
+    settle();
+    await service.tasks.leadPromotion.flush();
+    const promoted = store.getTask(task.id)!;
+    expect(store.getTopic(promoted.topicId!)?.title).toBe(title);
+    expect(service.canvases.canvas(promoted.topicId!).nodes).toEqual([expect.objectContaining({ kind: "task", taskId: task.id })]);
+    await service.tasks.leadPromotion.flush();
+    expect(store.listTopics()).toHaveLength(before + 1);
+    expect(store.listSessions({ taskId: task.id })).toHaveLength(2);
+  });
+
+  it("rejects generic new topics and invalid parameters before saving a promotion or a topic", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null, title: "审查" });
+    const count = store.listTopics().length;
+    for (const args of [{ summary }, { summary, topicTitle: "任务" }, { summary: "", topicTitle: "投币按钮：拆分资源与音效" }, { summary, topicTitle: 42 }]) {
+      expect(await tool().run(args)).toHaveProperty("isError", true);
+      expect(service.tasks.leadPromotion.status(task.id)).toBeNull();
+      expect(store.listTopics()).toHaveLength(count);
+    }
+    expect(await tool().run({ summary, topicTitle: "投币按钮：拆分资源与音效" })).not.toHaveProperty("isError", true);
+    service.tasks.leadPromotion.cancel(source.id);
+    settle();
+    await service.tasks.leadPromotion.flush();
+    expect(store.listTopics()).toHaveLength(count);
+  });
+
+  it("uses a meaningful short task title for legacy calls and recovers the topic/card receipt on reconstruction", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null, title: "投币按钮" });
+    await tool().run({ summary });
+    settle();
+    await service.tasks.leadPromotion.flush();
+    const receipt = service.tasks.leadPromotion.status(task.id)!;
+    const topicId = store.getTask(task.id)!.topicId!;
+    expect(store.getTopic(topicId)?.title).toBe("投币按钮");
+    const count = store.listTopics().length;
+    const saved = JSON.parse(store.getKv("tasks.lead-promotions")!.value);
+    saved[task.id].state = "starting";
+    delete saved[task.id].sessionId;
+    store.setKv("tasks.lead-promotions", JSON.stringify(saved));
+    service.removeAllListeners("event");
+    runtime = new CodexRuntime({ store, servers, profiles: PROFILES });
+    service = new HostService(store, runtime, PROFILES, { commonDir: join(root, "common") });
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)).toMatchObject({ state: "done", sessionId: receipt.sessionId });
+    expect(store.listTopics()).toHaveLength(count);
+    expect(service.canvases.canvas(topicId).nodes).toHaveLength(1);
+    expect(store.listSessions({ taskId: task.id })).toHaveLength(2);
+  });
+
+  it("preserves the user's existing topic and layout while adding only missing ancestor endpoints", async () => {
+    const originalTopic = store.getTopic(task.topicId!)!;
+    service.canvases.canvasPlaceTask(task.id, null);
+    service.canvases.canvasMove(task.topicId!, { target: task.id, x: 80, y: 125 });
+    const before = service.canvases.canvas(task.topicId!).nodes[0];
+    const peer = store.createTask({ title: "不归本任务管理", workspaceId: workspace.id, topicId: task.topicId });
+    await tool().run({ summary, topicTitle: "不会擅自改这个专题名" });
+    settle();
+    await service.tasks.leadPromotion.flush();
+    const doc = service.canvases.canvas(task.topicId!);
+    expect(store.getTopic(task.topicId!)?.title).toBe(originalTopic.title);
+    expect(doc.nodes.find((n) => n.kind === "task" && n.taskId === task.id)).toEqual(before);
+    expect(doc.nodes.filter((n) => n.kind === "task").map((n) => n.taskId).sort()).toEqual([task.id, task.managerTaskId!].sort());
+    expect(doc.nodes.some((n) => n.kind === "task" && n.taskId === peer.id)).toBe(false);
+    expect(store.getTask(task.id)?.managerTaskId).toBe(task.managerTaskId);
+  });
+
+  it("refuses moving an unbound managed child or a changed pending scope without creating a topic", async () => {
+    store.updateTask(task.managerTaskId!, { topicId: null });
+    store.updateTask(task.id, { topicId: null });
+    const count = store.listTopics().length;
+    expect(await tool().run({ summary, topicTitle: "投币按钮：组织实现与验收" })).toHaveProperty("isError", true);
+    store.updateTask(task.id, { managerTaskId: null });
+    await tool().run({ summary, topicTitle: "投币按钮：组织实现与验收" });
+    store.updateTask(task.id, { managerTaskId: task.managerTaskId });
+    settle();
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)?.state).toBe("failed");
+    expect(store.listTopics()).toHaveLength(count);
+    expect(store.getSession(source.id)?.archivedAt).toBeNull();
+  });
+
+  it("takes corrected parameters after a cancelled pending request", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null });
+    await tool().run({ summary, topicTitle: "投币按钮：整理需求" });
+    service.tasks.leadPromotion.cancel(source.id);
+    await tool().run({ summary: `${summary}补充新目标`, topicTitle: "投币按钮：交付实现与验收" });
+    settle();
+    await service.tasks.leadPromotion.flush();
+    expect(store.getTopic(store.getTask(task.id)!.topicId!)?.title).toBe("投币按钮：交付实现与验收");
+    expect(service.tasks.leadPromotion.status(task.id)?.summary).toContain("补充新目标");
+  });
+
+  it("retries a failed start from its saved handover without creating another topic or session", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null });
+    await tool().run({ summary, topicTitle: "投币按钮：组织实现与验收" });
+    settle();
+    const start = vi.spyOn(service.tasks, "addSession").mockRejectedValueOnce(new Error("mock start failed"));
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)).toMatchObject({ state: "failed", retryState: "starting" });
+    const count = store.listTopics().length;
+    const topicId = store.getTask(task.id)?.topicId;
+    const retrySession = await service.tasks.addSession(task.id, { profileId: "test" });
+    expect(await tool(retrySession.id).run({ summary })).not.toHaveProperty("isError", true);
+    service.tasks.leadPromotion.cancel(retrySession.id);
+    service.tasks.leadPromotion.cancel(retrySession.id);
+    expect(service.tasks.leadPromotion.status(task.id)).toMatchObject({ state: "failed", retryState: "starting" });
+    expect(await tool(retrySession.id).run({ summary })).not.toHaveProperty("isError", true);
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)?.state).toBe("done");
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(store.listTopics()).toHaveLength(count);
+    expect(store.getTask(task.id)?.topicId).toBe(topicId);
+    expect(store.listSessions({ taskId: task.id })).toHaveLength(2);
+  });
+
+  it("rolls back a failed topic/card commit and resumes its saved switching receipt from a live main session", async () => {
+    store.updateTask(task.id, { topicId: null, managerTaskId: null });
+    const count = store.listTopics().length;
+    await tool().run({ summary, topicTitle: "投币按钮：组织实现与验收" });
+    settle();
+    const place = vi.spyOn(service.canvases, "canvasPlaceTask").mockImplementationOnce(() => { throw new Error("mock card failed"); });
+    await service.tasks.leadPromotion.flush();
+    expect(store.listTopics()).toHaveLength(count);
+    expect(store.getTask(task.id)?.topicId).toBeNull();
+    expect(store.getTask(task.id)?.lead).not.toBe(true);
+    expect(service.tasks.leadPromotion.status(task.id)).toMatchObject({ state: "failed", retryState: "switching" });
+    place.mockRestore();
+    store.updateTask(task.id, { title: "审查" });
+    const retrySession = await service.tasks.addSession(task.id, { profileId: "test" });
+    store.updateSession(retrySession.id, { status: "running" });
+    expect(await tool(retrySession.id).run({ summary })).not.toHaveProperty("isError", true);
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)?.state).toBe("switching");
+    expect(store.listTopics()).toHaveLength(count);
+    store.updateSession(retrySession.id, { status: "idle" });
+    await service.tasks.leadPromotion.flush();
+    expect(service.tasks.leadPromotion.status(task.id)?.state).toBe("done");
+    expect(store.listTopics()).toHaveLength(count + 1);
+    expect(store.listSessions({ taskId: task.id })).toHaveLength(3);
+  });
+
   it("is self-scoped and automatically approved, and cannot be called anonymously or from topic, fork or sub sessions", async () => {
     expect(tool()).toMatchObject({ readOnly: false, autoApprove: true });
     expect(AUTO_APPROVED_WRITE_TOOLS).toContain("task_set_lead");
-    expect(Object.keys(tool().inputSchema)).toEqual(["summary"]);
+    expect(Object.keys(tool().inputSchema)).toEqual(["summary", "topicTitle"]);
     expect(await tool(null).run({ summary })).toHaveProperty("isError", true);
     for (const kind of ["fork", "sub", "topic"] as const) {
       const session = store.createSession({ ...source, id: undefined, runtimeRef: null, status: "idle", kind: kind === "topic" ? "main" : kind, parentId: kind === "topic" ? null : source.id, taskId: kind === "topic" ? null : task.id, topicId: kind === "topic" ? task.topicId : null });

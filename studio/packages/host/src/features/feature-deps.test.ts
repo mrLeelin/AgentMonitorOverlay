@@ -35,8 +35,8 @@ const GRAPH: Record<string, string[]> = {
   review: ["sessions"],
   scratchpad: ["attachments"],
   sessions: ["attachments", "collab", "config", "remote", "review", "sharedcontext", "tasks"],
-  taskplans: ["canvas", "collab", "orchestration", "sessions", "sharedcontext", "tasks"],
-  tasks: ["canvas", "config", "mcp", "remote", "sessions"],
+  taskplans: ["canvas", "collab", "orchestration", "sessions", "sharedcontext", "tasks", "topics"],
+  tasks: ["canvas", "config", "mcp", "remote", "sessions", "topics"],
   teamrelay: ["config", "sessions"],
   topics: ["tasks"],
   viewpacks: ["remote"],
@@ -50,7 +50,8 @@ const GRAPH: Record<string, string[]> = {
  * gitreview ⇄ remote and viewpacks ⇄ remote (opened on the paired device; A reads them for B); and through them
  * projects (archiving a project archives its tasks; opening a Review of a folder adds it as a project).
  */
-const KNOWN_CYCLES: string[][] = [["collab", "gitreview", "projects", "remote", "review", "sessions", "tasks", "viewpacks"]];
+// topics ⇄ tasks: promotion reuses topic creation/binding; topics already uses task lifecycle for archiving.
+const KNOWN_CYCLES: string[][] = [["collab", "gitreview", "projects", "remote", "review", "sessions", "tasks", "topics", "viewpacks"]];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

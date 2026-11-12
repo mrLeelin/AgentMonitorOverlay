@@ -13,7 +13,7 @@ import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-pu
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
-export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions"> {
+export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics"> {
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
@@ -175,18 +175,27 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const setups = checkSetups(input.firstSession?.subsessions);
     for (const s of setups) this.requireProfile(s.profileId);
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
-    const firstMessage = input.firstSession ? "" : firstMessageOf(input.firstMessage);
-    const title = input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60) || firstMessage.split("\n")[0]!.slice(0, 60);
-    const column = input.firstSession ? "doing" : (input.column ?? "todo");
+    const task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column });
+    const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
+    const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first) : null;
+    if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
+    return { task: this.store.getTask(task.id)!, session };
+  }
+
+  /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
+  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">): Task {
+    const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
+    const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
+    if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
+    const firstMessage = firstMessageOf(input.firstMessage);
+    const title = input.title?.trim() || firstMessage.split("\n")[0]!.slice(0, 60);
+    const column = input.column ?? "todo";
     const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
     const description = input.description?.trim() ?? "";
     if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
     const task = this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
     this.publish({ type: "task.upserted", task });
-    const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
-    const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first) : null;
-    if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
-    return { task: this.store.getTask(task.id)!, session };
+    return task;
   }
 
   /**

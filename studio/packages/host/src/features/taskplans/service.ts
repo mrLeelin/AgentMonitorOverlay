@@ -16,7 +16,7 @@ type PendingStart = { taskId: Id; planId: Id; managerTaskId: Id | null; rootTask
  * A lead organises its managed work directly; a topic session without a lead keeps the editable proposal workflow.
  * Tasks and dependencies are created before any session, and dependent work waits for accepted prerequisites.
  */
-export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions" | "tasks" | "orchestration" | "sharedContext"> {
+export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions" | "tasks" | "topics" | "orchestration" | "sharedContext"> {
   private starting: Promise<void> | null = null;
 
   /** Only accepted plans enter this durable queue; installing it never starts old unaccepted proposals. */
@@ -56,11 +56,15 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
   }
 
   /** A 主控's proposal (MCP task_plan_propose). */
-  async propose(sessionId: Id, input: { summary?: unknown; tasks?: unknown }): Promise<TaskPlan> {
+  async propose(sessionId: Id, input: { summary?: unknown; tasks?: unknown; topicTitle?: unknown; operationKey?: unknown }): Promise<TaskPlan> {
     const facts = roleFacts(this.host, sessionId);
     if (facts.role !== "lead" && facts.role !== "topic") {
       throw new HostError("bad_request", "只有主控（或专题会话）能提拆任务的提案：把想法用 mailbox_send 发给主控，或由任务主会话用 task_set_lead 自行设置主控并在新的只读主控会话中继续。");
     }
+    const operationKey = optionalText(input.operationKey, "operationKey", 200);
+    if (input.operationKey !== undefined && !operationKey) throw new HostError("bad_request", "operationKey must be non-empty text");
+    const [turn] = this.store.findItems(sessionId, "turn", {}, { newest: true, limit: 1 });
+    const operationId = operationKey ? `key:${operationKey}` : turn ? `turn:${turn.id}` : undefined;
     const summary = typeof input.summary === "string" ? input.summary.trim() : "";
     if (!summary) throw new HostError("bad_request", "summary is required: what the split is for, in a few lines");
     if (summary.length > SUMMARY_MAX) throw new HostError("bad_request", `summary is limited to ${SUMMARY_MAX} characters`);
@@ -87,8 +91,21 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
       tasks.push({ key, title, workspaceId, ...(t.lead ? { lead: true } : {}), ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}), profileId: picked.profileId, ...(options ? { options } : {}), ...(contextBasis ? { contextBasis } : {}), dependsOn });
     }
     checkKeys(tasks);
+    // Model lookup may await: re-read the task's role/scope before making anything durable.
+    const current = roleFacts(this.host, sessionId);
+    if (current.role !== facts.role || current.task?.managerTaskId !== facts.task?.managerTaskId || current.task?.archivedAt || current.task?.remote || this.requireSession(sessionId).archivedAt) throw new HostError("conflict", "提案期间角色或管理范围已变化，请重新核对后提案。");
+    const topicTitle = input.topicTitle === undefined ? undefined : optionalText(input.topicTitle, "topicTitle", 100);
+    const requestKey = createHash("sha256").update(JSON.stringify({ summary, topicTitle, tasks })).digest("hex");
+    // Capture the real turn before model lookup awaits. New turns may repeat the same work intentionally.
+    if (!operationKey && turn && this.store.findItems(sessionId, "turn", {}, { newest: true, limit: 1 })[0]?.id !== turn.id) throw new HostError("conflict", "提案期间会话回合已变化，请在当前回合重新提案。");
+    const sameOperation = operationId ? this.store.listTaskPlans().filter((p) => p.operationId === operationId && p.fromSessionId === sessionId && p.fromTaskId === (facts.task?.id ?? null) && p.topicId === (current.topic?.id ?? null) && p.state !== "dismissed") : [];
+    if (operationKey && sameOperation.some((p) => p.requestKey !== requestKey)) throw new HostError("conflict", "operationKey 已用于另一份分工；重试保留原参数，新一批工作使用新的 operationKey 或省略它按当前回合派工。");
+    const previous = sameOperation.find((p) => p.requestKey === requestKey);
+    if (previous) return previous.state === "accepted" ? previous : facts.role === "lead" ? this.accept(previous.id, { run: true }) : previous;
+    if (current.task?.topicId !== facts.task?.topicId) throw new HostError("conflict", "提案期间专题已变化，请重新核对后提案。");
+    if (current.task) this.f.topics.leadTopicTitle(current.task.id, input.topicTitle);
     const at = new Date().toISOString();
-    const plan = this.save({ id: newId("plan"), topicId: facts.topic?.id ?? null, fromSessionId: sessionId, fromTaskId: facts.task?.id ?? null, summary, tasks, state: "open", createdAt: at, decidedAt: null });
+    const plan = this.save({ id: newId("plan"), requestKey, ...(operationId ? { operationId } : {}), topicId: current.topic?.id ?? null, ...(topicTitle ? { topicTitle } : {}), fromSessionId: sessionId, fromTaskId: facts.task?.id ?? null, summary, tasks, state: "open", createdAt: at, decidedAt: null });
     // A real lead already has the person's authority to organise its own work (2026-11-09).
     return facts.role === "lead" ? this.accept(plan.id, { run: true }) : plan;
   }
@@ -96,6 +113,7 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
   /** The person accepts, with their changes: the tasks are made (and started, with `run`). */
   async accept(id: Id, input: { tasks?: unknown; run?: unknown }): Promise<TaskPlan> {
     const plan = this.requirePlan(id);
+    if (plan.state === "accepted") return plan;
     if (plan.state !== "open") throw new HostError("conflict", "this proposal was decided already");
     const run = input.run === true;
     const given: Array<Record<string, unknown>> = Array.isArray(input.tasks) ? (input.tasks as Array<Record<string, unknown>>) : plan.tasks.map((t) => ({ ...t }));
@@ -119,48 +137,57 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
     }
     if (!kept.length) throw new HostError("bad_request", "keep at least one task, or dismiss the proposal");
     checkKeys(kept);
+    for (const t of kept) { this.requireLiveWorkspace(t.workspaceId); if (t.profileId) this.requireProfile(t.profileId); }
     const topic = plan.topicId ? this.store.getTopic(plan.topicId) : undefined;
-    const topicId = topic && !topic.archivedAt ? topic.id : null;
+    if (plan.topicId && (!topic || topic.archivedAt)) throw new HostError("conflict", "提案专题已归档或不存在，请重新提案。");
+    let topicId = topic?.id ?? null;
     // Fail before creating groups/tasks if the proposing lead moved or lost its role while the proposal waited.
     const manager = plan.fromTaskId ? this.store.getTask(plan.fromTaskId) : null;
-    if (plan.fromTaskId && (!manager || !manager.lead || manager.archivedAt || manager.remote || manager.topicId !== topicId || (!topicId && kept.some((t) => t.workspaceId !== manager.workspaceId)))) throw new HostError("conflict", "提案来源主控已失效或离开范围，请重新提案后确认。");
-    // A group per project when the tasks span several (the person's case: one migration in three projects).
-    const projects = [...new Set(kept.map((t) => t.workspaceId))];
-    const groups = new Map<Id, Id>();
-    if (topicId && projects.length > 1) {
-      for (const ws of projects) {
-        const w = this.store.getWorkspace(ws);
-        groups.set(ws, this.f.canvases.canvasCreateGroup(topicId, { title: w && !isCommon(w) ? w.name : "未指定项目", ...(w && !isCommon(w) ? { workspace: ws } : {}) }).groupId);
-      }
-    }
+    if (plan.fromTaskId && (!manager || !manager.lead || manager.archivedAt || manager.remote || manager.topicId !== topicId)) throw new HostError("conflict", "提案来源主控已失效或离开范围，请重新提案后确认。");
+    if (manager) this.f.topics.leadTopicTitle(manager.id, plan.topicTitle);
     const made: Array<{ key: string; task: Task }> = [];
-    for (const t of kept) {
-      const { task } = await this.f.tasks.createTask({
-        title: t.title,
-        workspaceId: t.workspaceId,
-        topicId,
-        managerTaskId: manager?.id ?? null,
-        ...(t.lead ? { lead: true } : {}),
-        ...(t.description ? { description: t.description } : {}),
-        column: "todo",
-        ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}),
-      });
-      const described = t.description ? this.f.tasks.updateTask(task.id, { description: t.description }) : task;
-      if (t.contextBasis) this.f.sharedContext.apply(plan.fromSessionId, { ...t.contextBasis, taskIds: [task.id] });
-      if (topicId) this.f.canvases.canvasPlaceTask(task.id, groups.get(t.workspaceId) ?? null);
-      made.push({ key: t.key, task: described });
-    }
-    if (topicId) {
-      for (const t of kept) {
-        const to = made.find((m) => m.key === t.key)!.task.id;
-        for (const dep of t.dependsOn) {
-          const from = made.find((m) => m.key === dep)?.task.id;
-          if (from) this.f.canvases.canvasAddDependency(from, to);
+    // No runtime await inside: topic binding, cards, tasks and start receipts commit or roll back together.
+    const accepted = this.host.transaction(() => {
+      if (manager) {
+        topicId = this.f.topics.ensureLeadTopic(manager.id, plan.topicTitle).id;
+        this.f.canvases.ensureManagementCards(manager.id);
+      }
+      // A group per project when the tasks span several (the person's case: one migration in three projects).
+      const projects = [...new Set(kept.map((t) => t.workspaceId))];
+      const groups = new Map<Id, Id>();
+      if (topicId && projects.length > 1) {
+        for (const ws of projects) {
+          const w = this.store.getWorkspace(ws);
+          groups.set(ws, this.f.canvases.canvasCreateGroup(topicId, { title: w && !isCommon(w) ? w.name : "未指定项目", ...(w && !isCommon(w) ? { workspace: ws } : {}) }).groupId);
         }
       }
-    }
-    const accepted = this.store.transaction(() => {
-      const saved = this.save({ ...plan, tasks: kept, state: "accepted", decidedAt: new Date().toISOString(), created: made.map((m) => ({ key: m.key, taskId: m.task.id })) });
+      for (const t of kept) {
+        const task = this.f.tasks.createTaskRecord({
+          title: t.title,
+          workspaceId: t.workspaceId,
+          topicId,
+          managerTaskId: manager?.id ?? null,
+          ...(t.lead ? { lead: true } : {}),
+          ...(t.description ? { description: t.description } : {}),
+          column: "todo",
+          ...(t.firstMessage ? { firstMessage: t.firstMessage } : {}),
+        });
+        const described = t.description ? this.f.tasks.updateTask(task.id, { description: t.description }) : task;
+        if (t.contextBasis) this.f.sharedContext.apply(plan.fromSessionId, { ...t.contextBasis, taskIds: [task.id] });
+        if (topicId) this.f.canvases.canvasPlaceTask(task.id, groups.get(t.workspaceId) ?? null);
+        made.push({ key: t.key, task: described });
+      }
+      if (manager && topicId) this.f.canvases.layoutNewManagedCards(made.map((m) => m.task.id));
+      if (topicId) {
+        for (const t of kept) {
+          const to = made.find((m) => m.key === t.key)!.task.id;
+          for (const dep of t.dependsOn) {
+            const from = made.find((m) => m.key === dep)?.task.id;
+            if (from) this.f.canvases.canvasAddDependency(from, to);
+          }
+        }
+      }
+      const saved = this.save({ ...plan, topicId, tasks: kept, state: "accepted", decidedAt: new Date().toISOString(), created: made.map((m) => ({ key: m.key, taskId: m.task.id })) });
       if (run) {
         const pending = this.pending();
         for (const t of kept) {

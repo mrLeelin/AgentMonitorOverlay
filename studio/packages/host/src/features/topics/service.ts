@@ -5,6 +5,49 @@ import { Feature } from "../../core/feature.js";
 
 /** Topics (专题): their own sessions, archiving with their tasks. */
 export class TopicsFeature extends Feature<"tasks"> {
+  private storedTree(taskId: Id): Task[] {
+    const all = this.store.listTasks();
+    const ids = new Set([taskId]);
+    // Structural ownership includes archived/invalid descendants: validate them rather than silently leaving them.
+    let previous = 0;
+    while (previous !== ids.size) {
+      previous = ids.size;
+      for (const t of all) if (t.managerTaskId && ids.has(t.managerTaskId)) ids.add(t.id);
+    }
+    return all.filter((t) => ids.has(t.id));
+  }
+
+  /** Validate before requesting a promotion or filing a split; existing topics always keep their user's name. */
+  leadTopicTitle(taskId: Id, input?: unknown): string | null {
+    const task = this.requireTask(taskId);
+    if (input !== undefined) boundedText(input, "topicTitle", 100);
+    if (task.topicId) { this.requireLiveTopic(task.topicId); return null; }
+    if (task.managerTaskId) throw new HostError("conflict", "无专题的受管任务不能自行迁移上级；请由根主控先建立专题，保留原管理范围。");
+    const title = boundedText(input ?? task.title, "topicTitle", 100);
+    // Reject only standalone generic labels, not meaningful short product/module names.
+    if (/^(审查|检查|任务|专题|项目|主控|工作|review|task|topic|project|work)$/i.test(title)) throw new HostError("bad_request", "topicTitle 请写对象和具体目标或交付，例如：DarkEvil-Story分支交叉检查：定位缺陷并交付合并风险报告。");
+    const members = this.storedTree(task.id);
+    for (const member of members) {
+      if (member.topicId || member.archivedAt || member.remote || member.workspaceId !== task.workspaceId || (member.managerTaskId && !members.find((t) => t.id === member.managerTaskId)?.lead)) throw new HostError("conflict", "管理树存在其他专题、归档、远程或无效上级任务，不能自动迁移；请先核对管理范围。");
+    }
+    return title;
+  }
+
+  /** A root's explicitly owned tree joins one topic together; unrelated project tasks never move. */
+  ensureLeadTopic(taskId: Id, input?: unknown): Topic {
+    const title = this.leadTopicTitle(taskId, input);
+    if (title === null) return this.requireLiveTopic(this.requireTask(taskId).topicId!);
+    return this.host.transaction(() => {
+      const task = this.requireTask(taskId);
+      const topic = this.createTopic({ title, workspaceIds: isCommon(this.requireWorkspace(task.workspaceId)) ? [] : [task.workspaceId] });
+      for (const member of this.storedTree(task.id)) {
+        const updated = this.store.updateTask(member.id, { topicId: topic.id });
+        this.publish({ type: "task.upserted", task: updated });
+      }
+      return topic;
+    });
+  }
+
   createTopic(input: { title?: unknown; workspaceIds?: unknown }): Topic {
     const title = boundedText(input?.title, "title", 100);
     const topic = this.store.createTopic({ title, workspaceIds: this.projectIds(input.workspaceIds) });
