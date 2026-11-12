@@ -57,7 +57,7 @@ export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: Tool
         const patch = { ...(args.title !== undefined ? { title: args.title } : {}), ...(args.column !== undefined ? { column: args.column } : {}), ...(args.topicId !== undefined ? { topicId: args.topicId } : {}) };
         if (!Object.keys(patch).length) throw new HostError("bad_request", "请提供任务标题、状态或专题。");
         if (args.title !== undefined && (typeof args.title !== "string" || !args.title.trim())) throw new HostError("bad_request", "任务标题不能为空。");
-        if (args.column === "done" && managementRoot(service.store.listTasks(), taskId)) throw new HostError("bad_request", "管理任务的完成须经过交付验收：执行任务用 task_submit_result，直属主控用 task_review_result；总主控验收全部下辖后再提交最终交付。");
+        if (args.column === "done" && managementRoot(service.store.listTasks(), taskId)) throw new HostError("bad_request", "管理任务的完成须经过交付验收：执行任务用 task_submit_result，直属主控用 task_review_result；总主控验收全部下辖后提交最终交付，等待用户在 Studio 明确验收或退回，不能自行完成。");
         return service.tasks.updateTask(taskId, patch);
       }),
     },

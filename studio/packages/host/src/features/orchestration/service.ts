@@ -5,7 +5,7 @@ import { newId } from "../../store/store.js";
 
 const RESULTS_KEY = "task-results:";
 const OUTBOX_KEY = "orchestration.outbox";
-type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; rootTaskId?: Id; targetSessionId?: Id; messageId?: Id; sent?: boolean; error?: string; expiredAt?: string; expiredReason?: string; retiredAt?: string; replacesNoticeId?: Id; replacesItemId?: Id; decisionId?: Id; resultId?: Id; turnId?: Id; direction: "up" | "down" };
+type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; rootTaskId?: Id; targetSessionId?: Id; messageId?: Id; sent?: boolean; error?: string; expiredAt?: string; expiredReason?: string; retiredAt?: string; replacesNoticeId?: Id; replacesItemId?: Id; decisionId?: Id; resultId?: Id; turnId?: Id; direction: "up" | "down" | "user-return" };
 
 /** The management tree runs work; the inbox remains the sole automatic conversation delivery path. */
 export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab" | "sharedContext"> {
@@ -64,7 +64,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (current.expiredAt || current.retiredAt) continue;
       if (!this.valid(current)) { this.expireNotice(current, "任务归属、交付或问题状态已变化；原通知永久作废。"); continue; }
       row = this.store.getItem(notice.messageId ?? notice.id);
-      if (row?.type === "user" && !row.messagePurpose && (row.delivery === "held" || row.delivery === "unsent")) this.store.replaceItem({ ...row, messagePurpose: notice.direction === "down" ? "work" : "notification" });
+      if (row?.type === "user" && !row.messagePurpose && (row.delivery === "held" || row.delivery === "unsent")) this.store.replaceItem({ ...row, messagePurpose: notice.direction === "up" ? "notification" : "work" });
     }
   }
 
@@ -75,7 +75,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     }
     if (notice.resultId) {
       const result = this.results(notice.direction === "up" ? notice.sourceTaskId : notice.targetTaskId).at(-1);
-      if (!result || result.id !== notice.resultId || result.managerTaskId !== (notice.direction === "up" ? notice.targetTaskId : notice.sourceTaskId)) return null;
+      if (!result || result.id !== notice.resultId || result.managerTaskId !== (notice.direction === "user-return" ? null : notice.direction === "up" ? notice.targetTaskId : notice.sourceTaskId)) return null;
+      if (notice.direction === "user-return") return `【用户退回最终交付】结果 ${result.id}\n${result.review}\n请按退回意见修改和验证后重新 task_submit_result，等待用户审核。`;
       return notice.direction === "up" ? `【当前下级交付待验收】结果 ${result.id}\n${result.summary}\n验证：${result.verification}\n请用 task_workflow 核对当前要求、归属和实际依据，再用 task_review_result 验收或退回。此通知从当前结果记录重新生成。` : `【当前直属主控退回交付】结果 ${result.id}\n${result.review ?? "请核对最新退回结论。"}\n请读取 task_workflow，按当前要求修改和验证后重新交付。`;
     }
     return `【当前任务状态核对】「${this.requireTask(notice.sourceTaskId).title}」当前状态为 ${this.requireTask(notice.sourceTaskId).column}。原历史通知来源无法核验，已永久终止；请通过 task_workflow 查看当前交付和待决问题。此状态通知不代表重新派工，也不包含旧回合正文。`;
@@ -114,10 +115,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     if (this.store.listDecisions({ state: "open" }).some((d) => d.taskId && ids.has(d.taskId))) throw new HostError("conflict", "本任务或下辖还有未处理的业务问题，请先解决再交付。");
   }
 
-  private assertReviewSettled(taskId: Id, callerSessionId: Id, selfRoot: boolean): void {
-    // The root resolves its own pending final delivery from a tool in the current turn.
-    // Other sessions of that root, and every session of a reviewed child, must still be settled.
-    if (this.store.listSessions({ taskId }).some((s) => !(selfRoot && s.id === callerSessionId) && sessionMoving(s))) throw new HostError("conflict", "执行任务仍在工作，请等本轮结束后再验收。");
+  private assertReviewSettled(taskId: Id): void {
+    if (this.store.listSessions({ taskId }).some(sessionMoving)) throw new HostError("conflict", "执行任务仍在工作，请等本轮结束后再验收。");
   }
 
   submit(sessionId: Id, summaryIn: unknown, verificationIn: unknown, input?: Pick<TaskResult, "contextBasis" | "prerequisiteResultIds">): TaskResult {
@@ -128,15 +127,14 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const results = this.results(task.id);
     const previous = results.at(-1);
     if (previous && (previous.state === "submitted" || (previous.state === "accepted" && task.column === "done")) && previous.summary === summary && previous.verification === verification && previous.managerTaskId === (task.managerTaskId ?? null) && JSON.stringify(previous.contextBasis) === JSON.stringify(basis.contextBasis) && JSON.stringify(previous.prerequisiteResultIds) === JSON.stringify(basis.prerequisiteResultIds)) return previous;
-    if (previous?.state === "submitted") throw new HostError("conflict", "交付已提交，等待直属主控验收；需修改时由主控先退回。");
+    if (previous?.state === "submitted") throw new HostError("conflict", task.managerTaskId ? "交付已提交，等待直属主控验收；需修改时由主控先退回。" : "最终交付已提交，等待用户在 Studio 验收或退回；AI 不能自行验收。");
     const at = new Date().toISOString();
-    const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, ...basis, state: task.managerTaskId || basis.contextMismatch ? "submitted" : "accepted", createdAt: at, updatedAt: at };
+    const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, ...basis, state: "submitted", createdAt: at, updatedAt: at };
     this.store.transaction(() => {
-      if (result.state === "accepted") this.f.sharedContext.assertAcceptable(task.id, result);
       this.saveResults(task.id, [...results, result]);
       if (task.managerTaskId) this.queue({ id: `i-${result.id}-submit`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", resultId: result.id, text: `【下级任务提交交付】「${task.title}」（${task.id}）\n结果 ${result.id}\n${summary}\n\n验证：${verification}${result.contextBasis ? `\n需求依据：${result.contextBasis.contextId} v${result.contextBasis.version}` : ""}${result.prerequisiteResultIds?.length ? `\n前置结果：${result.prerequisiteResultIds.join("、")}` : ""}${result.contextMismatch ? `\n待处理差异：${result.contextMismatch}` : ""}\n\n请先用 task_workflow 读取最新结果，再用 task_review_result 验收或退回。提交不代表已完成；直属任务全部验收后再提交你自己的汇总。` });
     });
-    this.f.tasks.updateTask(task.id, { column: result.state === "submitted" ? "review" : "done" });
+    this.f.tasks.updateTask(task.id, { column: "review" });
     this.changed(task.id);
     this.deliver();
     return result;
@@ -146,28 +144,39 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const { task: manager } = this.own(sessionId);
     if (!manager.lead) throw new HostError("bad_request", "只有直属主控能够验收交付。");
     const review = requiredText(reviewIn, "验收结论或退回原因");
-    const child = this.store.listTasks().find((t) => (t.managerTaskId === manager.id || (t.id === manager.id && !manager.managerTaskId)) && !t.archivedAt && this.results(t.id).some((r) => r.id === resultId));
+    if (this.results(manager.id).some((r) => r.id === resultId)) throw new HostError("bad_request", "不能自行验收交付：总主控等待用户在 Studio 验收或退回，受管主控交给直属主控。");
+    const child = this.store.listTasks().find((t) => t.managerTaskId === manager.id && !t.archivedAt && this.results(t.id).some((r) => r.id === resultId));
     if (!child) throw new HostError("bad_request", "结果不属于你的有效直属任务，归属可能已变更。");
+    return this.reviewResult(child, manager.id, resultId, accept, review, contextExplanation);
+  }
+
+  /** Human-only REST entry; the MCP credential cannot reach REST and no AI tool exposes this operation. */
+  reviewByUser(taskId: Id, resultId: Id, accept: boolean, reviewIn: unknown, contextExplanation?: string): TaskResult {
+    const task = this.requireTask(taskId);
+    if (!task.lead || task.managerTaskId || task.archivedAt || task.remote || managementRoot(this.store.listTasks(), taskId)?.id !== taskId) throw new HostError("bad_request", "用户最终验收只适用于当前有效总主控；受管任务由直属主控验收。");
+    if (task.topicId) this.requireLiveTopic(task.topicId);
+    return this.reviewResult(task, null, resultId, accept, requiredText(reviewIn, "验收结论或退回原因"), contextExplanation);
+  }
+
+  private reviewResult(child: Task, expectedManager: Id | null, resultId: Id, accept: boolean, review: string, contextExplanation?: string): TaskResult {
     const results = this.results(child.id), latest = results.at(-1)!;
-    const expectedManager = child.id === manager.id ? null : manager.id;
-    if (latest.id !== resultId || latest.managerTaskId !== expectedManager) throw new HostError("conflict", "只能验收最新且仍归你管理的交付。");
+    if (!latest || latest.id !== resultId || latest.managerTaskId !== expectedManager) throw new HostError("conflict", "只能验收最新且归属仍有效的交付。");
     const state = accept ? "accepted" : "returned";
     if (latest.state === state && latest.review === review) return latest;
     if (latest.state !== "submitted") throw new HostError("conflict", "此交付已经处理，请读取最新状态。");
-    const selfRoot = child.id === manager.id && expectedManager === null;
     if (accept) {
-      this.assertReviewSettled(child.id, sessionId, selfRoot);
+      this.assertReviewSettled(child.id);
       this.ready(child);
     }
     const next = this.store.transaction(() => {
       // Acceptance is based on the requirement and ownership read inside the write transaction.
-      const current = this.requireTask(child.id), currentManager = this.requireTask(manager.id), currentResults = this.results(child.id), currentLatest = currentResults.at(-1);
+      const current = this.requireTask(child.id), currentManager = expectedManager ? this.requireTask(expectedManager) : current, currentResults = this.results(child.id), currentLatest = currentResults.at(-1);
       if (current.archivedAt || (current.managerTaskId ?? null) !== expectedManager || !currentManager.lead || !managementRoot(this.store.listTasks(), current.id) || currentLatest?.id !== resultId || currentLatest.state !== "submitted" || currentLatest.managerTaskId !== expectedManager) throw new HostError("conflict", "交付或任务归属已变化，请重新读取后验收。");
-      if (accept) { this.assertReviewSettled(current.id, sessionId, selfRoot); this.ready(current); }
+      if (accept) { this.assertReviewSettled(current.id); this.ready(current); }
       const contextResolution = accept ? this.f.sharedContext.assertAcceptable(current.id, currentLatest, contextExplanation) : undefined;
-      const next: TaskResult = { ...currentLatest, state, review, ...(contextResolution ? { contextResolution } : {}), updatedAt: new Date().toISOString() };
+      const next: TaskResult = { ...currentLatest, state, review, reviewedBy: expectedManager ? "manager" : "user", ...(contextResolution ? { contextResolution } : {}), updatedAt: new Date().toISOString() };
       this.saveResults(child.id, [...currentResults.slice(0, -1), next]);
-      if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: manager.id, targetTaskId: child.id, direction: "down", resultId, text: `【直属主控退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。` });
+      if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: expectedManager ?? child.id, targetTaskId: child.id, direction: expectedManager ? "down" : "user-return", resultId, text: `【${expectedManager ? "直属主控" : "用户"}退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。${expectedManager ? "" : "总主控须再次等待用户审核，不能自行验收。"}` });
       return next;
     });
     this.f.tasks.updateTask(child.id, { column: accept ? "done" : "doing" });
@@ -190,14 +199,14 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (event.type === "task.upserted") {
         this.reconcileDecisions();
         const results = this.results(event.task.id), latest = results.at(-1);
-        if (latest?.managerTaskId && latest.managerTaskId !== event.task.managerTaskId && latest.state !== "returned") {
-          this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", review: "直属主控已变更，请向新主控重新提交交付。", updatedAt: new Date().toISOString() }]);
-        } else if (latest?.state === "accepted" && event.task.column !== "done" && !event.task.archivedAt) {
-          this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", review: "交付后任务重新开始，须重新提交验证和验收。", updatedAt: new Date().toISOString() }]);
+        if (latest && latest.managerTaskId !== (event.task.managerTaskId ?? null) && latest.state !== "returned") {
+          this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "直属主控已变更，请按当前归属重新提交交付。", updatedAt: new Date().toISOString() }]);
+        } else if ((latest?.state === "accepted" && event.task.column !== "done" || latest?.state === "submitted" && event.task.column !== "review") && !event.task.archivedAt) {
+          this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "交付后任务重新开始，须重新提交验证和验收。", updatedAt: new Date().toISOString() }]);
           if (event.task.managerTaskId) {
             this.queue({ id: `i-${latest.id}-reopened`, sourceTaskId: event.task.id, targetTaskId: event.task.managerTaskId, direction: "up", text: `【下级任务重新开始】「${event.task.title}」之前的验收已失效，请等待最新交付并重新验收。` });
             const manager = this.store.getTask(event.task.managerTaskId);
-            if (manager?.column === "done" && !manager.archivedAt) this.f.tasks.updateTask(manager.id, { column: "doing" });
+            if (manager && !manager.archivedAt && (manager.column === "done" || manager.column === "review") && ["accepted", "submitted"].includes(this.results(manager.id).at(-1)?.state ?? "")) this.f.tasks.updateTask(manager.id, { column: "doing" });
           }
         }
         this.deliver();
@@ -254,7 +263,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const source = this.store.getTask(notice.sourceTaskId), target = this.store.getTask(notice.targetTaskId);
     if (!source || !target || source.archivedAt || target.archivedAt || !managementRoot(this.store.listTasks(), source.id)) return false;
     if (notice.rootTaskId && managementRoot(this.store.listTasks(), source.id)?.id !== notice.rootTaskId) return false;
-    if (notice.direction === "up" ? source.managerTaskId !== target.id : target.managerTaskId !== source.id) return false;
+    if (notice.direction === "user-return" ? source.id !== target.id || !!source.managerTaskId || !source.lead : notice.direction === "up" ? source.managerTaskId !== target.id : target.managerTaskId !== source.id) return false;
     if (notice.decisionId) { const d = this.store.getDecision(notice.decisionId); if (d?.state !== "open" || d.routedToTaskId !== target.id) return false; }
     if (notice.resultId) {
       const r = this.results(notice.direction === "up" ? source.id : target.id).at(-1);
@@ -318,7 +327,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         const messageId = notice.messageId ?? (original && original.sessionId !== target.id ? `${notice.id}-${target.id}` : notice.id);
         this.patchNotice(notice.id, { targetSessionId: target.id, messageId });
         try {
-          await this.f.sessions.inbox.put(target.id, notice.text, undefined, messageId, { purpose: notice.direction === "down" ? "work" : "notification", ...(notice.replacesItemId ? { replacesItemId: notice.replacesItemId } : {}) });
+          await this.f.sessions.inbox.put(target.id, notice.text, undefined, messageId, { purpose: notice.direction === "up" ? "notification" : "work", ...(notice.replacesItemId ? { replacesItemId: notice.replacesItemId } : {}) });
           const row = this.store.getItem(messageId);
           if (row?.type === "user" && row.delivery === "unsent") this.patchNotice(notice.id, { error: row.deliveryReason ?? "通知未送达，请进入目标任务的会话重新发送。" });
           else this.patchNotice(notice.id, { sent: true, error: undefined });

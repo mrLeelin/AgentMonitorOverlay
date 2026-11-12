@@ -52,7 +52,7 @@
 - 画布任务流转动画：管理线顺流执行、交付回流、退回修改与验收状态，依赖线展示等待前置及后续执行；支持本机动画开关和系统减少动态效果。类型检查、构建、41 条画布单测及 4 条隔离 mock Electron 验证通过，截图在 `screenshots/studio/canvas-flow-*.png`。仅改前端，当前窗口尚未刷新加载，未提交或发布。
 - 任务自行设主控与带队初始化：`task_set_lead` 可一次带齐具体目标和 topicTitle，持久化待切换标题，安定后创建绑定缺失专题、补齐主控卡并开启只读交接；已有主控无专题可直接拆分初始化，幂等按真实回合或显式 operationKey 区分重试与再次派工。新建未分组子卡留出走线空间，已有布局、专题名和原上级不变。200 条相关回归（含 21 条新增）、类型检查、构建及 2 条隔离 mock Electron 用例通过，截图 `screenshots/studio/lead-initialization-*.png`，方案 `plans/done/lead-topic-initialization.md`。未重启当前 Host，未提交或发布，待人在空闲时重启加载。
 - 画布协作点线已整项移除：界面、MCP、HTTP、协议与校验已清理，新增升级迁移仅清除旧协作线，管理/依赖与普通注释保持；定向单测、类型检查、构建及 7 条隔离 mock Electron 验证通过（`plans/done/remove-canvas-collaboration.md`）。未提交、发布或加载当前运行的 Host，待之后重启生效；本轮未启动教学实测。
-- 主控带队与逐层交付：自动拆分、二级主控、依赖启动、交付验收/退回和业务问题逐层上报已实现，完成定向测试及隔离 mock Electron 验证（`plans/done/managed-workflow.md`）；尚未加载当前使用中的 Host，未提交或发布。全仓测试受资源不足中止，过程中失败的 DSH 单项与发布脚本单项独立复测通过。
+- 主控带队与逐层交付：11-12 按「主控交给用户、受管任务交给直属主控」补齐最终验收；总交付保持 submitted/review，用户在交付面板明确通过才 accepted/done，AI 自审和拖动跳过最终审核被拒绝。重开/转交使旧交付失效，通知回复保留验收。164 条定向回归（含 3 条导航）、类型检查、构建与 2 条隔离 mock Electron 用例通过，已检查 `screenshots/studio/user-review-*.png`（深浅待审、退回与通过），方案 `plans/done/managed-workflow.md`。未加载当前用户 Host/Studio，需人在空闲时手动重启加载，未发布；本轮未跑全仓与真实模型验收。
 - 画布讨论与变化提醒：关联卡上下文、变化标记、来源关系和讨论展开已实现；11-09 新增确认自动回传和整轮自动继续，已完成隔离 mock Electron 验证并重启开发版加载（`plans/done/canvas-review-returns.md`），待用户手动验收。本批改动在 `codex/canvas-review-workflow` 分支，未发布；连带复查和 Focus 聚合仍待推进。
 - 画布连线纠错与管理树布局：本工作区已完成共享去重/防环、旧问题逐线定位修复和树形折线布局（`plans/done/canvas-relations.md`）；已做定向测试及隔离 Electron 拖线/反向/修复/布局验证，尚未提交、发布或加载用户使用中的 Studio/Host。
 - 主控归属与画板关系：本工作区已完成代码、定向测试和隔离 Electron 验收（`plans/done/lead-management.md`），未提交、发布或加载用户使用中的 Host；旧任务保持未分配，需由用户或专题入口明确设置直属主控。

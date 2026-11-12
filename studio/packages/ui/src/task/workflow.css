@@ -9,3 +9,7 @@
 .workflow-decision { border-left: 3px solid var(--attention); }
 .workflow-decision > .link-btn { display: block; margin-top: 8px; }
 .workflow-delivery-issue { padding: 10px 12px; border: 1px solid var(--error-border); border-radius: var(--r-m); background: var(--error-bg); color: var(--error-text); }
+.workflow-user-review { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.workflow-user-review label { display: grid; gap: 5px; }
+.workflow-user-review textarea { width: 100%; min-height: 68px; resize: vertical; box-sizing: border-box; }
+.workflow-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }

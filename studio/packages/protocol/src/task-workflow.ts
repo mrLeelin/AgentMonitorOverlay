@@ -32,6 +32,8 @@ export interface TaskResult {
   contextResolution?: ContextResolution;
   state: "submitted" | "accepted" | "returned";
   review?: string;
+  /** Explicit reviewer of this result; absent on historical records. A root's final review belongs to the user. */
+  reviewedBy?: "user" | "manager";
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

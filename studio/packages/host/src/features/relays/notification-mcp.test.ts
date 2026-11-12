@@ -72,7 +72,8 @@ it("permits an actual MCP decision answer from a notification while preserving t
   const completed = service.orchestration.submit(worker.id, "下级完成", "下级验证通过");
   service.orchestration.review(manager.id, completed.id, true, "下级通过");
   const final = service.orchestration.submit(manager.id, "主控完成", "直属任务已验收");
-  expect(final.state).toBe("accepted");
+  expect(final.state).toBe("submitted");
+  service.orchestration.reviewByUser(manager.taskId!, final.id, true, "用户验收通过");
   expect((await tool(worker.id, "decision_request").run({ question: "保留哪种现有记录？", options: ["完整记录", "摘要记录"] })).isError).not.toBe(true);
   const decision = store.listDecisions({ state: "open" }).find((entry) => entry.taskId === worker.taskId)!;
   expect(decision.routedToTaskId).toBe(manager.taskId);

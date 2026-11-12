@@ -134,7 +134,8 @@ it("retains the inquiry's permission boundary after a failed immediate change an
 });
 
 it("migrates a legacy held relay receipt's purpose from its real producer before sending in the same context version", async () => {
-  service.orchestration.submit(manager.id, "全部交付", "下级已验收");
+  const final = service.orchestration.submit(manager.id, "全部交付", "下级已验收");
+  service.orchestration.reviewByUser(manager.taskId!, final.id, true, "用户验收通过");
   service.sessions.inbox.pause(manager.id);
   const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
   await tool.run({ taskId: worker.taskId, text: "仅回答当前状态", purpose: "inquiry" });

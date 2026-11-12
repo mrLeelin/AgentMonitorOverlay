@@ -55,7 +55,9 @@ describe("managed delivery workflow", () => {
     const audioResult = service.orchestration.submit(audioSession.id, "音效工作完成", "资源存在并试听通过");
     service.orchestration.review(topSession.id, audioResult.id, true, "集成后试听通过");
     const final = service.orchestration.submit(topSession.id, "游戏交付完成", "运行验证通过，附截图");
-    expect(final.state).toBe("accepted");
+    expect(final.state).toBe("submitted");
+    expect(store.getTask(top.id)?.column).toBe("review");
+    expect(service.orchestration.reviewByUser(top.id, final.id, true, "用户集成验收通过").state).toBe("accepted");
     expect(store.getTask(top.id)?.column).toBe("done");
     expect(service.orchestration.workflow(top.id).results).toHaveLength(4);
   });
@@ -198,7 +200,7 @@ describe("managed delivery workflow", () => {
     expect(service.sharedContext.isResultCurrent(child.id, accepted)).toBe(true);
   });
 
-  it("lets the running root resolve its own pending delivery and keeps it accepted through turn completion", async () => {
+  it("requires settled human review of the root's final delivery and reopens only for new work", async () => {
     delivery();
     const top = task("总主控", true), manager = session(top);
     requireNextRootVersion(manager.id, top.id);
@@ -206,15 +208,17 @@ describe("managed delivery workflow", () => {
     const result = service.orchestration.submit(manager.id, "最终汇总", "隔离检查通过");
     expect(result.state).toBe("submitted");
     expect(store.getTask(top.id)?.column).toBe("review");
-    expect(() => service.orchestration.review(manager.id, result.id, true, "通过")).toThrow(/contextExplanation/);
-    const accepted = service.orchestration.review(manager.id, result.id, true, "最终通过", "实际采用一版；已逐条核对二版数量变化不影响此份汇总中的通用资源结论");
-    expect(accepted.state).toBe("accepted");
-    expect(store.getTask(top.id)?.column).toBe("done");
-    // Additional status updates in the same turn do not reopen the delivery. Ending the turn also keeps done.
+    expect(() => service.orchestration.review(manager.id, result.id, true, "通过")).toThrow(/不能自行验收/);
+    expect(() => service.orchestration.reviewByUser(top.id, result.id, true, "通过")).toThrow(/仍在工作/);
+    // Submitting during a turn and subsequent status updates keep review pending.
     service.publish({ type: "session.upserted", session: store.getSession(manager.id)! });
     service.tasks.reviewSettleMs = 0;
     service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "idle" }) });
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("submitted");
+    expect(() => service.orchestration.reviewByUser(top.id, result.id, true, "通过")).toThrow(/contextExplanation/);
+    const accepted = service.orchestration.reviewByUser(top.id, result.id, true, "最终通过", "实际采用一版；已逐条核对二版数量变化不影响此份汇总中的通用资源结论");
+    expect(accepted).toMatchObject({ state: "accepted", reviewedBy: "user" });
     expect(service.orchestration.results(top.id).at(-1)?.state).toBe("accepted");
     expect(store.getTask(top.id)?.column).toBe("done");
     // A genuinely new turn still reopens completed work and invalidates the old acceptance.
@@ -223,14 +227,14 @@ describe("managed delivery workflow", () => {
     expect(service.orchestration.results(top.id).at(-1)?.state).toBe("returned");
   });
 
-  it("blocks root self-acceptance while another session of the root is running", () => {
+  it("blocks human acceptance while any session of the root is running", () => {
     delivery();
     const top = task("总主控", true), manager = session(top), other = session(top);
     requireNextRootVersion(manager.id, top.id);
     service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "running" }) });
     service.publish({ type: "session.upserted", session: store.updateSession(other.id, { status: "running" }) });
     const result = service.orchestration.submit(manager.id, "最终汇总", "隔离检查通过");
-    expect(() => service.orchestration.review(manager.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
+    expect(() => service.orchestration.reviewByUser(top.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
     expect(service.orchestration.results(top.id).at(-1)?.state).toBe("submitted");
   });
 
@@ -247,7 +251,7 @@ describe("managed delivery workflow", () => {
       store.updateSession(blocking.id, { status: "running" });
       return transaction(fn);
     });
-    expect(() => service.orchestration.review(manager.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
+    expect(() => mode === "root" ? service.orchestration.reviewByUser(top.id, result.id, true, "通过", "逐条核对通过") : service.orchestration.review(manager.id, result.id, true, "通过", "逐条核对通过")).toThrow(/仍在工作/);
     expect(service.orchestration.results(owner.id).at(-1)?.state).toBe("submitted");
   });
 

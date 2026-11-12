@@ -13,7 +13,7 @@ import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-pu
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
-export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics"> {
+export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics" | "orchestration"> {
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
@@ -206,6 +206,9 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   /** PATCH /api/tasks/:id: a remote task's copy takes a new name, renamed on its own computer (2026-10-30). */
   patchTask(id: Id, patch: Parameters<TasksFeature["updateTask"]>[1]): Task | Promise<Task> {
     const current = this.requireTask(id);
+    // Moving the card is a management action, not a recorded human acceptance of the final delivery.
+    const final = current.lead && !current.managerTaskId ? this.f.orchestration.results(id).at(-1) : undefined;
+    if (patch.column === "done" && final && final.state !== "accepted") throw new HostError("conflict", "最终交付尚未通过用户验收，请在「交付与验收」中明确验收或退回。");
     const onlyTitle = patch.title !== undefined && Object.entries(patch).every(([k, v]) => k === "title" || v === undefined);
     if (current.remote && onlyTitle) {
       const title = String(patch.title).trim();

@@ -704,6 +704,8 @@ export interface HostRoutes
   "POST /api/tasks/:id/workflow/retry-notice": { req: { noticeId: Id }; res: { ok: true } };
   "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string } & ContextSubmissionInput; res: TaskResult };
   "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
+  /** Studio user only, guarded by the REST credential, never exposed as an AI tool. */
+  "POST /api/tasks/:id/workflow/user-review": { req: { resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
   "GET /api/tasks/:id/context": { req: void; res: SharedContextView };
   "POST /api/shared-context/save": { req: ContextSaveInput & { sessionId: Id }; res: SharedContext };
   "POST /api/shared-context/publish": { req: { sessionId: Id; contextId: Id; baseRevision: number }; res: SharedContext };
