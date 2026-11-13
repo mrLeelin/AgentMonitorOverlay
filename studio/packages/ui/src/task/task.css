@@ -3,6 +3,14 @@
 .task-title { margin: 0; font-family: var(--font-display); font-size: var(--fs-h2); font-weight: 700; }
 .task-body { flex: 1; display: flex; min-height: 0; }
 .session-list { flex: 0 0 236px; border-right: 1px solid var(--border); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: var(--panel-raised); }
+.session-list-fold { flex: none; width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: var(--r-btn); background: transparent; color: var(--text-dim); font-size: 24px; line-height: 1; cursor: pointer; }
+.session-list-fold:hover { background: var(--chip); color: var(--text); }
+.session-list-fold:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.session-list-rail { flex: 0 0 34px; display: flex; justify-content: center; align-items: flex-start; padding-top: 10px; border-right: 1px solid var(--border); background: var(--panel-raised); }
+.sidebar-rail { border-right: 0; border-left: 1px solid var(--border); }
+.taskpage .anno-panel { position: relative; }
+.sidebar-collapse { position: absolute; right: 16px; top: 14px; }
+.taskpage .anno-panel:has(.sidebar-collapse) .anno-head { padding-right: 34px; }
 .session-row { justify-content: flex-start; gap: 10px; }
 .session-text { display: flex; flex-direction: column; min-width: 0; }
 .session-kind { font-size: 11px; color: var(--text-dim); }
@@ -96,7 +104,7 @@
 .archived-dialog-head .archive-icon { color: var(--text-dim); }
 .archived-dialog-body { margin: 0; font-size: var(--fs-body); line-height: 1.6; color: var(--text); }
 .archived-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.thread-col { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel); position: relative; }
+.thread-col { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel); position: relative; container-type: inline-size; }
 .thread-head { display: flex; align-items: center; gap: 10px; padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
 .thread-title { font-weight: 600; }
 .writer { font-size: 12px; }
@@ -190,8 +198,15 @@
 
 /* Task page head (2026-10-14, 方案 A): the title, and under it one quiet line — status · project · branch · topic —
    whose parts look like text until hovered. */
-.task-head { align-items: center; flex-wrap: nowrap; }
-.task-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.task-head-shell { display: flex; flex-direction: column; flex: none; min-height: 56px; max-height: 50%; }
+.task-head-shell .task-head { flex: 1; min-height: 0; overflow: auto; align-items: safe center; flex-wrap: wrap; border-bottom: 0; padding: 6px 24px; }
+.task-head-main { flex: 1 1 280px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; }
+.task-head-main > .task-title, .task-head-main > .task-meta { flex-basis: 100%; min-width: 0; }
+.task-head-main > .link-btn { text-align: left; }
+.task-head .task-title-btn { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.task-head-resize { height: 7px; flex: none; cursor: ns-resize; touch-action: none; user-select: none; background: var(--bg-header); border-bottom: 1px solid var(--border); box-sizing: border-box; }
+.task-head-resize::after { content: ""; display: block; width: 36px; height: 2px; margin: 2px auto; background: var(--border-strong); border-radius: 2px; }
+.task-head-resize:hover, .task-head-resize:focus-visible { background: var(--chip); outline: 1px solid var(--primary); outline-offset: -1px; }
 /* The line starts where the title's text does (the name button has 7px of padding and border). */
 .task-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-left: 7px; font-size: 12.5px; color: var(--text-dim); }
 .meta-item { height: 22px; padding: 0 4px; margin: 0 -4px; border: 0; border-radius: var(--r-btn); background: transparent; color: inherit; font: inherit; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
@@ -225,8 +240,16 @@
 
 /* The session's bar (2026-10-15): name, the model as a quiet chip, the writer when it is not the usual 仅工作台, then
    icon buttons — the outside-Studio openers as one group, 分支 with the git-branch glyph, ⋯. */
-.thread-head { flex-wrap: nowrap; gap: 10px; padding: 6px 16px 6px 24px; min-height: 44px; box-sizing: border-box; }
-.thread-head .thread-title { min-width: 0; overflow: hidden; font-size: 15px; }
+.thread-head { flex-wrap: wrap; flex: none; gap: 6px 10px; padding: 6px 16px 6px 24px; min-height: 44px; box-sizing: border-box; }
+.thread-head .thread-title { flex: 1 1 160px; min-width: 0; overflow: hidden; font-size: 15px; }
+.thread-head .thread-title .task-title-btn { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.thread-head .thread-title .rename-input { width: 100%; min-width: 0; box-sizing: border-box; }
+@container (max-width: 650px) {
+  .thread-head { gap: 4px; padding: 4px 8px; }
+  .thread-head .thread-title { flex-basis: 100%; }
+  .thread-head .bar-label, .thread-head .head-sep, .thread-head > .spacer { display: none; }
+  .thread-head .bar-btn.labeled { padding: 0 6px; }
+}
 .thread-model { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; padding: 2px 9px; border-radius: 10px; background: var(--chip); font-size: 12px; line-height: 16px; color: var(--text-dim); white-space: nowrap; }
 .bar-btn { flex: none; height: 30px; min-width: 30px; padding: 0 7px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid transparent; border-radius: var(--r-btn); background: transparent; color: var(--text-dim); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
 .bar-btn svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }

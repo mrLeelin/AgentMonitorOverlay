@@ -51,6 +51,7 @@ import { TaskManagement } from "./TaskManagement.js";
 import { TaskContext } from "./TaskContext.js";
 import { decisionNeedsPerson } from "../focus/managedAttention.js";
 import { useMarkReviewSeen } from "../board/reviewSeen.js";
+import { TaskHeader } from "./TaskHeader.js";
 
 /** Whether the right column (进度、批注、留言…) shows; off by default, remembered per window. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -363,6 +364,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
 
   return (
     <section className="taskpage" aria-label="任务">
+      <TaskHeader>
       <div className="page-head task-head">
         <BackButton label={backLabel} onClick={onBack} />
         <div className="task-head-main">
@@ -483,6 +485,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           </button>
         </div>
       </div>
+      </TaskHeader>
       {statusAt && <StatusMenu at={statusAt} value={task.column} onPick={(c) => void setColumn(c)} onClose={() => setStatusAt(null)} />}
       {picking === "topic" && (
         <TopicPicker topics={topics} tasks={tasks} current={task.topicId} onPick={(id) => void setTopic(id)} onCreate={(title) => void newTopic(title)} onClose={() => setPicking(null)} />
@@ -657,9 +660,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             unread={unread}
             creating={creating}
             onCreating={setCreating}
+            onCollapse={() => setSessionsHidden(true)}
             {...(copy ? { remote: { name: copy.name, allowed: task.remote!.allowed, blocked: copy.blocked } } : {})}
           />
         )}
+        {sessionsHidden && <div className="session-list-rail"><button type="button" className="session-list-fold" aria-label="展开会话列表" aria-expanded={false} title="展开会话列表" onClick={() => setSessionsHidden(false)} data-testid="sessions-expand">›</button></div>}
         <div className="thread-col">
           {session && (
             <SessionHead
@@ -730,6 +735,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         )}
         {sidebar && (
         <AnnotationPanel
+          onCollapse={() => setSidebar(false)}
           header={
             <>
             <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />
@@ -756,6 +762,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           refs={annotationRefs}
         />
         )}
+        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：进度、批注、留言、清单" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
       </div>
       {archivedBox && (
         <TaskArchivedDialog

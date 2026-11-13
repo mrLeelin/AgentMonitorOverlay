@@ -16,6 +16,7 @@ interface AnnotationPanelProps {
   refs: AnnotationRefs;
   /** Shown above the annotations (the task's mail). */
   header?: ReactNode;
+  onCollapse?(): void;
 }
 
 /**
@@ -23,7 +24,7 @@ interface AnnotationPanelProps {
  * bubble by the selection), each referred to by the next message unless taken off, and the other sent ones folded
  * away, each of which can be referred to again. Newest first in each (2026-10-26).
  */
-export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, onLocate, onPin, refs, header }: AnnotationPanelProps) {
+export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, onLocate, onPin, refs, header, onCollapse }: AnnotationPanelProps) {
   const [showSent, setShowSent] = useState(false);
 
   const newest = [...annotations].reverse();
@@ -40,6 +41,7 @@ export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, 
 
   return (
     <aside className="anno-panel" aria-label="批注">
+      {onCollapse && <button type="button" className="session-list-fold sidebar-collapse" aria-label="折叠侧栏" aria-expanded={true} title="折叠侧栏" onClick={onCollapse} data-testid="sidebar-collapse">›</button>}
       {header}
       <div className="anno-head">
         <span className="anno-title">批注</span>

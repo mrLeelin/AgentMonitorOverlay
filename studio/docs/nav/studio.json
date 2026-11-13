@@ -94,6 +94,9 @@
         { "label": "看板框选", "path": "studio/packages/ui/src/board/useBoardSelection.ts", "anchor": "export function useBoardSelection" },
         { "label": "本轮待审阅查看记录", "path": "studio/packages/ui/src/board/reviewSeen.ts", "anchor": "export function useMarkReviewSeen" },
         { "label": "任务页", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "export function TaskPage" },
+        { "label": "任务信息栏高度拖拽与记忆", "path": "studio/packages/ui/src/task/TaskHeader.tsx", "anchor": "export function TaskHeader" },
+        { "label": "会话列表与就地折叠", "path": "studio/packages/ui/src/task/SessionTree.tsx", "anchor": "export function SessionTree" },
+        { "label": "进度批注侧栏与就地折叠", "path": "studio/packages/ui/src/review/AnnotationPanel.tsx", "anchor": "export function AnnotationPanel" },
         { "label": "实体类型", "path": "studio/packages/protocol/src/entities.ts" }
       ],
       "related": ["studio.sessions", "studio.topics", "studio.collab", "ui.newTask"],

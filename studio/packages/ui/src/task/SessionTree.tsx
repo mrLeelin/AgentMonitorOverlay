@@ -45,6 +45,7 @@ interface SessionTreeProps {
   /** The new-session form, opened from 新会话 in the task head (2026-10-14). */
   creating: boolean;
   onCreating(open: boolean): void;
+  onCollapse(): void;
   /**
    * 远程 (step 2): a copy of another computer's task — new sessions start there, on the models it allows (this
    * computer's ids of them), and not while `blocked` says why.
@@ -86,7 +87,7 @@ function RemoteNewSession({ name, allowed, blocked, profiles, busy, onStart }: {
 }
 
 /** Left column of the task page: session tree (forks and subagents indented), new session, archived area. Shown or hidden as a whole by 会话 in the task head (2026-10-15). */
-export function SessionTree({ link, task, sessions, workspaces, profiles, selected, busy, onSelect, onNewSession, onRestore, unread, creating, onCreating, remote }: SessionTreeProps) {
+export function SessionTree({ link, task, sessions, workspaces, profiles, selected, busy, onSelect, onNewSession, onRestore, unread, creating, onCreating, onCollapse, remote }: SessionTreeProps) {
   const live = sessions.filter((s) => !s.archivedAt);
   // An archived subtree shows once, by its top-most archived session.
   const archivedRoots = sessions.filter((s) => s.archivedAt && !sessions.some((p) => p.id === s.parentId && p.archivedAt));
@@ -152,6 +153,7 @@ export function SessionTree({ link, task, sessions, workspaces, profiles, select
     <aside className="session-list" aria-label="会话" style={{ flexBasis: listW.width }}>
       <div className="slist-head">
         <span className="nav-label">会话 {live.length}</span>
+        <button type="button" className="session-list-fold" aria-label="折叠会话列表" aria-expanded={true} title="折叠会话列表" onClick={onCollapse} data-testid="sessions-collapse">‹</button>
         {formOpen && live.length > 0 && (
           <button type="button" className="btn-ghost small" onClick={() => setCreating(false)}>
             收起
