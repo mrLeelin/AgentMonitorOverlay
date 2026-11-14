@@ -146,6 +146,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.config.watchClaudeAccounts();
     this.tasks.ensureStructure();
     this.sharedContext.watch();
+    this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);
     this.sessions.watchReports();
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();

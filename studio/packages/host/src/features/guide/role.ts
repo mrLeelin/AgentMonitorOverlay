@@ -48,6 +48,8 @@ function cardOf(service: CardHost, f: RoleFacts): string {
     if (root) {
       lines.push(`- 统一沟通入口：${taskName(root)}（${root.id}）。业务问题用 decision_request 交直属主控，只有总主控向人提问；命令授权和工具原生问答照常。`);
       lines.push(f.task.lead ? "- 分工与验收：task_plan_propose 自动创建并启动下级任务；负责人用 lead: true 建二级主控。用 task_workflow 读取交付和待决问题，用 task_review_result 验收或退回、task_decision_answer 回答直属问题。全部下辖验收完成后用 task_submit_result 汇总交付，不能把会话停止当成任务完成。" : "- 工作完成后必须用 task_submit_result 提交摘要和实际验证证据，自动回报直属主控；等待验收或按退回意见修改。handoff_submit 和普通回复不代替交付。不要自己用 task_update 标记完成。");
+      if (f.task.lead) lines.push("- 派工后如果没有其他独立工作，结束当前回合，不要 sleep 或轮询等待；下级交付和业务问题会经收件箱自动唤醒你。收到截断提示时用 task_read_reply 分页读取完整回复。");
+      if (f.task.lead) lines.push('- 日常验收用 task_workflow({view:"pending"})，只读各任务最新待处理交付、失效交付和待决问题。空列表不代表任务全部完成；最终汇总或核对历史用 view:"full"。依赖任务启动消息已附对应前置的已验收摘要、验证证据和 resultId。');
     }
     if (f.task.lead) {
       const scope = taskManagement(service.store.listTasks(), f.task.id);

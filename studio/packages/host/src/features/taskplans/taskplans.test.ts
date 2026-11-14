@@ -80,6 +80,14 @@ function acceptPrerequisite(taskId: string): void {
 }
 
 describe("task plans (拆任务提案)", () => {
+  it("does not queue a redundant confirmation when a lead receives its automatic plan result", async () => {
+    store.updateSession(leadSession.id, { status: "running" });
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "分工", tasks: [{ title: "执行", firstMessage: "执行" }] });
+    expect(plan.state).toBe("accepted");
+    expect(plan.created).toHaveLength(1);
+    expect(service.sessions.inbox.held(leadSession.id).filter((item) => item.id.startsWith("i-taskplan-"))).toEqual([]);
+  });
+
   it("takes a proposal only from a 主控, and checks it", async () => {
     await expect(service.taskPlans.propose(worker.id, proposal)).rejects.toThrow(/只有主控/);
     await expect(service.taskPlans.propose(leadSession.id, { ...proposal, summary: " " })).rejects.toThrow(/summary/);
@@ -186,7 +194,7 @@ describe("task plans (拆任务提案)", () => {
 
   it("creates a domain lead before starting it, and starts dependents only after accepted work is done", async () => {
     const seen: Array<{ lead: boolean; manager: string | null | undefined }> = [];
-    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => {
+    const start = vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => {
       const task = store.getTask(owner.taskId!)!;
       seen.push({ lead: !!task.lead, manager: task.managerTaskId });
       return store.createSession({ ...leadSession, id: undefined, taskId: task.id, runtimeRef: null });
@@ -208,6 +216,13 @@ describe("task plans (拆任务提案)", () => {
     await service.taskPlans.startReady();
     expect(store.listSessions({ taskId: second })).toHaveLength(1);
     expect(seen).toEqual([{ lead: true, manager: leadTask.id }, { lead: false, manager: leadTask.id }]);
+    const result = service.orchestration.results(first).at(-1)!;
+    const message = start.mock.calls[1]![2].text;
+    expect(start.mock.calls[0]![2].text).toBe("组织资源制作");
+    expect(message).toContain("接入资源");
+    expect(message).toContain("【启动时已验收的前置交付】");
+    expect(JSON.parse(message!.split("\n").at(-1)!)).toEqual([{ taskId: first, resultId: result.id, summary: "前置完成", verification: "隔离验证通过", review: "验收通过" }]);
+    expect(service.sharedContext.prerequisites(second)).toEqual([result.id]);
   });
 
   it("resumes a persisted dependency queue without duplicating previously started tasks", async () => {

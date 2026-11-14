@@ -341,7 +341,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (input.workspaceId && input.workspaceId !== task.workspaceId) throw new HostError("bad_request", "a task's sessions run in the task's own workspace");
     this.requireProfile(input.profileId);
     this.firstImages(input);
-    return this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input);
+    const first = this.store.listSessions({ taskId }).length === 0;
+    const session = await this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input);
+    if (first && (input.text?.trim() || input.attachments?.length) && this.followsSessions(taskId, "todo")) {
+      this.updateTask(taskId, { column: "doing" });
+      if (!this.store.listSessions({ taskId }).some(sessionMoving)) this.sessionStopped(taskId);
+    }
+    return session;
   }
 
   /** The images the first message carries, checked before anything is created; DSH sessions take none. */

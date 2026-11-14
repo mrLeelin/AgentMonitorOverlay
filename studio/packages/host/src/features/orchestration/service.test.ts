@@ -38,6 +38,69 @@ function requireNextRootVersion(sessionId: string, taskId: string): void {
 }
 
 describe("managed delivery workflow", () => {
+  it("reads only the latest pending deliveries while preserving full history and stale accepted evidence", () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), child = task("执行", false, top.id), worker = session(child);
+    const first = service.orchestration.submit(worker.id, "初稿", "待修订");
+    service.orchestration.review(manager.id, first.id, false, "补充验证");
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([first.id]);
+    const second = service.orchestration.submit(worker.id, "修订", "验证通过");
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([second.id]);
+    service.orchestration.review(manager.id, second.id, true, "通过");
+    expect(service.orchestration.workflow(top.id, "pending").results).toEqual([]);
+    expect(service.orchestration.workflow(top.id).results.map((r) => r.id)).toEqual([first.id, second.id]);
+    service.sharedContext.setPrerequisites(child.id, ["changed-prerequisite"]);
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([second.id]);
+    store.updateTask(child.id, { archivedAt: new Date().toISOString() });
+    expect(service.orchestration.workflow(top.id, "pending").results).toEqual([]);
+  });
+
+  it("adds later deliveries to a held batch and retains it across a Host reconstruction", async () => {
+    const top = task("总主控", true), manager = session(top);
+    store.updateSession(manager.id, { status: "running" });
+    const first = service.orchestration.submit(session(task("第一项", false, top.id)).id, "完成一", "证据一");
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)).toHaveLength(1));
+    const second = service.orchestration.submit(session(task("第二项", false, top.id)).id, "完成二", "证据二");
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(second.id) }));
+    expect(service.sessions.inbox.held(manager.id)).toHaveLength(1);
+    expect(service.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(first.id) });
+    const restored = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
+    await Promise.resolve();
+    expect(restored.sessions.inbox.held(manager.id)).toHaveLength(1);
+  });
+
+  it("coalesces simultaneous deliveries and rejects the notification once every result is handled", async () => {
+    const top = task("总主控", true), manager = session(top);
+    store.updateSession(manager.id, { status: "running" });
+    const workers = Array.from({ length: 10 }, (_, index) => session(task(`执行${index}`, false, top.id)));
+    const results = workers.map((worker) => service.orchestration.submit(worker.id, "完成", "验证通过"));
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)).toHaveLength(1));
+    const [message] = service.sessions.inbox.held(manager.id);
+    expect(message).toMatchObject({ text: expect.stringContaining("10 个任务") });
+    for (const result of results.slice(0, 9)) service.orchestration.review(manager.id, result.id, true, "通过");
+    expect(() => service.sessions.inbox.checkSource(store.getItem(message!.id)!)).not.toThrow();
+    service.orchestration.review(manager.id, results[9]!.id, true, "通过");
+    expect(() => service.sessions.inbox.checkSource(store.getItem(message!.id)!)).toThrow(/管理通知/);
+    service.orchestration.submit(manager.id, "最终汇总", "全部检查通过");
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "idle" }) });
+    await service.sessions.inbox.flush(manager.id);
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("accepted");
+    expect(store.getTask(top.id)?.column).toBe("done");
+  });
+
+  it("pages a long reply for its current direct manager only", () => {
+    const top = task("总主控", true), other = task("其他主控", true), child = task("执行", false, top.id);
+    const manager = session(top), stranger = session(other), worker = session(child);
+    store.appendItem({ id: "long-reply", sessionId: worker.id, type: "agent", streaming: false, markdown: "甲".repeat(6000) + "重要尾部", createdAt: new Date().toISOString() });
+    const first = service.orchestration.readReply(manager.id, "long-reply");
+    expect(first.text).toHaveLength(6000);
+    expect(first.nextOffset).toBe(6000);
+    expect(service.orchestration.readReply(manager.id, "long-reply", first.nextOffset!).text).toBe("重要尾部");
+    expect(() => service.orchestration.readReply(stranger.id, "long-reply")).toThrow(/直属任务/);
+    service.tasks.updateTask(child.id, { managerTaskId: other.id });
+    expect(() => service.orchestration.readReply(manager.id, "long-reply")).toThrow(/直属任务/);
+  });
+
   it("returns work for correction, accepts it at each level and only then completes the root", async () => {
     const send = delivery();
     const top = task("游戏总主控", true), audio = task("音效负责人", true, top.id), coin = task("投币音效", false, audio.id);

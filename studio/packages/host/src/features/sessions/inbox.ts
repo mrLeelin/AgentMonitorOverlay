@@ -24,6 +24,8 @@ const PEER_QUEUE_KEY = "sessions.peer-queue";
 const TURN_SEEN_MS = 3000;
 
 export class SessionInbox extends Feature<"sharedContext"> {
+  /** Durable producers recheck ownership/state immediately before dispatch or manual retry. */
+  validateProducerMessage: (item: SessionItem) => void = () => undefined;
   constructor(
     host: FeatureHost<"sharedContext">,
     /** The feature the inbox is part of (it sends through it). */
@@ -193,9 +195,9 @@ export class SessionInbox extends Feature<"sharedContext"> {
     // that would not be a steer.
     let before: number | null = null;
     for (const it of held) {
+      if (before !== null) await this.turnSeen(sessionId, before);
       const current = this.store.getItem(it.id);
       if (current?.type !== "user" || current.delivery !== "held") continue;
-      if (before !== null) await this.turnSeen(sessionId, before);
       before = current.seq;
       try {
         this.checkSource(current);
@@ -227,6 +229,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
 
   /** Rechecked at actual dispatch, including held messages surviving a Host restart or manual retry. */
   checkSource(item: SessionItem): void {
+    this.validateProducerMessage(item);
     if (!this.f.sharedContext.validateMessage(item.sessionId, item.id)) throw new HostError("read_only", "共同需求通知已失效，请读取当前任务的共同需求。");
     if (item.type !== "user" || !item.relayFromSessionId) return;
     const taskId = this.store.getSession(item.sessionId)?.taskId;

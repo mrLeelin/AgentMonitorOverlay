@@ -33,7 +33,7 @@ test("a new lead is the single contact and sees delegated deliveries for review"
   await expect(page.getByTestId("task-management")).toContainText("音效负责人");
   const delivery = page.getByTestId("workflow-result").filter({ hasText: "投币音效" });
   await expect(delivery).toHaveAttribute("data-state", "submitted");
-  await delivery.locator("summary").click();
+  await delivery.locator("summary").first().click();
   await expect(delivery).toContainText("教学验证");
   await delivery.scrollIntoViewIfNeeded();
   await screenshot(app, "studio", "managed-workflow-submitted", page);

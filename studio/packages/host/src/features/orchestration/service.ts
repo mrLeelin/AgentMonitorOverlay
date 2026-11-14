@@ -11,13 +11,19 @@ type Notice = { id: Id; sourceTaskId: Id; targetTaskId: Id; text: string; target
 export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab" | "sharedContext"> {
   private readonly sending = new Set<Id>();
 
-  workflow(taskId: Id): TaskWorkflow {
+  workflow(taskId: Id, view: "full" | "pending" = "full"): TaskWorkflow {
     this.requireTask(taskId);
     const tasks = this.store.listTasks();
     const ids = new Set([taskId, ...taskManagement(tasks, taskId).descendants.map((t) => t.id)]);
     return {
       rootTaskId: managementRoot(tasks, taskId)?.id ?? null,
-      results: [...ids].flatMap((id) => this.results(id)).filter((r) => !this.store.getTask(r.taskId)?.archivedAt),
+      results: [...ids].flatMap((id) => {
+        if (this.store.getTask(id)?.archivedAt) return [];
+        const results = this.results(id);
+        if (view === "full") return results;
+        const latest = results.at(-1);
+        return latest && (latest.state !== "accepted" || !this.f.sharedContext.isResultCurrent(id, latest)) ? [latest] : [];
+      }),
       decisions: this.store.listDecisions({ state: "open" }).filter((d) => d.routedToTaskId === taskId),
       deliveryIssues: this.notices().filter((n) => ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)).flatMap((n) => {
         if (!this.valid(n)) return [];
@@ -29,6 +35,16 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   results(taskId: Id): TaskResult[] { return JSON.parse(this.store.getKv(RESULTS_KEY + taskId)?.value ?? "[]") as TaskResult[]; }
+  readReply(sessionId: Id, itemId: Id, offset = 0): { text: string; nextOffset: number | null; length: number } {
+    const { task: manager } = this.own(sessionId);
+    const item = this.store.getItem(itemId);
+    const source = item && this.store.getSession(item.sessionId);
+    const child = source?.taskId && this.store.getTask(source.taskId);
+    if (!manager.lead || !item || item.type !== "agent" || !source || source.archivedAt || !child || child.archivedAt || child.managerTaskId !== manager.id) throw new HostError("read_only", "只能读取当前直属任务的会话回复。");
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > item.markdown.length) throw new HostError("bad_request", "回复位置无效。");
+    const end = Math.min(offset + 6000, item.markdown.length);
+    return { text: item.markdown.slice(offset, end), nextOffset: end < item.markdown.length ? end : null, length: item.markdown.length };
+  }
   private saveResults(taskId: Id, results: TaskResult[]): void { this.store.setKv(RESULTS_KEY + taskId, JSON.stringify(results)); }
   private notices(): Notice[] { return JSON.parse(this.store.getKv(OUTBOX_KEY)?.value ?? "[]") as Notice[]; }
   private saveNotices(notices: Notice[]): void { this.store.setKv(OUTBOX_KEY, JSON.stringify(notices)); }
@@ -122,7 +138,13 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     return this.f.collab.answerDecision(decisionId, requiredText(answer, "决定"));
   }
 
+  validateMessage(item: { id: Id; sessionId: Id }): void {
+      const notices = this.notices().filter((n) => n.targetSessionId === item.sessionId && (n.messageId ?? n.id) === item.id);
+      if (notices.length && !notices.some((n) => this.valid(n))) throw new HostError("read_only", "管理通知已处理或归属已变化，请读取最新工作流。");
+  }
+
   watch(): void {
+    this.saveNotices(this.notices().map((n) => n.sent && !n.error && !this.store.getItem(n.messageId ?? n.id) ? { ...n, sent: false } : n));
     this.host.on("event", (event) => {
       if (event.type === "decision.upserted" && event.decision.state === "open" && event.decision.routedToTaskId) this.routeDecision(event.decision);
       if (event.type === "task.upserted") {
@@ -175,8 +197,9 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const latest = this.results(task.id).at(-1);
     if (latest && latest.createdAt >= turn.startedAt && latest.state === "submitted") return;
     const [last] = this.store.findItems(session.id, "agent", {}, { newest: true, limit: 1 });
-    const reply = last?.type === "agent" && last.createdAt >= turn.startedAt ? last.markdown.slice(0, 6000) : "（暂无文字结果）";
-    this.queue({ id: `i-${turn.id}-manager`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", turnId: turn.id, text: `【下级任务本轮状态】「${task.title}」（${task.id}）：${turn.state}\n${turn.state === "failed" ? turn.error ?? "运行失败" : reply}\n\n这只是本轮回复，不等于任务验收完成。先用 task_workflow 查看交付与待决问题，必要时 task_message 继续派工。` });
+    const agent = last?.type === "agent" && last.createdAt >= turn.startedAt ? last : null;
+    const reply = agent ? agent.markdown.slice(0, 6000) : "（暂无文字结果）";
+    this.queue({ id: `i-${turn.id}-manager`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", turnId: turn.id, text: `【下级任务本轮状态】「${task.title}」（${task.id}）：${turn.state}\n${turn.state === "failed" ? turn.error ?? "运行失败" : reply}${agent && agent.markdown.length > 6000 ? `\n【回复已截断，共 ${agent.markdown.length} 字符；用 task_read_reply 读取完整回复，itemId: ${agent.id}】` : ""}\n\n这只是本轮回复，不等于任务验收完成。先用 task_workflow 查看交付与待决问题，必要时 task_message 继续派工。` });
   }
 
   private changed(taskId: Id): void { this.publish({ type: "task.upserted", task: this.requireTask(taskId) }); }
@@ -208,7 +231,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (!this.valid(notice)) {
         if (notice.targetSessionId) {
           const row = this.store.getItem(notice.messageId ?? notice.id);
-          if (row?.type === "user" && row.delivery === "held") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "unsent", text: "【管理通知已失效】任务归属或问题状态已变化，请以 task_workflow 最新内容为准。" }) });
+          const hasValid = this.notices().some((n) => (n.messageId ?? n.id) === row?.id && this.valid(n));
+          if (!hasValid && row?.type === "user" && row.delivery === "held") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "unsent", text: "【管理通知已处理】请以 task_workflow 最新内容为准。" }) });
         }
         continue;
       }
@@ -225,19 +249,28 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (notice.resultId && notice.direction === "up" && this.store.listSessions({ taskId: notice.sourceTaskId }).some(sessionMoving)) continue;
       this.sending.add(notice.id);
       void Promise.resolve().then(async () => {
-        if (!this.valid(notice)) return;
+        const saved = this.notices().find((n) => n.id === notice.id);
+        if (!this.valid(notice) || saved?.sent) return;
         // Never create a new session just to wake a stopped/archived one. A resumed manager receives the pending notice.
         const target = this.store.listSessions({ taskId: notice.targetTaskId }).filter((s) => s.kind === "main" && !s.archivedAt && s.runtime !== "remote" && s.writer !== "archived" && s.writer !== "terminal-handoff").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
         if (!target) return;
         const original = this.store.getItem(notice.id);
-        const messageId = notice.messageId ?? (original && original.sessionId !== target.id ? `${notice.id}-${target.id}` : notice.id);
-        this.patchNotice(notice.id, { targetSessionId: target.id, messageId });
+        const heldIds = new Set(this.f.sessions.inbox.held(target.id).map((item) => item.id));
+        const heldBatch = notice.resultId && notice.direction === "up" ? this.notices().find((n) => n.resultId && n.direction === "up" && n.targetSessionId === target.id && this.valid(n) && heldIds.has(n.messageId ?? n.id)) : undefined;
+        const messageId = heldBatch ? heldBatch.messageId ?? heldBatch.id : notice.messageId ?? (original && original.sessionId !== target.id ? `${notice.id}-${target.id}` : notice.id);
+        const batch = notice.resultId && notice.direction === "up"
+          ? this.notices().filter((n) => (!n.sent || (heldBatch && n.targetSessionId === target.id && (n.messageId ?? n.id) === messageId)) && !n.error && n.resultId && n.direction === "up" && n.targetTaskId === notice.targetTaskId && this.valid(n) && !this.store.listSessions({ taskId: n.sourceTaskId }).some(sessionMoving))
+          : [notice];
+        // Persist membership before the asynchronous send so concurrent delivery passes share one inbox row.
+        const ids = new Set(batch.map((n) => n.id));
+        this.saveNotices(this.notices().map((n) => ids.has(n.id) ? { ...n, targetSessionId: target.id, messageId, sent: true } : n));
         try {
-          await this.f.sessions.inbox.put(target.id, notice.text, undefined, messageId);
+          const text = batch.length > 1 ? `【下级交付汇总】${batch.length} 个任务提交了交付。请用 task_workflow({view:"pending"}) 读取待处理结果并逐项验收或退回。\n${batch.map((n) => `任务 ${n.sourceTaskId}，结果 ${n.resultId}`).join("\n")}` : notice.text;
+          await this.f.sessions.inbox.put(target.id, text, undefined, messageId);
           const row = this.store.getItem(messageId);
           if (row?.type === "user" && row.delivery === "unsent") this.patchNotice(notice.id, { error: "通知未送达，请进入目标任务的会话重新发送。" });
           else this.patchNotice(notice.id, { sent: true, error: undefined });
-        } catch (error) { this.patchNotice(notice.id, { error: String(error) }); }
+        } catch (error) { for (const n of batch) this.patchNotice(n.id, { error: String(error) }); }
         const current = this.notices().find((n) => n.id === notice.id);
         if (current?.error) this.changed(notice.targetTaskId);
       }).catch((error: unknown) => this.log(`managed delivery: ${String(error)}`)).finally(() => this.sending.delete(notice.id));
