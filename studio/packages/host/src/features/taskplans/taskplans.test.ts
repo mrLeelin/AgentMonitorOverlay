@@ -80,6 +80,29 @@ function acceptPrerequisite(taskId: string): void {
 }
 
 describe("task plans (拆任务提案)", () => {
+  it("keeps the accepted prerequisite evidence when a relay races a dependency's automatic start", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "依赖与传话竞争", tasks: [{ key: "pre", title: "前置", firstMessage: "前置要求" }, { key: "post", title: "后续", dependsOn: ["pre"], firstMessage: "后续完整要求" }] });
+    const pre = plan.created!.find((t) => t.key === "pre")!.taskId, post = plan.created!.find((t) => t.key === "post")!.taskId;
+    const original = service.runtime.startSession.bind(service.runtime);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    vi.spyOn(service.runtime, "startSession").mockImplementationOnce(async (input) => { entered(); await gate; return original(input); });
+    acceptPrerequisite(pre);
+    await ready;
+    const relay = service.relays.send(leadSession.id, { taskId: post, text: "补充要求" });
+    const delivered = service.relays.deliver(relay.id);
+    release();
+    const sent = await delivered;
+    await service.taskPlans.startReady();
+    expect(store.listSessions({ taskId: post })).toHaveLength(1);
+    const result = service.orchestration.results(pre).at(-1)!;
+    const first = store.listItems(sent.sessionId!).find((i) => i.type === "user" && i.text.includes("【启动时已验收的前置交付】"));
+    expect(first).toMatchObject({ text: expect.stringContaining(result.id) });
+    expect(first).toMatchObject({ text: expect.stringContaining("后续完整要求") });
+    expect(store.getItem(`i-relay-${relay.id}`)).toMatchObject({ sessionId: sent.sessionId });
+  });
+
   it("does not queue a redundant confirmation when a lead receives its automatic plan result", async () => {
     store.updateSession(leadSession.id, { status: "running" });
     const plan = await service.taskPlans.propose(leadSession.id, { summary: "分工", tasks: [{ title: "执行", firstMessage: "执行" }] });

@@ -83,6 +83,9 @@ test("routed business questions wait with the manager while unrelated person dec
   const worker = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "音效制作", workspaceId: ws.id, managerTaskId: root.task.id, firstSession: { profileId: "codex-mock", text: '[[mcp: decision_request {"question":"投币音效用Q版还是写实？","options":["Q版","写实"]}]]' } });
   const decisions = () => studio!.api<DecisionRequest[]>("GET", "/api/decisions?state=open");
   await expect.poll(async () => (await decisions()).find((d) => d.taskId === worker.task.id)?.routedToTaskId, { timeout: 60_000 }).toBe(root.task.id);
+  await expect.poll(async () => (await studio!.api<StateSnapshot>("GET", "/api/state")).sessions.find((s) => s.id === worker.session.id)?.status).toMatch(/idle|completed/);
+  const parentItems = await studio.api<SessionItem[]>("GET", `/api/sessions/${root.session.id}/items`);
+  expect(parentItems.filter((i) => i.type === "user" && i.text.includes("【下级任务本轮状态】"))).toHaveLength(0);
   const child = page.getByTestId("task-card").filter({ hasText: "音效制作" });
   await expect(child.getByTestId("card-asks")).toHaveCount(0);
   await expect(page.getByTestId("needs-you")).toHaveCount(0);

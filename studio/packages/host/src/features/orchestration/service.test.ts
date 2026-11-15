@@ -38,6 +38,46 @@ function requireNextRootVersion(sessionId: string, taskId: string): void {
 }
 
 describe("managed delivery workflow", () => {
+  it.each([false, true])("does not duplicate a same-turn routed decision with a completed status report (answered=%s)", async (answered) => {
+    const send = delivery(), top = task("主控", true), child = task("规则确认", false, top.id);
+    const manager = session(top), worker = session(child), at = new Date(Date.now() - 1000).toISOString();
+    store.appendItem({ id: "question-turn", sessionId: worker.id, type: "turn", turnId: "rt", state: "completed", startedAt: at, endedAt: new Date().toISOString(), createdAt: at });
+    const question = service.collab.requestDecisionFromSession(worker.id, "按折后金额判断？", ["是", "否"]);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    if (answered) service.orchestration.answerDecision(manager.id, question.id, "是");
+    send.mockClear();
+    service.publish({ type: "session.upserted", session: store.getSession(worker.id)! });
+    await Promise.resolve();
+    expect(send.mock.calls.filter((c) => c[0] === manager.id)).toHaveLength(0);
+    const notices = JSON.parse(store.getKv("orchestration.outbox")!.value);
+    store.setKv("orchestration.outbox", JSON.stringify([...notices, { id: "old-question-status", sourceTaskId: child.id, targetTaskId: top.id, targetSessionId: manager.id, direction: "up", turnId: "question-turn", text: "旧版普通状态" }]));
+    expect(() => service.orchestration.validateMessage({ id: "old-question-status", sessionId: manager.id })).toThrow(/管理通知/);
+  });
+
+  it.each(["failed", "interrupted"] as const)("still reports a %s worker turn after its business question", async (state) => {
+    const send = delivery(), top = task("主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child), at = new Date(Date.now() - 1000).toISOString();
+    store.appendItem({ id: "failed-question-turn", sessionId: worker.id, type: "turn", turnId: "rt", state, startedAt: at, endedAt: new Date().toISOString(), createdAt: at });
+    service.collab.requestDecisionFromSession(worker.id, "当前问题", []);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    send.mockClear();
+    service.publish({ type: "session.upserted", session: store.updateSession(worker.id, { status: state === "failed" ? "error" : "interrupted" }) });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining(state), undefined, "i-failed-question-turn-manager"));
+  });
+
+  it("still reports a later ordinary worker turn after an older business question", async () => {
+    const send = delivery(), top = task("主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child);
+    const question = service.collab.requestDecisionFromSession(worker.id, "旧问题", []);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    service.orchestration.answerDecision(manager.id, question.id, "已决定");
+    send.mockClear();
+    const at = new Date(Date.now() + 1000).toISOString();
+    store.appendItem({ id: "later-turn", sessionId: worker.id, type: "turn", turnId: "rt-later", state: "completed", startedAt: at, endedAt: at, createdAt: at });
+    service.publish({ type: "session.upserted", session: store.getSession(worker.id)! });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining("本轮状态"), undefined, "i-later-turn-manager"));
+  });
+
   it("does not wake an upstream lead for ordinary coordinator progress across multiple turns", async () => {
     const send = delivery(), top = task("总主控", true), middle = task("开发主控", true, top.id);
     session(top); const coordinator = session(middle);

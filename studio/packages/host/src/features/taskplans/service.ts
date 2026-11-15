@@ -212,6 +212,9 @@ export class TaskPlansFeature extends Feature<"canvases" | "collab" | "sessions"
     // event's empty scan is finishing, and its caller must await a scan that can see those entries.
     const running = (this.starting ?? Promise.resolve()).then(async () => {
         for (const entry of Object.values(this.pending())) {
+          // A relay or explicit session creation can precede this scan without having saved a row yet.
+          while (this.f.tasks.hasStartingSession(entry.taskId)) await this.f.tasks.waitForSessionStarts(entry.taskId);
+          if (this.pending()[entry.taskId]?.planId !== entry.planId) continue;
           const task = this.store.getTask(entry.taskId);
           const manager = entry.managerTaskId ? this.store.getTask(entry.managerTaskId) : null;
           const rootChanged = entry.rootTaskId !== undefined && (managementRoot(this.store.listTasks(), entry.taskId)?.id ?? null) !== entry.rootTaskId;

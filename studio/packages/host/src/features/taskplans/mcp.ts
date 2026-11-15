@@ -18,7 +18,7 @@ export function taskPlansTools({ service, caller }: ToolContext): AmoTool[] {
             project: z.string().optional(),
             description: z.string().optional(),
             lead: z.boolean().optional(),
-            firstMessage: z.string().optional(),
+            firstMessage: z.string().describe("Complete execution contract: interfaces, file ownership, constraints and verification. If details are stored in description, explicitly tell the executor to read its complete task_get description before starting; a role-card preview is not the full contract.").optional(),
             model: z.string().optional(),
             effort: z.string().optional(),
             dependsOn: z.array(z.string()).optional(),

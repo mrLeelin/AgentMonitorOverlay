@@ -14,6 +14,8 @@ import { TaskLeadPromotion } from "./lead-promotion.js";
 export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions"> {
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
+  private readonly sessionStartWaiters = new Map<Id, Set<() => void>>();
+  private readonly mainSessionStarts = new Map<Id, Promise<Session>>();
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
   reviewSettleMs = 4000;
   private readonly movingBefore = new Map<Id, boolean>();
@@ -342,12 +344,16 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     this.requireProfile(input.profileId);
     this.firstImages(input);
     const first = this.store.listSessions({ taskId }).length === 0;
-    const session = await this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input);
-    if (first && (input.text?.trim() || input.attachments?.length) && this.followsSessions(taskId, "todo")) {
-      this.updateTask(taskId, { column: "doing" });
-      if (!this.store.listSessions({ taskId }).some(sessionMoving)) this.sessionStopped(taskId);
-    }
-    return session;
+    return this.trackSessionStart(taskId, async () => {
+      const session = await this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input);
+      // Keep first-turn initialization active through the column event: the same frozen requirement is already
+      // in the initial input, so the inbox must not race it with another automatic notification.
+      if (first && (input.text?.trim() || input.attachments?.length) && this.followsSessions(taskId, "todo")) {
+        this.updateTask(taskId, { column: "doing" });
+        if (!this.store.listSessions({ taskId }).some(sessionMoving)) this.sessionStopped(taskId);
+      }
+      return session;
+    });
   }
 
   /** The images the first message carries, checked before anything is created; DSH sessions take none. */
@@ -393,7 +399,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       if (taskId) {
         const remaining = (this.sessionStarts.get(taskId) ?? 1) - 1;
         if (remaining) this.sessionStarts.set(taskId, remaining);
-        else this.sessionStarts.delete(taskId);
+        else {
+          this.sessionStarts.delete(taskId);
+          const waiters = this.sessionStartWaiters.get(taskId);
+          this.sessionStartWaiters.delete(taskId);
+          for (const resolve of waiters ?? []) resolve();
+        }
         void this.leadPromotion.flush();
       }
     }
@@ -401,6 +412,30 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
 
   hasStartingSession(taskId: Id): boolean {
     return this.sessionStarts.has(taskId);
+  }
+
+  /** Await starts that have not persisted their session yet, including a failed runtime request. */
+  async waitForSessionStarts(taskId: Id): Promise<void> {
+    while (this.hasStartingSession(taskId)) await new Promise<void>((resolve) => {
+      const waiters = this.sessionStartWaiters.get(taskId) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.sessionStartWaiters.set(taskId, waiters);
+    });
+  }
+
+  /** Automatic messages reuse the task's conversation; explicit addSession still creates a separate one. */
+  ensureMainSession(taskId: Id, profileId: Id): Promise<Session> {
+    const opening = this.mainSessionStarts.get(taskId);
+    if (opening) return opening;
+    const pending = (async () => {
+      while (this.hasStartingSession(taskId)) await this.waitForSessionStarts(taskId);
+      const task = this.requireTask(taskId);
+      if (task.archivedAt) throw new HostError("read_only", "任务已归档，不能接收新消息。");
+      const session = this.store.listSessions({ taskId }).filter((s) => s.kind === "main" && !s.archivedAt && s.writer !== "archived").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+      return session ?? this.addSession(taskId, { profileId });
+    })().finally(() => this.mainSessionStarts.delete(taskId));
+    this.mainSessionStarts.set(taskId, pending);
+    return pending;
   }
 
   private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {

@@ -1,4 +1,4 @@
-import { managementRoot, taskManagement, type DecisionRequest, type Id, type Session, type Task, type TaskResult, type TaskWorkflow } from "@amo-studio/protocol";
+import { managementRoot, taskManagement, type DecisionRequest, type Id, type Session, type SessionItem, type Task, type TaskResult, type TaskWorkflow } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { HostError, sessionMoving } from "../../core/shared.js";
 import { newId } from "../../store/store.js";
@@ -197,12 +197,20 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     // Coordinators routinely finish a turn to wait for their children. Only explicit deliveries/questions
     // need the parent's attention; reporting this progress automatically creates empty polling turns.
     if (task.lead && turn.state === "completed") return;
+    if (turn.state === "completed" && this.reportedDecision(task, turn)) return;
     const latest = this.results(task.id).at(-1);
     if (latest && latest.createdAt >= turn.startedAt && latest.state === "submitted") return;
     const [last] = this.store.findItems(session.id, "agent", {}, { newest: true, limit: 1 });
     const agent = last?.type === "agent" && last.createdAt >= turn.startedAt ? last : null;
     const reply = agent ? agent.markdown.slice(0, 6000) : "（暂无文字结果）";
     this.queue({ id: `i-${turn.id}-manager`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", turnId: turn.id, text: `【下级任务本轮状态】「${task.title}」（${task.id}）：${turn.state}\n${turn.state === "failed" ? turn.error ?? "运行失败" : reply}${agent && agent.markdown.length > 6000 ? `\n【回复已截断，共 ${agent.markdown.length} 字符；用 task_read_reply 读取完整回复，itemId: ${agent.id}】` : ""}\n\n这只是本轮回复，不等于任务验收完成。先用 task_workflow 查看交付与待决问题，必要时 task_message 继续派工。` });
+  }
+
+  /** A worker's question already has its own durable notification, even if the manager answered immediately. */
+  private reportedDecision(task: Task, turn: Extract<SessionItem, { type: "turn" }>): boolean {
+    // Codex timestamps turn boundaries to whole seconds while decisions retain milliseconds.
+    const end = turn.endedAt ? Date.parse(turn.endedAt) + 1000 : Infinity;
+    return this.store.listDecisions().some((d) => d.state !== "withdrawn" && d.taskId === task.id && d.sessionId === turn.sessionId && d.routedToTaskId === task.managerTaskId && d.createdAt >= turn.startedAt && Date.parse(d.createdAt) < end);
   }
 
   private changed(taskId: Id): void { this.publish({ type: "task.upserted", task: this.requireTask(taskId) }); }
@@ -225,6 +233,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       const turn = this.store.getItem(notice.turnId), latest = this.results(source.id).at(-1);
       // Also withdraw progress queued by an older Host, before inbox dispatch or manual retry.
       if (source.lead && turn?.type === "turn" && turn.state === "completed") return false;
+      if (turn?.type === "turn" && turn.state === "completed" && this.reportedDecision(source, turn)) return false;
       if (turn?.type !== "turn" || (turn.state === "completed" && latest && latest.createdAt >= turn.startedAt && latest.state !== "returned")) return false;
     }
     return true;

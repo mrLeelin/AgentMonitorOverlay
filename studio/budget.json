@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 174
+      "used": 202
     },
     "claude": {
       "limit": 300,
@@ -1282,6 +1282,146 @@
       "at": "2026-11-15T03:09:06.006Z",
       "provider": "gpt",
       "note": "complex-retest-1794711078045 actual turn/start 41"
+    },
+    {
+      "at": "2026-11-15T04:21:21.910Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 1"
+    },
+    {
+      "at": "2026-11-15T04:21:59.988Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 2"
+    },
+    {
+      "at": "2026-11-15T04:22:00.088Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 3"
+    },
+    {
+      "at": "2026-11-15T04:22:35.444Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 4"
+    },
+    {
+      "at": "2026-11-15T04:22:35.574Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 5"
+    },
+    {
+      "at": "2026-11-15T04:22:46.455Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 6"
+    },
+    {
+      "at": "2026-11-15T04:22:56.893Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 7"
+    },
+    {
+      "at": "2026-11-15T04:23:01.429Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 8"
+    },
+    {
+      "at": "2026-11-15T04:23:09.101Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 9"
+    },
+    {
+      "at": "2026-11-15T04:23:17.076Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 10"
+    },
+    {
+      "at": "2026-11-15T04:23:41.094Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 11"
+    },
+    {
+      "at": "2026-11-15T04:23:52.595Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 12"
+    },
+    {
+      "at": "2026-11-15T04:25:32.592Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 13"
+    },
+    {
+      "at": "2026-11-15T04:25:44.884Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 14"
+    },
+    {
+      "at": "2026-11-15T04:26:37.337Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 15"
+    },
+    {
+      "at": "2026-11-15T04:26:59.679Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 16"
+    },
+    {
+      "at": "2026-11-15T04:27:51.052Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 17"
+    },
+    {
+      "at": "2026-11-15T04:28:14.127Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 18"
+    },
+    {
+      "at": "2026-11-15T04:31:45.740Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 19"
+    },
+    {
+      "at": "2026-11-15T04:31:57.413Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 20"
+    },
+    {
+      "at": "2026-11-15T04:35:25.795Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 21"
+    },
+    {
+      "at": "2026-11-15T04:36:02.473Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 22"
+    },
+    {
+      "at": "2026-11-15T04:36:10.206Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 23"
+    },
+    {
+      "at": "2026-11-15T04:36:46.540Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 24"
+    },
+    {
+      "at": "2026-11-15T04:36:57.747Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 25"
+    },
+    {
+      "at": "2026-11-15T04:38:01.291Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 26"
+    },
+    {
+      "at": "2026-11-15T04:38:10.441Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 27"
+    },
+    {
+      "at": "2026-11-15T04:39:28.868Z",
+      "provider": "gpt",
+      "note": "complex-fixed-1794716477367 actual turn/start 28"
     }
   ]
 }
