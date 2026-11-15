@@ -1,9 +1,40 @@
 import { expect, test } from "@playwright/test";
-import type { DecisionRequest, Session, StateSnapshot, Task, TaskResult, Workspace } from "@amo-studio/protocol";
+import type { DecisionRequest, Session, SessionItem, StateSnapshot, Task, TaskResult, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 let studio: Studio | undefined;
 test.afterEach(async () => { await studio?.close(); studio = undefined; });
+
+test("coordinator progress stays local while formal delivery still wakes the upstream lead", async () => {
+  studio = await launchStudio();
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("coordinator-progress") });
+  const create = (title: string, managerTaskId?: string) => studio!.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title, workspaceId: ws.id, lead: true, managerTaskId, firstSession: { profileId: "codex-mock", text: "已派工，等待下级交付。" } });
+  const items = (id: string) => studio!.api<SessionItem[]>("GET", `/api/sessions/${id}/items`);
+  const settled = async (id: string, turns: number) => {
+    await expect.poll(async () => (await items(id)).filter((i) => i.type === "turn" && i.state === "completed").length).toBe(turns);
+    await expect.poll(async () => (await studio!.api<StateSnapshot>("GET", "/api/state")).sessions.find((s) => s.id === id)?.status).toMatch(/idle|completed/);
+  };
+  const top = await create("总主控");
+  await settled(top.session.id, 1);
+  for (const title of ["开发主控", "测试主控"]) {
+    const middle = await create(title, top.task.id);
+    await settled(middle.session.id, 1);
+    for (let turn = 2; turn <= 3; turn++) {
+      await studio.api("POST", `/api/sessions/${middle.session.id}/messages`, { text: "普通进度：继续等下级交付。" });
+      await settled(middle.session.id, turn);
+    }
+    expect((await items(middle.session.id)).filter((i) => i.type === "agent")).toHaveLength(3);
+  }
+  // Give an erroneous automatic dispatch time to start its extra turn before checking absence.
+  await studio.page.waitForTimeout(1000);
+  expect((await items(top.session.id)).filter((i) => i.type === "turn")).toHaveLength(1);
+  expect((await items(top.session.id)).filter((i) => i.type === "user" && i.text.includes("【下级任务本轮状态】"))).toHaveLength(0);
+  const middle = (await studio.api<StateSnapshot>("GET", "/api/state")).tasks.find((t) => t.title === "开发主控")!;
+  const middleSession = (await studio.api<StateSnapshot>("GET", "/api/state")).sessions.find((s) => s.taskId === middle.id)!;
+  const result = await studio.api<TaskResult>("POST", `/api/tasks/${middle.id}/workflow/submit`, { sessionId: middleSession.id, summary: "开发交付", verification: "隔离验证通过" });
+  await settled(top.session.id, 2);
+  expect((await items(top.session.id)).some((i) => i.type === "user" && i.text.includes(result.id))).toBe(true);
+});
 
 test("a new lead is the single contact and sees delegated deliveries for review", async () => {
   studio = await launchStudio();

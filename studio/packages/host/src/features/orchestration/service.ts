@@ -194,6 +194,9 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     if (!task?.managerTaskId || !managementRoot(this.store.listTasks(), task.id)) return;
     const [turn] = this.store.findItems(session.id, "turn", {}, { newest: true, limit: 1 });
     if (turn?.type !== "turn" || turn.state === "running") return;
+    // Coordinators routinely finish a turn to wait for their children. Only explicit deliveries/questions
+    // need the parent's attention; reporting this progress automatically creates empty polling turns.
+    if (task.lead && turn.state === "completed") return;
     const latest = this.results(task.id).at(-1);
     if (latest && latest.createdAt >= turn.startedAt && latest.state === "submitted") return;
     const [last] = this.store.findItems(session.id, "agent", {}, { newest: true, limit: 1 });
@@ -220,6 +223,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     }
     if (notice.turnId) {
       const turn = this.store.getItem(notice.turnId), latest = this.results(source.id).at(-1);
+      // Also withdraw progress queued by an older Host, before inbox dispatch or manual retry.
+      if (source.lead && turn?.type === "turn" && turn.state === "completed") return false;
       if (turn?.type !== "turn" || (turn.state === "completed" && latest && latest.createdAt >= turn.startedAt && latest.state !== "returned")) return false;
     }
     return true;

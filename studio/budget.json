@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 96
+      "used": 174
     },
     "claude": {
       "limit": 300,
@@ -892,6 +892,396 @@
       "at": "2026-11-14T13:47:53.748Z",
       "provider": "gpt",
       "note": "提交前依赖复测-1794664073643 预留 13"
+    },
+    {
+      "at": "2026-11-14T13:56:53.313Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 1"
+    },
+    {
+      "at": "2026-11-14T13:56:53.316Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 2"
+    },
+    {
+      "at": "2026-11-14T13:56:53.317Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 3"
+    },
+    {
+      "at": "2026-11-14T13:56:53.319Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 4"
+    },
+    {
+      "at": "2026-11-14T13:56:53.320Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 5"
+    },
+    {
+      "at": "2026-11-14T13:56:53.321Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 6"
+    },
+    {
+      "at": "2026-11-14T13:56:53.322Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 7"
+    },
+    {
+      "at": "2026-11-14T13:56:53.324Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 8"
+    },
+    {
+      "at": "2026-11-14T13:56:53.325Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 9"
+    },
+    {
+      "at": "2026-11-14T13:56:53.327Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 10"
+    },
+    {
+      "at": "2026-11-14T13:56:53.328Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 11"
+    },
+    {
+      "at": "2026-11-14T13:56:53.329Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 12"
+    },
+    {
+      "at": "2026-11-14T13:56:53.330Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 13"
+    },
+    {
+      "at": "2026-11-14T13:56:53.331Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 14"
+    },
+    {
+      "at": "2026-11-14T13:56:53.333Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 15"
+    },
+    {
+      "at": "2026-11-14T13:56:53.335Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 16"
+    },
+    {
+      "at": "2026-11-14T13:56:53.336Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 17"
+    },
+    {
+      "at": "2026-11-14T13:56:53.337Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 18"
+    },
+    {
+      "at": "2026-11-14T13:56:53.339Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 19"
+    },
+    {
+      "at": "2026-11-14T13:56:53.340Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 20"
+    },
+    {
+      "at": "2026-11-14T13:56:53.341Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 21"
+    },
+    {
+      "at": "2026-11-14T13:56:53.343Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 22"
+    },
+    {
+      "at": "2026-11-14T13:56:53.344Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 23"
+    },
+    {
+      "at": "2026-11-14T13:56:53.345Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 24"
+    },
+    {
+      "at": "2026-11-14T13:56:53.346Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 25"
+    },
+    {
+      "at": "2026-11-14T13:56:53.347Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 26"
+    },
+    {
+      "at": "2026-11-14T13:56:53.349Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 27"
+    },
+    {
+      "at": "2026-11-14T13:56:53.350Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 28"
+    },
+    {
+      "at": "2026-11-14T13:56:53.351Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 29"
+    },
+    {
+      "at": "2026-11-14T13:56:53.353Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 30"
+    },
+    {
+      "at": "2026-11-14T13:56:53.354Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 31"
+    },
+    {
+      "at": "2026-11-14T13:56:53.355Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 32"
+    },
+    {
+      "at": "2026-11-14T13:56:53.356Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 33"
+    },
+    {
+      "at": "2026-11-14T13:56:53.357Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 34"
+    },
+    {
+      "at": "2026-11-14T13:56:53.359Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 35"
+    },
+    {
+      "at": "2026-11-14T13:56:53.360Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 36"
+    },
+    {
+      "at": "2026-11-14T13:56:53.361Z",
+      "provider": "gpt",
+      "note": "复杂工作流实测-1794664613213 预留 37"
+    },
+    {
+      "at": "2026-11-15T02:51:21.409Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 1"
+    },
+    {
+      "at": "2026-11-15T02:52:08.773Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 2"
+    },
+    {
+      "at": "2026-11-15T02:52:08.892Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 3"
+    },
+    {
+      "at": "2026-11-15T02:52:46.689Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 4"
+    },
+    {
+      "at": "2026-11-15T02:52:46.820Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 5"
+    },
+    {
+      "at": "2026-11-15T02:53:01.604Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 6"
+    },
+    {
+      "at": "2026-11-15T02:53:16.385Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 7"
+    },
+    {
+      "at": "2026-11-15T02:53:20.819Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 8"
+    },
+    {
+      "at": "2026-11-15T02:53:30.247Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 9"
+    },
+    {
+      "at": "2026-11-15T02:53:38.762Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 10"
+    },
+    {
+      "at": "2026-11-15T02:53:44.072Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 11"
+    },
+    {
+      "at": "2026-11-15T02:53:56.115Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 12"
+    },
+    {
+      "at": "2026-11-15T02:54:08.846Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 13"
+    },
+    {
+      "at": "2026-11-15T02:54:17.405Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 14"
+    },
+    {
+      "at": "2026-11-15T02:54:26.441Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 15"
+    },
+    {
+      "at": "2026-11-15T02:54:27.947Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 16"
+    },
+    {
+      "at": "2026-11-15T02:54:37.892Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 17"
+    },
+    {
+      "at": "2026-11-15T02:55:31.948Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 18"
+    },
+    {
+      "at": "2026-11-15T02:55:56.931Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 19"
+    },
+    {
+      "at": "2026-11-15T02:55:56.986Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 20"
+    },
+    {
+      "at": "2026-11-15T02:56:01.025Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 21"
+    },
+    {
+      "at": "2026-11-15T02:56:46.555Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 22"
+    },
+    {
+      "at": "2026-11-15T02:56:58.560Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 23"
+    },
+    {
+      "at": "2026-11-15T02:57:04.157Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 24"
+    },
+    {
+      "at": "2026-11-15T02:57:17.002Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 25"
+    },
+    {
+      "at": "2026-11-15T02:57:49.349Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 26"
+    },
+    {
+      "at": "2026-11-15T02:58:51.034Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 27"
+    },
+    {
+      "at": "2026-11-15T02:59:08.697Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 28"
+    },
+    {
+      "at": "2026-11-15T02:59:08.798Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 29"
+    },
+    {
+      "at": "2026-11-15T02:59:12.848Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 30"
+    },
+    {
+      "at": "2026-11-15T02:59:38.505Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 31"
+    },
+    {
+      "at": "2026-11-15T03:00:05.656Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 32"
+    },
+    {
+      "at": "2026-11-15T03:00:09.991Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 33"
+    },
+    {
+      "at": "2026-11-15T03:00:30.612Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 34"
+    },
+    {
+      "at": "2026-11-15T03:01:11.987Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 35"
+    },
+    {
+      "at": "2026-11-15T03:03:30.213Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 36"
+    },
+    {
+      "at": "2026-11-15T03:04:16.159Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 37"
+    },
+    {
+      "at": "2026-11-15T03:04:31.539Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 38"
+    },
+    {
+      "at": "2026-11-15T03:06:10.789Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 39"
+    },
+    {
+      "at": "2026-11-15T03:06:22.665Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 40"
+    },
+    {
+      "at": "2026-11-15T03:09:06.006Z",
+      "provider": "gpt",
+      "note": "complex-retest-1794711078045 actual turn/start 41"
     }
   ]
 }

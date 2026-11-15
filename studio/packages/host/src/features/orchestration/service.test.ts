@@ -38,6 +38,48 @@ function requireNextRootVersion(sessionId: string, taskId: string): void {
 }
 
 describe("managed delivery workflow", () => {
+  it("does not wake an upstream lead for ordinary coordinator progress across multiple turns", async () => {
+    const send = delivery(), top = task("总主控", true), middle = task("开发主控", true, top.id);
+    session(top); const coordinator = session(middle);
+    for (let index = 0; index < 3; index++) {
+      const at = new Date(Date.now() + index * 1000).toISOString();
+      store.appendItem({ id: `progress-turn-${index}`, sessionId: coordinator.id, type: "turn", turnId: `rt-${index}`, state: "completed", startedAt: at, endedAt: at, createdAt: at });
+      store.appendItem({ id: `progress-reply-${index}`, sessionId: coordinator.id, type: "agent", streaming: false, markdown: "已派工，等待下级正式交付。", createdAt: at });
+      service.publish({ type: "session.upserted", session: store.getSession(coordinator.id)! });
+      await Promise.resolve();
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(store.findItems(coordinator.id, "agent", {})).toHaveLength(3);
+    const result = service.orchestration.submit(coordinator.id, "开发汇总", "验证通过");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(result.id), undefined, expect.any(String));
+  });
+
+  it.each(["failed", "interrupted", "completed"] as const)("still reports %s worker turns and coordinator failures", async (state) => {
+    const send = delivery(), top = task("总主控", true), child = task("下级", state !== "completed", top.id);
+    const manager = session(top), worker = session(child), at = new Date().toISOString();
+    store.appendItem({ id: "report-turn", sessionId: worker.id, type: "turn", turnId: "rt", state, startedAt: at, endedAt: at, createdAt: at, ...(state === "failed" ? { error: "执行失败" } : {}) });
+    service.publish({ type: "session.upserted", session: store.updateSession(worker.id, { status: state === "failed" ? "error" : state === "interrupted" ? "interrupted" : "idle" }) });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining(state), undefined, "i-report-turn-manager");
+  });
+
+  it("revokes old held coordinator progress on Host reconstruction without discarding deliveries", async () => {
+    const top = task("总主控", true), middle = task("开发主控", true, top.id);
+    const manager = session(top), coordinator = session(middle), at = new Date().toISOString();
+    store.updateSession(manager.id, { status: "running" });
+    const turn = store.appendItem({ id: "old-progress", sessionId: coordinator.id, type: "turn", turnId: "rt", state: "completed", startedAt: at, endedAt: at, createdAt: at });
+    store.setKv("orchestration.outbox", JSON.stringify([{ id: "old-notice", sourceTaskId: middle.id, targetTaskId: top.id, direction: "up", turnId: turn.id, text: "等待下级", sent: true, targetSessionId: manager.id }]));
+    await service.sessions.inbox.put(manager.id, "等待下级", undefined, "old-notice");
+    const restarted = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
+    await Promise.resolve();
+    expect(restarted.sessions.inbox.held(manager.id)).toHaveLength(0);
+    expect(() => restarted.sessions.inbox.checkSource(store.getItem("old-notice")!)).toThrow(/管理通知/);
+    const result = restarted.orchestration.submit(coordinator.id, "汇总", "验证通过");
+    await vi.waitFor(() => expect(restarted.sessions.inbox.held(manager.id)).toHaveLength(1));
+    expect(restarted.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(result.id) });
+  });
+
   it("reads only the latest pending deliveries while preserving full history and stale accepted evidence", () => {
     delivery();
     const top = task("总主控", true), manager = session(top), child = task("执行", false, top.id), worker = session(child);
