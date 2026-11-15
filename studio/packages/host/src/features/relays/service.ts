@@ -10,10 +10,22 @@ const DECIDED_SHOWN_MS = 24 * 3600_000;
 /**
  * 传话 (stage 16, from the stage 15 design): a 主控 (or a topic's own session) asks Studio to say something in another
  * managed task's session automatically. Topic sessions retain the confirmation workflow. Dispatch and receipts
- * use stable inbox ids so a restart cannot duplicate a delivered message.
+ * use stable inbox ids so a restart cannot duplicate a delivered message. Successful receipts stay in mail;
+ * only actionable failures/refusals enter the lead's model inbox.
  */
 export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
   private readonly delivering = new Map<Id, Promise<Relay>>();
+
+  /** Retire old success-only wakeups before inbox recovery, preserving their frozen history and visible mail. */
+  prepareInbox(): void {
+    for (const relay of this.store.listRelays()) {
+      if (relay.state !== "delivered" || !relay.fromTaskId) continue;
+      const receiptId = `i-relay-receipt-${relay.id}`;
+      for (const item of [...this.store.findItems(relay.fromSessionId, "user", { delivery: "held" }), ...this.store.findItems(relay.fromSessionId, "user", { delivery: "unsent" })]) {
+        if (item.type === "user" && !item.relayFromSessionId && (item.id === receiptId || item.id.startsWith(`${receiptId}-context-`))) this.f.sessions.inbox.expire(item.id, "传话成功回执仅供查看，不再自动唤醒主控；实际答复仍会另行通知。");
+      }
+    }
+  }
 
   /** Resume owned dispatches that were persisted before a Host interruption. */
   watch(): void {
@@ -91,16 +103,16 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       if (row?.type === "user" && row.delivery === "unsent") throw new HostError("conflict", row.deliveryReason || "消息运行时发送失败，请在会话中查看原因并重试。");
       if (row?.type === "user" && row.delivery === "expired") {
         const expired = this.save({ ...this.requireRelay(id), state: "expired", decidedAt: new Date().toISOString(), sessionId, error: row.deliveryReason });
-        this.tellLead(relay, `这份传话已过期：${row.deliveryReason || "任务归属或要求已变化"}。请以当前任务通知和 task_workflow 为准。`);
+        this.tellLead(expired, `这份传话已过期：${row.deliveryReason || "任务归属或要求已变化"}。请以当前任务通知和 task_workflow 为准。`);
         return expired;
       }
       const delivered = this.save({ ...this.requireRelay(id), state: "delivered", decidedAt: new Date().toISOString(), sessionId });
-      this.tellLead(relay, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : `传话已送到「${target.title || "未命名任务"}」。`);
+      this.tellLead(delivered, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : `传话已送到「${target.title || "未命名任务"}」。`);
       return delivered;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const failed = this.save({ ...this.requireRelay(id), state: "failed", decidedAt: new Date().toISOString(), error });
-      this.tellLead(relay, `传话没能送到「${target?.title || relay.toTaskId}」：${error}`);
+      this.tellLead(failed, `传话没能送到「${target?.title || relay.toTaskId}」：${error}`);
       return failed;
     }
   }
@@ -110,14 +122,14 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     if (relay.state !== "pending") throw new HostError("conflict", "this relay was decided already");
     const dismissed = this.save({ ...relay, state: "dismissed", decidedAt: new Date().toISOString() });
     const target = this.store.getTask(relay.toTaskId);
-    this.tellLead(relay, `人没有让你的传话送到「${target?.title || relay.toTaskId}」。`);
+    this.tellLead(dismissed, `人没有让你的传话送到「${target?.title || relay.toTaskId}」。`);
     return dismissed;
   }
 
   private tellLead(relay: Relay, text: string): void {
     try {
       this.f.collab.sendMail(null, { kind: "session", sessionId: relay.fromSessionId }, text);
-      if (relay.fromTaskId) void this.f.sessions.inbox.put(relay.fromSessionId, text, undefined, `i-relay-receipt-${relay.id}`, { purpose: "notification", rebaseOnContextUpgrade: true }).catch((error: unknown) => this.log(`relay receipt: ${String(error)}`));
+      if (relay.fromTaskId && relay.state !== "delivered") void this.f.sessions.inbox.put(relay.fromSessionId, text, undefined, `i-relay-receipt-${relay.id}`, { purpose: "notification", rebaseOnContextUpgrade: true }).catch((error: unknown) => this.log(`relay receipt: ${String(error)}`));
     } catch {
       // The 主控's session is gone: the relay still records what happened.
     }

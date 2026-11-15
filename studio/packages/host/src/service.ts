@@ -147,6 +147,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.config.watchClaudeAccounts();
     this.tasks.latestDelivery = (id) => this.orchestration.results(id).at(-1);
     this.tasks.ensureStructure();
+    this.relays.prepareInbox();
     this.sharedContext.watch();
     this.orchestration.prepareInbox();
     this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);

@@ -44,6 +44,26 @@ it("keeps accepted work accepted while an explicit MCP inquiry reaches an actual
   expect(service.orchestration.results(worker.taskId!).at(-1)?.state).toBe("accepted");
 });
 
+it("wakes the manager once for the actual inquiry reply and never for its successful receipt", async () => {
+  service.sessions.inbox.pause(worker.id);
+  const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
+  expect((await tool.run({ taskId: worker.taskId, text: "请回传只读原文答复", purpose: "inquiry" })).isError).not.toBe(true);
+  const relay = store.listRelays().at(-1)!;
+  await vi.waitFor(() => expect(store.getRelay(relay.id)?.state).toBe("delivered"));
+  expect(store.getItem(`i-relay-receipt-${relay.id}`)).toBeUndefined();
+  expect(service.collab.readMailFromSession(manager.id).some((m) => m.text.includes("传话已放进"))).toBe(true);
+  const managerStarts = () => servers.fakes.get("test")!.calls.filter((c) => c.method === "turn/start" && (c.params as { threadId?: string }).threadId === manager.runtimeRef);
+  expect(managerStarts().filter((c) => JSON.stringify(c.params).includes("传话已放进"))).toHaveLength(0);
+  // Native turn boundaries have whole-second precision; this new answer must follow the earlier acceptance.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await service.sessions.inbox.sendNow(worker.id, `i-relay-${relay.id}`);
+  await vi.waitFor(() => expect(managerStarts().filter((c) => JSON.stringify(c.params).includes("只读原文答复"))).toHaveLength(1));
+  await vi.waitFor(() => expect(store.getSession(manager.id)?.status).toBe("idle"));
+  expect(managerStarts().filter((c) => JSON.stringify(c.params).includes("只读原文答复"))).toHaveLength(1);
+  expect(managerStarts().filter((c) => /传话已送到|传话已放进/.test(JSON.stringify(c.params)))).toHaveLength(0);
+  expect(service.orchestration.results(worker.taskId!).at(-1)?.state).toBe("accepted");
+});
+
 it.each([undefined, "work", "reopen"])("keeps legacy and explicit %s work reopening accepted work", async (purpose) => {
   const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
   expect((await tool.run({ taskId: worker.taskId, text: "[[slow]] 继续实施", ...(purpose ? { purpose } : {}) })).isError).not.toBe(true);
@@ -133,13 +153,16 @@ it("retains the inquiry's permission boundary after a failed immediate change an
   await service.runtime.interrupt(worker.id);
 });
 
-it("migrates a legacy held relay receipt's purpose from its real producer before sending in the same context version", async () => {
+it("migrates an actionable legacy failure receipt's purpose before sending without revoking acceptance", async () => {
   const final = service.orchestration.submit(manager.id, "全部交付", "下级已验收");
   service.orchestration.reviewByUser(manager.taskId!, final.id, true, "用户验收通过");
   service.sessions.inbox.pause(manager.id);
   const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
+  const resend = vi.spyOn(service.runtime, "resend").mockRejectedValueOnce(new Error("测试发送失败"));
   await tool.run({ taskId: worker.taskId, text: "仅回答当前状态", purpose: "inquiry" });
   const relay = store.listRelays().at(-1)!;
+  await vi.waitFor(() => expect(store.getRelay(relay.id)?.state).toBe("failed"));
+  resend.mockRestore();
   const receiptId = `i-relay-receipt-${relay.id}`;
   await vi.waitFor(() => expect(store.getItem(receiptId)).toMatchObject({ delivery: "held" }));
   await vi.waitFor(() => expect(store.getSession(worker.id)?.status).toBe("idle"));
@@ -154,6 +177,35 @@ it("migrates a legacy held relay receipt's purpose from its real producer before
   expect(store.getTask(manager.taskId!)?.column).toBe("done");
   expect(rebuilt.orchestration.results(manager.taskId!).at(-1)?.state).toBe("accepted");
   await rebuilt.sessions.interrupt(manager.id);
+});
+
+it.each(["held", "unsent"] as const)("retires a legacy %s success receipt and its context replacement before Host recovery", async (delivery) => {
+  service.sessions.inbox.pause(manager.id);
+  service.sessions.inbox.pause(worker.id);
+  const relay = service.relays.send(manager.id, { taskId: worker.taskId!, text: "仅回答当前状态", purpose: "inquiry" });
+  expect(await service.relays.deliver(relay.id)).toMatchObject({ state: "delivered" });
+  const receiptId = `i-relay-receipt-${relay.id}`;
+  // Recreate old Host rows, including a replacement whose frozen text must remain intact.
+  await service.sessions.inbox.put(manager.id, "传话已送到「已完成执行」。", undefined, receiptId, { purpose: "notification", rebaseOnContextUpgrade: true });
+  const replacementId = `${receiptId}-context-old-binding`;
+  await service.sessions.inbox.put(manager.id, "旧绑定下的成功回执", undefined, replacementId, { purpose: "notification", replacesItemId: receiptId, rebaseOnContextUpgrade: true });
+  for (const id of [receiptId, replacementId]) {
+    const item = store.getItem(id)!;
+    if (item.type !== "user") throw new Error("expected receipt user row");
+    const { messagePurpose: _legacyMissing, ...legacy } = item;
+    store.replaceItem({ ...legacy, delivery });
+  }
+  // The next Host resumes the manager immediately; only the real worker message remains paused.
+  store.setKv("sessions.inbox.paused", JSON.stringify([worker.id]));
+  const rebuilt = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
+  for (const id of [receiptId, replacementId]) {
+    expect(store.getItem(id)).toMatchObject({ delivery: "expired", deliveryReason: expect.stringContaining("成功回执") });
+    await rebuilt.sessions.inbox.sendNow(manager.id, id);
+    await expect(rebuilt.sessions.resend(manager.id, id)).rejects.toThrow(/成功回执/);
+  }
+  expect(store.getItem(replacementId)).toHaveProperty("text", expect.stringContaining("旧绑定下的成功回执"));
+  expect(store.getItem(`i-relay-${relay.id}`)).toMatchObject({ delivery: "held", messagePurpose: "inquiry" });
+  expect(rebuilt.collab.readMailFromSession(manager.id).some((m) => m.text.includes("传话已放进"))).toBe(true);
 });
 
 it("answers a direct inquiry without unpausing previously held work or revoking acceptance", async () => {

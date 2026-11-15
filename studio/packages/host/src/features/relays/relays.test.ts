@@ -63,6 +63,8 @@ describe("relays (传话)", () => {
     const receipt = lastMail();
     expect(receipt).toContain("传话没能送到");
     expect(receipt).toContain("runtime transport is unavailable");
+    await until(() => !!store.getItem(`i-relay-receipt-${sent.id}`));
+    expect(store.getItem(`i-relay-receipt-${sent.id}`)).toHaveProperty("messagePurpose", "notification");
   });
 
   it("joins an automatic task start before delivering a relay instead of opening another session", async () => {
@@ -158,16 +160,18 @@ describe("relays (传话)", () => {
     expect(userTexts(first.sessionId!).at(-1)).toContain("计划改了：先做界面");
   });
 
-  it("automatically dispatches a lead's managed work without relayAuto and delivers one receipt", async () => {
+  it("dispatches managed work once and records success as mail without waking the lead", async () => {
+    const resend = vi.spyOn(service.runtime, "resend");
     const sent = service.relays.send(leadSession.id, { taskId: target.id, text: "按已定范围完成投币逻辑" });
     const [first, second] = await Promise.all([service.relays.deliver(sent.id), service.relays.deliver(sent.id)]);
     expect(first).toEqual(second);
     expect(first.state).toBe("delivered");
     expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
     expect(store.listItems(first.sessionId!).filter((i) => i.id === `i-relay-${sent.id}`)).toHaveLength(1);
-    await until(() => store.listItems(leadSession.id).some((i) => i.id === `i-relay-receipt-${sent.id}`));
     service.relays.watch();
-    expect(store.listItems(leadSession.id).filter((i) => i.id === `i-relay-receipt-${sent.id}`)).toHaveLength(1);
+    expect(service.collab.readMailFromSession(leadSession.id).filter((m) => m.text === "传话已送到「装甲车」。")).toHaveLength(1);
+    expect(store.getItem(`i-relay-receipt-${sent.id}`)).toBeUndefined();
+    expect(resend.mock.calls.filter(([sessionId, itemId]) => sessionId === leadSession.id && itemId === `i-relay-receipt-${sent.id}`)).toHaveLength(0);
   });
 
   it("keeps topic-only proposals manual and does not turn an unassigned peer into a managed task", async () => {
