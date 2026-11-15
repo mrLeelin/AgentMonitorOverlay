@@ -40,6 +40,19 @@ const task = (title: string, lead = false, managerTaskId: string | null = null) 
 const session = (owner: Task | null) => store.createSession({ taskId: owner?.id ?? null, topicId: owner ? null : topic.id, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId: workspace.id, title: "", status: "idle", writer: "workbench", runtimeRef: null });
 
 describe("stored management ownership", () => {
+  it("lets an executor recover the complete multiline contract beyond its role-card preview", async () => {
+    const owner = task("完整契约"), worker = session(owner);
+    const description = "接口契约\n" + "金额必须是安全整数。".repeat(120) + "\n尾部要求：200元九折支付188元。";
+    store.updateTask(owner.id, { description });
+    const tool = amoToolsFor(service, { sessionId: worker.id }).find((t) => t.name === "task_get")!;
+    const reply = await tool.run({ taskId: owner.id }) as { content: Array<{ text: string }> };
+    expect(JSON.parse(reply.content.at(-1)!.text).description).toBe(description);
+    const card = roleCardFor(service, { taskId: owner.id, topicId: null, workspaceId: workspace.id, kind: "main", runtime: "codex" });
+    expect(card).not.toContain("尾部要求：200元九折支付188元。");
+    expect(card).toContain("task_get");
+    expect(card).toContain("description");
+  });
+
   it("counts the unique multi-level tree without treating a sibling or old unassigned task as owned", () => {
     const top = task("总主控", true);
     const sub = task("下级主控", true, top.id);

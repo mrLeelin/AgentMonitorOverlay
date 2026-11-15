@@ -124,13 +124,14 @@
       "label": "传话（主控给别的任务的会话说话）",
       "aliases": ["传话", "RelaysFeature", "task_message", "relayAuto"],
       "category": "host",
-      "purpose": "主控（或专题自己的会话）让 Studio 在专题里另一个任务的会话里说一句：人在主窗口或 Focus 确认（任务设了不用确认就直接送），送进那个任务最新的主会话，结果用邮件告诉主控。不是 AMO 中转（那个是 studio.teamRelay）。",
+        "purpose": "主控向其管理任务传话会自动送入持久收件箱，专题会话仍需人确认（或任务 relayAuto）。复用任务最新主会话，等待在途创建且不同传话共用首创建；结果用邮件和回执告诉主控。不是 AMO 中转（studio.teamRelay）。",
       "anchors": [
-        { "label": "RelaysFeature", "path": "studio/packages/host/src/features/relays/service.ts", "anchor": "export class RelaysFeature" },
+          { "label": "RelaysFeature", "path": "studio/packages/host/src/features/relays/service.ts", "anchor": "export class RelaysFeature" },
+          { "label": "等待并复用主会话", "path": "studio/packages/host/src/features/tasks/service.ts", "anchor": "ensureMainSession(taskId:" },
         { "label": "界面", "path": "studio/packages/ui/src/relays/Relays.tsx" }
       ],
       "related": ["studio.topics", "studio.collab", "studio.sessions"],
-      "next": ["studio/plans/done/stage-16.md"]
+        "next": ["studio/plans/done/stage-16.md", "studio/plans/done/session-start-contract.md"]
     },
     {
       "id": "studio.collab",

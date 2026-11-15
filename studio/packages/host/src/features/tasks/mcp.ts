@@ -34,7 +34,7 @@ export function tasksTools({ service, caller, model, ownTask, inOwnTopic }: Tool
     {
       name: "task_get",
       title: "任务详情",
-      description: "One task: its latest handoff summary, column, status, project, topic, the tasks it depends on and that depend on it, its canvas group, recent progress notes and its sessions (no transcripts).",
+      description: "One task: its complete untruncated description (including multiline execution requirements), latest handoff summary, column, status, project, topic, dependencies, canvas group, recent progress notes and sessions (no transcripts). Read description here when the role-card preview is incomplete; do not ask the manager to resend an already stored contract.",
       inputSchema: { taskId: z.string() },
       readOnly: true,
       autoApprove: true,

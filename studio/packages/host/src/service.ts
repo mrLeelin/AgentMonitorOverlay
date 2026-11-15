@@ -145,9 +145,11 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));
     this.config.watchClaudeAccounts();
+    this.tasks.latestDelivery = (id) => this.orchestration.results(id).at(-1);
     this.tasks.ensureStructure();
     this.sharedContext.watch();
     this.orchestration.prepareInbox();
+    this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);
     this.sessions.watchReports();
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();

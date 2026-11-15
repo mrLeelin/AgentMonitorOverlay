@@ -65,6 +65,67 @@ describe("relays (传话)", () => {
     expect(receipt).toContain("runtime transport is unavailable");
   });
 
+  it("joins an automatic task start before delivering a relay instead of opening another session", async () => {
+    const start = service.runtime.startSession.bind(service.runtime);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const spy = vi.spyOn(service.runtime, "startSession").mockImplementationOnce(async (input) => { entered(); await gate; return start(input); });
+    const starting = service.tasks.addSession(target.id, { profileId: "p-ds", text: "完整任务契约与前置证据" });
+    await ready;
+    const relay = service.relays.send(leadSession.id, { taskId: target.id, text: "补充要求" });
+    const delivering = service.relays.deliver(relay.id);
+    await Promise.resolve();
+    release();
+    const [worker, delivered] = await Promise.all([starting, delivering]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
+    expect(delivered.sessionId).toBe(worker.id);
+    expect(userTexts(worker.id).join("\n")).toContain("完整任务契约与前置证据");
+    expect(store.getItem(`i-relay-${relay.id}`)).toMatchObject({ sessionId: worker.id, text: expect.stringContaining("补充要求") });
+  });
+
+  it("shares a first conversation across simultaneous distinct relays", async () => {
+    const a = service.relays.send(leadSession.id, { taskId: target.id, text: "要求甲" });
+    const b = service.relays.send(leadSession.id, { taskId: target.id, text: "要求乙" });
+    const [first, second] = await Promise.all([service.relays.deliver(a.id), service.relays.deliver(b.id)]);
+    expect(first.sessionId).toBe(second.sessionId);
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
+    expect(store.getItem(`i-relay-${a.id}`)).toMatchObject({ sessionId: first.sessionId });
+    expect(store.getItem(`i-relay-${b.id}`)).toMatchObject({ sessionId: first.sessionId });
+  });
+
+  it("allows a fresh relay after the shared first-session creation fails", async () => {
+    vi.spyOn(service.runtime, "startSession").mockRejectedValueOnce(new Error("启动失败"));
+    const a = service.relays.send(leadSession.id, { taskId: target.id, text: "要求甲" });
+    const b = service.relays.send(leadSession.id, { taskId: target.id, text: "要求乙" });
+    const failed = await Promise.all([service.relays.deliver(a.id), service.relays.deliver(b.id)]);
+    expect(failed.every((r) => r.state === "failed")).toBe(true);
+    expect(service.tasks.hasStartingSession(target.id)).toBe(false);
+    const retry = await service.relays.deliver(service.relays.send(leadSession.id, { taskId: target.id, text: "重试" }).id);
+    expect(retry.state).toBe("delivered");
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
+  });
+
+  it("rechecks management after waiting for an in-flight session", async () => {
+    const start = service.runtime.startSession.bind(service.runtime);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    vi.spyOn(service.runtime, "startSession").mockImplementationOnce(async (input) => { entered(); await gate; return start(input); });
+    const starting = service.tasks.addSession(target.id, { profileId: "p-ds" });
+    await ready;
+    const relay = service.relays.send(leadSession.id, { taskId: target.id, text: "旧主控要求" });
+    const delivering = service.relays.deliver(relay.id);
+    const other = store.createTask({ title: "新主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    service.tasks.updateTask(target.id, { managerTaskId: other.id });
+    release();
+    await starting;
+    expect(await delivering).toMatchObject({ state: "failed", error: expect.stringContaining("归属已变更") });
+    expect(store.getItem(`i-relay-${relay.id}`)).toBeUndefined();
+    expect(store.listSessions({ taskId: target.id })).toHaveLength(1);
+  });
+
   it("takes a relay only from a 主控, for a task of its topic", () => {
     expect(() => service.relays.send(workerSession.id, { taskId: target.id, text: "x" })).toThrow(/只有主控/);
     const outside = store.listTasks().find((t) => t.title === "别处")!;

@@ -46,6 +46,14 @@ const status = (id: string) => store.getSession(id)?.status;
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("放进待办 (2026-11-05)", () => {
+  it("moves a waiting task into doing when its first session starts with work", async () => {
+    const { task } = await service.tasks.createTask({ workspaceId: alpha.id, title: "待办主控", lead: true });
+    const session = await service.tasks.addSession(task.id, { profileId: "p-ds", text: "[[slow]]" });
+    expect(column(task)).toBe("doing");
+    await service.sessions.interrupt(session.id);
+    await until(() => column(task) === "review");
+  });
+
   it("keeps the first sentence on the task (the title from its first line) until it is cleared", async () => {
     const { task, session } = await service.tasks.createTask({ workspaceId: alpha.id, firstMessage: "  改一下掉落表\n按新的稀有度分档  " });
     expect(session).toBeNull();

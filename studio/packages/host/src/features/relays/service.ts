@@ -1,4 +1,4 @@
-import { RELAY_TEXT_MAX, type Id, type Relay, type Session } from "@amo-studio/protocol";
+import { RELAY_TEXT_MAX, type Id, type Relay } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
@@ -82,19 +82,11 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     try {
       if (!target || target.archivedAt) throw new HostError("bad_request", "the task is gone or archived");
       if (!managesTask(this.host, relay.fromSessionId, target.id)) throw new HostError("bad_request", "任务归属已变更，原主控不再管理此任务。");
-      const session = latestMain(this.store.listSessions({ taskId: target.id }));
-      let sessionId: Id;
-      let held = false;
-      if (session) {
-        // The session's inbox (2026-11-04): it goes in once the session's turn is over, not into the running one.
-        held = !(await this.f.sessions.inbox.put(session.id, message, relay.fromSessionId, `i-relay-${relay.id}`, { purpose: relay.purpose ?? "work" })).delivered;
-        sessionId = session.id;
-      } else {
-        const workspace = this.requireWorkspace(target.workspaceId);
-        const profileId = from?.profileId ?? this.profiles[0]!.id;
-        sessionId = (await this.f.tasks.startSession({ taskId: target.id, topicId: null }, workspace, { profileId })).id;
-        held = !(await this.f.sessions.inbox.put(sessionId, message, relay.fromSessionId, `i-relay-${relay.id}`, { purpose: relay.purpose ?? "work" })).delivered;
-      }
+      // A dependency may be creating its session while no row exists yet; distinct relays also share that start.
+      const session = await this.f.tasks.ensureMainSession(target.id, from?.profileId ?? this.profiles[0]!.id);
+      if (!managesTask(this.host, relay.fromSessionId, target.id)) throw new HostError("bad_request", "任务归属已变更，原主控不再管理此任务。");
+      const sessionId = session.id;
+      const held = !(await this.f.sessions.inbox.put(sessionId, message, relay.fromSessionId, `i-relay-${relay.id}`, { purpose: relay.purpose ?? "work" })).delivered;
       const row = this.store.getItem(`i-relay-${relay.id}`);
       if (row?.type === "user" && row.delivery === "unsent") throw new HostError("conflict", row.deliveryReason || "消息运行时发送失败，请在会话中查看原因并重试。");
       if (row?.type === "user" && row.delivery === "expired") {
@@ -130,11 +122,4 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       // The 主控's session is gone: the relay still records what happened.
     }
   }
-}
-
-/** The task's main session it was last working in (not archived, not handed to a terminal). */
-function latestMain(sessions: readonly Session[]): Session | undefined {
-  return sessions
-    .filter((s) => s.kind === "main" && !s.archivedAt && s.writer !== "archived")
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
 }

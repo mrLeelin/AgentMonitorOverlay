@@ -38,6 +38,154 @@ function requireNextRootVersion(sessionId: string, taskId: string): void {
 }
 
 describe("managed delivery workflow", () => {
+  it.each([false, true])("does not duplicate a same-turn routed decision with a completed status report (answered=%s)", async (answered) => {
+    const send = delivery(), top = task("主控", true), child = task("规则确认", false, top.id);
+    const manager = session(top), worker = session(child), at = new Date(Date.now() - 1000).toISOString();
+    store.appendItem({ id: "question-turn", sessionId: worker.id, type: "turn", turnId: "rt", state: "completed", startedAt: at, endedAt: new Date().toISOString(), createdAt: at });
+    const question = service.collab.requestDecisionFromSession(worker.id, "按折后金额判断？", ["是", "否"]);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    if (answered) service.orchestration.answerDecision(manager.id, question.id, "是");
+    send.mockClear();
+    service.publish({ type: "session.upserted", session: store.getSession(worker.id)! });
+    await Promise.resolve();
+    expect(send.mock.calls.filter((c) => c[0] === manager.id)).toHaveLength(0);
+    const notices = JSON.parse(store.getKv("orchestration.outbox")!.value);
+    store.setKv("orchestration.outbox", JSON.stringify([...notices, { id: "old-question-status", sourceTaskId: child.id, targetTaskId: top.id, targetSessionId: manager.id, direction: "up", turnId: "question-turn", text: "旧版普通状态" }]));
+    expect(() => service.orchestration.validateMessage({ id: "old-question-status", sessionId: manager.id })).toThrow(/管理通知/);
+  });
+
+  it.each(["failed", "interrupted"] as const)("still reports a %s worker turn after its business question", async (state) => {
+    const send = delivery(), top = task("主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child), at = new Date(Date.now() - 1000).toISOString();
+    store.appendItem({ id: "failed-question-turn", sessionId: worker.id, type: "turn", turnId: "rt", state, startedAt: at, endedAt: new Date().toISOString(), createdAt: at });
+    service.collab.requestDecisionFromSession(worker.id, "当前问题", []);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    send.mockClear();
+    service.publish({ type: "session.upserted", session: store.updateSession(worker.id, { status: state === "failed" ? "error" : "interrupted" }) });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining(state), undefined, "i-failed-question-turn-manager", expect.objectContaining({ purpose: "notification" })));
+  });
+
+  it("still reports a later ordinary worker turn after an older business question", async () => {
+    const send = delivery(), top = task("主控", true), child = task("执行", false, top.id);
+    const manager = session(top), worker = session(child);
+    const question = service.collab.requestDecisionFromSession(worker.id, "旧问题", []);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    service.orchestration.answerDecision(manager.id, question.id, "已决定");
+    send.mockClear();
+    const at = new Date(Date.now() + 1000).toISOString();
+    store.appendItem({ id: "later-turn", sessionId: worker.id, type: "turn", turnId: "rt-later", state: "completed", startedAt: at, endedAt: at, createdAt: at });
+    service.publish({ type: "session.upserted", session: store.getSession(worker.id)! });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining("本轮状态"), undefined, "i-later-turn-manager", expect.objectContaining({ purpose: "notification" })));
+  });
+
+  it("does not wake an upstream lead for ordinary coordinator progress across multiple turns", async () => {
+    const send = delivery(), top = task("总主控", true), middle = task("开发主控", true, top.id);
+    session(top); const coordinator = session(middle);
+    for (let index = 0; index < 3; index++) {
+      const at = new Date(Date.now() + index * 1000).toISOString();
+      store.appendItem({ id: `progress-turn-${index}`, sessionId: coordinator.id, type: "turn", turnId: `rt-${index}`, state: "completed", startedAt: at, endedAt: at, createdAt: at });
+      store.appendItem({ id: `progress-reply-${index}`, sessionId: coordinator.id, type: "agent", streaming: false, markdown: "已派工，等待下级正式交付。", createdAt: at });
+      service.publish({ type: "session.upserted", session: store.getSession(coordinator.id)! });
+      await Promise.resolve();
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(store.findItems(coordinator.id, "agent", {})).toHaveLength(3);
+    const result = service.orchestration.submit(coordinator.id, "开发汇总", "验证通过");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(result.id), undefined, expect.any(String), expect.objectContaining({ purpose: "notification" }));
+  });
+
+  it.each(["failed", "interrupted", "completed"] as const)("still reports %s worker turns and coordinator failures", async (state) => {
+    const send = delivery(), top = task("总主控", true), child = task("下级", state !== "completed", top.id);
+    const manager = session(top), worker = session(child), at = new Date().toISOString();
+    store.appendItem({ id: "report-turn", sessionId: worker.id, type: "turn", turnId: "rt", state, startedAt: at, endedAt: at, createdAt: at, ...(state === "failed" ? { error: "执行失败" } : {}) });
+    service.publish({ type: "session.upserted", session: store.updateSession(worker.id, { status: state === "failed" ? "error" : state === "interrupted" ? "interrupted" : "idle" }) });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith(manager.id, expect.stringContaining(state), undefined, "i-report-turn-manager", expect.objectContaining({ purpose: "notification" }));
+  });
+
+  it("revokes old held coordinator progress on Host reconstruction without discarding deliveries", async () => {
+    const top = task("总主控", true), middle = task("开发主控", true, top.id);
+    const manager = session(top), coordinator = session(middle), at = new Date().toISOString();
+    store.updateSession(manager.id, { status: "running" });
+    const turn = store.appendItem({ id: "old-progress", sessionId: coordinator.id, type: "turn", turnId: "rt", state: "completed", startedAt: at, endedAt: at, createdAt: at });
+    store.setKv("orchestration.outbox", JSON.stringify([{ id: "old-notice", sourceTaskId: middle.id, targetTaskId: top.id, direction: "up", turnId: turn.id, text: "等待下级", sent: true, targetSessionId: manager.id }]));
+    await service.sessions.inbox.put(manager.id, "等待下级", undefined, "old-notice");
+    const restarted = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
+    await Promise.resolve();
+    expect(restarted.sessions.inbox.held(manager.id)).toHaveLength(0);
+    expect(() => restarted.sessions.inbox.checkSource(store.getItem("old-notice")!)).toThrow(/管理通知/);
+    const result = restarted.orchestration.submit(coordinator.id, "汇总", "验证通过");
+    await vi.waitFor(() => expect(restarted.sessions.inbox.held(manager.id)).toHaveLength(1));
+    expect(restarted.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(result.id) });
+  });
+
+  it("reads only the latest pending deliveries while preserving full history and stale accepted evidence", () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), child = task("执行", false, top.id), worker = session(child);
+    const first = service.orchestration.submit(worker.id, "初稿", "待修订");
+    service.orchestration.review(manager.id, first.id, false, "补充验证");
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([first.id]);
+    const second = service.orchestration.submit(worker.id, "修订", "验证通过");
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([second.id]);
+    service.orchestration.review(manager.id, second.id, true, "通过");
+    expect(service.orchestration.workflow(top.id, "pending").results).toEqual([]);
+    expect(service.orchestration.workflow(top.id).results.map((r) => r.id)).toEqual([first.id, second.id]);
+    service.sharedContext.setPrerequisites(child.id, ["changed-prerequisite"]);
+    expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([second.id]);
+    store.updateTask(child.id, { archivedAt: new Date().toISOString() });
+    expect(service.orchestration.workflow(top.id, "pending").results).toEqual([]);
+  });
+
+  it("adds later deliveries to a held batch and retains it across a Host reconstruction", async () => {
+    const top = task("总主控", true), manager = session(top);
+    store.updateSession(manager.id, { status: "running" });
+    const first = service.orchestration.submit(session(task("第一项", false, top.id)).id, "完成一", "证据一");
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)).toHaveLength(1));
+    const original = service.sessions.inbox.held(manager.id)[0]!;
+    const second = service.orchestration.submit(session(task("第二项", false, top.id)).id, "完成二", "证据二");
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(second.id) }));
+    expect(service.sessions.inbox.held(manager.id)).toHaveLength(1);
+    expect(service.sessions.inbox.held(manager.id)[0]).toMatchObject({ text: expect.stringContaining(first.id) });
+    expect(service.sessions.inbox.held(manager.id)[0]).toMatchObject({ replacesItemId: original.id });
+    expect(store.getItem(original.id)).toMatchObject({ delivery: "expired", text: original.type === "user" ? original.text : "" });
+    const restored = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
+    await Promise.resolve();
+    expect(restored.sessions.inbox.held(manager.id)).toHaveLength(1);
+  });
+
+  it("coalesces simultaneous deliveries and rejects the notification once every result is handled", async () => {
+    const top = task("总主控", true), manager = session(top);
+    store.updateSession(manager.id, { status: "running" });
+    const workers = Array.from({ length: 10 }, (_, index) => session(task(`执行${index}`, false, top.id)));
+    const results = workers.map((worker) => service.orchestration.submit(worker.id, "完成", "验证通过"));
+    await vi.waitFor(() => expect(service.sessions.inbox.held(manager.id)).toHaveLength(1));
+    const [message] = service.sessions.inbox.held(manager.id);
+    expect(message).toMatchObject({ text: expect.stringContaining("10 个任务") });
+    for (const result of results.slice(0, 9)) service.orchestration.review(manager.id, result.id, true, "通过");
+    expect(() => service.sessions.inbox.checkSource(store.getItem(message!.id)!)).not.toThrow();
+    service.orchestration.review(manager.id, results[9]!.id, true, "通过");
+    expect(() => service.sessions.inbox.checkSource(store.getItem(message!.id)!)).toThrow(/管理通知/);
+    service.orchestration.submit(manager.id, "最终汇总", "全部检查通过");
+    service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "idle" }) });
+    await service.sessions.inbox.flush(manager.id);
+    expect(service.orchestration.results(top.id).at(-1)?.state).toBe("submitted");
+    expect(store.getTask(top.id)?.column).toBe("review");
+  });
+
+  it("pages a long reply for its current direct manager only", () => {
+    const top = task("总主控", true), other = task("其他主控", true), child = task("执行", false, top.id);
+    const manager = session(top), stranger = session(other), worker = session(child);
+    store.appendItem({ id: "long-reply", sessionId: worker.id, type: "agent", streaming: false, markdown: "甲".repeat(6000) + "重要尾部", createdAt: new Date().toISOString() });
+    const first = service.orchestration.readReply(manager.id, "long-reply");
+    expect(first.text).toHaveLength(6000);
+    expect(first.nextOffset).toBe(6000);
+    expect(service.orchestration.readReply(manager.id, "long-reply", first.nextOffset!).text).toBe("重要尾部");
+    expect(() => service.orchestration.readReply(stranger.id, "long-reply")).toThrow(/直属任务/);
+    service.tasks.updateTask(child.id, { managerTaskId: other.id });
+    expect(() => service.orchestration.readReply(manager.id, "long-reply")).toThrow(/直属任务/);
+  });
+
   it("returns work for correction, accepts it at each level and only then completes the root", async () => {
     const send = delivery();
     const top = task("游戏总主控", true), audio = task("音效负责人", true, top.id), coin = task("投币音效", false, audio.id);

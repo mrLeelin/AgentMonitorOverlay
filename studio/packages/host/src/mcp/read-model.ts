@@ -166,6 +166,7 @@ export class ReadModel {
       id: t.id,
       title: t.title || "未命名任务",
       lead: !!t.lead,
+      description: t.description ?? "",
       managerTaskId: t.managerTaskId ?? null,
       manager: t.managerTaskId ? { id: t.managerTaskId, title: title(t.managerTaskId) } : null,
       management: this.service.tasks.management(t.id),
