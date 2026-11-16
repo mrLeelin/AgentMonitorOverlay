@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { Session, StateSnapshot, Task, TaskResult, TaskWorkflow, Workspace } from "@amo-studio/protocol";
+import type { Session, SessionItem, StateSnapshot, Task, TaskResult, TaskWorkflow, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 let studio: Studio | undefined;
@@ -63,6 +63,8 @@ test("managed domain leads still return to their direct manager and expose no hu
   const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("domain-review") });
   const root = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "游戏总主控", workspaceId: ws.id, lead: true, firstSession: { profileId: "codex-mock", text: "等待分工成果。" } });
   const child = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "音效二级主控", workspaceId: ws.id, lead: true, managerTaskId: root.task.id, firstSession: { profileId: "codex-mock", text: "登记已验证的音效成果。" } });
+  // The turn/start response can precede turn/started; initial idle alone does not prove this turn finished.
+  await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${child.session.id}/items`)).filter((item) => item.type === "turn").at(-1)?.state, { timeout: 30_000 }).toBe("completed");
   await settled(child.task.id);
   const submitted = await studio.api<TaskResult>("POST", `/api/tasks/${child.task.id}/workflow/submit`, { sessionId: child.session.id, summary: "音效完成", verification: "触发和播放次数检查通过。" });
   await page.getByTestId("task-card").filter({ hasText: root.task.title }).click();

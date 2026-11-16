@@ -1,13 +1,11 @@
 import { join } from "node:path";
 import { newCanvasRelationIssues, canvasRelationMessage, canvasRelationDiagnostic } from "@amo-studio/protocol";
 import type { CanvasDoc, CanvasNode, Id, Task } from "@amo-studio/protocol";
-import { addDependency, addGroupAuto, CANVAS_COLORS, CanvasLayoutError, canvasOutline, emptyCanvas, isCanvasColor, pruneLinks, isCommon, ITEM_CARD, LAYOUT, placeTask, refsToCard, removeTask, unplaceTask, validateCanvas } from "@amo-studio/protocol";
+import { addDependency, addGroupAuto, CANVAS_COLORS, CanvasLayoutError, canvasNodeExtent as nodeExtent, canvasOutline, emptyCanvas, isCanvasColor, pruneLinks, isCommon, LAYOUT, placeTask, refsToCard, removeTask, unplaceTask, validateCanvas } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
-
-const nodeExtent = (node: CanvasNode) => node.size ?? (node.kind === "item" ? ITEM_CARD : LAYOUT.card);
 
 function layoutTarget(doc: CanvasDoc, target: string) {
   const group = doc.groups.find((g) => g.id === target);

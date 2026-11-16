@@ -2,12 +2,16 @@ import { newCanvasRelationIssues, canvasRelationMessage } from "./canvas-relatio
 import type { CanvasDoc, CanvasGroup, CanvasItem, CanvasNode, Rect, Id } from "./entities.js";
 
 // Where things go when an agent (through the AMO MCP) changes the canvas: agents never write coordinates, Studio lays
-// out. Sizes match the workbench canvas (task card 220×66, group header 30).
+// out. Sizes match the workbench canvas (task card 220×92, group header 30).
 
-export const LAYOUT = { card: { w: 220, h: 66 }, header: 30, pad: 12, gap: 16, group: { w: 500, h: 320 }, margin: 40 } as const;
+export const LAYOUT = { card: { w: 220, h: 92 }, header: 30, pad: 12, gap: 16, group: { w: 500, h: 320 }, margin: 40 } as const;
 
 /** How much room a card takes when laying out around it: the size it was dragged to, else its kind's (2026-10-29). */
-const extent = (n: CanvasNode) => n.size ?? (n.kind === "item" ? ITEM_CARD : LAYOUT.card);
+export function canvasNodeExtent(n: CanvasNode): { w: number; h: number } {
+  const size = n.size ?? (n.kind === "item" ? ITEM_CARD : LAYOUT.card);
+  // Older saved sizes predate the model row; the UI keeps that row visible without rewriting the saved document.
+  return n.kind === "task" || n.kind === "ref" ? { w: size.w, h: Math.max(size.h, LAYOUT.card.h) } : size;
+}
 
 const right = (r: Rect) => r.x + r.w;
 const bottom = (r: Rect) => r.y + r.h;
@@ -16,7 +20,7 @@ export class CanvasLayoutError extends Error {}
 
 /** A new group to the right of everything on the canvas, top-aligned with the first group (or at the origin). */
 export function placeNewGroup(doc: CanvasDoc): Rect {
-  const rects = [...doc.groups.map((g) => g.rect), ...doc.nodes.map((n) => ({ x: n.pos.x, y: n.pos.y, ...extent(n) }))];
+  const rects = [...doc.groups.map((g) => g.rect), ...doc.nodes.map((n) => ({ x: n.pos.x, y: n.pos.y, ...canvasNodeExtent(n) }))];
   const x = rects.length ? Math.max(...rects.map(right)) + LAYOUT.margin : LAYOUT.margin;
   const y = doc.groups.length ? Math.min(...doc.groups.map((g) => g.rect.y)) : LAYOUT.margin + 24;
   return { x, y, w: LAYOUT.group.w, h: LAYOUT.group.h };
@@ -42,7 +46,7 @@ export function placeTask(doc: CanvasDoc, taskId: Id, groupId: Id | null, newNod
   const existing = doc.nodes.find((n) => n.kind === "task" && n.taskId === taskId);
   const others = doc.nodes.filter((n) => n !== existing);
   if (groupId === null) {
-    const bottoms = [...doc.groups.map((g) => bottom(g.rect)), ...others.map((n) => n.pos.y + extent(n).h)];
+    const bottoms = [...doc.groups.map((g) => bottom(g.rect)), ...others.map((n) => n.pos.y + canvasNodeExtent(n).h)];
     const pos = { x: LAYOUT.margin, y: (bottoms.length ? Math.max(...bottoms) : 0) + LAYOUT.margin };
     const node = existing ? { ...existing, groupId: null, pos } : { id: newNodeId, kind: "task" as const, taskId, groupId: null, pos };
     return { ...doc, nodes: [...others, node] };
@@ -132,7 +136,7 @@ export function addItems(doc: CanvasDoc, group: { id: Id; title?: string } | nul
     h: Math.ceil(count / ITEM_COLS) * (ITEM_CARD.h + LAYOUT.gap) - LAYOUT.gap,
   });
   if (!group) {
-    const bottoms = [...doc.groups.map((g) => bottom(g.rect)), ...doc.nodes.map((n) => n.pos.y + extent(n).h)];
+    const bottoms = [...doc.groups.map((g) => bottom(g.rect)), ...doc.nodes.map((n) => n.pos.y + canvasNodeExtent(n).h)];
     const origin = { x: LAYOUT.margin, y: (bottoms.length ? Math.max(...bottoms) : 0) + LAYOUT.margin };
     const placed = items.map((it, i) => make(it, null, itemSlot(origin, i)));
     return { doc: { ...doc, nodes: [...doc.nodes, ...placed] }, items: placed };
@@ -149,7 +153,7 @@ export function addItems(doc: CanvasDoc, group: { id: Id; title?: string } | nul
   }
   // After what the group holds: a new row under its lowest card.
   const members = doc.nodes.filter((n) => n.groupId === existing.id);
-  const lowest = members.length ? Math.max(...members.map((n) => n.pos.y + extent(n).h)) + LAYOUT.gap : existing.rect.y + LAYOUT.header + LAYOUT.pad;
+  const lowest = members.length ? Math.max(...members.map((n) => n.pos.y + canvasNodeExtent(n).h)) + LAYOUT.gap : existing.rect.y + LAYOUT.header + LAYOUT.pad;
   const origin = { x: existing.rect.x + LAYOUT.pad, y: lowest };
   const placed = items.map((it, i) => make(it, existing.id, itemSlot(origin, i)));
   const size = span(items.length);

@@ -1,16 +1,17 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { taskWhere, type CanvasNode, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
+import { LAYOUT, taskWhere, type CanvasNode, type ModelProfile, type ProfileChoices, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { relativeTime, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
 import type { ContextHint } from "./useContextHints.js";
 import { TaskRunner } from "../board/TaskRunner.js";
+import { TaskModels } from "../lib/TaskModels.js";
 
 // The canvas's cards (stage 16 split out of CanvasPage.tsx): a task of the topic, a reference to another topic's task,
 // and a note. A task's description shows on its card (two lines); a colour mark is its outline (data-color).
 
-export const CARD_W = 220;
-export const CARD_H = 66;
+export const CARD_W = LAYOUT.card.w;
+export const CARD_H = LAYOUT.card.h;
 /** A card with a description: two more lines. */
-export const CARD_H_DESC = 102;
+export const CARD_H_DESC = CARD_H + 36;
 export const NOTE_W = 180;
 export const NOTE_H = 90;
 
@@ -19,12 +20,12 @@ export const managementHeight = (task: Task | undefined) => (task?.managerTaskId
 export const cardHeight = (task: Task | undefined) => (task?.description ? CARD_H_DESC : CARD_H) + managementHeight(task);
 
 /**
- * The smallest a card may be dragged to (2026-10-29): a task or reference card keeps its title and status line (the
+ * The smallest a card may be dragged to: a task or reference card keeps its title, status and model (the
  * description gives way first), a note at least two lines.
  */
 export const CARD_MIN = { w: 140, h: CARD_H };
 export const NOTE_MIN = { w: 120, h: 56 };
-/** A description line on a task or reference card; the card's first CARD_H are its title and status line. */
+/** A description line on a task or reference card; CARD_H reserves its title, status and model. */
 const DESC_LINE = 17;
 /** A note's line when it has a size (its text is cut to the lines that fit, with an ellipsis). */
 const NOTE_LINE = 18;
@@ -42,7 +43,12 @@ interface CardEvents {
   onContextMenu(e: ReactMouseEvent): void;
 }
 
-export function TaskCard({ node, task, sessions, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager, contextHint }: CardEvents & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void; contextHint?: ContextHint }) {
+interface CardModels {
+  profiles: readonly ModelProfile[];
+  choices: ReadonlyMap<string, ProfileChoices | null>;
+}
+
+export function TaskCard({ node, task, sessions, profiles, choices, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager, contextHint }: CardEvents & CardModels & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void; contextHint?: ContextHint }) {
   const own = taskSessions(task, sessions);
   const status = taskStatus(own);
   const look = status ? SESSION_LOOK[status] : null;
@@ -94,6 +100,7 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
           </>
         )}
       </span>
+      <TaskModels sessions={own} profiles={profiles} choices={task.remote ? new Map() : choices} />
       {task.managerTaskId && <button type="button" className="link-btn canvas-manager" title="定位直属主控" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onLocateManager?.(); }}>直属：{manager?.title || "主控不可用"}</button>}
       {task.lead && management && <span className="canvas-management-summary" data-testid="canvas-management-summary">直属主控 {management.directLeadCount} · 下辖执行 {management.workerCount}<br />待确认 {management.pending} 项</span>}
       {task.description && lines > 0 && (
@@ -106,14 +113,14 @@ export function TaskCard({ node, task, sessions, workspaces, selected, flag, lin
   );
 }
 
-export function RefCard({ node, target, topics, sessions, workspaces, selected, flag, handles, onOpen, onMouseDown, onContextMenu }: CardEvents & { node: CanvasNode; target: Task | undefined; topics: readonly Topic[]; sessions: readonly Session[]; workspaces: readonly Workspace[]; onOpen(): void }) {
+export function RefCard({ node, target, topics, sessions, profiles, choices, workspaces, selected, flag, handles, onOpen, onMouseDown, onContextMenu }: CardEvents & CardModels & { node: CanvasNode; target: Task | undefined; topics: readonly Topic[]; sessions: readonly Session[]; workspaces: readonly Workspace[]; onOpen(): void }) {
   const gone = !target ? "任务不存在" : target.archivedAt ? "任务已归档" : "";
   const own = target && !gone ? taskSessions(target, sessions) : [];
   const refStatus = target && !gone ? taskStatus(own) : null;
   const refLook = refStatus ? SESSION_LOOK[refStatus] : null;
   const home = target ? `${topics.find((t) => t.id === target.topicId)?.title ?? "不在专题里"} / ${taskWhere(target, workspaces)}` : "";
   const described = !gone && target?.description;
-  const size = node.size ?? { w: CARD_W, h: described ? CARD_H_DESC : CARD_H };
+  const size = { w: node.size?.w ?? CARD_W, h: Math.max(node.size?.h ?? (described ? CARD_H_DESC : CARD_H), CARD_H) };
   const lines = node.size ? descLines(size.h) : 2;
   return (
     <div
@@ -143,6 +150,7 @@ export function RefCard({ node, target, topics, sessions, workspaces, selected, 
         {refStatus === "running" && <TaskRunner sessions={own} />}
         <span className="ref-home">{gone ? "可以删掉这张卡片" : `· ${home}`}</span>
       </span>
+      {!gone && <TaskModels sessions={own} profiles={profiles} choices={target?.remote ? new Map() : choices} />}
       {described && lines > 0 && (
         <span className="canvas-card-desc" title={target.description} style={lines !== 2 ? { WebkitLineClamp: lines } : undefined}>
           {target.description}

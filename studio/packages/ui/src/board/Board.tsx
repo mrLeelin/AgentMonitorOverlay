@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type MouseEvent } from "react";
-import { TASK_COLUMNS, taskProject, type RemoteState, type Session, type Task, type TaskColumn, type Topic, type Workspace } from "@amo-studio/protocol";
+import { TASK_COLUMNS, taskProject, type ModelProfile, type ProfileChoices, type RemoteState, type Session, type Task, type TaskColumn, type Topic, type Workspace } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { copyStatus, grantsOf, useRemote, type CopyStatus } from "../remote/remote.js";
 import { takenText, teamTaken, teamWaits, useTeamThreads } from "../teamrelay/TeamRelay.js";
@@ -12,6 +12,9 @@ import { dutyOfTask, useDuty } from "../duty/duty.js";
 import { useBoardSelection } from "./useBoardSelection.js";
 import { useReviewUnseen } from "./reviewSeen.js";
 import { TaskRunner } from "./TaskRunner.js";
+import { useChoicesFor } from "../lib/choices.js";
+import { taskModelSessions } from "../lib/task-models.js";
+import { TaskModels } from "../lib/TaskModels.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -45,6 +48,7 @@ interface BoardProps {
   sessions: readonly Session[];
   workspaces: readonly Workspace[];
   topics: readonly Topic[];
+  profiles: readonly ModelProfile[];
   scope: Scope;
   onOpen(task: Task): void;
   onNew?(): void;
@@ -58,14 +62,15 @@ interface BoardProps {
   /** 归档已完成: 归档 at the right of the 完成 column's head archives its cards, the one on a topic group's head that group's (2026-10-28; a right-click menu before). */
   onArchive?(tasks: readonly Task[]): void;
   /** 远程 (step 2): where copies of remote tasks run and whether they can be reached; what this computer granted. */
-  link?: HostLink;
+  link: HostLink;
 }
 
 /** Four columns; the person moves cards (drag a card onto another column), agents never do. Cards carry no buttons. */
-export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
+export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
   const visible = tasks.filter((t) => inScope(t, scope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const choices = useChoicesFor(link, visible.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
   const [dragging, setDragging] = useState<readonly Task[]>([]);
   const [over, setOver] = useState<TaskColumn | null>(null);
   const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? visible.filter((t) => !t.remote).map((t) => t.id) : []);
@@ -82,6 +87,8 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onNe
       key={task.id}
       task={task}
       sessions={taskSessions(task, sessions)}
+      profiles={profiles}
+      choices={task.remote ? new Map() : choices}
       teamWaiting={[...teamWaits(teamThreads, taskSessions(task, sessions)), ...teamTaken(teamThreads, taskSessions(task, sessions)).map(takenText)]}
       scope={scope}
       grouped={grouped}
@@ -204,6 +211,8 @@ export function Board({ tasks, sessions, workspaces, topics, scope, onOpen, onNe
 function TaskCard({
   task,
   sessions,
+  profiles,
+  choices,
   scope,
   grouped = false,
   workspaces,
@@ -222,6 +231,8 @@ function TaskCard({
   remote?: RemoteState | null;
   task: Task;
   sessions: Session[];
+  profiles: readonly ModelProfile[];
+  choices: ReadonlyMap<string, ProfileChoices | null>;
   scope: Scope;
   /** Under its topic's group head: the card does not name the topic again. */
   grouped?: boolean;
@@ -336,6 +347,7 @@ function TaskCard({
         <span className="spacer" />
         <span>{relativeTime(task.updatedAt)}</span>
       </span>
+      <TaskModels sessions={sessions} profiles={profiles} choices={choices} />
       <span className="card-footer">
         <span className="card-meta">{meta}</span>
         {unseen && <span className="card-review-unseen" data-testid="card-review-unseen" title="进入待审阅后还未打开过，点击任务查看后消失"><span className="dot" aria-hidden="true" />未查看</span>}

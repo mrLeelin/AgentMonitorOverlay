@@ -83,13 +83,15 @@
     {
       "id": "studio.tasks",
       "label": "任务和看板",
-      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "序列帧", "跑步小人", "框选", "批量拖动", "任务页", "待审阅", "未查看", "说明", "交接", "handoff", "worktree"],
+      "aliases": ["task", "TasksFeature", "看板", "board", "运行中", "奔跑动效", "序列帧", "跑步小人", "框选", "批量拖动", "任务页", "任务页签", "当前模型", "型号标签", "待审阅", "未查看", "说明", "交接", "handoff", "worktree"],
       "category": "host",
       "purpose": "任务（一个项目里的一件事，有自己的会话、看板列、说明、进度、交接）和项目、看板。Studio 从不替人建分支或合并（用户 10 月定）。",
       "anchors": [
         { "label": "TasksFeature", "path": "studio/packages/host/src/features/tasks/service.ts", "anchor": "export class TasksFeature" },
         { "label": "ProjectsFeature", "path": "studio/packages/host/src/features/projects/service.ts", "anchor": "export class ProjectsFeature" },
         { "label": "看板", "path": "studio/packages/ui/src/board/Board.tsx", "anchor": "export function Board" },
+        { "label": "看板和画布共用的型号标签", "path": "studio/packages/ui/src/lib/TaskModels.tsx", "anchor": "export function TaskModels" },
+        { "label": "任务当前主会话与型号汇总", "path": "studio/packages/ui/src/lib/task-models.ts", "anchor": "export function taskModelSessions" },
         { "label": "运行中人物（Claude 新版、其余原版）", "path": "studio/packages/ui/src/board/TaskRunner.tsx", "anchor": "export function TaskRunner" },
         { "label": "看板框选", "path": "studio/packages/ui/src/board/useBoardSelection.ts", "anchor": "export function useBoardSelection" },
         { "label": "本轮待审阅查看记录", "path": "studio/packages/ui/src/board/reviewSeen.ts", "anchor": "export function useMarkReviewSeen" },
@@ -529,11 +531,13 @@
     {
       "id": "ui.focus",
       "label": "Focus 窗口（浮窗）",
-      "aliases": ["Focus", "FocusApp", "置顶", "pin", "机器人", "bot", "等你", "太阳按钮", "主题切换"],
+      "aliases": ["Focus", "FocusApp", "置顶", "pin", "机器人", "bot", "等你", "太阳按钮", "主题切换", "任务栏", "角标", "badge"],
       "category": "ui",
       "purpose": "常驻的小浮窗：哪些会话在跑、哪些在等人（审批、提问、确认），置顶一个任务，机器人形象。点击顶栏「需要你」在工作台打开第一个待处理项；太阳按钮切换浅色／深色主题；右键打开 Focus 设置。",
       "anchors": [
         { "label": "Focus 界面", "path": "studio/packages/ui/src/focus/FocusApp.tsx", "anchor": "export function FocusApp" },
+        { "label": "任务栏待处理统计与角标图片（主窗口持续更新）", "path": "studio/packages/ui/src/focus/useTaskbarBadge.ts", "anchor": "export function useTaskbarBadge" },
+        { "label": "Windows 原生任务栏角标", "path": "studio/packages/app/src/main.ts", "anchor": "amo:taskbar-badge" },
         { "label": "进行中", "path": "studio/packages/ui/src/focus/FocusWorking.tsx" },
         { "label": "置顶", "path": "studio/packages/ui/src/focus/pins.ts" },
         { "label": "Focus 窗口", "path": "studio/packages/app/src/focus-window.ts", "anchor": "export function createFocusWindow" }

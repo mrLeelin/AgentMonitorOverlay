@@ -45,6 +45,131 @@ const column = (task: Task) => store.getTask(task.id)?.column;
 const status = (id: string) => store.getSession(id)?.status;
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+describe("主控等待下辖任务返回", () => {
+  const lead = () => store.createTask({ title: "总主控", workspaceId: alpha.id, column: "doing", lead: true });
+  const child = (manager: Task, input: Partial<Task> = {}) => store.createTask({ title: "执行任务", workspaceId: alpha.id, managerTaskId: manager.id, column: "doing", ...input });
+
+  it("keeps an idle lead doing while a child has not delivered, even if that child's turn has stopped", async () => {
+    const top = lead();
+    const worker = child(top);
+    const main = await service.tasks.addSession(top.id, { profileId: "p-ds", text: "[[slow]]" });
+    service.sessions.inbox.pause(main.id);
+    const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds", text: "已结束本轮" });
+    await until(() => column(worker) === "review");
+    await service.sessions.interrupt(main.id);
+    await pause(250);
+    expect(column(top)).toBe("doing");
+    service.orchestration.submit(execution.id, "完成实现", "测试通过");
+    await until(() => column(top) === "review");
+  });
+
+  it("waits for every descendant, reopens on return, and settles again after resubmission", async () => {
+    const top = lead();
+    const domain = child(top, { title: "二级主控", lead: true, column: "review" });
+    const worker = child(domain);
+    const main = await service.tasks.addSession(top.id, { profileId: "p-ds", text: "[[slow]]" });
+    const coordinator = await service.tasks.addSession(domain.id, { profileId: "p-ds" });
+    const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds" });
+    service.sessions.inbox.pause(main.id);
+    service.sessions.inbox.pause(coordinator.id);
+    service.sessions.inbox.pause(execution.id);
+    await service.sessions.interrupt(main.id);
+    await pause(250);
+    expect(column(top)).toBe("doing");
+    expect(column(domain)).toBe("doing");
+    const result = service.orchestration.submit(execution.id, "完成实现", "测试通过");
+    await until(() => column(domain) === "review");
+    expect(column(top)).toBe("doing");
+    service.orchestration.review(coordinator.id, result.id, true, "验收通过");
+    const summary = service.orchestration.submit(coordinator.id, "汇总完成", "下级已验收");
+    await until(() => column(top) === "review");
+    service.orchestration.review(main.id, summary.id, false, "补充验证");
+    expect(column(top)).toBe("doing");
+    await pause(250);
+    expect(column(top)).toBe("doing");
+    service.orchestration.submit(coordinator.id, "补充后汇总", "补充验证通过");
+    await until(() => column(top) === "review");
+  });
+
+  it("repairs an existing review lead on startup and blocks premature manual review", () => {
+    const top = lead();
+    child(top, { column: "todo" });
+    store.updateTask(top.id, { column: "review" });
+    new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
+    expect(column(top)).toBe("doing");
+    expect(service.tasks.updateTask(top.id, { column: "review" }).column).toBe("doing");
+  });
+
+  it("rechecks the last child's state during settling and reopens on a new pending session start", async () => {
+    const top = lead();
+    const worker = child(top);
+    service.tasks.updateTask(worker.id, { column: "done" });
+    service.tasks.updateTask(worker.id, { column: "doing" });
+    await pause(250);
+    expect(column(top)).toBe("doing");
+    service.tasks.updateTask(worker.id, { column: "done" });
+    await until(() => column(top) === "review");
+    let finish!: () => void;
+    const starting = service.tasks.trackSessionStart(worker.id, () => new Promise<void>((resolve) => { finish = resolve; }));
+    expect(column(top)).toBe("doing");
+    await pause(250);
+    expect(column(top)).toBe("doing");
+    finish();
+    await starting;
+    await until(() => column(top) === "review");
+  });
+
+  it("rechecks both managers on transfer, ignores other trees, and releases archived work", async () => {
+    const top = lead();
+    const other = lead();
+    const { task: worker } = await service.tasks.createTask({ title: "待转交任务", workspaceId: alpha.id, managerTaskId: top.id, column: "todo" });
+    service.tasks.updateTask(other.id, { column: "review" });
+    service.tasks.setManager(worker.id, other.id);
+    expect(column(other)).toBe("doing");
+    await until(() => column(top) === "review");
+    expect(column(other)).toBe("doing");
+    await service.tasks.archiveTask(worker.id);
+    await until(() => column(other) === "review");
+  });
+
+  it("preserves a lead's submitted final delivery when an accepted child starts a read-only inquiry", async () => {
+    const top = lead();
+    const worker = child(top);
+    const main = await service.tasks.addSession(top.id, { profileId: "p-ds" });
+    const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds" });
+    service.sessions.inbox.pause(main.id);
+    const delivery = service.orchestration.submit(execution.id, "实现完成", "测试通过");
+    service.orchestration.review(main.id, delivery.id, true, "验收通过");
+    const final = service.orchestration.submit(main.id, "最终汇总", "所有下级已验收");
+    const inquiry = await service.tasks.addSession(worker.id, { profileId: "p-ds", text: "[[slow]] 只读查询", purpose: "inquiry" });
+    const now = new Date().toISOString();
+    const background = store.appendItem({ id: "readonly-background", sessionId: inquiry.id, type: "background", taskId: "readonly-query", command: "git status", state: "running", startedAt: now, createdAt: now });
+    service.publish({ type: "item.appended", item: background });
+    expect(column(top)).toBe("review");
+    expect(service.orchestration.results(top.id).at(-1)).toMatchObject({ id: final.id, state: "submitted" });
+    await service.sessions.interrupt(inquiry.id);
+  });
+
+  it("invalidates an old submitted final delivery when startup repairs its premature review column", async () => {
+    const top = lead();
+    const main = await service.tasks.addSession(top.id, { profileId: "p-ds" });
+    service.sessions.inbox.pause(main.id);
+    const final = service.orchestration.submit(main.id, "旧汇总", "旧证据");
+    child(top, { column: "todo" });
+    service.removeAllListeners("event");
+    const rebuilt = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
+    expect(column(top)).toBe("doing");
+    expect(rebuilt.orchestration.results(top.id).at(-1)).toMatchObject({ id: final.id, state: "returned" });
+  });
+
+  it("reopens a completed lead when a new unfinished child is assigned", async () => {
+    const top = lead();
+    service.tasks.updateTask(top.id, { column: "done" });
+    await service.tasks.createTask({ title: "新增待办", workspaceId: alpha.id, managerTaskId: top.id });
+    expect(column(top)).toBe("doing");
+  });
+});
+
 describe("放进待办 (2026-11-05)", () => {
   it("moves a waiting task into doing when its first session starts with work", async () => {
     const { task } = await service.tasks.createTask({ workspaceId: alpha.id, title: "待办主控", lead: true });

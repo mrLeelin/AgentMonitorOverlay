@@ -29,6 +29,8 @@ declare global {
       openExternal?(url: string): Promise<void>;
       /** The workbench window's icon (taskbar): one of 「AMO 娘」's faces by file name (focus/mascot.ts), or null for the app's. */
       setAppIcon?(face: string | null): void;
+      /** Pending items, independent of whether the Focus window is open. */
+      setTaskbarBadge?(count: number, image: string | null): void;
       /** Writes text to the system clipboard (Electron); works without window focus. */
       copyText?(text: string): Promise<void>;
       /** The 便签 program (2026-10-30): text and pictures together. */

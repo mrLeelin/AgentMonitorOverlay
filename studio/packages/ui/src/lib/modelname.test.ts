@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelName, sessionModelName } from "./choices.js";
+import { activeModel, modelName, sessionModelName } from "./choices.js";
 
 describe("model names", () => {
   it("reads Claude Code's default entry as the model inside it", () => {
@@ -15,5 +15,7 @@ describe("model names", () => {
     expect(sessionModelName(choices, { model: "b" })).toBe("Luna");
     expect(sessionModelName(null, { model: "b" })).toBe("b");
     expect(sessionModelName(null, {})).toBeNull();
+    expect(sessionModelName(choices, { model: "retired-model" })).toBe("retired-model");
+    expect(activeModel(choices, { model: "retired-model" })).toBeUndefined();
   });
 });

@@ -13,7 +13,9 @@ import type { HostLink } from "../host/client.js";
 import { addGroup, addLink, arrowBetween, contentBounds, deleteGroup, deleteGroupAndCards, duplicateNote, gridStyle, GROUP_HEADER, groupContents, linkCurve, moveGroup, moveNode, nearestSide, outOfGroup, removeEdge, removeLink, resizeGroup, resizeNode, reverseEdge, reverseLink, setColor, setLinkLabel, sidePoint, updateGroup } from "./geometry.js";
 import { useCanvas } from "./useCanvas.js";
 import { RefPicker, type RefChoice } from "./RefPicker.js";
-import { CARD_H, CARD_MIN, CARD_W, cardHeight, managementHeight, NOTE_H, NOTE_MIN, NOTE_W, NoteCard, RefCard, TaskCard } from "./cards.js";
+import { CARD_H, CARD_H_DESC, CARD_MIN, CARD_W, cardHeight, managementHeight, NOTE_H, NOTE_MIN, NOTE_W, NoteCard, RefCard, TaskCard } from "./cards.js";
+import { useChoicesFor } from "../lib/choices.js";
+import { taskModelSessions } from "../lib/task-models.js";
 import { DeleteGroupDialog } from "./DeleteGroupDialog.js";
 import { DeleteSelectionDialog, type CanvasDeletion } from "./DeleteSelectionDialog.js";
 import { canvasLinePolylines, polylineIntersectsRect } from "./selection.js";
@@ -256,7 +258,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   // The topic's archived tasks keep their cards, greyed (2026-10-22); a task that left the topic does not.
   const cardTaskById = new Map([...allTasks.filter((t) => t.archivedAt && t.topicId === topic.id), ...tasks].map((t) => [t.id, t]));
   const anyTaskById = new Map(allTasks.map((t) => [t.id, t]));
-  const nodeSize = (n: CanvasNode) => n.kind === "task" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? cardHeight(anyTaskById.get(n.taskId)), CARD_H + managementHeight(anyTaskById.get(n.taskId))) } : n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : n.kind === "item" ? ITEM_CARD : { w: CARD_W, h: cardHeight(anyTaskById.get(n.taskId)) });
+  const modelTaskIds = new Set((doc?.nodes ?? []).flatMap((n) => (n.kind === "task" || n.kind === "ref") && anyTaskById.has(n.taskId) && !anyTaskById.get(n.taskId)?.remote ? [n.taskId] : []));
+  const modelChoices = useChoicesFor(link, [...modelTaskIds].flatMap((id) => taskModelSessions(sessions.filter((s) => s.taskId === id)).map((s) => s.profileId)));
+  const nodeSize = (n: CanvasNode) => n.kind === "task" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? cardHeight(anyTaskById.get(n.taskId)), CARD_H + managementHeight(anyTaskById.get(n.taskId))) } : n.kind === "ref" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? (anyTaskById.get(n.taskId)?.description ? CARD_H_DESC : CARD_H), CARD_H) } : n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : ITEM_CARD);
   const minSize = (n: CanvasNode) => (n.kind === "note" ? NOTE_MIN : n.kind === "item" ? ITEM_MIN : n.kind === "task" ? { ...CARD_MIN, h: CARD_MIN.h + managementHeight(anyTaskById.get(n.taskId)) } : CARD_MIN);
   const relationDoc = preview ?? doc;
   const expandedItem = expandedDiscussion?.topicId === topic.id ? expandedDiscussion.itemId : null;
@@ -1122,6 +1126,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                   key={node.id}
                   node={node}
                   target={target}
+                  profiles={profiles}
+                  choices={modelChoices}
                   topics={topics}
                   sessions={sessions}
                   workspaces={workspaces}
@@ -1145,6 +1151,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                 key={node.id}
                 node={node}
                 task={task}
+                profiles={profiles}
+                choices={modelChoices}
                 manager={task.managerTaskId ? anyTaskById.get(task.managerTaskId) : undefined}
                 management={tree ? { directLeadCount: tree.directLeadCount, workerCount: tree.workerCount, pending } : undefined}
                 contextHint={contextHints.hints.get(task.id)}

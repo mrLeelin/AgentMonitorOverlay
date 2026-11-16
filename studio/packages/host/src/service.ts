@@ -160,6 +160,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.taskPlans.watch();
     this.relays.watch();
     this.duty.registerCheck(this.issues.dutyCheck());
+    this.tasks.recoverColumns();
   }
 
   /** The common space: where tasks without a project, the scheduler and topic sessions without a project run. */

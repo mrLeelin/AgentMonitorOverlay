@@ -382,6 +382,16 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
     if (testMode) (globalThis as { __amoAppIcon?: string }).__amoAppIcon = icon;
     mainWindow.setIcon(icon);
   });
+  ipcMain.on("amo:taskbar-badge", (event, count: unknown, image: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return;
+    if (image !== null && (typeof image !== "string" || image.length > 32_768 || !image.startsWith("data:image/png;base64,"))) return;
+    const overlay = count > 0 && typeof image === "string" ? nativeImage.createFromDataURL(image) : null;
+    if (count > 0 && (!overlay || overlay.isEmpty() || overlay.getSize().width !== 32 || overlay.getSize().height !== 32)) return;
+    // A native overlay also works for pinned taskbar shortcuts; setIcon alone cannot update those.
+    if (process.platform === "win32") mainWindow.setOverlayIcon(overlay, count ? `${count} 项待处理` : "");
+    else app.setBadgeCount(count);
+    if (testMode) (globalThis as { __amoTaskbarBadge?: unknown }).__amoTaskbarBadge = { count, image: overlay?.toDataURL() ?? null };
+  });
   ipcMain.handle("amo:copy", (_event, text: unknown) => {
     if (typeof text !== "string") return;
     if (testMode) ((globalThis as { __amoCopied?: string[] }).__amoCopied ??= []).push(text);

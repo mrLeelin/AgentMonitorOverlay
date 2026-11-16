@@ -299,6 +299,7 @@
 .canvas-card:hover .canvas-card-resize, .canvas-note:hover .canvas-card-resize, .canvas-card.selected .canvas-card-resize, .canvas-note.selected .canvas-card-resize { opacity: 1; }
 .canvas-card-resize:hover { border-color: var(--primary); }
 .canvas-card-title, .canvas-card-meta, .canvas-card-desc, .item-head { flex: none; min-width: 0; }
+.canvas-card > .task-models { flex: none; min-width: 0; }
 .canvas-card-meta > span { flex: none; }
 .canvas-card-meta > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-card-desc { overflow-wrap: anywhere; }

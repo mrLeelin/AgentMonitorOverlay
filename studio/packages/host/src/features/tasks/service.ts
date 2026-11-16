@@ -17,6 +17,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   latestDelivery: (taskId: Id) => TaskResult | undefined = () => undefined;
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
+  private readonly workSessionStarts = new Map<Id, number>();
   private readonly sessionStartWaiters = new Map<Id, Set<() => void>>();
   private readonly mainSessionStarts = new Map<Id, Promise<Session>>();
   /** How long a task's sessions must all have stood still before it moves to 待审阅 (a turn often follows another at once). */
@@ -29,12 +30,25 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
    * 进行中 ⇄ 待审阅 by the sessions (2026-10-26, the person asked for it; Studio moves the card, never an agent): when a
    * session of a 进行中 task stops moving and none of the task's sessions moves any more, the task goes to 待审阅; when a
    * session of a 待审阅 or 完成 task starts moving again (the person talks to it), the task goes back to 进行中. Only a
-   * session starting or stopping counts, so a card the person moved stays where it is until then; 待办 is never
-   * touched, nor the scheduler's task. Completed work reopens when another turn starts (2026-11-06).
+   * session starting or stopping counts for workers, so a card the person moved stays where it is until then. Leads
+   * also wait for all managed descendants to deliver or finish (2026-11-16); their child changes are reevaluated.
+   * 待办 is never touched, nor the scheduler's task. Completed work reopens when another turn starts (2026-11-06).
    */
   watchColumns(): void {
     for (const s of this.store.listSessions()) this.movingBefore.set(s.id, sessionMoving(s));
+    const managers = new Map(this.store.listTasks().map((t) => [t.id, t.managerTaskId]));
     this.host.on("event", (e) => {
+      if (e.type === "task.upserted") {
+        const previous = managers.get(e.task.id);
+        managers.set(e.task.id, e.task.managerTaskId);
+        this.refreshManagerColumns(e.task.id, previous);
+        return;
+      }
+      if ((e.type === "item.appended" || e.type === "item.updated") && e.item.type === "background") {
+        const taskId = this.store.getSession(e.item.sessionId)?.taskId;
+        if (taskId) this.refreshManagerColumns(taskId);
+        return;
+      }
       if (e.type !== "session.upserted") return;
       const s = e.session;
       const moving = sessionMoving(s);
@@ -44,7 +58,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       const preservedBefore = this.purposeBefore.get(s.id) ?? false;
       this.purposeBefore.set(s.id, preserves);
       if (!s.taskId) return;
-      if (preserves) return;
+      this.refreshManagerColumns(s.taskId);
+      if (preserves) {
+        // A notification can finish after the last child's delivery event and its settle timer.
+        if (!moving) this.refreshLeadColumn(s.taskId);
+        return;
+      }
       if (moving === before) {
         if (moving && preservedBefore && this.followsSessions(s.taskId, "done")) this.sessionStarted(s.taskId);
         return;
@@ -52,6 +71,45 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       if (moving) this.sessionStarted(s.taskId);
       else this.sessionStopped(s.taskId);
     });
+  }
+
+  /** Run after workflow listeners are installed so repairing a card also invalidates its old delivery. */
+  recoverColumns(): void {
+    for (const task of this.store.listTasks()) if (task.lead) this.refreshLeadColumn(task.id);
+  }
+
+  /** Stopping a turn is not a delivery. Check the whole explicit tree, including nested coordinators. */
+  private hasPendingManagedWork(taskId: Id): boolean {
+    return taskManagement(this.store.listTasks(), taskId).descendants.some((child) => {
+      if (this.workSessionStarts.has(child.id)) return true;
+      if (this.store.listSessions({ taskId: child.id }).some((s) => !s.archivedAt && !keepsAcceptance(currentMessagePurpose(this.store, s.id)) && (sessionMoving(s) || this.store.findItems(s.id, "background", { state: "running" }).length > 0))) return true;
+      if (child.column === "done") return false;
+      const result = this.latestDelivery(child.id);
+      return child.column !== "review" || !result || result.managerTaskId !== child.managerTaskId || !["submitted", "accepted"].includes(result.state);
+    });
+  }
+
+  private refreshLeadColumn(taskId: Id, allowEmpty = false): void {
+    const task = this.store.getTask(taskId);
+    if (!task?.lead || task.archivedAt || task.remote) return;
+    if (this.hasPendingManagedWork(taskId)) {
+      clearTimeout(this.settling.get(taskId));
+      this.settling.delete(taskId);
+      if (this.followsSessions(taskId, "review") || this.followsSessions(taskId, "done")) this.updateTask(taskId, { column: "doing" });
+    } else if (this.followsSessions(taskId, "doing") && (allowEmpty || taskManagement(this.store.listTasks(), taskId).descendants.length)) {
+      this.sessionStopped(taskId);
+    }
+  }
+
+  private refreshManagerColumns(taskId: Id, previousManagerId?: Id | null): void {
+    const seen = new Set<Id>();
+    for (let id of [previousManagerId, this.store.getTask(taskId)?.managerTaskId]) {
+      while (id && !seen.has(id)) {
+        seen.add(id);
+        this.refreshLeadColumn(id, true);
+        id = this.store.getTask(id)?.managerTaskId;
+      }
+    }
   }
 
   private sessionStarted(taskId: Id): void {
@@ -66,7 +124,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       this.settling.delete(taskId);
       try {
         if (!this.followsSessions(taskId, "doing")) return;
-        if (this.store.listSessions({ taskId }).some(sessionMoving)) return;
+        if (this.hasStartingSession(taskId) || this.store.listSessions({ taskId }).some(sessionMoving) || this.hasPendingManagedWork(taskId)) return;
         this.updateTask(taskId, { column: "review" });
       } catch {
         // The Host is closing (its database already is).
@@ -267,6 +325,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (patch.column !== undefined) {
       if (!TASK_COLUMNS.includes(patch.column as TaskColumn)) throw new HostError("bad_request", `unknown column ${String(patch.column)}`);
       clean.column = patch.column as TaskColumn;
+      if (clean.column === "review" && current.lead && this.hasPendingManagedWork(id)) clean.column = "doing";
     }
     if (patch.workspaceId !== undefined) {
       const workspaceId = patch.workspaceId === null || patch.workspaceId === "" ? this.commonWorkspace().id : this.requireLiveWorkspace(String(patch.workspaceId)).id;
@@ -380,7 +439,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
         if (!this.store.listSessions({ taskId }).some(sessionMoving)) this.sessionStopped(taskId);
       }
       return session;
-    });
+    }, publicMessagePurpose(input.purpose) === "inquiry");
   }
 
   /** The images the first message carries, checked before anything is created; DSH sessions take none. */
@@ -413,17 +472,26 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
-    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input));
+    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input), publicMessagePurpose(input.purpose) === "inquiry");
   }
 
   /** Includes forks: an in-flight runtime request may not have saved its session yet. */
-  async trackSessionStart<T>(taskId: Id | null, start: () => Promise<T>): Promise<T> {
+  async trackSessionStart<T>(taskId: Id | null, start: () => Promise<T>, preservesAcceptance = false): Promise<T> {
     this.leadPromotion.assertAvailable(taskId);
-    if (taskId) this.sessionStarts.set(taskId, (this.sessionStarts.get(taskId) ?? 0) + 1);
+    if (taskId) {
+      this.sessionStarts.set(taskId, (this.sessionStarts.get(taskId) ?? 0) + 1);
+      if (!preservesAcceptance) this.workSessionStarts.set(taskId, (this.workSessionStarts.get(taskId) ?? 0) + 1);
+      this.refreshManagerColumns(taskId);
+    }
     try {
       return await start();
     } finally {
       if (taskId) {
+        if (!preservesAcceptance) {
+          const workRemaining = (this.workSessionStarts.get(taskId) ?? 1) - 1;
+          if (workRemaining) this.workSessionStarts.set(taskId, workRemaining);
+          else this.workSessionStarts.delete(taskId);
+        }
         const remaining = (this.sessionStarts.get(taskId) ?? 1) - 1;
         if (remaining) this.sessionStarts.set(taskId, remaining);
         else {
@@ -432,6 +500,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
           this.sessionStartWaiters.delete(taskId);
           for (const resolve of waiters ?? []) resolve();
         }
+        this.refreshManagerColumns(taskId);
         void this.leadPromotion.flush();
       }
     }

@@ -95,6 +95,17 @@ describe("画布移动排序", () => {
     expect(service.canvases.canvas(topicId).nodes.find((n) => n.id === "item")).toMatchObject({ body: "内容", status: "discuss", conclusion: "待讨论" });
   });
 
+  it("leaves room for model rows when vertically arranging default and legacy resized task cards", () => {
+    const before = service.canvases.canvas(topicId);
+    service.canvases.saveCanvas(topicId, { ...before, nodes: before.nodes.map((n) => n.id === "a" ? { ...n, size: { w: 400, h: 66 } } : n) });
+    const result = service.canvases.canvasArrange(topicId, { targets: ["a", "b"] });
+    expect(result.arranged).toMatchObject([
+      { id: "a", pos: { x: 112, y: 142 }, size: { w: 400, h: 92 } },
+      { id: "b", pos: { x: 112, y: 250 }, size: { w: 220, h: 92 } },
+    ]);
+    expect(service.canvases.canvas(topicId).nodes.find((n) => n.id === "a")!.size).toEqual({ w: 400, h: 66 });
+  });
+
   it("moves groups with every member while keeping cards and connections intact", () => {
     const before = service.canvases.canvas(topicId);
     service.canvases.canvasArrange(topicId, { targets: ["g2", "g1"], direction: "horizontal" });

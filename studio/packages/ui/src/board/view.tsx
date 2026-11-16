@@ -22,6 +22,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
             sessions={state.sessions}
             workspaces={state.workspaces}
             topics={state.topics}
+            profiles={state.profiles}
             scope={scope}
             onOpen={(task) => setView({ kind: "task", taskId: task.id })}
             onNew={() => setView({ kind: "new" })}

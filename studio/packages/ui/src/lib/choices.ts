@@ -104,7 +104,7 @@ export function sessionModelName(choices: ProfileChoices | null, options: Sessio
 
 /** The model a session runs: the chosen one, else the profile's default. */
 export function activeModel(choices: ProfileChoices, options: SessionOptions): ModelOption | undefined {
-  return (options.model && choices.models.find((m) => m.id === options.model)) || defaultModel(choices);
+  return options.model ? choices.models.find((m) => m.id === options.model) : defaultModel(choices);
 }
 
 /** "GPT-6.1 Sol · 高 · 逐条询问" — what a session runs with, defaults filled in. */

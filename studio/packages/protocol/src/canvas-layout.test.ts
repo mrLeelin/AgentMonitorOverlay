@@ -19,10 +19,20 @@ describe("canvas layout for agent changes", () => {
     const pos = (t: string) => d.nodes.find((n) => n.kind === "task" && n.taskId === t)!.pos;
     expect(pos("a")).toEqual({ x: 52, y: 64 + 30 + 12 });
     expect(pos("b")).toEqual({ x: 52 + 236, y: 106 });
-    expect(pos("c")).toEqual({ x: 52, y: 106 + 82 }); // two cards per row in a 500-wide group
+    expect(pos("c")).toEqual({ x: 52, y: 106 + 108 }); // two cards per row, with room for the model row
+    expect(pos("c").y - pos("a").y).toBeGreaterThanOrEqual(92 + LAYOUT.gap);
     const g = d.groups[0]!.rect;
     expect(g.y + g.h).toBeGreaterThanOrEqual(pos("h").y + LAYOUT.card.h + LAYOUT.pad);
     expect(d.nodes.every((n) => n.groupId === "g1")).toBe(true);
+  });
+
+  it.each(["task", "ref"] as const)("lays new content below a legacy resized %s card's visible minimum", (kind) => {
+    const start = doc({ nodes: [{ id: "old", kind, taskId: "a", groupId: null, pos: { x: 0, y: 300 }, size: { w: 140, h: 66 } }] });
+    const placed = placeTask(start, "b", null, "new");
+    expect(placed.nodes.find((n) => n.id === "new")!.pos.y).toBe(300 + 92 + LAYOUT.margin);
+    expect(placed.nodes.find((n) => n.id === "old")!.size).toEqual({ w: 140, h: 66 });
+    const reviewed = addItems(start, null, [{ title: "检查", status: "todo" }], () => "review");
+    expect(reviewed.items[0]!.pos.y).toBe(300 + 92 + LAYOUT.margin);
   });
 
   it("takes a card out of its group to below everything, and keeps one card per task", () => {

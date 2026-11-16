@@ -38,6 +38,7 @@ import { useMascotIcon } from "./focus/mascot.js";
 import { useSessionSeen, withGrants } from "./lib/sessionSeen.js";
 import { remoteButton, useRemote } from "./remote/remote.js";
 import { RemoteDialog } from "./remote/RemoteDialog.js";
+import { useTaskbarBadge } from "./focus/useTaskbarBadge.js";
 
 // The shell: the Host connection, the scope and the view in front, the top bar and the left column. Pages come from
 // the features (features.ts); the data several of them share is loaded here once.
@@ -47,6 +48,7 @@ const NO_LINK = { url: "", token: "" };
 
 export function App() {
   const host = useHostState();
+  useTaskbarBadge(host);
   // Where the workbench was left, again after a restart or reload (2026-10-15; shell/lastPlace).
   const [scope, setScope] = useState<Scope>(() => readPlace().scope);
   const [view, setShownView] = useState<View>(() => readPlace().view);
