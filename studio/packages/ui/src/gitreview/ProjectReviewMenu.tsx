@@ -3,6 +3,7 @@ import type { GitStatus } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { openReview } from "./open.js";
 import { ContextMenu } from "../lib/ContextMenu.js";
+import { showError } from "../lib/toast.js";
 
 export interface ProjectMenuAt {
   workspaceId: string;
@@ -60,13 +61,14 @@ export function GroupItems({ groups, what, onClose }: { groups: MenuGroups; what
 }
 
 /**
- * Right-click menu of a project in the left column: Git Review (only when the folder is a git repository), and
+ * Right-click menu of a project in the left column: Git Review and the configured Git editor, and
  * 编辑项目, 加入分组 / 移出分组 and 归档项目 when the caller offers them.
  */
 export function ProjectReviewMenu({ link, at, onClose, onArchive, onEdit, groups }: { link: HostLink; at: ProjectMenuAt; onClose(): void; onArchive?: () => void; onEdit?: () => void; groups?: MenuGroups }) {
   const [status, setStatus] = useState<GitStatus | null>(null);
   useEffect(() => {
     let live = true;
+    setStatus(null);
     call(link, "GET /api/workspaces/:id/git/status", { id: at.workspaceId })
       .then((s) => live && setStatus(s))
       .catch(() => undefined);
@@ -90,6 +92,20 @@ export function ProjectReviewMenu({ link, at, onClose, onArchive, onEdit, groups
       >
         Git Review{notGit ? `（${status.reason ?? "不是 git 仓库"}）` : ""}
       </button>
+      {status?.repo && (
+        <button
+          type="button"
+          role="menuitem"
+          title="用设置 → Git 编辑器中选择的程序打开这个仓库"
+          onClick={() => {
+            void call(link, "POST /api/workspaces/:id/git/open", { id: at.workspaceId }).catch((err: unknown) => showError(err instanceof Error ? err.message : String(err)));
+            onClose();
+          }}
+          data-testid="project-git-open"
+        >
+          用 Git 编辑器打开
+        </button>
+      )}
       {onEdit && (
         <button
           type="button"

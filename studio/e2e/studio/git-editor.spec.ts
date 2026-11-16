@@ -9,6 +9,38 @@ import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 let studio: Studio | undefined;
 test.afterEach(async () => { await studio?.close(); studio = undefined; });
 
+test("项目右键仅为 Git 仓库显示编辑器入口，读取配置并提示失效程序", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  const dir = studio.workspace("菜单仓库");
+  execFileSync("git", ["init", "-q"], { cwd: dir, windowsHide: true });
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
+  await studio.api("POST", "/api/workspaces", { path: studio.workspace("普通目录") });
+  const exe = join(studio.root, "Fork.exe");
+  writeFileSync(exe, "test mode never launches this file");
+  await studio.api("PUT", "/api/git-editor", { path: exe });
+
+  await page.getByRole("button", { name: "菜单仓库", exact: true }).click({ button: "right" });
+  const item = page.getByRole("menuitem", { name: "用 Git 编辑器打开", exact: true });
+  await expect(item).toBeVisible();
+  await screenshot(app, "studio", "project-git-menu", page);
+  const opened = page.waitForResponse((r) => r.url().endsWith(`/api/workspaces/${ws.id}/git/open`));
+  await item.click();
+  const response = await opened;
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ path: normalize(dir), editor: "Fork", dryRun: true });
+  await expect(page.getByRole("menu", { name: "项目", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "普通目录", exact: true }).click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: /Git Review.*不是/ })).toBeDisabled();
+  await expect(item).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  unlinkSync(exe);
+  await page.getByRole("button", { name: "菜单仓库", exact: true }).click({ button: "right" });
+  await item.click();
+  await expect(page.getByTestId("toast")).toContainText(/不存在|找不到|失效/);
+});
+
 test("Git 编辑器点击自动检测会重新查找，并显示检测进度和结果", async () => {
   studio = await launchStudio();
   const { page, app } = studio;
