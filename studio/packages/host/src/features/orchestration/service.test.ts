@@ -10,6 +10,8 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { roleCard } from "../guide/role.js";
+import { guideText, WORKFLOW_READING_GUIDE } from "../guide/guide.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, workspaceId: string, topicId: string;
@@ -135,6 +137,65 @@ describe("managed delivery workflow", () => {
     expect(service.orchestration.workflow(top.id, "pending").results.map((r) => r.id)).toEqual([second.id]);
     store.updateTask(child.id, { archivedAt: new Date().toISOString() });
     expect(service.orchestration.workflow(top.id, "pending").results).toEqual([]);
+  });
+
+  it("checks the whole tree without delivery prose, including unfinished tasks, stale inputs and exact session creation", async () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), child = task("执行", false, top.id), worker = session(child);
+    const waiting = task("下游未开工", false, top.id), unrelated = task("同专题非下辖");
+    service.canvases.canvasAddDependency(child.id, waiting.id);
+    const first = service.orchestration.submit(worker.id, "初稿", "补测");
+    service.orchestration.review(manager.id, first.id, false, "退回");
+    const submitted = service.orchestration.submit(worker.id, "摘要正文".repeat(2000), "验证正文".repeat(2000));
+    const accepted = service.orchestration.review(manager.id, submitted.id, true, "通过");
+    const tools = amoToolsFor(service, { sessionId: manager.id });
+    const workflow = tools.find((t) => t.name === "task_workflow")!;
+    const compact = JSON.parse((await workflow.run({ view: "summary" })).content[0]!.text);
+    expect(compact.tasks.map((t: { taskId: string }) => t.taskId)).toEqual([top.id, child.id, waiting.id]);
+    expect(compact.tasks.find((t: { taskId: string }) => t.taskId === child.id)).toMatchObject({ acceptedCurrent: true, latestResult: { id: accepted.id, state: "accepted" }, sessions: [{ id: worker.id, createdAt: worker.createdAt }] });
+    expect(compact.tasks.find((t: { taskId: string }) => t.taskId === waiting.id)).toMatchObject({ acceptedCurrent: false, latestResult: null, sessions: [] });
+    expect(JSON.stringify(compact)).not.toContain("摘要正文");
+    expect(JSON.stringify(compact)).not.toContain("验证正文");
+    expect(JSON.stringify(compact)).not.toContain(unrelated.id);
+    expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(service.orchestration.workflow(top.id)).length / 4);
+    // The default and full callers still receive every byte of every historical result.
+    const full = JSON.parse((await workflow.run({})).content[0]!.text);
+    expect(full.results).toEqual([service.orchestration.results(child.id)[0], accepted]);
+    service.sharedContext.setPrerequisites(child.id, ["new-input"]);
+    const stale = service.orchestration.workflowSummary(top.id, service.taskPlans.waitingMap());
+    expect(stale.tasks.find((t) => t.taskId === child.id)).toMatchObject({ acceptedCurrent: false, prerequisiteResultIds: ["new-input"] });
+    expect(stale.tasks.find((t) => t.taskId === waiting.id)?.waitingForTaskIds).toEqual([child.id]);
+    expect(roleCard(service, manager.id)).toContain(WORKFLOW_READING_GUIDE);
+    expect(guideText("lead")).toContain(WORKFLOW_READING_GUIDE);
+  });
+
+  it("pages complete result JSON, preserves tails and history, and follows the current readable subtree", async () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), child = task("执行", false, top.id), worker = session(child);
+    const first = service.orchestration.submit(worker.id, "摘要😀".repeat(1800) + "摘要尾部", "验证".repeat(4500) + "证据尾部");
+    const returned = service.orchestration.review(manager.id, first.id, false, "退回尾部");
+    const latest = service.orchestration.submit(worker.id, "新版", "新版证据");
+    const read = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_read_result")!;
+    let offset: number | null = 0, text = "";
+    while (offset !== null) {
+      const page = JSON.parse((await read.run({ resultId: first.id, offset })).content[0]!.text);
+      expect(page.text.length).toBeLessThanOrEqual(6000);
+      expect(page).toMatchObject({ latest: false, acceptedCurrent: false, result: { id: first.id } });
+      text += page.text; offset = page.nextOffset;
+    }
+    expect(JSON.parse(text)).toEqual(returned);
+    expect(service.orchestration.readResult(top.id, first.id, text.length)).toMatchObject({ text: "", nextOffset: null });
+    for (const invalid of [-1, 1.5, NaN, text.length + 1]) expect(() => service.orchestration.readResult(top.id, first.id, invalid)).toThrow(/位置无效/);
+    expect(service.orchestration.readResult(top.id, latest.id)).toMatchObject({ latest: true });
+    const other = task("另一个主控", true), stranger = session(other);
+    expect(() => service.orchestration.readResult(other.id, first.id)).toThrow(/可读交付/);
+    expect(() => service.orchestration.review(stranger.id, latest.id, true, "不可越权")).toThrow(/直属任务/);
+    service.tasks.setManager(child.id, other.id);
+    expect((await read.run({ resultId: first.id })).isError).toBe(true);
+    // Explicit taskId has the same read access as the existing workflow tool; it never grants review rights.
+    expect((await read.run({ taskId: child.id, resultId: first.id })).isError).not.toBe(true);
+    store.updateTask(child.id, { archivedAt: new Date().toISOString() });
+    expect(() => service.orchestration.readResult(other.id, first.id)).toThrow(/可读交付/);
   });
 
   it("adds later deliveries to a held batch and retains it across a Host reconstruction", async () => {

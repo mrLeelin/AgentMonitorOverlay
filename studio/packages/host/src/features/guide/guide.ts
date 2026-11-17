@@ -3,6 +3,12 @@
 export const GUIDE_SECTIONS = ["overview", "tasks", "topics", "canvas", "collab", "lead", "files"] as const;
 export type GuideSection = (typeof GUIDE_SECTIONS)[number];
 
+/** Shared by the actual role injection and amo_guide, so the working convention is present before dispatch. */
+export const WORKFLOW_READING_GUIDE = `- 分工时指定集中取证的负责人和文件范围；下游先复用已验收交付，仅在验收确需复核时回查源码。启动消息已附前置摘要、验证证据和 resultId，交付必须核对实际采用的前置，不能把背景报告冒充启动依据。
+- 交付和问题通知已附全文和 id 时直接处理；待办用 task_workflow({view:"pending"})，空列表不代表全部完成。最终用一次 view:"summary" 核对全树的 column、acceptedCurrent、实际前置和待决问题；完整历史才用 view:"full"。
+- 要补读一份交付，用 task_read_result({taskId,resultId,offset}) 按 nextOffset 分页直到 null，完整证据不会丢失；会话回复截断则用 task_read_reply。不要在输出截断后重复全量查询。
+- 短报告区分直接观察、上游 resultId 引用、源码结论和未测项；逐层汇总保留引用与新增验证，不复制上游全文。summary 的 sessions.createdAt 是会话记录创建时间，waitingForTaskIds 是查询时等待状态，均不证明独立调度来源或历史启动时刻。`;
+
 const GUIDE: Record<GuideSection, string> = {
   overview: `# AMO Studio 是什么
 
@@ -71,6 +77,9 @@ const GUIDE: Record<GuideSection, string> = {
 2. 用 task_plan_propose 自动创建并启动下级任务，不再等待人逐个确认。每项写清范围、第一句话、model 和 effort；资源、音效、逻辑负责人可以设 lead:true 成为二级主控并继续拆分。管理归属、角色和说明在首会话之前落库，前置任务验收完成后再启动后续任务。专题会话没有任务主控身份时仍走人确认的提案。
 3. 新任务在首个会话启动前自动归属提案来源主控；主控、子任务和同专题管理祖先缺失的画布卡自动补齐，已有坐标/分组不变，管理虚线由归属自动显示，不要用 dependsOn 伪造管理线。已经是主控但没有专题时，直接 task_plan_propose 带 summary/topicTitle/tasks 一次建专题和派工；未传 topicTitle 兼容有业务意义的任务名，泛称会提示补具体标题，不能静默创建无画布子任务。已有专题不改名。同一真实回合内重试相同参数返回已有结果；新回合可以再次派相同工作。跨回合重试同一次操作可传 operationKey，重试保留键和参数；新工作用新键，相同键改参数会拒绝。没有可识别回合又不传键的旧调用保持每次新提案。用 task_management 查看直属和下辖，task_manager_set 在范围内转交或解除归属。给受管任务写分工说明（task_describe），用 task_update 管理标题、状态和专题。只整理范围内的画布内容。
 4. 用 task_message 自动交代下辖工作；用 task_workflow 读最新交付，用 task_review_result 验收或退回。下级业务问题用 task_decision_answer 回答，解决不了再用 decision_request 向你的直属主控上报，只有总主控向人提问。全部直属交付验收通过、待决问题解决后，用 task_submit_result 汇总上报。有直属主控（含二级主控）的交付等待直属主控验收；总主控最后向用户交付，保持 submitted 和待审阅，等待用户在 Studio「交付与验收」明确验收或退回。AI 不能自行验收最终交付，不要用 task_update 跳过验收标记完成。
+
+${WORKFLOW_READING_GUIDE}
+
 5. 主控的本地文件只读，具体实现和本地文档修改都分配给执行任务。可以维护 Studio 内的专题文档、记录和交接；不能用自己的子会话、子 agent 或执行设置绕过文件只读限制。
 6. 分支和合并交给人决定，主控不执行。`,
   files: `# 文件和项目

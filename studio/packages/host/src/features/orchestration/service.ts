@@ -40,6 +40,51 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   results(taskId: Id): TaskResult[] { return JSON.parse(this.store.getKv(RESULTS_KEY + taskId)?.value ?? "[]") as TaskResult[]; }
+
+  /** Final tree check without copying delivery prose or transport history. Full evidence stays addressable by id. */
+  workflowSummary(taskId: Id, waiting: Readonly<Record<Id, readonly Id[]>>) {
+    const task = this.requireTask(taskId), tasks = this.store.listTasks();
+    const pending = this.workflow(taskId, "pending");
+    return {
+      rootTaskId: pending.rootTaskId,
+      tasks: [task, ...taskManagement(tasks, taskId).descendants].filter((t) => !t.archivedAt).map((t) => {
+        const latest = this.results(t.id).at(-1);
+        return {
+          taskId: t.id, title: t.title, managerTaskId: t.managerTaskId ?? null, lead: !!t.lead, column: t.column,
+          latestResult: latest ? resultHeader(latest) : null,
+          acceptedCurrent: !!latest && this.acceptedCurrent(t, latest),
+          prerequisiteResultIds: this.f.sharedContext.prerequisites(t.id),
+          waitingForTaskIds: waiting[t.id] ?? [],
+          // createdAt is the session record's creation, not task.updatedAt or proof of an automatic dispatch.
+          sessions: this.store.listSessions({ taskId: t.id }).filter((s) => !s.archivedAt && s.kind === "main").map((s) => ({ id: s.id, status: s.status, createdAt: s.createdAt, ...(s.startedBy ? { startedBy: s.startedBy } : {}) })),
+        };
+      }),
+      decisions: pending.decisions.map((d) => ({ id: d.id, taskId: d.taskId, sessionId: d.sessionId, createdAt: d.createdAt })),
+      deliveryIssues: pending.deliveryIssues,
+      deliveryNotices: pending.deliveryNotices,
+    };
+  }
+
+  /** Same readable scope as workflow; a result id never grants authority to accept or manage its owner. */
+  readResult(taskId: Id, resultId: Id, offset = 0) {
+    const task = this.requireTask(taskId);
+    const owners = [task, ...taskManagement(this.store.listTasks(), taskId).descendants].filter((t) => !t.archivedAt);
+    for (const owner of owners) {
+      const results = this.results(owner.id), result = results.find((r) => r.id === resultId);
+      if (!result) continue;
+      // Paging the complete JSON preserves every field, including review and requirement-resolution evidence.
+      const text = JSON.stringify(result);
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) throw new HostError("bad_request", "交付位置无效。");
+      const end = Math.min(offset + 6000, text.length);
+      return { result: resultHeader(result), latest: results.at(-1)?.id === resultId, acceptedCurrent: this.acceptedCurrent(owner, result), text: text.slice(offset, end), nextOffset: end < text.length ? end : null, length: text.length };
+    }
+    throw new HostError("bad_request", "该结果不在指定任务及其当前下辖的可读交付中；请核对 taskId 和当前归属。");
+  }
+
+  private acceptedCurrent(task: Task, result: TaskResult): boolean {
+    return task.column === "done" && result.state === "accepted" && this.results(task.id).at(-1)?.id === result.id && result.managerTaskId === (task.managerTaskId ?? null) && this.f.sharedContext.isResultCurrent(task.id, result);
+  }
+
   readReply(sessionId: Id, itemId: Id, offset = 0): { text: string; nextOffset: number | null; length: number } {
     const { task: manager } = this.own(sessionId);
     const item = this.store.getItem(itemId);
@@ -88,13 +133,13 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   private currentBusiness(notice: Notice): string | null {
     if (notice.decisionId) {
       const d = this.store.getDecision(notice.decisionId);
-      return d?.state === "open" && d.routedToTaskId === notice.targetTaskId ? `【当前直属任务待决问题】${d.question}\n${d.options.join("\n")}${detailBlock(d)}\n问题 ${d.id}\n请用 task_workflow 核对当前归属和最新问题，再按原角色处理。此通知从当前问题记录重新生成，未重放旧通知正文。` : null;
+      return d?.state === "open" && d.routedToTaskId === notice.targetTaskId ? `【当前直属任务待决问题】${d.question}\n${d.options.join("\n")}${detailBlock(d)}\n问题 ${d.id}\n请用 task_workflow({view:"pending"}) 核对当前归属和最新问题，再按原角色处理。此通知从当前问题记录重新生成，未重放旧通知正文。` : null;
     }
     if (notice.resultId) {
       const result = this.results(notice.direction === "up" ? notice.sourceTaskId : notice.targetTaskId).at(-1);
       if (!result || result.id !== notice.resultId || result.managerTaskId !== (notice.direction === "user-return" ? null : notice.direction === "up" ? notice.targetTaskId : notice.sourceTaskId)) return null;
       if (notice.direction === "user-return") return `【用户退回最终交付】结果 ${result.id}\n${result.review}\n请按退回意见修改和验证后重新 task_submit_result，等待用户审核。`;
-      return notice.direction === "up" ? `【当前下级交付待验收】结果 ${result.id}\n${result.summary}\n验证：${result.verification}\n请用 task_workflow 核对当前要求、归属和实际依据，再用 task_review_result 验收或退回。此通知从当前结果记录重新生成。` : `【当前直属主控退回交付】结果 ${result.id}\n${result.review ?? "请核对最新退回结论。"}\n请读取 task_workflow，按当前要求修改和验证后重新交付。`;
+      return notice.direction === "up" ? `【当前下级交付待验收】结果 ${result.id}\n${result.summary}\n验证：${result.verification}\n已附当前结果全文和 id，可直接用 task_review_result 验收或退回；核对其他待办时再用 task_workflow({view:"pending"})。此通知从当前结果记录重新生成。` : `【当前直属主控退回交付】结果 ${result.id}\n${result.review ?? "请核对最新退回结论。"}\n请读取 task_workflow，按当前要求修改和验证后重新交付。`;
     }
     return `【当前任务状态核对】「${this.requireTask(notice.sourceTaskId).title}」当前状态为 ${this.requireTask(notice.sourceTaskId).column}。原历史通知来源无法核验，已永久终止；请通过 task_workflow 查看当前交付和待决问题。此状态通知不代表重新派工，也不包含旧回合正文。`;
   }
@@ -380,7 +425,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         const batch = notice.resultId && notice.direction === "up"
           ? this.notices().filter((n) => (!n.sent || (heldBatch && n.targetSessionId === target.id && (n.messageId ?? n.id) === messageId)) && !n.error && n.resultId && n.direction === "up" && n.targetTaskId === notice.targetTaskId && this.valid(n) && !this.store.listSessions({ taskId: n.sourceTaskId }).some(sessionMoving))
           : [notice];
-        const text = batch.length > 1 ? `【下级交付汇总】${batch.length} 个任务提交了交付。请用 task_workflow({view:"pending"}) 读取待处理结果并逐项验收或退回。\n${batch.map((n) => `任务 ${n.sourceTaskId}，结果 ${n.resultId}`).join("\n")}` : notice.text;
+        const text = batch.length > 1 ? `【下级交付汇总】${batch.length} 个任务提交了交付。请用 task_workflow({view:"pending"}) 读取待处理结果并逐项验收或退回；证据较长时，按下列 taskId/resultId 用 task_read_result 分页读取，不必重读 full。\n${batch.map((n) => `任务 ${n.sourceTaskId}，结果 ${n.resultId}`).join("\n")}` : notice.text;
         let replacesItemId = notice.replacesItemId;
         // Inbox rows are frozen. Expanding a held batch creates a linked replacement, never rewrites history.
         if (heldBatch && batch.some((n) => !n.sent)) {
@@ -428,6 +473,11 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 function requiredText(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim() || value.length > 20_000) throw new HostError("bad_request", `${label}不能为空，且不能超过 20000 字符。`);
   return value.trim();
+}
+
+function resultHeader(result: TaskResult) {
+  const { summary, verification, review, contextMismatch, contextResolution, ...metadata } = result;
+  return { ...metadata, hasContextMismatch: !!contextMismatch, hasContextResolution: !!contextResolution, textLengths: { summary: summary.length, verification: verification.length, review: review?.length ?? 0 } };
 }
 
 /** A routed question's evidence (2026-11-17): the manager decides on it, so it travels with the question. */

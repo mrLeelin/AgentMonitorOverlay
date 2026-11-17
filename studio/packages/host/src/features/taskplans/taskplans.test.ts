@@ -616,16 +616,24 @@ describe("dependencies (依赖统一)", () => {
     expect(started(c)).toBe(false);
     const revised = finish("重新完成");
     expect(service.sharedContext.prerequisites(b)).toEqual([revised.id]);
+    // Updating adoption must never rewrite the old delivery's frozen evidence.
+    expect(service.orchestration.results(b).find((r) => r.id === accepted.id)?.prerequisiteResultIds).toEqual(initial.prerequisiteResultIds);
     expect(service.sharedContext.isResultCurrent(b, accepted)).toBe(false);
     await service.taskPlans.startReady();
     expect(started(c)).toBe(false);
     service.tasks.updateTask(b, { column: "doing" });
     const redone = service.orchestration.submit(executor.id, "按新版重新集成", "验证通过");
     expect(redone.prerequisiteResultIds).toEqual([revised.id]);
+    await service.taskPlans.startReady();
+    expect(started(c)).toBe(false); // New evidence is still submitted, not accepted.
+    expect(service.taskPlans.waitingFor(c).map((t) => t.id)).toEqual([b]);
     const current = service.orchestration.review(leadSession.id, redone.id, true, "重新验收通过");
     expect(service.sharedContext.isResultCurrent(b, current)).toBe(true);
     await service.taskPlans.startReady();
     expect(started(c)).toBe(true);
+    const downstream = service.orchestration.submit(store.listSessions({ taskId: c })[0]!.id, "恢复后验证", "采用最新集成结果");
+    expect(downstream.prerequisiteResultIds).toEqual([redone.id]);
+    expect(service.orchestration.review(leadSession.id, downstream.id, true, "恢复链路通过").state).toBe("accepted");
   });
 
   it("dependsOn may name a task the topic has already: a line is drawn, and one without a manager counts once done", async () => {

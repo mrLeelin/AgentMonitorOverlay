@@ -3,7 +3,7 @@
   "topics": [{
     "id": "studio.managedWorkflow",
     "label": "主控带队、逐层交付与统一沟通",
-    "aliases": ["主控带队", "自动派工", "逐层回报", "验收", "退回", "task_submit_result", "task_review_result", "task_workflow", "routedToTaskId"],
+    "aliases": ["主控带队", "自动派工", "逐层回报", "验收", "退回", "task_submit_result", "task_review_result", "task_workflow", "task_read_result", "精简核对", "分页交付", "routedToTaskId"],
     "category": "host",
     "purpose": "主控自动拆分和派工，支持二级负责人；交付与业务问题沿直属管理树逐层回报，通过持久收件箱继续，总主控统一对人沟通。主控等待下辖全部提交交付或完成并停止工作后才进入待审阅，会话停止不等于交付或验收完成。",
     "steps": ["管理根只从显式归属推导；受管任务（含二级主控）由直属主控验收，总主控提交后保持 submitted/review，必须由用户在 Studio 明确验收或退回，AI 不得自审，普通状态修改不代替最终验收。", "自动通知走稳定消息 id 的收件箱，用户退回通过持久收件箱送回总主控；归属变化或真实重开使旧交付失效，通知和只读询问保留有效验收。", "任务交付面板提供人工验收/退回及差异说明；user-review REST 使用人工凭据，MCP 凭据不能访问，旧 AI review 接口仅处理直属任务。"],
@@ -11,6 +11,8 @@
       { "label": "管理根与交付类型", "path": "studio/packages/protocol/src/task-workflow.ts", "anchor": "export function managementRoot" },
       { "label": "主控等待全部下辖返回后进入审阅", "path": "studio/packages/host/src/features/tasks/service.ts", "anchor": "private hasPendingManagedWork" },
       { "label": "提交、验收和持久通知", "path": "studio/packages/host/src/features/orchestration/service.ts", "anchor": "export class OrchestrationFeature" },
+      { "label": "精简全树核对与完整交付分页", "path": "studio/packages/host/src/features/orchestration/service.ts", "anchor": "workflowSummary(taskId:" },
+      { "label": "实际角色注入的调用约定", "path": "studio/packages/host/src/features/guide/guide.ts", "anchor": "export const WORKFLOW_READING_GUIDE" },
       { "label": "用户最终验收入口", "path": "studio/packages/host/src/features/orchestration/service.ts", "anchor": "reviewByUser(taskId:" },
       { "label": "自动拆分与依赖启动", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "startReady():" },
       { "label": "任务交付面板", "path": "studio/packages/ui/src/task/TaskWorkflow.tsx", "anchor": "export function TaskWorkflow" },

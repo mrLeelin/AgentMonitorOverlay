@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { writeFileSync } from "node:fs";
 import type { Session, SessionItem, StateSnapshot, Task, TaskPlan, TaskResult, TaskWorkflow, Topic, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
@@ -9,6 +10,83 @@ const state = () => studio!.api<StateSnapshot>("GET", "/api/state");
 const settled = async (sessionId: string) => {
   await expect.poll(async () => (await state()).sessions.find((s) => s.id === sessionId)?.status, { timeout: 60_000 }).toMatch(/idle|completed/);
 };
+
+test("reopening a prerequisite keeps old dependent evidence invalid until the revised dependent is accepted", async () => {
+  test.setTimeout(180_000);
+  studio = await launchStudio();
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("dependency-recovery") });
+  const topic = await studio.api<Topic>("POST", "/api/topics", { title: "同一管理根的前置失效恢复" });
+  const create = async (title: string, lead: boolean, managerTaskId?: string) => {
+    const row = await studio!.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title, workspaceId: ws.id, topicId: topic.id, lead, managerTaskId, firstSession: { profileId: "codex-mock", text: "登记隔离任务。" } });
+    await settled(row.session.id);
+    return row;
+  };
+  const root = await create("恢复测试总主控", true);
+  const sourceLead = await create("资源二级主控", true, root.task.id);
+  const targetLead = await create("实现二级主控", true, root.task.id);
+  expect(sourceLead.task.managerTaskId).toBe(root.task.id);
+  expect(targetLead.task.managerTaskId).toBe(root.task.id);
+  const a = await create("会重开的资源", false, sourceLead.task.id);
+  const submit = async (taskId: string, sessionId: string, summary: string) => {
+    await settled(sessionId);
+    return studio!.api<TaskResult>("POST", `/api/tasks/${taskId}/workflow/submit`, { sessionId, summary, verification: "隔离 mock Electron：真实门禁和交付持久化。" });
+  };
+  const accept = (manager: typeof sourceLead, result: TaskResult) => studio!.api<TaskResult>("POST", `/api/tasks/${manager.task.id}/workflow/review`, { sessionId: manager.session.id, resultId: result.id, accept: true, review: "已核对当前实际前置。" });
+  const plan = async (title: string, dependsOn: string) => {
+    await settled(targetLead.session.id);
+    await studio!.api("POST", `/api/sessions/${targetLead.session.id}/messages`, { text: `[[mcp: task_plan_propose ${JSON.stringify({ summary: title, tasks: [{ key: title, title, dependsOn: [dependsOn], firstMessage: "只采用已验收的最新前置，完成后重新提交。" }] })}]]` });
+    await expect.poll(async () => (await state()).tasks.find((t) => t.title === title)?.id, { timeout: 60_000 }).toBeTruthy();
+    await settled(targetLead.session.id);
+    return (await state()).tasks.find((t) => t.title === title)!;
+  };
+  const started = async (taskId: string) => {
+    await expect.poll(async () => (await state()).sessions.find((s) => s.taskId === taskId)?.id, { timeout: 60_000 }).toBeTruthy();
+    const row = (await state()).sessions.find((s) => s.taskId === taskId)!;
+    await settled(row.id);
+    return row;
+  };
+  const initialA = await accept(sourceLead, await submit(a.task.id, a.session.id, "资源初版"));
+  const b = await plan("依赖资源的集成", a.task.id), bSession = await started(b.id);
+  const oldB = await accept(targetLead, await submit(b.id, bSession.id, "集成初版"));
+  expect(oldB.prerequisiteResultIds).toEqual([initialA.id]);
+  await studio.api("PATCH", `/api/tasks/${a.task.id}`, { column: "doing" });
+  const c = await plan("重验集成后的下游", b.id);
+  const dispatch = (await studio.api<TaskPlan[]>("GET", "/api/task-plans")).find((p) => p.created?.some((row) => row.taskId === c.id));
+  expect(dispatch).toMatchObject({ fromTaskId: targetLead.task.id, state: "accepted" });
+  const stages: unknown[] = [{ stage: "downstream-plan", plan: dispatch, managementRootId: root.task.id }];
+  const stillWaiting = async (stage: string) => {
+    const snapshot = await state();
+    const history = await studio!.api<TaskWorkflow>("GET", `/api/tasks/${targetLead.task.id}/workflow`);
+    const cSessions = snapshot.sessions.filter((s) => s.taskId === c.id);
+    expect(cSessions).toEqual([]);
+    expect(history.results.find((r) => r.id === oldB.id)?.prerequisiteResultIds).toEqual([initialA.id]);
+    await expect(studio!.page.locator(`[data-testid="task-card"][data-task-id="${c.id}"]`).getByTestId("card-waiting")).toContainText(b.title);
+    stages.push({ stage, observedAt: new Date().toISOString(), cSessions, bResults: history.results.filter((r) => r.taskId === b.id) });
+  };
+  await stillWaiting("prerequisite-reopened");
+  const revisedA = await accept(sourceLead, await submit(a.task.id, a.session.id, "资源新版"));
+  expect(revisedA.id).not.toBe(initialA.id);
+  await stillWaiting("prerequisite-reaccepted-only");
+  await studio.api("PATCH", `/api/tasks/${b.id}`, { column: "doing" });
+  const revisedB = await submit(b.id, bSession.id, "按新版资源重新集成");
+  expect(revisedB.prerequisiteResultIds).toEqual([revisedA.id]);
+  await stillWaiting("dependent-resubmitted-not-accepted");
+  await accept(targetLead, revisedB);
+  const cSession = await started(c.id);
+  const items = await studio.api<SessionItem[]>("GET", `/api/sessions/${cSession.id}/items`);
+  const firstInput = items.find((i) => i.type === "user" && i.text.includes("【启动时已验收的前置交付】"));
+  expect(firstInput?.type === "user" && firstInput.text).toContain(revisedB.id);
+  expect(firstInput?.type === "user" && firstInput.text).not.toContain(oldB.id);
+  const final = await submit(c.id, cSession.id, "恢复后的下游交付");
+  expect(final.prerequisiteResultIds).toEqual([revisedB.id]);
+  const acceptedFinal = await accept(targetLead, final);
+  expect(acceptedFinal.state).toBe("accepted");
+  expect((await state()).sessions.filter((s) => s.taskId === c.id)).toHaveLength(1);
+  stages.push({ stage: "downstream-recovered", sessionId: cSession.id, sessionCreatedAt: cSession.createdAt, firstInput, result: acceptedFinal });
+  const evidencePath = test.info().outputPath("dependency-recovery-stages.json");
+  writeFileSync(evidencePath, JSON.stringify(stages, null, 2), "utf8");
+  await test.info().attach("dependency-recovery-stages", { path: evidencePath, contentType: "application/json" });
+});
 
 test("a coordinator waits for another lead's prerequisite, accepts its dependent children and delivers up to human review", async () => {
   test.setTimeout(180_000);

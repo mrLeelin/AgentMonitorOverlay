@@ -91,10 +91,10 @@ describe("AMO MCP", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "amo_guide", "amo_whoami", "board_list", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place", "canvas_read", "checklist_check", "context_adopt", "context_apply", "context_get", "context_publish", "context_save", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
-      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_decision_answer", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_read_reply", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "task_workflow", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
+      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_decision_answer", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_read_reply", "task_read_result", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "task_workflow", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
     ]);
     expect(tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_read", "context_get", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "task_read_reply", "task_workflow", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
+      "amo_guide", "amo_whoami", "board_list", "canvas_read", "context_get", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "task_read_reply", "task_read_result", "task_workflow", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
     ]);
     await client.close();
   });
@@ -189,10 +189,33 @@ describe("AMO MCP", () => {
 
   it("opens /mcp, and only /mcp, with the MCP token", async () => {
     const client = await connect(MCP_TOKEN);
-    expect((await client.listTools()).tools).toHaveLength(69);
+    expect((await client.listTools()).tools).toHaveLength(70);
     await client.close();
     const res = await fetch(`${http.url}/api/state`, { headers: { authorization: `Bearer ${MCP_TOKEN}`, connection: "close" } });
     expect(res.status).toBe(401);
+  });
+
+  it("exposes compact tree checks and complete result pages through the read-only MCP credential", async () => {
+    const manager = store.createTask({ title: "分页验证主控", workspaceId: importTask.workspaceId!, topicId, lead: true });
+    const child = store.createTask({ title: "分页验证执行", workspaceId: importTask.workspaceId!, topicId, managerTaskId: manager.id });
+    const worker = store.createSession({ ...store.getSession(mainSessionId)!, id: undefined, taskId: child.id, status: "idle", runtimeRef: null });
+    const result = service.orchestration.submit(worker.id, "完整交付".repeat(1800), "完整证据尾部");
+    const client = await connect(MCP_TOKEN);
+    try {
+      const summary = await call(client, "task_workflow", { taskId: manager.id, view: "summary" });
+      expect(summary.data.tasks.find((t: { taskId: string }) => t.taskId === child.id)).toMatchObject({ latestResult: { id: result.id }, acceptedCurrent: false });
+      expect(JSON.stringify(summary.data)).not.toContain(result.summary);
+      const first = await call(client, "task_read_result", { taskId: manager.id, resultId: result.id });
+      expect(first.data.nextOffset).toBe(6000);
+      const last = await call(client, "task_read_result", { taskId: manager.id, resultId: result.id, offset: first.data.nextOffset });
+      expect(last.data.nextOffset).toBeNull();
+      expect(JSON.parse(first.data.text + last.data.text)).toEqual(result);
+      expect((await call(client, "task_read_result", { taskId: manager.id, resultId: result.id, offset: -1 })).isError).toBe(true);
+    } finally {
+      await client.close();
+      await service.tasks.archiveTask(child.id);
+      await service.tasks.archiveTask(manager.id);
+    }
   });
 
   it("needs the Host token", async () => {
