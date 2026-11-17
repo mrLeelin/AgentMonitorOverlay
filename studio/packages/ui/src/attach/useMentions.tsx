@@ -52,6 +52,8 @@ export function useComposerMentions(input: {
    * that may start sub-sessions). A session's composer decides from `current`.
    */
   subsession?: boolean;
+  /** Some text-only destinations cannot carry session setup or commit actions. */
+  commit?: boolean;
 }) {
   const { link, text, setText, tasks, sessions, current } = input;
   const [caret, setCaret] = useState<number | null>(null);
@@ -78,8 +80,8 @@ export function useComposerMentions(input: {
   const [commitAt, setCommitAt] = useState<number | null>(null);
   // 提示词模板…: likewise for the template's text.
   const [templateAt, setTemplateAt] = useState<number | null>(null);
-  const subsession = current ? current.kind !== "sub" && !!current.taskId && !current.archivedAt : !!input.subsession;
-  const commit = !!current && !current.archivedAt;
+  const subsession = input.subsession !== false && (current ? current.kind !== "sub" && !!current.taskId && !current.archivedAt : !!input.subsession);
+  const commit = input.commit !== false && !!current && !current.archivedAt;
   const template = input.templates !== false && !current?.archivedAt;
 
   // Files come from the Host: the recent ones for a bare "@", matches once something is typed (debounced).

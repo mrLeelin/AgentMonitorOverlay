@@ -81,9 +81,11 @@ export class ClaudeGoals {
   private async read(id: Id): Promise<SessionGoalState> {
     const session = this.core.requireSession(id);
     if (session.kind === "sub") return { ...this.state(id), unavailable: "Claude 子 agent 共用父会话，不能单独控制 Goal。" };
-    if (session.goal?.status === "active" && !this.core.live.has(id)) this.closed(id);
+    if (session.goal?.status === "active" && !this.core.live.has(id) && (session.writer === "workbench" || session.archivedAt)) this.closed(id);
     this.refresh(id);
-    if (session.archivedAt || session.writer !== "workbench" || this.pending.has(id) || this.core.live.get(id)?.running) return this.state(id);
+    // Journal/events own an active Goal. A local /goal read can otherwise queue behind a model request before
+    // its first SDK stream event, delaying the person's next pause/clear behind that same work.
+    if (session.archivedAt || session.writer !== "workbench" || this.pending.has(id) || this.core.live.get(id)?.running || this.core.requireSession(id).goal?.status === "active") return this.state(id);
     try { await this.command(id, "", false); }
     catch (error) { if (String(error).includes("不支持原生 /goal")) return { ...this.state(id), unavailable: String((error as Error).message) }; throw error; }
     this.refresh(id);
@@ -110,10 +112,11 @@ export class ClaudeGoals {
   async pause(id: Id): Promise<SessionGoalState> {
     this.writable(id);
     this.invalidate(id);
+    await this.reads.get(id)?.catch(() => undefined);
     const activation = this.pending.get(id);
-    if (activation?.args && activation.args !== "clear") {
+    if (activation && activation.args !== "clear") {
       // A dispatched local setter must be consumed before clear. Moving clear ahead of a still-queued setter
-      // would allow that setter to re-enable the hook after Stop.
+      // would allow that setter to re-enable the hook after Stop. A concurrent state read must settle as well.
       await activation.settled.catch(() => undefined);
       if (this.pending.get(id) === activation) this.pending.delete(id);
     }
@@ -131,8 +134,9 @@ export class ClaudeGoals {
   async clear(id: Id): Promise<SessionGoalState> {
     this.writable(id);
     this.invalidate(id);
+    await this.reads.get(id)?.catch(() => undefined);
     const activation = this.pending.get(id);
-    if (activation?.args && activation.args !== "clear") {
+    if (activation && activation.args !== "clear") {
       await activation.settled.catch(() => undefined);
       if (this.pending.get(id) === activation) this.pending.delete(id);
     }
@@ -298,13 +302,19 @@ export class ClaudeGoals {
       this.core.clearIdle(live);
       if (args && args !== "clear") queueMessagePurpose(this.core.store, id, "work", live.running);
       live.push({ content: `/goal${args ? ` ${args}` : ""}`, uuid });
-      if (now && live.running) {
+      // A native Goal can start a model request before the SDK reports message_start. Its clear command still
+      // needs Send now in that gap, rather than waiting behind the invisible work until it completes.
+      if (now) {
         await Promise.race([atCli, result.then(() => undefined)]);
         if (!pending.started) {
           live.givingWay = true;
-          const request = (live.q as unknown as { request?: (input: Record<string, unknown>) => Promise<unknown> }).request;
-          if (live.capabilities.has("interrupt_send_now_v1") && request) await request.call(live.q, { subtype: "interrupt", send_now: true, message_uuid: uuid });
-          else await live.q.interrupt();
+          const request = (live.q as unknown as { request?: (input: Record<string, unknown>) => Promise<{ response?: { send_now?: unknown } } | undefined> }).request;
+          try {
+            if (live.capabilities.has("interrupt_send_now_v1") && request) {
+              const answer = await request.call(live.q, { subtype: "interrupt", send_now: true, message_uuid: uuid });
+              if (answer?.response?.send_now !== "stopped") live.givingWay = false;
+            } else await live.q.interrupt();
+          } catch (error) { live.givingWay = false; throw error; }
         }
       }
       await result;

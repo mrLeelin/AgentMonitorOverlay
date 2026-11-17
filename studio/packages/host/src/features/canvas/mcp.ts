@@ -44,7 +44,7 @@ export function canvasTools({ service, caller, model, ownTopic, inOwnTopic }: To
     {
       name: "canvas_depend",
       title: "画布连依赖",
-      description: "Record on your topic's canvas that toTaskId depends on fromTaskId (fromTaskId must finish first); both must be tasks of your topic. Refused if it would make a cycle. Leads manage directly; other roles need the person's approval.",
+      description: "Record on your topic's canvas that toTaskId depends on fromTaskId; both must be tasks of your topic. A managed prerequisite needs its own direct manager's current acceptance; one without a manager must be done. The line holds automatic starts and a manager's new work/reopen until then; the person can confirm starting early. Already-started work is not interrupted. Removing the line releases queued work. Refused if it would make a cycle. Leads manage directly; other roles need the person's approval. A dependency grants no management or shared-requirement authority.",
       inputSchema: { fromTaskId: z.string(), toTaskId: z.string() },
       readOnly: false,
       autoApprove: false,

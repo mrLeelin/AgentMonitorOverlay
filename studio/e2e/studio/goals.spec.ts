@@ -76,7 +76,7 @@ test("Codex Goal 从底栏开启原生自动轮，暂停、恢复、刷新和清
   }
   await page.getByTestId("goal-clear").click();
   await expect(page.getByTestId("switch-goal")).toContainText("未开启");
-  await expect(page.getByTestId("goal-objective-input")).toHaveValue("");
+  await expect(page.getByTestId("goal-objective-input")).toHaveText("");
   expect((await goal()).goal).toBeNull();
 });
 
@@ -123,7 +123,7 @@ test("Goal 接口不可用和写入失败均明确显示，失败保留草稿", 
   await page.getByTestId("goal-objective-input").fill("保留这个目标草稿");
   await page.getByTestId("goal-start").click();
   await expect(page.getByTestId("goal-error")).toContainText("Goal 写入失败");
-  await expect(page.getByTestId("goal-objective-input")).toHaveValue("保留这个目标草稿");
+  await expect(page.getByTestId("goal-objective-input")).toHaveText("保留这个目标草稿");
   await expect(page.getByTestId("switch-goal")).toContainText("未开启");
 });
 

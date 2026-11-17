@@ -140,7 +140,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     const router = runtime instanceof RuntimeRouter ? runtime : RuntimeRouter.around(store, runtime);
     router.register("remote", new RemoteRuntime(() => this.remote.copies));
     this.runtime = router;
-    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), validate: (sessionId, itemId) => { const item = this.store.getItem(itemId); if (!item || item.sessionId !== sessionId) return false; this.sessions.inbox.checkSource(item); return this.sharedContext.validateMessage(sessionId, itemId); }, checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze), defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options) });
+    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), goal: (id) => this.sharedContext.goalContext(id), validate: (sessionId, itemId) => { const item = this.store.getItem(itemId); if (!item || item.sessionId !== sessionId) return false; this.sessions.inbox.checkSource(item); return this.sharedContext.validateMessage(sessionId, itemId); }, checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze), defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options) });
     router.on("message-delivered", (sessionId, text) => this.sharedContext.markDelivered(sessionId, text));
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ModelProfile, Session, SessionOptions, SessionPreset } from "@amo-studio/protocol";
+import type { ModelProfile, Session, SessionOptions, SessionPreset, Task, Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { activeModel, optionsSummary, sameOptions, useProfileChoices } from "../lib/choices.js";
 import { rememberPick } from "../lib/recents.js";
@@ -21,12 +21,18 @@ export function SessionOptionsBar({
   profile,
   presets,
   disabled,
+  tasks,
+  sessions,
+  projects,
 }: {
   link: HostLink;
   session: Session;
   profile: ModelProfile | undefined;
   presets: readonly SessionPreset[];
   disabled: boolean;
+  tasks: readonly Task[];
+  sessions: readonly Session[];
+  projects: readonly Workspace[];
 }) {
   const { choices } = useProfileChoices(link, session.profileId);
   const [tray, setTray] = useState<Tray>(null);
@@ -43,6 +49,7 @@ export function SessionOptionsBar({
   useEffect(() => {
     if (!tray) return;
     const close = (e: Event) => {
+      if (e.defaultPrevented || (e.target instanceof Element && e.target.closest(".modal-backdrop"))) return;
       if (e instanceof KeyboardEvent ? e.key === "Escape" : !box.current?.contains(e.target as Node)) setTray(null);
     };
     window.addEventListener("keydown", close);
@@ -123,7 +130,7 @@ export function SessionOptionsBar({
       )}
       {tray === "goal" && goal.supported && (
         <div className="tray goal-tray" role="dialog" aria-label="Goal 目标" data-testid="options-tray">
-          <SessionGoalTray control={goal} disabled={disabled || !!session.archivedAt} />
+          <SessionGoalTray control={goal} disabled={disabled || !!session.archivedAt} tasks={tasks} sessions={sessions} projects={projects} />
         </div>
       )}
       {(tray === "model" || tray === "permission") && choices && (

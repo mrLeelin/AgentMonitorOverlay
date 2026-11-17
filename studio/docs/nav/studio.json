@@ -550,14 +550,15 @@
       "label": "新建任务页",
       "aliases": ["新建任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建"],
       "category": "ui",
-      "purpose": "新建任务：选项目、模型、强度，第一句话；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
+        "purpose": "新建任务：选项目、模型、强度，第一句话；可直接勾选 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
       "anchors": [
         { "label": "新建任务页", "path": "studio/packages/ui/src/newtask/NewTaskPage.tsx", "anchor": "export function NewTaskPage" },
+          { "label": "新建 Goal 校验与恢复", "path": "studio/packages/ui/src/newtask/goalStart.ts", "anchor": "export function draftGoalInput" },
         { "label": "接续已有会话", "path": "studio/packages/ui/src/newtask/ResumePicker.tsx" },
         { "label": "远程新建", "path": "studio/packages/ui/src/newtask/RemoteDraft.tsx" }
       ],
-      "related": ["runtime.claude", "studio.remote", "studio.tasks"],
-      "next": ["studio/plans/done/resume-cli-sessions.md", "studio/plans/done/remote-page-and-new-task.md"]
+        "related": ["runtime.goals", "runtime.claude", "studio.remote", "studio.tasks"],
+        "next": ["studio/e2e/studio/newtask-goal.spec.ts", "studio/plans/done/resume-cli-sessions.md", "studio/plans/done/remote-page-and-new-task.md"]
     },
     {
       "id": "ui.panorama",

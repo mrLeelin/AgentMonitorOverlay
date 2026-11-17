@@ -21,6 +21,11 @@
 .goal-field textarea { min-height: 78px; max-height: 180px; resize: vertical; }
 .goal-field textarea::placeholder, .goal-field input::placeholder { color: var(--text-faint); }
 .goal-field textarea:disabled, .goal-field input:disabled { opacity: 0.55; }
+.goal-input { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--panel); }
+.goal-input:focus-within { border-color: var(--primary); }
+.goal-input .resource-input { min-height: 78px; max-height: 180px; padding: 8px 10px; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
+.goal-input .resource-input[aria-disabled="true"] { opacity: 0.55; }
+.goal-content .suggest.inline { flex: none; box-sizing: border-box; width: 100%; min-width: 0; max-height: 180px; overflow-y: auto; }
 .goal-budget { width: 210px; max-width: 100%; }
 .goal-create-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .goal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -15,6 +15,7 @@ import { TaskRunner } from "./TaskRunner.js";
 import { useChoicesFor } from "../lib/choices.js";
 import { taskModelSessions } from "../lib/task-models.js";
 import { TaskModels } from "../lib/TaskModels.js";
+import { usePrerequisites, waitingTitles, WAITING_HINT } from "../task/prerequisites.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -69,6 +70,7 @@ interface BoardProps {
 export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
+  const prerequisites = usePrerequisites(link);
   const visible = tasks.filter((t) => inScope(t, scope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const choices = useChoicesFor(link, visible.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
   const [dragging, setDragging] = useState<readonly Task[]>([]);
@@ -90,6 +92,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
       profiles={profiles}
       choices={task.remote ? new Map() : choices}
       teamWaiting={[...teamWaits(teamThreads, taskSessions(task, sessions)), ...teamTaken(teamThreads, taskSessions(task, sessions)).map(takenText)]}
+      waitingOn={task.column === "todo" ? waitingTitles(prerequisites, task.id, tasks) : []}
       scope={scope}
       grouped={grouped}
       workspaces={workspaces}
@@ -227,6 +230,7 @@ function TaskCard({
   checklist,
   remote = null,
   teamWaiting = [],
+  waitingOn = [],
 }: {
   remote?: RemoteState | null;
   task: Task;
@@ -248,6 +252,8 @@ function TaskCard({
   checklist?: { done: number; total: number };
   /** 会话里用中转 (2026-10-30): 「等 X 回复（中转）· 已等 …」, one per person its sessions wait on. */
   teamWaiting?: string[];
+  /** Not started, its prerequisites not finished (2026-11-17, plans/done/task-dependencies.md): their titles. */
+  waitingOn?: string[];
 }) {
   const status = taskStatus(sessions);
   const unseen = useReviewUnseen(task);
@@ -362,6 +368,11 @@ function TaskCard({
           {w}
         </span>
       ))}
+      {waitingOn.length > 0 && (
+        <span className="card-waiting" data-testid="card-waiting" title={WAITING_HINT}>
+          等待前置：{waitingOn.join("、")}
+        </span>
+      )}
       {granted.length > 0 && (
         <span className="card-granted" data-testid="card-granted" title="这个任务授权给了你的其他设备远程使用（任务页的 ⋯ 或顶栏的「远程」里可以收回）">
           已授权给 {granted.map((g) => g.name).join("、")}

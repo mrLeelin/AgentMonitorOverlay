@@ -150,11 +150,19 @@ export class SharedContextFeature extends Feature {
     if (!s?.taskId || s.runtime === "remote") return "";
     const binding = this.binding(s.taskId);
     if (!binding || !this.valid(binding)) return this.taskContext(s.taskId);
-    const receipt = this.receipts(sessionId).find((r) => r.requirementId === binding.id && r.taskId === s.taskId && r.rootTaskId === binding.rootTaskId && r.deliveredAt);
+    const receipt = this.deliveredReceipt(sessionId, binding);
     if (!receipt) return this.taskContext(s.taskId);
     // Once the full version reached this conversation, later turns carry only a bounded reference, not its body.
     // A context_get response still supplies the complete version and records its provision independently.
     return `[AMO_SHARED_CONTEXT:${binding.id}]\n共同需求轻量引用：本会话已收到此版本完整正文；恢复或需要重新核对正文时使用 context_get。\n${JSON.stringify({ contextId: binding.contextId, version: binding.version, rootTaskId: binding.rootTaskId, taskId: s.taskId, prerequisiteResultIds: this.prerequisites(s.taskId) })}\n本会话${receipt.adoptedAt ? "已声明采用" : "尚未声明采用，可核对后使用 context_adopt"}。此引用不新增正文送达或采用记录，不改变角色、管理范围或工具权限。`;
+  }
+  /** Native Goals need the frozen body once as well; a fork has its own provision receipt, like an ordinary session. */
+  goalContext(sessionId: Id): string {
+    const s = this.store.getSession(sessionId), binding = s?.taskId ? this.binding(s.taskId) : null;
+    return s && s.runtime !== "remote" && binding && this.valid(binding) && !this.deliveredReceipt(sessionId, binding) ? this.taskContext(binding.taskId) : "";
+  }
+  private deliveredReceipt(sessionId: Id, binding: TaskContextBinding): ContextReceipt | undefined {
+    return this.receipts(sessionId).find((r) => r.requirementId === binding.id && r.taskId === binding.taskId && r.rootTaskId === binding.rootTaskId && r.deliveredAt);
   }
   pendingNotifications(sessionId: Id): Array<{ id: Id; text: string }> {
     const s = this.store.getSession(sessionId), binding = s?.taskId ? this.binding(s.taskId) : null;
@@ -194,9 +202,40 @@ export class SharedContextFeature extends Feature {
   }
   prerequisites(taskId: Id): Id[] { return this.read<Id[]>(PREREQUISITES_KEY + taskId, []); }
   setPrerequisites(taskId: Id, resultIds: Id[]): void { this.requireTask(taskId); this.saveValue(PREREQUISITES_KEY + taskId, [...new Set(resultIds)]); }
+  /**
+   * A prerequisite done again and accepted anew (2026-11-17, plans/done/task-dependencies.md): unbound tasks that started on one
+   * of its earlier deliveries now name this one, so their own can be accepted (an accepted one shows outdated until
+   * redone). Before, they kept the old id, and no delivery of theirs could ever be accepted. A bound task keeps its frozen
+   * evidence: its manager restarts it explicitly, as before.
+   */
+  refreshPrerequisites(taskId: Id, resultId: Id): void {
+    const older = new Set(this.results(taskId).map((r) => r.id).filter((id) => id !== resultId));
+    if (!older.size) return;
+    for (const task of this.store.listTasks()) {
+      const ids = this.prerequisites(task.id);
+      if (!this.binding(task.id) && ids.some((id) => older.has(id))) this.setPrerequisites(task.id, ids.map((id) => (older.has(id) ? resultId : id)));
+    }
+  }
   validatePlanBasis(sessionId: Id, basis: ContextBasis): void {
     const actor = this.actor(sessionId), context = this.context(basis.contextId);
     if (!this.requireTask(actor).lead || this.root(actor) !== context.rootTaskId || !context.versions.some((v) => v.version === basis.version)) throw new HostError("read_only", "派工的共同需求必须来自本管理树的已发布版本。");
+  }
+  /**
+   * A dependency may cross management trees, but does not confer management or shared-requirement authority. Unbound
+   * work may retain a same-topic prerequisite named by an explicit line or its real frozen start evidence; merely
+   * citing another task's result in a submission cannot create that relationship (2026-11-17).
+   */
+  isPrerequisiteInScope(taskId: Id, prerequisiteTaskId: Id): boolean {
+    const task = this.store.getTask(taskId), prerequisite = this.store.getTask(prerequisiteTaskId);
+    if (!task || !prerequisite || taskId === prerequisiteTaskId || task.archivedAt || prerequisite.archivedAt || task.remote || prerequisite.remote) return false;
+    const root = this.root(taskId), prerequisiteRoot = this.root(prerequisiteTaskId);
+    if (root && root === prerequisiteRoot) return true;
+    if (this.binding(taskId) || !root || !prerequisiteRoot || !task.topicId || task.topicId !== prerequisite.topicId) return false;
+    const topic = this.store.getTopic(task.topicId);
+    if (!topic || topic.archivedAt) return false;
+    if (this.store.getCanvas(task.topicId)?.edges.some((e) => e.kind === "depends" && e.from === prerequisiteTaskId && e.to === taskId)) return true;
+    const expected = new Set(this.prerequisites(taskId));
+    return this.results(prerequisiteTaskId).some((r) => expected.has(r.id));
   }
   isPrerequisiteCurrent(taskId: Id, result: TaskResult): boolean {
     const binding = this.binding(taskId);
@@ -221,7 +260,7 @@ export class SharedContextFeature extends Feature {
     const resultIds: Id[] = [];
     for (const id of new Set(dependencyIds)) {
       const dependency = this.store.getTask(id), result = dependency ? this.results(id).at(-1) : undefined;
-      if (!dependency || dependency.archivedAt || dependency.column !== "done" || !result || result.state !== "accepted" || result.managerTaskId !== (dependency.managerTaskId ?? null) || this.root(id) !== this.root(taskId) || !this.isResultCurrent(id, result) || !this.isPrerequisiteCurrent(taskId, result)) throw new HostError("conflict", "前置任务尚无归属及需求版本有效的已验收交付，不能启动依赖任务。");
+      if (!dependency || dependency.archivedAt || dependency.column !== "done" || !result || result.state !== "accepted" || result.managerTaskId !== (dependency.managerTaskId ?? null) || !this.isPrerequisiteInScope(taskId, id) || !this.isResultCurrent(id, result) || !this.isPrerequisiteCurrent(taskId, result)) throw new HostError("conflict", "前置任务尚无归属及需求版本有效的已验收交付，不能启动依赖任务。");
       resultIds.push(result.id);
     }
     if (freeze) this.setPrerequisites(taskId, resultIds);
@@ -252,7 +291,7 @@ export class SharedContextFeature extends Feature {
     for (const id of actual) {
       const owner = this.store.listTasks().find((t) => this.results(t.id).some((r) => r.id === id));
       const latest = owner ? this.results(owner.id).at(-1) : undefined;
-      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.managerTaskId !== (owner.managerTaskId ?? null) || latest.state !== "accepted" || !this.isResultCurrent(owner.id, latest) || !this.isPrerequisiteCurrent(taskId, latest) || this.root(owner.id) !== this.root(taskId)) issues.push(`前置交付 ${id} 已失效或不属于当前管理树`);
+      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.managerTaskId !== (owner.managerTaskId ?? null) || latest.state !== "accepted" || !this.isResultCurrent(owner.id, latest) || !this.isPrerequisiteCurrent(taskId, latest) || !this.isPrerequisiteInScope(taskId, owner.id)) issues.push(`前置交付 ${id} 已失效或不属于有效依赖范围`);
     }
     return issues;
   }
@@ -279,7 +318,7 @@ export class SharedContextFeature extends Feature {
     for (const id of ids) {
       const owner = this.store.listTasks().find((t) => this.results(t.id).some((r) => r.id === id));
       const latest = owner ? this.results(owner.id).at(-1) : undefined;
-      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.state !== "accepted" || latest.managerTaskId !== (owner.managerTaskId ?? null) || this.root(owner.id) !== this.root(taskId) || !this.isResultCurrent(owner.id, latest, new Set(seen)) || (!this.isPrerequisiteCurrent(taskId, latest) && !resolved)) return false;
+      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.state !== "accepted" || latest.managerTaskId !== (owner.managerTaskId ?? null) || !this.isPrerequisiteInScope(taskId, owner.id) || !this.isResultCurrent(owner.id, latest, new Set(seen)) || (!this.isPrerequisiteCurrent(taskId, latest) && !resolved)) return false;
     }
     return true;
   }
@@ -293,7 +332,7 @@ export class SharedContextFeature extends Feature {
     for (const id of actual) {
       const owner = this.store.listTasks().find((t) => this.results(t.id).some((r) => r.id === id));
       const latest = owner ? this.results(owner.id).at(-1) : undefined;
-      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.state !== "accepted" || latest.managerTaskId !== (owner.managerTaskId ?? null) || this.root(owner.id) !== this.root(taskId) || !this.isResultCurrent(owner.id, latest)) throw new HostError("conflict", `前置交付 ${id} 不是当前管理树的有效已验收结果，不能通过差异说明接受。`);
+      if (!owner || owner.archivedAt || owner.column !== "done" || latest?.id !== id || latest.state !== "accepted" || latest.managerTaskId !== (owner.managerTaskId ?? null) || !this.isPrerequisiteInScope(taskId, owner.id) || !this.isResultCurrent(owner.id, latest)) throw new HostError("conflict", `前置交付 ${id} 不是有效依赖范围内的有效已验收结果，不能通过差异说明接受。`);
     }
     if (typeof explanation !== "string" || !explanation.trim() || explanation.length > 10_000) throw new HostError("conflict", `${issues.join("；")}。请退回更新、明确调整任务要求版本，或提供 contextExplanation 说明差异不影响接受。`);
     const binding = this.binding(taskId);

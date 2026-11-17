@@ -36,6 +36,7 @@ import { ReviewRelations } from "./ReviewRelations.js";
 import { useCanvasReturns } from "./useCanvasReturns.js";
 import { taskStatus } from "../lib/status.js";
 import { dependencyFlow, managementFlow } from "./task-flow.js";
+import { usePrerequisites } from "../task/prerequisites.js";
 import { useTaskFlow } from "./useTaskFlow.js";
 import { useContextHints } from "./useContextHints.js";
 import { FlowOverlay } from "./FlowOverlay.js";
@@ -161,6 +162,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const decisions = useOpenDecisions(link);
   const taskFlow = useTaskFlow(link, tasks);
   const contextHints = useContextHints(link, tasks);
+  // Whether each prerequisite is finished, as the Host counts it (2026-11-17, plans/done/task-dependencies.md).
+  const prerequisites = usePrerequisites(link);
   const [animateFlow, setAnimateFlow] = useState(() => readKey("amo.canvasFlowAnimation") !== "0");
   const flowStatus = new Map(tasks.map((t) => [t.id, taskStatus(sessions.filter((s) => s.taskId === t.id))]));
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
@@ -1063,7 +1066,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
               if (!from || !to) return null;
               const { a, b } = arrowBetween(from, to);
               const source = anyTaskById.get(e.from), target = anyTaskById.get(e.to);
-              const flow = source && target ? dependencyFlow(source, target, flowStatus.get(e.to) ?? null) : null;
+              const flow = source && target ? dependencyFlow(source, target, flowStatus.get(e.to) ?? null, prerequisites ? (prerequisites[e.to] ?? []).includes(e.from) : undefined) : null;
               return (
                 <g key={e.id} className={!selectedLines.has(`edge:${e.id}`) && selectedScope && !(selectedScope.has(e.from) && selectedScope.has(e.to)) ? "management-dimmed" : undefined}>
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`canvas-edge${selectedLines.has(`edge:${e.id}`) ? " selected" : ""}`} markerEnd="url(#amo-arrow)" data-testid="canvas-edge" data-edge-id={e.id} />

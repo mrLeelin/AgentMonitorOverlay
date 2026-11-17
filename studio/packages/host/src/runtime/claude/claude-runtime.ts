@@ -960,6 +960,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   private recoverAfterRestart(): void {
     for (const s of this.store.listSessions()) {
       if (s.runtime !== "claude") continue;
+      // No Host-owned Goal can keep working after recovery, including the idle gap between native rounds.
+      // Terminal-owned processes may still be alive; archived leftovers cannot be executing in Studio.
+      if (s.goal?.status === "active" && (s.writer === "workbench" || s.archivedAt)) this.goals.closed(s.id);
       // Only what was under way, picked out by SQLite (2026-10-20: every item of every session was read and parsed).
       for (const item of this.store.listUnfinishedItems(s.id)) if (item.type === "question" && item.state === "pending") this.asks.cancelQuestion(item.id);
       this.settleLeftovers(s.id, { approvals: true });

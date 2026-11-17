@@ -51,6 +51,8 @@
   box-shadow: 0 1px 0 var(--shadow-soft);
 }
 .draft-composer:focus-within { box-shadow: 0 0 0 3px var(--tint); }
+.draft-goal { padding: 10px 16px; border-top: 1px solid var(--border); background: var(--tint); }
+.draft-composer .draft-goal input { border: 1px solid var(--border); }
 /* 2026-10-19: images and files pasted or dropped in, above the first sentence, like the session's composer. */
 .draft-composer .attach-tray { padding: 12px 16px 0; }
 .draft-composer.dropping { border-style: dashed; border-color: var(--attention-border); background: color-mix(in srgb, var(--selection) 40%, var(--panel)); }

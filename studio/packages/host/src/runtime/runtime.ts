@@ -143,9 +143,11 @@ const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", 
  * step 2) — 2026-11-05, plans/host-structure.md 8a: it used to be a wrapper around the router.
  */
 export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements SessionRuntimeApi {
-  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
+  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; goal?: (sessionId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
   private readonly purposeBoundaries = new Map<Id, Id>();
   private readonly dispatching = new Map<Id, { purpose: MessagePurpose; done: Promise<void> }>();
+  private readonly goalStopVersions = new Map<Id, number>();
+  private readonly goalPreparing = new Map<Id, () => void>();
 
   /** One Host-owned context assembler for every runtime, including first messages and resumed sessions. */
   setMessageContext(context: NonNullable<RuntimeRouter["context"]>): void {
@@ -420,12 +422,19 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.forSession(sessionId).rename(sessionId, title);
   }
   interrupt(sessionId: Id, options?: InterruptOptions) {
+    this.cancelGoalPreparation(sessionId);
     return this.forSession(sessionId).interrupt(sessionId, options);
   }
   fork(sessionId: Id, profileId?: Id) {
     return this.forSession(sessionId).fork(sessionId, profileId);
   }
   archive(sessionId: Id) {
+    const descendants = new Set([sessionId]);
+    for (let previous = -1; previous !== descendants.size;) {
+      previous = descendants.size;
+      for (const s of this.store.listSessions()) if (s.parentId && descendants.has(s.parentId)) descendants.add(s.id);
+    }
+    for (const id of descendants) this.cancelGoalPreparation(id);
     return this.forSession(sessionId).archive(sessionId);
   }
   unarchive(sessionId: Id) {
@@ -482,23 +491,42 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   async setGoal(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState> {
     const r = this.forSession(sessionId);
     if (!r.setGoal) throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
+    if (this.store.getSession(sessionId)?.kind === "sub") throw Object.assign(new Error("子 agent 的生命周期由父会话管理，不能单独控制 Goal。"), { code: "bad_request" });
     const activates = input.status !== "paused";
+    if (!activates) this.cancelGoalPreparation(sessionId);
+    const stopVersion = this.goalStopVersions.get(sessionId) ?? 0;
+    const context = activates ? this.context?.session(sessionId) ?? "" : "";
+    let preparing = false;
     let finish!: () => void;
     const reservation = { purpose: "work" as const, done: new Promise<void>((resolve) => { finish = resolve; }) };
-    const check = () => {
+    const check = this.frozenInputGuard(context, context, () => activates ? this.context?.session(sessionId) ?? "" : "", () => {}, () => {
       beforeDispatch?.();
       const s = this.store.getSession(sessionId);
+      if (activates && stopVersion !== (this.goalStopVersions.get(sessionId) ?? 0)) throw Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "conflict" });
+      if (!s || s.archivedAt || s.writer === "archived" || s.writer === "terminal-handoff") throw Object.assign(new Error("会话不可写，这次待开启的 Goal 已取消。"), { code: "read_only" });
       const pending = this.dispatching.get(sessionId);
       if (activates && ((pending && pending !== reservation) || this.purposeBoundaries.has(sessionId))) throw Object.assign(new Error("当前消息还在发送，请等发送完成后再开启 Goal。"), { code: "bad_request" });
       if (input.status !== "paused" && s?.taskId) this.context?.checkStart?.(s.taskId, false);
       // A read-only inquiry must finish before the person starts autonomous work in this thread.
-      if (input.status !== "paused" && s && this.inNativeTurn(s) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
-    };
+      if (activates && !preparing && this.inNativeTurn(s) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
+    });
     check();
     // Reserve the idle session before any native recovery await, just as an ordinary message does. Messages
     // arriving while the Goal is being enabled stay in the existing inbox and keep their original purpose.
     if (activates) this.dispatching.set(sessionId, reservation);
-    try { return await r.setGoal(sessionId, input, check); }
+    try {
+      const missing = activates ? this.context?.goal?.(sessionId) ?? "" : "";
+      if (missing) {
+        const session = this.store.getSession(sessionId)!;
+        if (session.goal?.status === "active") throw Object.assign(new Error("当前 Goal 尚未收到新的共同需求，请先暂停 Goal，再重新开启。"), { code: "conflict" });
+        if (this.inNativeTurn(session)) throw Object.assign(new Error("请等当前回复结束，再核对共同需求并开启 Goal。"), { code: "conflict" });
+        preparing = true;
+        await this.prepareGoalContext(r, session, missing, input.objective ?? session.goal?.objective ?? "", check);
+        preparing = false;
+      }
+      check();
+      return await r.setGoal(sessionId, input, check);
+    }
     finally {
       if (this.dispatching.get(sessionId) === reservation) {
         this.dispatching.delete(sessionId);
@@ -509,9 +537,67 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     }
   }
   clearGoal(sessionId: Id): Promise<SessionGoalState> {
+    this.cancelGoalPreparation(sessionId);
     const r = this.forSession(sessionId);
     if (!r.clearGoal) throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
     return r.clearGoal(sessionId);
+  }
+  private cancelGoalPreparation(sessionId: Id): void {
+    this.goalStopVersions.set(sessionId, (this.goalStopVersions.get(sessionId) ?? 0) + 1);
+    this.goalPreparing.get(sessionId)?.();
+  }
+  /** A bounded read-only turn supplies business data; only its real transport receipt permits native Goal work. */
+  private async prepareGoalContext(runtime: SessionRuntimeApi, session: Session, context: string, objective: string, check: () => void): Promise<void> {
+    if (!runtime.resend) throw Object.assign(new Error("当前 Agent 无法先核对共同需求，请先发送一条消息读取完整需求，再开启 Goal。"), { code: "bad_request" });
+    const text = `【Goal 启动前核对】以下是任务的冻结业务依据，请只读核对，先不要实施目标、修改文件或拆分任务。待本轮结束后，Studio 才会开启原生 Goal；本轮不计入原生 Goal 预算。\n用户目标：${objective}\n\n${context}`;
+    const item = this.store.appendItem({ id: newId("i-goal-context"), sessionId: session.id, type: "user", text, messagePurpose: "inquiry", delivery: "held", createdAt: new Date().toISOString(), raw: { runtime: session.runtime, method: "user/inbox" } });
+    let dispatchValid = true;
+    const beforeDispatch = () => {
+      if (!dispatchValid) throw Object.assign(new Error("Goal 启动前核对已取消，旧输入不能再发送。"), { code: "conflict" });
+      check();
+    };
+    let delivered = false, observedTurn = false, settled = false, finish!: () => void, fail!: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+    void ready.catch(() => undefined);
+    const poll = () => {
+      if (settled) return;
+      try {
+        check();
+        const current = this.store.getSession(session.id)!;
+        // A stopped/failed previous turn is a valid starting point; only this preparation's lifecycle can fail it.
+        if (observedTurn && ["error", "interrupted"].includes(current.status)) throw new Error("共同需求核对已中断，Goal 未开启，请重试。");
+        if (this.inNativeTurn(current)) observedTurn = true;
+        if (delivered && observedTurn && !this.inNativeTurn(current)) {
+          if (!["idle", "completed"].includes(current.status)) throw new Error("共同需求核对仍在等待处理，Goal 未开启，请先处理当前问题。");
+          settled = true; finish();
+        }
+      } catch (error) { settled = true; fail(error); }
+    };
+    const onDelivery = (id: Id, value: string) => { if (id === session.id && value === text) { delivered = true; poll(); } };
+    const onEvent = (event: HostEvent) => { if (event.type === "session.upserted" || event.type === "task.upserted") poll(); };
+    const cancel = () => { if (!settled) { settled = true; fail(Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "conflict" })); } };
+    this.on("message-delivered", onDelivery);
+    this.on("event", onEvent);
+    this.goalPreparing.set(session.id, cancel);
+    const timer = setTimeout(() => { if (!settled) { settled = true; fail(new Error("共同需求核对未完成或送达未确认，Goal 未开启；请等当前回复结束后重试。")); } }, 30_000);
+    timer.unref?.();
+    try {
+      this.prepareMessagePurpose(session.id, "inquiry");
+      this.emit("event", this.store.appendEvent({ type: "item.appended", item }));
+      await Promise.race([runtime.resend(session.id, item.id, [], { purpose: "inquiry", skillText: "", beforeDispatch }), ready]);
+      await ready;
+    } catch (error) {
+      const row = this.store.getItem(item.id);
+      if (row?.type === "user" && row.delivery) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "expired", deliveryReason: "Goal 启动前核对已取消；重新开启时核对当前需求。", deliveryEndedAt: new Date().toISOString() }) }));
+      if (session.runtime === "dsh" && (error as { code?: string } | null)?.code === "read_only") throw Object.assign(new Error("这个 DSH 会话不能保证 Goal 启动前的只读核对；Goal 未开启。请先通过普通工作消息提供当前完整共同需求，再开启 Goal。"), { code: "read_only" });
+      throw error;
+    } finally {
+      dispatchValid = false;
+      clearTimeout(timer);
+      this.off("message-delivered", onDelivery);
+      this.off("event", onEvent);
+      if (this.goalPreparing.get(session.id) === cancel) this.goalPreparing.delete(session.id);
+    }
   }
   applyChatSettings(settings: ChatSettings): void {
     for (const r of Object.values(this.runtimes)) r.applyChatSettings?.(settings);

@@ -30,7 +30,7 @@ const GRAPH: Record<string, string[]> = {
   orchestration: ["collab", "sessions", "sharedcontext", "tasks"],
   planning: ["canvas", "tasks"],
   projects: ["tasks"],
-  relays: ["collab", "sessions", "tasks"],
+  relays: ["collab", "sessions", "taskplans", "tasks"],
   remote: ["attachments", "channels", "chatfiles", "gitreview", "openin", "prompttemplates", "sessions", "tasks", "viewpacks"],
   review: ["sessions"],
   scratchpad: ["attachments"],

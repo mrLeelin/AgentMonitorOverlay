@@ -204,6 +204,31 @@ describe("Codex native Goals", () => {
     expect(store.getSession(session.id)?.archivedAt).toBeNull();
   });
 
+  it("archives native subagents with their parent without querying an independently addressable Goal", async () => {
+    const session = await start();
+    await runtime.setGoal(session.id, { objective: "Archive the whole tree", status: "active" });
+    // Codex can announce a subagent through activity alone; Studio neither resumes nor owns that native thread.
+    const child = store.createSession({ taskId, topicId: null, parentId: session.id, kind: "sub", runtime: "codex", profileId: session.profileId, workspaceId: workspace.id, title: "Native child", status: "completed", writer: "workbench", runtimeRef: "native-child-not-loaded" });
+    const fake = servers.fakes.get(session.profileId)!;
+    const before = fake.calls.length;
+    await runtime.archive(session.id);
+    expect(store.getSession(session.id)?.archivedAt).toEqual(expect.any(String));
+    expect(store.getSession(child.id)?.archivedAt).toEqual(expect.any(String));
+    expect(fake.goals.get(session.runtimeRef!)?.status).toBe("paused");
+    expect(fake.calls.slice(before).some((call) => (call.params as { threadId?: string }).threadId === child.runtimeRef)).toBe(false);
+  });
+
+  it("reports native subagent Goals as unavailable and refuses independent mutations without transport", async () => {
+    const session = await start();
+    const child = store.createSession({ taskId, topicId: null, parentId: session.id, kind: "sub", runtime: "codex", profileId: session.profileId, workspaceId: workspace.id, title: "Native child", status: "completed", writer: "workbench", runtimeRef: "native-child-not-loaded" });
+    const fake = servers.fakes.get(session.profileId)!;
+    const before = fake.calls.length;
+    expect(await runtime.getGoal(child.id)).toMatchObject({ goal: null, unavailable: expect.stringContaining("子 agent") });
+    await expect(runtime.setGoal(child.id, { objective: "Do not independently activate", status: "active" })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(runtime.clearGoal(child.id)).rejects.toMatchObject({ code: "bad_request" });
+    expect(fake.calls).toHaveLength(before);
+  });
+
   it("serializes a permission change with the first Goal activation so native and UI settings agree", async () => {
     const session = await start();
     const { client } = await servers.ensure(session.profileId);

@@ -90,6 +90,74 @@ describe("Claude Goal native journal and action ordering", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it.each([false, true])("waits for a concurrent local state read before clearing an active Goal (read not dispatched: %s)", async (early) => {
+    const { goals, id, sent, ack, core, live } = harness();
+    const activating = goals.set(id, { objective: "Do the work", status: "active" });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    ack(0, "Do the work", "Goal set: Do the work"); await activating;
+    core.store.updateSession(id, { goal: { ...goals.state(id).goal!, status: "paused" } });
+    const reading = goals.get(id);
+    if (!early) await vi.waitFor(() => expect(sent).toHaveLength(2));
+    goals.observe(id, live, { type: "active_goal", value: { condition: "Do the work" } } as unknown as SDKMessage);
+    let earlyError: unknown;
+    const pausing = goals.pause(id).catch((error: unknown) => { earlyError = error; return goals.state(id); });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    ack(1, "", "Goal active: Do the work (not yet evaluated)"); await reading;
+    expect(earlyError).toBeUndefined();
+    await vi.waitFor(() => expect(sent).toHaveLength(3));
+    expect(sent[2]?.content).toBe("/goal clear");
+    ack(2, "clear", "Goal cleared: Do the work");
+    expect((await pausing).goal?.status).toBe("paused");
+  });
+
+  it("does not queue a local status command behind an active Goal's invisible model request", async () => {
+    const { goals, id, sent, ack } = harness();
+    const activating = goals.set(id, { objective: "Do the work", status: "active" });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    ack(0, "Do the work", "Goal set: Do the work"); await activating;
+    const reading = goals.get(id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try { expect(sent).toHaveLength(1); }
+    finally { if (sent[1]) ack(1, "", "Goal active: Do the work (not yet evaluated)"); await reading; }
+  });
+
+  it("sends clear now while a native Goal request has started before its first SDK stream event", async () => {
+    const { goals, id, sent, ack, live } = harness();
+    const request = vi.fn(async () => undefined);
+    (live.q as unknown as { request: typeof request }).request = request;
+    const activating = goals.set(id, { objective: "Do the work", status: "active" });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    ack(0, "Do the work", "Goal set: Do the work"); await activating;
+    // A native Goal can have dispatched a slow model request while Studio still sees its previous idle result.
+    expect(live.running).toBe(false);
+    const pausing = goals.pause(id);
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    goals.observe(id, live, { type: "command_lifecycle", state: "queued", command_uuid: sent[1]!.uuid } as unknown as SDKMessage);
+    try {
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith({ subtype: "interrupt", send_now: true, message_uuid: sent[1]!.uuid }));
+    } finally { ack(1, "clear", "Goal cleared: Do the work"); await pausing; }
+    expect(goals.state(id).goal?.status).toBe("paused");
+  });
+
+  it.each([false, true])("does not leave the next turn marked as interrupted when Send now did not stop a turn (request failed: %s)", async (failed) => {
+    const { goals, id, sent, ack, live } = harness();
+    const failure = new Error("Send now failed");
+    const request = vi.fn(async () => { if (failed) throw failure; return { response: { send_now: "nothing-waiting" } }; });
+    (live.q as unknown as { request: typeof request }).request = request;
+    const activating = goals.set(id, { objective: "Do the work", status: "active" });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    ack(0, "Do the work", "Goal set: Do the work"); await activating;
+    const pausing = goals.pause(id).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    goals.observe(id, live, { type: "command_lifecycle", state: "queued", command_uuid: sent[1]!.uuid } as unknown as SDKMessage);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    if (!failed) ack(1, "clear", "Goal cleared: Do the work");
+    const result = await pausing;
+    if (failed) expect(result).toBe(failure);
+    expect(live.givingWay).toBe(false);
+  });
+
   it.each(["Do the work", "A different objective"])("ignores delayed clear/evaluation rows from the prior Goal after resuming %s", async (objective) => {
     const { goals, id, sent, ack, home, settled } = harness();
     const activate = goals.set(id, { objective: "Do the work", status: "active" });

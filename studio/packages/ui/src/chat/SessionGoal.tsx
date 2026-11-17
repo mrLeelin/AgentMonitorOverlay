@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Session, SessionGoal, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import type { Session, SessionGoal, SessionGoalState, SessionGoalUpdate, Task, Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
+import { withMentionRefs, type MentionPick } from "../attach/mentions.js";
+import { resourceMessage } from "../attach/inlineResources.js";
+import { GoalObjectiveInput } from "./GoalObjectiveInput.js";
 import "./goal.css";
 
 const STATUS: Record<SessionGoal["status"], string> = { active: "进行中", paused: "已暂停", blocked: "遇到阻碍", usageLimited: "额度已用尽", budgetLimited: "预算已用尽", complete: "已完成" };
 const CODEX_CAPABILITIES = { tokenBudget: true, pause: true, tokens: true, elapsed: true, roundBudget: false };
 const UNKNOWN_CAPABILITIES = { tokenBudget: false, pause: false, tokens: false, elapsed: false, roundBudget: false };
 type GoalView = { sessionId: string; state: SessionGoalState | null; error: string | null };
-type GoalDraft = { sessionId: string; objective: string; budget: string; busy: boolean; note: string | null };
+type GoalDraft = { sessionId: string; objective: string; refs: ReadonlyMap<string, MentionPick>; budget: string; busy: boolean; note: string | null };
 
 function errorText(error: unknown): string {
   if (error instanceof HostApiError && error.status === 404) return "当前 Host 没有提供 Goal 接口。请在会话空闲后手动重启新版 Host，再刷新重试。";
@@ -52,9 +55,9 @@ export function useSessionGoal(link: HostLink, session: Session) {
     reloadDelay: 100,
   }, [link.url, link.token, session.id, session.runtime]);
   latestView.current = view;
-  const empty: GoalDraft = { sessionId: session.id, objective: "", budget: "", busy: false, note: null };
+  const empty: GoalDraft = { sessionId: session.id, objective: "", refs: new Map(), budget: "", busy: false, note: null };
   const [savedDraft, setDraft] = useState<GoalDraft>(empty);
-  useEffect(() => { setDraft({ sessionId: session.id, objective: "", budget: "", busy: false, note: null }); }, [scope]);
+  useEffect(() => { setDraft({ sessionId: session.id, objective: "", refs: new Map(), budget: "", busy: false, note: null }); }, [scope]);
   const draft = savedDraft.sessionId === session.id ? savedDraft : empty;
   const data = view.sessionId === session.id ? view : initial;
   const state = data.state;
@@ -70,7 +73,7 @@ export function useSessionGoal(link: HostLink, session: Session) {
     let body: SessionGoalUpdate = {};
     try {
       if (action === "create") {
-        const objective = draft.objective.trim();
+        const objective = resourceMessage(withMentionRefs(draft.objective.trim(), draft.refs), []).text;
         if (!objective || objective.length > 4000) throw new Error("请填写目标，最多 4000 个字符。");
         const budget = hasBudget ? budgetValue(draft.budget, rounds ? "续跑轮数上限" : "Token 预算") : undefined;
         body = { objective, status: "active", ...(budget === undefined ? {} : rounds ? { roundBudget: budget } : { tokenBudget: budget }) };
@@ -92,7 +95,7 @@ export function useSessionGoal(link: HostLink, session: Session) {
     try {
       if (action === "clear") await call(link, "DELETE /api/sessions/:id/goal", { id: session.id });
       else await call(link, "PUT /api/sessions/:id/goal", { id: session.id }, body);
-      if (current.current === scope && (action === "create" || action === "budget" || action === "clear")) updateDraft({ objective: "", budget: "" });
+      if (current.current === scope && (action === "create" || action === "budget" || action === "clear")) updateDraft({ objective: "", refs: new Map(), budget: "" });
     } catch (error) {
       if (current.current === scope) updateDraft({ note: errorText(error) });
     } finally {
@@ -104,7 +107,7 @@ export function useSessionGoal(link: HostLink, session: Session) {
     }
   }
 
-  return { state, goal, capabilities, supported, runtime: session.runtime, error: data.error, draft, updateDraft, change, refresh };
+  return { link, session, state, goal, capabilities, supported, runtime: session.runtime, error: data.error, draft, updateDraft, change, refresh };
 }
 
 type GoalControl = ReturnType<typeof useSessionGoal>;
@@ -120,7 +123,7 @@ export function SessionGoalButton({ control, expanded, onClick }: { control: Goa
   );
 }
 
-export function SessionGoalTray({ control, disabled }: { control: GoalControl; disabled: boolean }) {
+export function SessionGoalTray({ control, disabled, tasks, sessions, projects }: { control: GoalControl; disabled: boolean; tasks: readonly Task[]; sessions: readonly Session[]; projects: readonly Workspace[] }) {
   const { state, goal, capabilities, runtime, error, draft, updateDraft, change, refresh } = control;
   const locked = disabled || draft.busy || !state || !!state.unavailable || !!error;
   const format = (value: number) => value.toLocaleString("zh-CN");
@@ -154,7 +157,7 @@ export function SessionGoalTray({ control, disabled }: { control: GoalControl; d
         </>
       ) : (
         <>
-          <label className="goal-field">要完成的目标<textarea rows={3} maxLength={4000} value={draft.objective} placeholder="描述要完成的工作和完成标准…" disabled={locked} onChange={(event) => updateDraft({ objective: event.target.value, note: null })} data-testid="goal-objective-input" /></label>
+          <GoalObjectiveInput key={control.session.id} link={control.link} session={control.session} tasks={tasks} sessions={sessions} projects={projects} value={draft.objective} refs={draft.refs} onChange={(objective) => updateDraft({ objective, note: null })} onRefs={(refs) => updateDraft({ refs })} disabled={locked} />
           <div className="goal-create-row">{hasBudget && <label className="goal-field goal-budget">{rounds ? "续跑轮数上限（可选）" : "Token 预算（可选）"}<input inputMode="numeric" value={draft.budget} placeholder={rounds ? "使用 Agent 默认上限" : "留空不设预算"} disabled={locked} onChange={(event) => updateDraft({ budget: event.target.value, note: null })} data-testid="goal-budget" /></label>}<button type="button" className="btn-primary small" disabled={locked || !draft.objective.trim()} onClick={() => void change("create")} data-testid="goal-start">{draft.busy ? "正在开启…" : "开启 Goal"}</button></div>
           <div className="tray-note">开启后，Agent 会围绕目标自动继续执行。</div>
         </>

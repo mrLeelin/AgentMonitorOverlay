@@ -64,6 +64,11 @@ export interface NewSessionInput {
   resumeFrom?: string;
   /** 子会话设定 named in the first message (see SubsessionSetup): kept for the new session. */
   subsessions?: SubsessionSetup[];
+  /**
+   * The person confirmed starting a task whose prerequisites are not finished (2026-11-17, plans/done/task-dependencies.md):
+   * without it the task's first session is refused. GET /api/tasks/:id/prerequisites says which wait.
+   */
+  confirmed?: boolean;
 }
 
 /** 接续已有会话 (2026-11-05): a Claude session started outside Studio, as GET /api/claude/outside-sessions lists it. */
@@ -702,6 +707,10 @@ export interface HostRoutes
   "PATCH /api/tasks/:id": { req: { title?: string; description?: string; firstMessage?: string; lead?: boolean; managerTaskId?: Id | null; relayAuto?: boolean; column?: TaskColumn; workspaceId?: Id | null; topicId?: Id | null }; res: Task };
   "GET /api/tasks/:id/management": { req: void; res: TaskManagement };
   "GET /api/tasks/:id/workflow": { req: void; res: TaskWorkflow };
+  /** The task's prerequisites not finished yet (2026-11-17, plans/done/task-dependencies.md). */
+  "GET /api/tasks/:id/prerequisites": { req: void; res: Task[] };
+  /** Every live task still waiting for prerequisites: task id → their ids (the board, the task page, the canvas). */
+  "GET /api/prerequisites": { req: void; res: Record<Id, Id[]> };
   "POST /api/tasks/:id/workflow/retry-notice": { req: { noticeId: Id }; res: { ok: true } };
   "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string } & ContextSubmissionInput; res: TaskResult };
   "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };

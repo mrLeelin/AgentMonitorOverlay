@@ -530,3 +530,151 @@ describe("task plans (拆任务提案)", () => {
     expect(JSON.parse(store.getKv("taskplans.pending-starts")!.value)[b]).toBeUndefined();
   });
 });
+
+// 2026-11-17, plans/done/task-dependencies.md: the canvas's dependency lines are the one kind of dependency, and a queued task
+// waits for them; a prerequisite counts as finished once its own direct manager accepted it (done, without a manager);
+// a plan may depend on tasks its topic has already. Before, the queue kept its own list from the plan and ignored lines.
+describe("dependencies (依赖统一)", () => {
+  const started = (taskId: string) => store.listSessions({ taskId }).length > 0;
+  const lines = () => service.canvases.canvas(topic.id).edges.map((e) => [e.from, e.to]);
+  const removeLine = (from: string, to: string) => service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, edges: doc.edges.filter((e) => !(e.from === from && e.to === to)) }));
+  beforeEach(() => {
+    vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+    vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
+  });
+
+  it("a line drawn later holds a queued task, and taking it away lets the task start", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "前后置", tasks: [
+      { key: "a", title: "前置" }, { key: "x", title: "另一个前置" }, { key: "b", title: "后做", dependsOn: ["a"] },
+    ] });
+    const id = (key: string) => plan.created!.find((c) => c.key === key)!.taskId;
+    service.canvases.canvasAddDependency(id("x"), id("b"));
+    acceptPrerequisite(id("a"));
+    await service.taskPlans.startReady();
+    // Before: the queue knew only `a`, and started `b` while `x` was still being done.
+    expect(started(id("b"))).toBe(false);
+    removeLine(id("x"), id("b"));
+    await vi.waitFor(() => expect(started(id("b"))).toBe(true));
+  });
+
+  it("taking away the line a plan drew lets its dependent start without waiting", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "前后置", tasks: [
+      { key: "a", title: "前置" }, { key: "b", title: "后做", dependsOn: ["a"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId;
+    expect(lines()).toContainEqual([a, b]);
+    expect(started(b)).toBe(false);
+    removeLine(a, b);
+    await vi.waitFor(() => expect(started(b)).toBe(true));
+  });
+
+  it("a prerequisite under another manager counts once its own manager accepted it", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "前后置", tasks: [
+      { key: "a", title: "前置" }, { key: "b", title: "后做", dependsOn: ["a"] }, { key: "c", title: "下游", dependsOn: ["b"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId;
+    const peer = store.createTask({ title: "另一个主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    const peerSession = store.createSession({ ...leadSession, id: undefined, taskId: peer.id, runtimeRef: `thr-${peer.id}` });
+    service.tasks.setManager(a, peer.id);
+    const result = service.orchestration.submit(store.listSessions({ taskId: a })[0]!.id, "前置完成", "隔离验证通过");
+    service.orchestration.review(peerSession.id, result.id, true, "验收通过");
+    await service.taskPlans.startReady();
+    // Before: only a prerequisite of the dependent's own manager counted, so `b` waited for good.
+    expect(started(b)).toBe(true);
+    // Removing the visual dependency after startup does not erase the real evidence used to start this task.
+    removeLine(a, b);
+    const c = plan.created![2]!.taskId;
+    const delivery = service.orchestration.submit(store.listSessions({ taskId: b })[0]!.id, "后做完成", "集成验证通过");
+    expect(delivery.contextMismatch).toBeUndefined();
+    const accepted = service.orchestration.review(leadSession.id, delivery.id, true, "验收通过");
+    expect(service.sharedContext.isResultCurrent(b, accepted)).toBe(true);
+    await service.taskPlans.startReady();
+    expect(started(c)).toBe(true);
+    acceptPrerequisite(c);
+    expect(service.sharedContext.isResultCurrent(c, service.orchestration.results(c).at(-1)!)).toBe(true);
+  });
+
+  it("a cross-tree prerequisite reopened and accepted again invalidates old downstream delivery until it is redone", async () => {
+    const peer = store.createTask({ title: "独立主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
+    const peerSession = store.createSession({ ...leadSession, id: undefined, taskId: peer.id, runtimeRef: null });
+    const a = store.createTask({ title: "已有前置", workspaceId: alpha.id, topicId: topic.id, managerTaskId: peer.id });
+    const source = store.createSession({ ...leadSession, id: undefined, taskId: a.id, runtimeRef: null });
+    const finish = (summary: string) => {
+      const result = service.orchestration.submit(source.id, summary, "验证通过");
+      return service.orchestration.review(peerSession.id, result.id, true, "验收通过");
+    };
+    finish("初次完成");
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "跨树复验", tasks: [{ key: "b", title: "集成", dependsOn: [a.id] }] });
+    const b = plan.created![0]!.taskId, executor = store.listSessions({ taskId: b })[0]!;
+    const initial = service.orchestration.submit(executor.id, "初次集成", "验证通过");
+    const accepted = service.orchestration.review(leadSession.id, initial.id, true, "验收通过");
+    service.tasks.updateTask(a.id, { column: "doing" });
+    expect(service.sharedContext.isResultCurrent(b, accepted)).toBe(false);
+    turn(leadSession.id, "after-prerequisite-reopen");
+    const next = await service.taskPlans.propose(leadSession.id, { summary: "等待有效集成", tasks: [{ key: "c", title: "下游", dependsOn: [b] }] });
+    const c = next.created![0]!.taskId;
+    expect(started(c)).toBe(false);
+    const revised = finish("重新完成");
+    expect(service.sharedContext.prerequisites(b)).toEqual([revised.id]);
+    expect(service.sharedContext.isResultCurrent(b, accepted)).toBe(false);
+    await service.taskPlans.startReady();
+    expect(started(c)).toBe(false);
+    service.tasks.updateTask(b, { column: "doing" });
+    const redone = service.orchestration.submit(executor.id, "按新版重新集成", "验证通过");
+    expect(redone.prerequisiteResultIds).toEqual([revised.id]);
+    const current = service.orchestration.review(leadSession.id, redone.id, true, "重新验收通过");
+    expect(service.sharedContext.isResultCurrent(b, current)).toBe(true);
+    await service.taskPlans.startReady();
+    expect(started(c)).toBe(true);
+  });
+
+  it("dependsOn may name a task the topic has already: a line is drawn, and one without a manager counts once done", async () => {
+    const ui = store.createTask({ title: "Free UI 移植", workspaceId: alpha.id, topicId: topic.id });
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "等 UI 移植完再接入", tasks: [{ key: "b", title: "接入", dependsOn: [ui.id] }] });
+    const b = plan.created![0]!.taskId;
+    expect(lines()).toContainEqual([ui.id, b]);
+    expect(started(b)).toBe(false);
+    service.tasks.updateTask(ui.id, { column: "done" });
+    await vi.waitFor(() => expect(started(b)).toBe(true));
+  });
+
+  it("dependsOn still refuses what is neither in the proposal nor a live task of the topic", async () => {
+    const elsewhere = store.createTask({ title: "别的专题", workspaceId: alpha.id, topicId: service.topics.createTopic({ title: "别处" }).id });
+    const archived = store.createTask({ title: "已归档", workspaceId: alpha.id, topicId: topic.id });
+    await service.tasks.archiveTask(archived.id);
+    for (const dep of ["nope", elsewhere.id, archived.id]) {
+      await expect(service.taskPlans.propose(leadSession.id, { summary: `依赖 ${dep}`, tasks: [{ key: "b", title: "后做", dependsOn: [dep] }] })).rejects.toThrow(/depends on/);
+    }
+  });
+
+  it("a dependent started on its prerequisite's earlier delivery can be accepted after that one was redone", async () => {
+    const plan = await service.taskPlans.propose(leadSession.id, { summary: "前后置", tasks: [
+      { key: "a", title: "前置" }, { key: "b", title: "后做", dependsOn: ["a"] },
+    ] });
+    const a = plan.created![0]!.taskId, b = plan.created![1]!.taskId;
+    acceptPrerequisite(a);
+    await service.taskPlans.startReady();
+    expect(started(b)).toBe(true);
+    // `a` is done again: taken out of 完成, delivered anew and accepted.
+    service.tasks.updateTask(a, { column: "doing" });
+    acceptPrerequisite(a);
+    const redone = service.orchestration.results(a).at(-1)!;
+    expect(redone.state).toBe("accepted");
+    // Before: `b` stayed on `a`'s first delivery, and its own could never be accepted, explanation or not.
+    const delivered = service.orchestration.submit(store.listSessions({ taskId: b })[0]!.id, "后做完成", "隔离验证通过");
+    expect(service.orchestration.review(leadSession.id, delivered.id, true, "验收通过")).toMatchObject({ state: "accepted" });
+    expect(delivered.prerequisiteResultIds).toEqual([redone.id]);
+    expect(service.sharedContext.prerequisites(b)).toEqual([redone.id]);
+  });
+
+  it("a task without a card that leaves the topic takes its dependency lines with it", () => {
+    const leaving = store.createTask({ title: "没放卡片的任务", workspaceId: alpha.id, topicId: topic.id });
+    const staying = store.createTask({ title: "留下的任务", workspaceId: alpha.id, topicId: topic.id });
+    service.canvases.canvasAddDependency(leaving.id, staying.id);
+    expect(service.canvases.canvas(topic.id).nodes.some((n) => n.kind === "task" && n.taskId === leaving.id)).toBe(false);
+    service.tasks.patchTask(leaving.id, { topicId: service.topics.createTopic({ title: "别处" }).id });
+    // Before: the line stayed, naming a task the topic no longer has, and every later save of the canvas was refused.
+    expect(lines()).toEqual([]);
+    expect(() => service.canvases.mutateCanvas(topic.id, (doc) => doc)).not.toThrow();
+  });
+});

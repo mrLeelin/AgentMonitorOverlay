@@ -19,6 +19,8 @@ export function useSlashCommands(input: {
   onComplete?(caret: number): void;
   /** A command was picked that runs without arguments (or the person pressed Enter on it). */
   onRun?(command: SlashCommand, args: string): void;
+  /** Goal objectives insert commands without executing them while the person is still writing. */
+  completionOnly?: boolean;
 }) {
   const { link, session, text, setText } = input;
   const [caret, setCaret] = useState<number | null>(null);
@@ -68,7 +70,7 @@ export function useSlashCommands(input: {
   const commands = list?.key === key ? list.commands : [];
   const skills = useMemo(() => commands.filter((command) => command.group === "skill"), [commands]);
   const trigger = typing?.trigger ?? "/";
-  const completionOnly = !sessionId || trigger === "$";
+  const completionOnly = input.completionOnly || !sessionId || trigger === "$";
   const groups = useMemo(() => (query === null ? [] : slashGroups(trigger === "$" ? commands.filter((c) => c.group === "skill") : commands, query)), [commands, query, trigger]);
   const flat = groups.flatMap((g) => g.commands);
   const hl = Math.min(highlight, Math.max(flat.length - 1, 0));

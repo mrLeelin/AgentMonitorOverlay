@@ -11,7 +11,14 @@ export function tasksRoutes(service: HostService): Route[] {
     // 远程副本 (remoteCopy, http/route.ts): a copy is renamed on A (2026-10-30; TasksFeature.updateTask refuses its other
     // changes), gets new sessions there, and archiving it deletes the copy.
     route("PATCH /api/tasks/:id", ({ params, body }) => service.tasks.patchTask(params.id!, obj(body) as never), { remoteCopy: "forward" }),
-    route("POST /api/tasks/:id/sessions", ({ params, body }) => service.tasks.addSession(params.id!, obj(body) as never), { remoteCopy: "forward" }),
+    // The person starting a task whose prerequisites are not finished confirms it first (2026-11-17, plans/done/task-dependencies.md).
+    route("GET /api/prerequisites", () => service.taskPlans.waitingMap()),
+    route("GET /api/tasks/:id/prerequisites", ({ params }) => service.taskPlans.waitingFor(params.id!)),
+    route("POST /api/tasks/:id/sessions", ({ params, body }) => {
+      const input = obj(body);
+      service.taskPlans.checkPersonStart(params.id!, input.confirmed === true);
+      return service.tasks.addSession(params.id!, input as never);
+    }, { remoteCopy: "forward" }),
     route("POST /api/tasks/:id/archive", ({ params }) => service.tasks.archiveTask(params.id!), { remoteCopy: "forward" }),
     route("POST /api/tasks/:id/unarchive", ({ params }) => service.tasks.unarchiveTask(params.id!)),
   ];

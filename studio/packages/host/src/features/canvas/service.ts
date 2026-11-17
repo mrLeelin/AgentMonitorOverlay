@@ -85,10 +85,13 @@ export class CanvasFeature extends Feature {
     return this.store.listTasks().filter((t) => t.topicId === topicId && !t.archivedAt);
   }
 
-  /** A task leaving a topic takes its card and its dependencies off that topic's canvas. */
+  /**
+   * A task leaving a topic takes its card and its dependencies off that topic's canvas — its dependencies even when it had
+   * no card (2026-11-17: they stayed, naming a task the topic no longer has, and every later save was refused).
+   */
   leaveCanvas(topicId: Id, taskId: Id): void {
     const current = this.store.getCanvas(topicId);
-    if (!current || !current.nodes.some((n) => n.kind === "task" && n.taskId === taskId)) return;
+    if (!current || (!current.nodes.some((n) => n.kind === "task" && n.taskId === taskId) && !current.edges.some((e) => e.from === taskId || e.to === taskId))) return;
     const next: CanvasDoc = { ...removeTask(current, taskId), version: current.version + 1, updatedAt: new Date().toISOString() };
     this.store.putCanvas(next);
     this.publish({ type: "canvas.updated", canvas: next });

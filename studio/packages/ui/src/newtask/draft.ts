@@ -5,6 +5,7 @@ import { defaultProfile, rememberProfile, rememberWorkspace, repick } from "../l
 import { rememberPick, type ModelPick } from "../lib/recents.js";
 import { subSessionSetups, withMentionRefs, type MentionPick, type SubSessionSpec } from "../attach/mentions.js";
 import { readStoredJson, writeStoredJson } from "../lib/stored.js";
+import { activateDraftGoal, draftGoalInput, readPendingGoalStart, savePendingGoalStart, type DraftGoal } from "./goalStart.js";
 
 // The task being written: one draft, shared by the draft task page and the quick bar (Ctrl N), kept across restarts
 // so leaving the page never loses it.
@@ -21,6 +22,8 @@ export interface TaskDraft {
   options: Omit<SessionOptions, "model">;
   /** 主控 (stage 16): the task coordinates its topic (or project). */
   lead?: boolean;
+  /** Explicit Goal mode; the first sentence is the native objective. */
+  goal?: DraftGoal;
   /**
    * What the「@名字」in the text point at (2026-10-29: projects, tasks, sessions, as in a session's composer); the first
    * message says so (withMentionRefs). Never the task's own project or topic.
@@ -48,6 +51,7 @@ function load(profiles: readonly ModelProfile[]): TaskDraft {
       pick,
       options: d.options && typeof d.options === "object" ? d.options : {},
       ...(d.lead === true ? { lead: true } : {}),
+      ...(d.goal && typeof d.goal === "object" ? { goal: { tokenBudget: typeof d.goal.tokenBudget === "string" ? d.goal.tokenBudget : "", roundBudget: typeof d.goal.roundBudget === "string" ? d.goal.roundBudget : "" } } : {}),
       ...(d.refs && typeof d.refs === "object" ? { refs: cleanRefs(d.refs) } : {}),
     };
   } catch {
@@ -133,30 +137,41 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
  * with the first message (not when only filing).
  */
 /** `resumeFrom` (接续已有会话, 2026-11-05): the outside Claude session the first session goes on from; the text may be empty then. */
-export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[]): Promise<{ task: Task; session: Session | null }> {
+export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[], goalRuntime?: ModelProfile["runtime"]): Promise<{ task: Task; session: Session | null }> {
+  if (readPendingGoalStart()) throw new Error("已有一次 Goal 开启尚未完成，请回到新建任务页重试或进入已建会话。");
   if (draft.lead && resumeFrom) throw new Error("接续已有会话不能作为主控带队，请新建主控会话。");
   const text = draftText(draft);
+  if (draft.goal && (file || resumeFrom || attachments.length)) throw new Error(file ? "Goal 需要直接开始，不能放进待办。" : resumeFrom ? "接续已有会话请在会话内开启 Goal。" : "Goal 直接启动暂不带图片，请关闭 Goal 发送图片，再在会话内开启。");
+  const goal = draft.goal ? draftGoalInput(text, draft.goal, goalRuntime) : undefined;
   // 子会话设定 named in the first message (2026-11-05): kept by the Host for the task's first session.
   const setups = subsessions ?? (draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : []);
   const options: SessionOptions = { ...draft.options, ...(draft.pick.model ? { model: draft.pick.model } : {}) };
   // Lead isolation is enforced by each runtime (Claude calls it plan); never reuse the draft's writable choice.
   if (draft.lead) delete options.permission;
   const created = await call(link, "POST /api/tasks", {}, {
-    ...(draft.title.trim() ? { title: draft.title.trim() } : file ? { title: text.split("\n")[0]!.slice(0, 60) } : {}),
+    ...(draft.title.trim() ? { title: draft.title.trim() } : file || goal ? { title: text.split("\n")[0]!.slice(0, 60) } : {}),
     workspaceId: draft.projectId,
     topicId: draft.topicId,
+    // The native setter may fail after the task exists. Keep the objective visible on that task too.
+    ...(goal ? { description: text } : {}),
     ...(draft.lead ? { lead: true } : {}),
     // 放进待办 (2026-11-05): the sentence is kept on the task for its first session; it used to be cut to the title.
     ...(file
       ? { firstMessage: text }
-      : { firstSession: { profileId: draft.pick.profileId, ...(text ? { text } : {}), ...(Object.keys(options).length ? { options } : {}), ...(attachments.length ? { attachments: [...attachments] } : {}), ...(resumeFrom ? { resumeFrom } : {}), ...(setups.length ? { subsessions: [...setups] } : {}) } }),
+      : { firstSession: { profileId: draft.pick.profileId, ...(!goal && text ? { text } : {}), ...(Object.keys(options).length ? { options } : {}), ...(attachments.length ? { attachments: [...attachments] } : {}), ...(resumeFrom ? { resumeFrom } : {}), ...(setups.length ? { subsessions: [...setups] } : {}) } }),
   });
+  if (goal && created.session) {
+    // Persist before activation: an error or a renderer reload must not turn Retry into a duplicate task.
+    const pending = { taskId: created.task.id, sessionId: created.session.id, goal, ...(onCanvas && created.task.topicId ? { onCanvas: true } : {}) };
+    savePendingGoalStart(pending);
+    await activateDraftGoal(link, pending);
+  }
   if (!file) {
     rememberProfile(draft.pick.profileId);
     rememberPick(draft.pick);
   }
   if (draft.projectId) rememberWorkspace(draft.projectId);
-  if (onCanvas && created.task.topicId) await call(link, "PUT /api/tasks/:id/canvas", { id: created.task.id }, { onCanvas: true });
+  if (!goal && onCanvas && created.task.topicId) await call(link, "PUT /api/tasks/:id/canvas", { id: created.task.id }, { onCanvas: true });
   return created;
 }
 

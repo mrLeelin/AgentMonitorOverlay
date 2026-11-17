@@ -28,6 +28,13 @@ it("animates a dependency only after its prerequisite is done and the next task 
   expect(dependencyFlow(task, { ...task, column: "done" }, "idle")).toBeNull();
 });
 
+it("takes the Host's word on whether the prerequisite is finished (2026-11-17): done is not yet accepted", () => {
+  const done = { ...task, column: "done" as const };
+  expect(dependencyFlow(done, task, "idle", true)).toEqual({ state: "waiting", label: "等待前置" });
+  expect(dependencyFlow(done, task, "idle", false)).toEqual({ state: "ready", label: "前置已完成" });
+  expect(dependencyFlow(done, task, "running", false)?.direction).toBe("forward");
+});
+
 it("uses the latest submission even if workflow history arrives out of order", () => {
   const newer = { ...result, id: "new", createdAt: "2026-11-09T02:00:00Z" };
   expect(latestTaskResults([newer, result]).get(task.id)?.id).toBe("new");

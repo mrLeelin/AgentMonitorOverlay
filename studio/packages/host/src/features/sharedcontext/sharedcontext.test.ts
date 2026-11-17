@@ -99,6 +99,25 @@ describe("explicit shared requirements", () => {
     expect(view.receipts[0]?.adoptedAt).toBeUndefined();
   });
 
+  it("supplies a native Goal only the frozen body not yet delivered to that exact session or fork", () => {
+    const { worker, executor, lead, basis } = setup();
+    expect(service.sharedContext.goalContext(executor.id)).toBe("");
+    const [binding] = service.sharedContext.apply(lead.id, { ...basis, taskIds: [worker.id] });
+    const fork = store.createSession({ ...executor, id: undefined, parentId: executor.id, kind: "fork" });
+    const body = service.sharedContext.taskContext(worker.id);
+    expect(service.sharedContext.goalContext(executor.id)).toBe(body);
+    service.sharedContext.markQueued(executor.id, `i-context-${binding!.id}-${executor.id}`);
+    expect(service.sharedContext.goalContext(executor.id)).toBe(body);
+    service.sharedContext.markDelivered(executor.id, body);
+    expect(service.sharedContext.goalContext(executor.id)).toBe("");
+    expect(service.sharedContext.goalContext(fork.id)).toBe(body);
+    service.sharedContext.markDelivered(fork.id, body);
+    expect(service.sharedContext.goalContext(fork.id)).toBe("");
+    expect(service.sharedContext.receipts(fork.id)[0]?.adoptedAt).toBeUndefined();
+    service.tasks.setManager(worker.id, task("另一根", true).id);
+    expect(service.sharedContext.goalContext(executor.id)).toBe("");
+  });
+
   it("invalidates intra-tree ownership changes permanently, even after transfer back", () => {
     const { root, worker, lead, executor, basis } = setup();
     const middle = task("领域主控", true, root.id);
@@ -296,8 +315,50 @@ describe("explicit shared requirements", () => {
     service.sharedContext.setPrerequisites(worker.id, [resultId]);
     const result = service.orchestration.submit(executor.id, "交付保留", "验证");
     expect(result.state).toBe("submitted");
-    expect(() => service.orchestration.review(lead.id, result.id, true, "尝试接受", "版本差异不影响")).toThrow(/不是当前管理树的有效已验收结果/);
+    expect(() => service.orchestration.review(lead.id, result.id, true, "尝试接受", "版本差异不影响")).toThrow(/有效依赖范围内的有效已验收结果/);
     expect(service.orchestration.results(worker.id).at(-1)?.state).toBe("submitted");
+  });
+
+  it.each(["unrelated", "other_topic", "missing", "old", "returned", "transferred"])("refuses unauthorized or stale cross-tree prerequisite evidence: %s", (mode) => {
+    const { worker, executor, lead } = setup();
+    const peer = task("另一根主控", true), peerSession = session(peer);
+    const prerequisite = task("另一树前置", false, peer.id), source = session(prerequisite);
+    const submitted = service.orchestration.submit(source.id, "前置完成", "验证通过");
+    service.orchestration.review(peerSession.id, submitted.id, true, "通过");
+    if (mode !== "unrelated") service.canvases.canvasAddDependency(prerequisite.id, worker.id);
+    let resultId = submitted.id;
+    if (mode === "other_topic") {
+      const otherTopic = service.topics.createTopic({ title: "另一专题" });
+      // Keep its valid manager/result ownership: only the dependency's topic scope has changed.
+      store.updateTask(peer.id, { topicId: otherTopic.id });
+      store.updateTask(prerequisite.id, { topicId: otherTopic.id });
+    }
+    if (mode === "missing") resultId = "nonexistent-prerequisite-result";
+    if (mode === "old" || mode === "returned") {
+      service.tasks.updateTask(prerequisite.id, { column: "doing" });
+      const newer = service.orchestration.submit(source.id, "前置重做", "验证通过");
+      service.orchestration.review(peerSession.id, newer.id, mode === "old", mode === "old" ? "通过" : "退回");
+    }
+    if (mode === "transferred") service.tasks.setManager(prerequisite.id, task("新主控", true).id);
+    const result = service.orchestration.submit(executor.id, "后项完成", "验证通过", { prerequisiteResultIds: [resultId] });
+    expect(result.contextMismatch).toBeTruthy();
+    expect(() => service.orchestration.review(lead.id, result.id, true, "尝试验收", "内容差异已核对")).toThrow(/有效已验收结果/);
+    expect(service.sharedContext.isResultCurrent(worker.id, { ...result, state: "accepted" })).toBe(false);
+  });
+
+  it("keeps a bound task's management and version boundary even with an explicit same-topic cross-tree dependency", () => {
+    const { worker, executor, lead, basis } = setup();
+    service.sharedContext.apply(lead.id, { ...basis, taskIds: [worker.id] });
+    service.sharedContext.getForSession(executor.id); service.sharedContext.adopt(executor.id, basis);
+    const peer = task("独立主控", true), peerSession = session(peer);
+    const prerequisite = task("独立前置", false, peer.id), source = session(prerequisite);
+    const submitted = service.orchestration.submit(source.id, "前置完成", "验证通过");
+    service.orchestration.review(peerSession.id, submitted.id, true, "通过");
+    service.canvases.canvasAddDependency(prerequisite.id, worker.id);
+    expect(() => service.sharedContext.assertStartable(worker.id, true)).toThrow(/前置任务/);
+    const result = service.orchestration.submit(executor.id, "后项完成", "验证通过", { contextBasis: basis, prerequisiteResultIds: [submitted.id] });
+    expect(() => service.orchestration.review(lead.id, result.id, true, "尝试验收", "不同来源已核对")).toThrow(/有效已验收结果/);
+    expect(() => service.sharedContext.apply(peerSession.id, { ...basis, taskIds: [worker.id] })).toThrow();
   });
 
   it("does not rewrite an accepted historical result when a new requirement is published", () => {

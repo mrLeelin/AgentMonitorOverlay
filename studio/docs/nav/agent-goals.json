@@ -10,7 +10,11 @@
       "anchors": [
         { "label": "共用会话选项", "path": "studio/packages/protocol/src/entities.ts", "anchor": "export interface SessionOptions" },
         { "label": "Goal 状态与接口类型", "path": "studio/packages/protocol/src/goals.ts", "anchor": "export interface SessionGoal" },
+        { "label": "开启前只读核对、真实送达与取消", "path": "studio/packages/host/src/runtime/runtime.ts", "anchor": "private async prepareGoalContext" },
+        { "label": "共同需求正文是否真实送达", "path": "studio/packages/host/src/features/sharedcontext/service.ts", "anchor": "goalContext(sessionId: Id" },
+        { "label": "新建任务直接以 Goal 开始与失败恢复", "path": "studio/packages/ui/src/newtask/goalStart.ts", "anchor": "export function draftGoalInput" },
         { "label": "底栏 Goal 与弹出面板", "path": "studio/packages/ui/src/chat/SessionGoal.tsx", "anchor": "export function useSessionGoal" },
+        { "label": "目标输入的引用、模板与命令技能补全", "path": "studio/packages/ui/src/chat/GoalObjectiveInput.tsx", "anchor": "export function GoalObjectiveInput" },
         { "label": "Codex Goal 协议", "path": "studio/packages/protocol/src/codex/v2/ThreadGoalSetParams.ts", "anchor": "export type ThreadGoalSetParams" },
         { "label": "Codex Goal 生命周期", "path": "studio/packages/host/src/runtime/codex/codex-runtime.ts", "anchor": "async getGoal(" },
         { "label": "原生设置应用确认", "path": "studio/packages/host/src/runtime/codex/rpc-client.ts", "anchor": "async updateThreadSettings" },
@@ -20,8 +24,8 @@
         { "label": "Claude 原生目标控制和日志", "path": "studio/packages/host/src/runtime/claude/goals.ts", "anchor": "export class ClaudeGoals" },
         { "label": "Pi RPC 与动态命令", "path": "studio/packages/host/src/runtime/pi/pi-runtime.ts" }
       ],
-      "related": ["runtime.common", "runtime.codex", "runtime.dsh", "runtime.claude", "runtime.pi"],
-      "next": ["studio/plans/done/codex-goal-bar.md", "studio/plans/done/agent-goals.md", "studio/e2e/studio/goals.spec.ts"]
+      "related": ["ui.newTask", "runtime.common", "runtime.codex", "runtime.dsh", "runtime.claude", "runtime.pi", "studio.sharedContext", "studio.taskDependencies"],
+      "next": ["studio/plans/done/codex-goal-bar.md", "studio/plans/done/agent-goals.md", "studio/e2e/studio/goals.spec.ts", "studio/e2e/studio/goal-input.spec.ts", "studio/e2e/studio/managed-goal-context.spec.ts"]
     }
   ]
 }

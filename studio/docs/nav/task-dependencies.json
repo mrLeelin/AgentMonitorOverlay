@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "topics": [{
+    "id": "studio.taskDependencies",
+    "label": "任务依赖门禁与中控子任务交付",
+    "aliases": ["任务依赖", "前置任务", "等待前置", "dependsOn", "中控", "依赖验收", "跨主控"],
+    "category": "workflow",
+    "purpose": "画布依赖线是专题内唯一的执行依赖：排队任务等待前置，主控新派工被阻挡，人可确认提前开始。同专题不同管理树可以有明确依赖；启动、递归有效性和交付验收使用一致范围，依赖不授予管理或共同需求权限。",
+    "steps": [
+      "前置有直属主控时检查它自己的主控验收的最新有效交付；无主控时看完成列，不能用旧交付或同专题位置代替验收。",
+      "改门禁同时核查自动启动、主控 work/reopen 和人的新建会话确认；已开始的工作不被新依赖打断。",
+      "改交付同时检查真实启动依据、递归有效性和前置重新验收；绑定共同需求的任务保留原有版本及管理树约束。"
+    ],
+    "anchors": [
+      { "label": "排队任务启动", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "startReady():" },
+      { "label": "主控派工门禁", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "checkDispatch(" },
+      { "label": "真实依赖范围", "path": "studio/packages/host/src/features/sharedcontext/service.ts", "anchor": "isPrerequisiteInScope(" },
+      { "label": "递归交付有效性", "path": "studio/packages/host/src/features/sharedcontext/service.ts", "anchor": "isResultCurrent(taskId: Id" },
+      { "label": "手动提前启动", "path": "studio/packages/host/src/features/tasks/routes.ts", "anchor": "checkPersonStart(" },
+      { "label": "跨主控及逐层交付验收", "path": "studio/e2e/studio/managed-dependencies.spec.ts", "anchor": "a coordinator waits for another lead's prerequisite" }
+    ],
+    "related": ["studio.leadManagement", "studio.sharedContext", "studio.managedWorkflow", "runtime.goals"],
+    "next": ["studio/plans/done/task-dependencies.md", "studio/packages/host/src/features/taskplans/taskplans.test.ts", "studio/e2e/studio/task-dependencies.spec.ts"]
+  }]
+}

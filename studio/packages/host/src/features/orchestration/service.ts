@@ -193,6 +193,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       const contextResolution = accept ? this.f.sharedContext.assertAcceptable(current.id, currentLatest, contextExplanation) : undefined;
       const next: TaskResult = { ...currentLatest, state, review, reviewedBy: expectedManager ? "manager" : "user", ...(contextResolution ? { contextResolution } : {}), updatedAt: new Date().toISOString() };
       this.saveResults(child.id, [...currentResults.slice(0, -1), next]);
+      // Done again: tasks that started on its earlier delivery go on from this one (2026-11-17, plans/done/task-dependencies.md).
+      if (accept) this.f.sharedContext.refreshPrerequisites(child.id, next.id);
       if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: expectedManager ?? child.id, targetTaskId: child.id, direction: expectedManager ? "down" : "user-return", resultId, text: `【${expectedManager ? "直属主控" : "用户"}退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。${expectedManager ? "" : "总主控须再次等待用户审核，不能自行验收。"}` });
       return next;
     });

@@ -31,6 +31,8 @@ import { remoteModeShown } from "./remoteTargets.js";
 import { ResumePicker, SOURCE_LABEL } from "./ResumePicker.js";
 import { relativeTime } from "../lib/status.js";
 import type { OutsideSession } from "@amo-studio/protocol";
+import { activateDraftGoal, existingGoalStart, GoalStartError, readPendingGoalStart, savePendingGoalStart, supportsDraftGoal } from "./goalStart.js";
+import "../chat/goal.css";
 
 /** 接续已有会话 runs on this profile only: the outside sessions are the local Claude Code login's. */
 const CLAUDE_SUBSCRIPTION = "claude-subscription";
@@ -81,6 +83,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // 正在启动: the page is covered while the first session starts (filing in 待办 is quick).
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [pendingGoal, setPendingGoal] = useState(readPendingGoalStart);
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
   const input = useRef<ResourceInputHandle>(null);
@@ -93,6 +96,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const presets = settings?.presets ?? [];
   const { choices } = useProfileChoices(link, draft.pick.profileId);
   const model = choices ? activeModel(choices, draft.pick.model ? { model: draft.pick.model } : {}) : undefined;
+  const runtime = profiles.find((p) => p.id === draft.pick.profileId)?.runtime;
   // 接续已有会话 (2026-11-05): the outside session picked; not kept in the draft (it may be taken on elsewhere meanwhile).
   const [resume, setResume] = useState<OutsideSession | null>(null);
   const [pickingResume, setPickingResume] = useState(false);
@@ -141,6 +145,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
 
   async function submit(file: boolean) {
     if (busy) return;
+    if (draft.goal && file) return setError("Goal 需要直接开始，不能放进待办；关闭 Goal 后可以存为待办。");
     if (resume && draft.lead) return setError("接续已有会话不能作为主控带队：请取消接续，再新建主控会话。");
     if (resume && file) return setError("接续的会话不能放进待办：直接点「接续」，第一句话可以不写。");
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
@@ -159,15 +164,34 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
       const setups = draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : [];
       const { refs: _refs, ...rest } = draft;
       const title = rest.title.trim() || (resume ? resume.title : resourceTitle(draft.text)) || "";
-      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups);
+      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups, runtime);
       setResume(null);
       attach.reset();
       reset({ projectId: draft.projectId, topicId: draft.topicId });
       onCreated(created.task, created.session);
     } catch (err) {
-      setError(err instanceof HostApiError ? err.message : String(err));
+      if (err instanceof GoalStartError) setPendingGoal(err.pending);
+      setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
       setStarting(null);
+    }
+  }
+
+  async function recoverGoal(retry: boolean) {
+    if (!pendingGoal || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const created = await existingGoalStart(link, pendingGoal);
+      if (retry) await activateDraftGoal(link, pendingGoal, true);
+      else if (pendingGoal.onCanvas) await call(link, "PUT /api/tasks/:id/canvas", { id: pendingGoal.taskId }, { onCanvas: true });
+      savePendingGoalStart(null);
+      attach.reset();
+      reset({ projectId: draft.projectId, topicId: draft.topicId });
+      onCreated(created.task, created.session);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
     }
   }
 
@@ -176,7 +200,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     setPickingResume(false);
     setResume(s);
     setError("");
-    update({ title: s.title.slice(0, 100), lead: false, ...(subscription ? { pick: { profileId: subscription.id, model: null } } : {}) });
+    update({ title: s.title.slice(0, 100), lead: false, goal: undefined, ...(subscription ? { pick: { profileId: subscription.id, model: null } } : {}) });
     if (s.workspaceId) rows.pickProject(s.workspaceId);
     requestAnimationFrame(() => input.current?.focus());
   }
@@ -213,6 +237,23 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     return () => window.removeEventListener("keydown", onKey);
   }, [profiles, draft, model, update, remoteMode]);
 
+  if (pendingGoal) return (
+    <section className="draft-page" aria-label="新任务">
+      <div className="page-head"><BackButton label={backLabel} onClick={onBack} /></div>
+      <div className="draft-wrap"><div className="draft goal-content" data-testid="draft-goal-recovery">
+        <h1 className="draft-ask">会话已创建，Goal 待确认</h1>
+        <p className="draft-lede">目标已保留。重试只会使用这个会话，已有的目标和执行状态会保留。</p>
+        <div className="goal-objective">{pendingGoal.goal.objective}</div>
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <div className="goal-actions">
+          <button className="btn-primary" disabled={busy} onClick={() => void recoverGoal(true)} data-testid="draft-goal-retry">{busy ? "正在处理…" : "重试开启 Goal"}</button>
+          <button className="btn-ghost" disabled={busy} onClick={() => void recoverGoal(false)} data-testid="draft-goal-open">进入已建会话</button>
+          <button className="link-btn" disabled={busy} onClick={() => { savePendingGoalStart(null); setPendingGoal(null); setError(""); }} data-testid="draft-goal-discard">保留会话，重新填写</button>
+        </div>
+      </div></div>
+    </section>
+  );
+
   return (
     <section className="draft-page" aria-label="新任务">
       <div className="page-head">
@@ -235,7 +276,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 <button type="button" aria-pressed={!remoteMode} onClick={() => setSide("here")}>
                   在这台电脑上
                 </button>
-                <button type="button" aria-pressed={remoteMode} onClick={() => setSide("remote")} data-testid="draft-side-remote">
+                <button type="button" aria-pressed={remoteMode} onClick={() => { setSide("remote"); update({ goal: undefined }); }} data-testid="draft-side-remote">
                   在别的设备上
                 </button>
               </span>
@@ -391,6 +432,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 <EffortBars efforts={model.efforts} value={draft.options.effort ?? null} fallback={model.defaultEffort} onChange={(effort) => update({ options: { ...draft.options, effort } })} />
               )}
               <FastToggle fast={model?.fast} value={draft.options.fast} onChange={(fast) => update({ options: { ...draft.options, fast } })} />
+              <button type="button" className="chip" aria-pressed={!!draft.goal} disabled={busy || !!resume || (!draft.goal && !supportsDraftGoal(runtime))} onClick={() => { update({ goal: draft.goal ? undefined : { tokenBudget: "", roundBudget: "" } }); setError(""); }} title={resume ? "接续后在会话内开启 Goal" : "把第一句话作为目标，开始后自动继续执行"} data-testid="draft-goal-toggle">Goal{draft.goal ? " 已开启" : ""}</button>
               {draft.lead ? <span className="drawer-note" data-testid="draft-lead-permission">主控只读项目，具体修改交给执行任务</span> : choices ? (
                 <PermissionSegments
                   choices={choices}
@@ -403,6 +445,13 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 <span className="drawer-note">正在读取这个模型的选项…</span>
               )}
             </div>
+            {draft.goal && <div className="draft-goal goal-content" data-testid="draft-goal-options">
+              <div className="tray-note">第一句话就是 Goal 目标，开始后 Agent 会围绕目标自动继续执行；最多 4000 个字符（含引用内容）。</div>
+              {runtime === "codex" && <label className="goal-field goal-budget">Token 预算（可选）<input inputMode="numeric" value={draft.goal.tokenBudget} placeholder="留空不设预算" onChange={(e) => update({ goal: { ...draft.goal!, tokenBudget: e.target.value } })} data-testid="draft-goal-budget" /></label>}
+              {runtime === "dsh" && <label className="goal-field goal-budget">续跑轮数上限（可选）<input inputMode="numeric" value={draft.goal.roundBudget} placeholder="使用 Agent 默认上限" onChange={(e) => update({ goal: { ...draft.goal!, roundBudget: e.target.value } })} data-testid="draft-goal-budget" /></label>}
+              {!supportsDraftGoal(runtime) && <div className="form-error" role="alert">这个模型尚未接入 Goal，请关闭 Goal 或换一个模型。</div>}
+              {!attach.empty && <div className="tray-note">Goal 直接启动暂不带图片；文件引用可用。发送图片请关闭 Goal，再在会话内开启。</div>}
+            </div>}
             {/* DeepSeek · DSH with 工作区可写 in a project not set up for its sandbox (2026-10-23). */}
             <SandboxHint
               link={link}
@@ -429,7 +478,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
             )}
             <div className="cbar draft-actions">
               <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId} data-testid="draft-start">
-                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : "开始"} <kbd>↵</kbd>
+                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : draft.goal ? "开始 Goal" : "开始"} <kbd>↵</kbd>
               </button>
               <button type="button" className="btn-ghost draft-templates" onClick={() => mentions.askTemplate(input.current?.selectionStart ?? draft.text.length)} disabled={busy} title="打开提示词模板，选择后插入第一句话" data-testid="draft-templates">
                 提示词模板

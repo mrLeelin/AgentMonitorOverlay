@@ -203,6 +203,8 @@
 .task-head-main { flex: 1 1 280px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; }
 .task-head-main > .task-title, .task-head-main > .task-meta { flex-basis: 100%; min-width: 0; }
 .task-head-main > .link-btn { text-align: left; }
+/* 等待前置 (2026-11-17, plans/done/task-dependencies.md): not started, its prerequisites not finished. */
+.task-waiting { font-size: var(--fs-sm); color: var(--text-dim); overflow-wrap: anywhere; }
 .task-head .task-title-btn { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .task-head-resize { height: 7px; flex: none; cursor: ns-resize; touch-action: none; user-select: none; background: var(--bg-header); border-bottom: 1px solid var(--border); box-sizing: border-box; }
 .task-head-resize::after { content: ""; display: block; width: 36px; height: 2px; margin: 2px auto; background: var(--border-strong); border-radius: 2px; }

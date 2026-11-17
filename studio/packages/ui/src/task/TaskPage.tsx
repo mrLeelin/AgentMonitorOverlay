@@ -49,6 +49,8 @@ import { readStored, writeStored } from "../lib/stored.js";
 import { writeSessionDraft } from "./sessionDraft.js";
 import { TaskManagement } from "./TaskManagement.js";
 import { TaskContext } from "./TaskContext.js";
+import { usePrerequisites, waitingTitles, WAITING_HINT } from "./prerequisites.js";
+import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { decisionNeedsPerson } from "../focus/managedAttention.js";
 import { useMarkReviewSeen } from "../board/reviewSeen.js";
 import { TaskHeader } from "./TaskHeader.js";
@@ -127,6 +129,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const copy = copyStatus(task, remote);
   const granted = grantsOf(remote, task.id);
   const remoteHeld = remoteHeldTasks(remote).has(task.id);
+  const prerequisites = usePrerequisites(link);
+  const waitingOn = !copy && task.column === "todo" ? waitingTitles(prerequisites, task.id, tasks) : [];
   // 「我也关心」 (2026-11-02, 问题 #8): this computer's Focus keeps listing the granted task as usual (focus/pins.ts), and
   // what agents open in the device's turns (查看包, Review) pops up here too (远程 Reviewer, the user 2026-11-02).
   const alsoMine = useStoredIds(ALSO_MINE_KEY);
@@ -227,8 +231,15 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   };
   // A task filed with a first sentence (放进待办, 2026-11-05): the new session's composer starts with it, to be read
   // and sent (not sent by itself: the person may have picked a model or want to add to it), and the task lets it go.
-  const newSession = (input: { profileId: string; options?: SessionOptions }) =>
-    run(starts(input.profileId, () => call(link, "POST /api/tasks/:id/sessions", { id: task.id }, input)), (s) => {
+  // Not started and its prerequisites not finished (2026-11-17, plans/done/task-dependencies.md): asked first, and started only
+  // once confirmed — the Host refuses the first session otherwise.
+  const [early, setEarly] = useState<{ input: { profileId: string; options?: SessionOptions }; waiting: string[] } | null>(null);
+  const newSession = async (input: { profileId: string; options?: SessionOptions }, confirmed = false) => {
+    if (!confirmed && !copy && own.length === 0) {
+      const waiting = await call(link, "GET /api/tasks/:id/prerequisites", { id: task.id }).catch(() => []);
+      if (waiting.length) return setEarly({ input, waiting: waiting.map((t) => t.title || t.id) });
+    }
+    return run(starts(input.profileId, () => call(link, "POST /api/tasks/:id/sessions", { id: task.id }, confirmed ? { ...input, confirmed } : input)), (s) => {
       const first = task.firstMessage;
       if (first && !copy) {
         writeSessionDraft(s.id, first);
@@ -236,6 +247,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       }
       setSelected(s.id);
     });
+  };
   const restore = (id: string) => run(() => call(link, "POST /api/sessions/:id/unarchive", { id }), () => setSelected(id));
   const archive = (id: string) =>
     run(() => call(link, "POST /api/sessions/:id/archive", { id }), () => {
@@ -395,6 +407,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           />
           <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">{task.lead && !task.managerTaskId ? "总主控 · 查看管理与交付" : <>直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理与交付" : " · 设置归属"}</>}</button>
           {!copy && <TaskContext link={link} task={task} tasks={tasks} session={session} />}
+          {waitingOn.length > 0 && (
+            <span className="task-waiting" data-testid="task-waiting" title={WAITING_HINT}>
+              等待前置：{waitingOn.join("、")}
+            </span>
+          )}
         </div>
         <div className="task-head-actions">
           {!task.archivedAt && !(copy && copy.state === "revoked") && (
@@ -764,6 +781,22 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         )}
         {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：进度、批注、留言、清单" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
       </div>
+      {early && (
+        <ConfirmDialog
+          title="前置任务还没完成"
+          action="仍要开始"
+          testId="early-start-confirm"
+          onCancel={() => setEarly(null)}
+          onConfirm={() => {
+            const { input } = early;
+            setEarly(null);
+            void newSession(input, true);
+          }}
+        >
+          <p>这个任务要等{early.waiting.map((t) => `「${t}」`).join("")}完成后才开始（有直属主控的，要它的主控验收）。现在开始，可能和{early.waiting.length > 1 ? "它们" : "它"}改到同一处。</p>
+          <p className="dim">确认后照常开始；主控给它派工仍会等前置完成。不想等的话，也可以在画布上删掉这条依赖线。</p>
+        </ConfirmDialog>
+      )}
       {archivedBox && (
         <TaskArchivedDialog
           title={task.title || "未命名任务"}

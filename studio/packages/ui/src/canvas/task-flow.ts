@@ -20,10 +20,14 @@ export function managementFlow(task: Task, status: SessionStatus | null, result?
   return null;
 }
 
-export function dependencyFlow(from: Task, to: Task, status: SessionStatus | null): TaskFlow | null {
+/**
+ * `waiting` (2026-11-17, plans/done/task-dependencies.md): the Host's word on whether `from` is finished for `to` — a managed one
+ * once its own direct manager accepted it, one without a manager once done; until that is known, its column decides.
+ */
+export function dependencyFlow(from: Task, to: Task, status: SessionStatus | null, waiting?: boolean): TaskFlow | null {
   if (from.archivedAt || to.archivedAt || to.column === "done") return null;
   // A downstream task can run independently; do not imply an unfinished prerequisite has handed over.
-  if (from.column !== "done") return { state: "waiting", label: "等待前置" };
+  if (waiting ?? from.column !== "done") return { state: "waiting", label: "等待前置" };
   if (status === "running") return { state: "running", label: "后续执行中", direction: "forward" };
   return { state: "ready", label: "前置已完成" };
 }

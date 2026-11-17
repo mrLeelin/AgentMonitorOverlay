@@ -11,6 +11,7 @@ import { ChoicePicker } from "./ChoiceRow.js";
 import { GROUP_HEADINGS } from "./choices.js";
 import { resourceSpans, resourceText } from "../attach/inlineResources.js";
 import { useDraftChoices } from "./useDraftChoices.js";
+import { readPendingGoalStart } from "./goalStart.js";
 
 /**
  * 快速启动条 (Ctrl N, design/ui-directions/new-task.html): one line from anywhere — the sentence, the topic and the
@@ -66,7 +67,7 @@ export function QuickStart({
     templates: false,
   });
   useEffect(() => input.current?.focus(), []);
-  const hasResources = resourceSpans(draft.text).length > 0;
+  const hasResources = resourceSpans(draft.text).length > 0 || !!draft.goal || !!readPendingGoalStart();
   // A draft with inline resources belongs on the full page, where its previews and upload state are available.
   useEffect(() => { if (hasResources) onExpand(); }, [hasResources, onExpand]);
 

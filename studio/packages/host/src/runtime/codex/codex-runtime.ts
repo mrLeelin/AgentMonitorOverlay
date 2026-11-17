@@ -359,6 +359,7 @@ export class CodexRuntime extends RuntimeBase {
   async getGoal(sessionId: Id): Promise<SessionGoalState> {
     const s = this.requireSession(sessionId);
     if (s.runtime !== "codex") return { goal: null, unavailable: "这个 Agent 尚未接入原生 Goal。" };
+    if (s.kind === "sub") return { goal: null, unavailable: "Codex 子 agent 的生命周期由父会话管理，不能单独控制 Goal。" };
     if (!s.runtimeRef) return { goal: null, unavailable: "Codex 会话尚未建立。" };
     return this.readGoal(await this.handleFor(s.profileId), s);
   }
@@ -403,6 +404,7 @@ export class CodexRuntime extends RuntimeBase {
   private goalWritable(sessionId: Id): Session {
     const s = this.writable(sessionId);
     if (s.runtime !== "codex") throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
+    if (s.kind === "sub") throw Object.assign(new Error("Codex 子 agent 的生命周期由父会话管理，不能单独控制 Goal。"), { code: "bad_request" });
     this.requireLeadThread(s);
     return s;
   }
@@ -454,6 +456,8 @@ export class CodexRuntime extends RuntimeBase {
     // Stop takes precedence over queued settings/activation, including a settings RPC still awaiting its event.
     this.goalStopVersions.set(sessionId, (this.goalStopVersions.get(sessionId) ?? 0) + 1);
     const s = this.requireSession(sessionId);
+    // Native children may exist only as parent activity; like resume/archive, Goal control belongs to the parent.
+    if (s.kind === "sub") return;
     if (!s.runtimeRef) return;
     const handle = await this.handleFor(s.profileId);
     const state = await this.readGoal(handle, s);

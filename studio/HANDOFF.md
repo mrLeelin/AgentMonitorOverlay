@@ -28,9 +28,15 @@
 
 ## 还开着的事
 
-- 主控沟通（2026-11-17，起因是 Free 专题主控卡在「等待回答」）：卡死已修，主控也少被叫醒（下级留言送进直属主控；主控自己引起的重开、和待决问题重复的本轮状态不再叫醒它；需求含义问到人）；直属主控的工作传话和决定答复直接插进下级正在跑的 Codex 回合（`plans/done/lead-instructions-mid-turn.md`）。Host 重启后生效。待实施：`plans/topic-task-default-lead.md`（专题里新建任务默认归主控 / 交给主控安排，用户已定；界面部分等 Goal 改动提交后再做）。待实施：`plans/task-dependencies.md`（依赖线真的拦启动、拆任务能依赖已有任务，用户已定；第 6 条要用到）。
+- 主控沟通（2026-11-17，起因是 Free 专题主控卡在「等待回答」）：卡死已修，主控也少被叫醒（下级留言送进直属主控；主控自己引起的重开、和待决问题重复的本轮状态不再叫醒它；需求含义问到人）；直属主控的工作传话和决定答复直接插进下级正在跑的 Codex 回合（`plans/done/lead-instructions-mid-turn.md`）。Host 重启后生效。待实施：`plans/topic-task-default-lead.md`（专题里新建任务默认归主控 / 交给主控安排，用户已定；界面部分等 Goal 改动提交后再做）。
 
-- Codex、Claude、DSH 原生 Goal 已接入底栏 MCP 右侧，按能力显示目标、预算/续跑轮数和状态；支持暂停/继续/清除、停止和归档联动，异常退出与在途开启竞态已覆盖。定向回归、类型检查、构建及 7 条隔离 Electron 用例通过；Claude 使用真实 SDK/CLI + mock，DSH 的真实插件/自主轮由独立隔离 mock 验证，已检查深浅主题及窄窗口 `screenshots/studio/goal-*.png`。方案 `plans/done/codex-goal-bar.md`、`plans/done/agent-goals.md`。未重启用户 Host，需会话空闲后由用户手动重启源码版加载；已提交，未发布。
+- 任务依赖已接入：画布线拦自动启动和主控新派工，人可确认提前开始，等待提示在看板、任务页和画布同步；拆任务可依赖同专题已有任务。跨主控树依赖统一启动、交付和递归验收规则，前置重开重验可继续流转；共同需求和管理权限边界保留。方案 `plans/done/task-dependencies.md`，导航「任务依赖」。已通过隔离单测及隐藏 Electron 的跨主控前置→中控链式子任务→逐层交付→用户验收，截图 `screenshots/studio/managed-dependencies-reviewed.png`。已提交，未发布或重启当前 Host，需人在空闲时手动重启加载。
+
+- 新建任务页已增加 Goal 开关：第一句话直接作为 Codex、Claude、DSH 原生目标启动，按模型显示预算；支持草稿恢复、失败后沿用已建会话重试及画布放卡恢复。Goal 直接启动暂不带图片，文件引用可用。25 条定向单测/导航检查、类型检查、构建及 6 条隔离 mock Electron 回归通过，已检查深浅主题、窄窗口和失败恢复截图 `screenshots/studio/newtask-goal-*.png`。仅前端修改，源码版刷新窗口可加载入口；已提交，未发布或重启用户 Studio/Host。
+
+- Goal 目标输入已接入 `@` 任务/会话/项目/文件引用及提示词模板、`/` 和 `$` 菜单补全与技能高亮；引用以真实 ID/路径传入目标，写入失败保留草稿和引用，填写时不执行命令。27 条单测/导航检查、类型检查、构建与 13 条隔离 Electron 用例通过，新增 2 条输入用例重复通过；已检查深浅主题及窄窗口截图 `screenshots/studio/goal-input-*.png`。仅前端修复，源码版刷新窗口可加载；已提交，未发布或重启用户 Studio/Host。
+
+- Codex、Claude、DSH 原生 Goal 已接入底栏 MCP 右侧，按能力显示目标、预算/续跑轮数和状态；支持暂停/继续/清除、停止和归档联动。受管 Goal 开工前真实送达冻结共同需求，核对轮只读且不计原生预算；DSH 可写会话先用普通工作消息提供完整需求。Claude 冷恢复不残留虚假 active，暂停不再被状态读取抢占；Codex 子 agent 不独立控制 Goal，父任务归档正常。本轮 453 条定向测试通过、1 条 DSH 原生集成按开关跳过，类型检查、构建及 19 条隔离 Electron 回归通过，Claude 暂停最后修正后另单例复测通过；已检查 `screenshots/studio/managed-dependencies-reviewed.png`。方案 `plans/done/codex-goal-bar.md`、`plans/done/agent-goals.md`。已提交，未发布或重启当前 Host，需人在空闲时手动重启加载。
 
 - 看板任务卡、画布任务卡及引用卡已显示具体型号，运行/等待中的主会话优先，多主会话汇总并提供悬浮列表，型号切换随会话事件更新；共享卡片高度和旧尺寸排布已同步。58 条定向单测/导航检查、类型检查、构建及 2 条隔离 mock Electron 回归通过，已检查深浅主题截图 `screenshots/studio/task-models-{board,canvas}-{dark,light}.png`。刷新源码版窗口可加载标签；自动排布使用的新尺寸需会话空闲后由用户手动重启 Host 加载。已提交，未发布或重启当前 Host。
 

@@ -13,7 +13,7 @@ const DECIDED_SHOWN_MS = 24 * 3600_000;
  * use stable inbox ids so a restart cannot duplicate a delivered message. Successful receipts stay in mail;
  * only actionable failures/refusals enter the lead's model inbox.
  */
-export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
+export class RelaysFeature extends Feature<"collab" | "sessions" | "taskPlans" | "tasks"> {
   private readonly delivering = new Map<Id, Promise<Relay>>();
 
   /** Retire old success-only wakeups before inbox recovery, preserving their frozen history and visible mail. */
@@ -65,6 +65,8 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     if (text.length > RELAY_TEXT_MAX) throw new HostError("bad_request", `text is limited to ${RELAY_TEXT_MAX} characters`);
     const purpose = input.purpose ?? "work";
     if (purpose !== "inquiry" && purpose !== "work" && purpose !== "reopen") throw new HostError("bad_request", "purpose must be inquiry, work or reopen");
+    // Work that would start the task, or reopen it, waits for its prerequisites (2026-11-17, plans/done/task-dependencies.md).
+    this.f.taskPlans.checkDispatch(target.id, purpose);
     const relay = this.save({ id: newId("relay"), fromSessionId, fromTaskId: facts.task?.id ?? null, toTaskId: target.id, text, purpose, state: "pending", createdAt: new Date().toISOString(), decidedAt: null });
     if (facts.role === "lead" || target.relayAuto) void Promise.resolve().then(() => this.deliver(relay.id)).catch(() => undefined);
     return relay;

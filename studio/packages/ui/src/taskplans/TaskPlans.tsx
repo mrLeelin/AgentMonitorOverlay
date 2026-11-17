@@ -38,7 +38,7 @@ export function PlanBanner({ link, plans, tasks, workspaces, profiles }: { link:
           </div>
         ))}
       </div>
-      {shown && <PlanDialog link={link} plan={shown} workspaces={workspaces} profiles={profiles} onClose={() => setOpen(null)} />}
+      {shown && <PlanDialog link={link} plan={shown} tasks={tasks} workspaces={workspaces} profiles={profiles} onClose={() => setOpen(null)} />}
     </>
   );
 }
@@ -46,7 +46,7 @@ export function PlanBanner({ link, plans, tasks, workspaces, profiles }: { link:
 type Draft = PlannedTask & { include: boolean };
 
 /** The proposal, editable: keep or drop each task, change its title, project, model, description and first message. */
-export function PlanDialog({ link, plan, workspaces, profiles, onClose }: { link: HostLink; plan: TaskPlan; workspaces: readonly Workspace[]; profiles: readonly ModelProfile[]; onClose(): void }) {
+export function PlanDialog({ link, plan, tasks = [], workspaces, profiles, onClose }: { link: HostLink; plan: TaskPlan; tasks?: readonly Task[]; workspaces: readonly Workspace[]; profiles: readonly ModelProfile[]; onClose(): void }) {
   const [drafts, setDrafts] = useState<Draft[]>(() => plan.tasks.map((t) => ({ ...t, include: true })));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +54,8 @@ export function PlanDialog({ link, plan, workspaces, profiles, onClose }: { link
   const projects = workspaces.filter((w) => !w.archivedAt);
   const models = profiles.filter((p) => !p.hidden && !p.unavailable);
   const change = (key: string, patch: Partial<Draft>) => setDrafts((cur) => cur.map((d) => (d.key === key ? { ...d, ...patch } : d)));
-  const titleOf = (key: string) => drafts.find((d) => d.key === key)?.title ?? key;
+  // A task of this proposal, or (2026-11-17) one the topic has already.
+  const titleOf = (key: string) => drafts.find((d) => d.key === key)?.title ?? tasks.find((t) => t.id === key)?.title ?? key;
   const kept = drafts.filter((d) => d.include).length;
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -145,7 +146,7 @@ export function PlanDialog({ link, plan, workspaces, profiles, onClose }: { link
           <button type="button" className="btn-ghost" disabled={busy || !kept} title="建好任务，放在待办里，等你开始" onClick={() => void accept(false)} data-testid="plan-accept-todo">
             放进待办
           </button>
-          <button type="button" className="btn-primary" disabled={busy || !kept} title="建好任务，每个都用第一句话开跑" onClick={() => void accept(true)} data-testid="plan-accept-run">
+          <button type="button" className="btn-primary" disabled={busy || !kept} title="建好任务就开跑：没有前置的马上用第一句话开始，有前置的等前置完成（有主控的要验收）后自动开始" onClick={() => void accept(true)} data-testid="plan-accept-run">
             立刻开跑
           </button>
         </div>

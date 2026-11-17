@@ -770,7 +770,7 @@ ${d}` : restored));
                   e.currentTarget.value = "";
                 }}
               />
-              <SessionOptionsBar link={link} session={session} profile={profile} presets={presets} disabled={readOnly || isRemote} />
+              <SessionOptionsBar link={link} session={session} profile={profile} presets={presets} disabled={readOnly || isRemote} tasks={tasks} sessions={sessions} projects={projects ?? []} />
               <span
                 className="composer-hint"
                 {...(blocked ? { "data-testid": "remote-blocked" } : {})}
