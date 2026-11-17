@@ -28,7 +28,7 @@
 
 ## 还开着的事
 
-- 主控沟通（2026-11-17，起因是 Free 专题主控卡在「等待回答」）：卡死已修，主控也少被叫醒（下级留言送进直属主控；主控自己引起的重开、和待决问题重复的本轮状态不再叫醒它；需求含义问到人）；直属主控的工作传话和决定答复直接插进下级正在跑的 Codex 回合（`plans/done/lead-instructions-mid-turn.md`）。Host 重启后生效。待实施：`plans/topic-task-default-lead.md`（专题里新建任务默认归主控 / 交给主控安排，用户已定；界面部分等 Goal 改动提交后再做）。
+- 主控沟通（2026-11-17，起因是 Free 专题主控卡在「等待回答」）：卡死已修，主控也少被叫醒（下级留言送进直属主控；主控自己引起的重开、和待决问题重复的本轮状态不再叫醒它；需求含义问到人）；直属主控的工作传话和决定答复直接插进下级正在跑的 Codex 回合（`plans/done/lead-instructions-mid-turn.md`）。Host 重启后生效。待实施：`plans/topic-task-default-lead.md`（专题里新建任务默认归主控 / 交给主控安排，用户已定；界面部分等 Goal 改动提交后再做）。待实施：`plans/task-dependencies.md`（依赖线真的拦启动、拆任务能依赖已有任务，用户已定；第 6 条要用到）。
 
 - Codex、Claude、DSH 原生 Goal 已接入底栏 MCP 右侧，按能力显示目标、预算/续跑轮数和状态；支持暂停/继续/清除、停止和归档联动，异常退出与在途开启竞态已覆盖。定向回归、类型检查、构建及 7 条隔离 Electron 用例通过；Claude 使用真实 SDK/CLI + mock，DSH 的真实插件/自主轮由独立隔离 mock 验证，已检查深浅主题及窄窗口 `screenshots/studio/goal-*.png`。方案 `plans/done/codex-goal-bar.md`、`plans/done/agent-goals.md`。未重启用户 Host，需会话空闲后由用户手动重启源码版加载；已提交，未发布。
 
