@@ -88,8 +88,22 @@ it("停止 ends a wait left behind after the question was answered (no card, no 
   await vi.waitFor(() => expect(status()).toBe("idle"));
 }, 15_000);
 
+it("停止 while the turn that asked runs on: one press ends the turn and the wait", async () => {
+  await service.sessions.inbox.put(manager.id, "[[ask-async:600]] 【直属任务请求决定】按哪种方案做？", undefined, "i-decision-notice", { purpose: "notification" });
+  await vi.waitFor(() => {
+    expect(store.findItems(manager.id, "question", { source: "codex-async", state: "pending" })).toHaveLength(1);
+    expect(latestTurn()).toMatchObject({ state: "running" });
+  });
+  const [question] = store.findItems(manager.id, "question", { source: "codex-async" });
+  await service.sessions.interrupt(manager.id);
+  // Before (2026-11-17): the turn stopped, the open card put the session back to 等待回答, and a second 停止 ended that.
+  await vi.waitFor(() => expect(latestTurn()).not.toMatchObject({ state: "running" }), { timeout: 4000 });
+  await vi.waitFor(() => expect(status()).toBe("idle"), { timeout: 4000 });
+  expect(store.getItem(question!.id)).toMatchObject({ state: "dismissed" });
+}, 15_000);
+
 it("立即发送 takes in a message held while the person was asked, with no turn left to wait for", async () => {
-  await askedInNotificationTurn();
+  const question = await askedInNotificationTurn();
   // Messages from elsewhere wait while the person is asked (the inbox's design)…
   await service.sessions.inbox.put(manager.id, "等你回答时来的工作", undefined, "i-held-work", { purpose: "work" });
   expect(held()).toHaveLength(1);
@@ -98,21 +112,49 @@ it("立即发送 takes in a message held while the person was asked, with no tur
   sent.catch(() => undefined);
   await vi.waitFor(() => expect(turnStarts("等你回答时来的工作")).toHaveLength(1), { timeout: 3000 });
   await sent;
-  await vi.waitFor(() => expect(status()).toBe("idle"), { timeout: 4000 });
+  // Not the person's answer (2026-11-17: before, any message closed the card as answered): the card stays open, and
+  // once that turn is over the session waits for the person again.
+  await vi.waitFor(() => expect(latestTurn()).toMatchObject({ state: "completed", messagePurpose: "work" }), { timeout: 4000 });
+  await vi.waitFor(() => expect(status()).toBe("awaiting-answer"), { timeout: 4000 });
+  expect(store.getItem(question.id)).toMatchObject({ state: "pending" });
 }, 15_000);
 
-// The other side: only a turn that is over stops counting. One still running keeps its purpose boundary.
-
-it("while the turn that asked runs on, a message of another purpose still waits for it", async () => {
+it("立即发送 across purposes stops the turn that asked, and leaves the person's question open", async () => {
   await service.sessions.inbox.put(manager.id, "[[ask-async:600]] 【直属任务请求决定】按哪种方案做？", undefined, "i-decision-notice", { purpose: "notification" });
   await vi.waitFor(() => {
     expect(store.findItems(manager.id, "question", { source: "codex-async", state: "pending" })).toHaveLength(1);
     expect(latestTurn()).toMatchObject({ state: "running", messagePurpose: "notification" });
   });
+  const [question] = store.findItems(manager.id, "question", { source: "codex-async" });
+  await service.sessions.inbox.put(manager.id, "跨用途立即发送的工作", undefined, "i-cross-work", { purpose: "work" });
+  expect(held()).toEqual(["跨用途立即发送的工作"]);
+  // The notification turn gives way to the work message (the router's purpose boundary), as for the person's 停止 —
+  // but nobody stopped waiting for the person, and an agent's message is no answer.
+  await service.sessions.sendNow(manager.id, "i-cross-work");
+  await vi.waitFor(() => expect(turnStarts("跨用途立即发送的工作")).toHaveLength(1), { timeout: 4000 });
+  await vi.waitFor(() => expect(latestTurn()).toMatchObject({ state: "completed", messagePurpose: "work" }), { timeout: 4000 });
+  await vi.waitFor(() => expect(status()).toBe("awaiting-answer"), { timeout: 4000 });
+  expect(store.getItem(question!.id)).toMatchObject({ state: "pending" });
+}, 15_000);
+
+// The other side: only a turn that is over stops counting. One still running keeps its purpose boundary.
+
+it("while the turn that asked runs on, a message of another purpose waits for it, then goes in as the answer", async () => {
+  await service.sessions.inbox.put(manager.id, "[[ask-async:600]] 【直属任务请求决定】按哪种方案做？", undefined, "i-decision-notice", { purpose: "notification" });
+  await vi.waitFor(() => {
+    expect(store.findItems(manager.id, "question", { source: "codex-async", state: "pending" })).toHaveLength(1);
+    expect(latestTurn()).toMatchObject({ state: "running", messagePurpose: "notification" });
+  });
+  const [question] = store.findItems(manager.id, "question", { source: "codex-async" });
   await service.sessions.sendMessage(manager.id, "冬天");
   expect(held()).toEqual(["冬天"]);
   expect(turnStarts("冬天")).toHaveLength(0);
   await vi.waitFor(() => expect(latestTurn()).toMatchObject({ state: "completed" }), { timeout: 4000 });
+  // Once that turn is over only the person's answer is awaited (2026-11-17): their message goes in as the next turn and
+  // answers the card. Before, it waited behind the card until the card was answered or 立即发送 pressed.
+  await wentIn("冬天");
+  expect(held()).toEqual([]);
+  expect(store.getItem(question!.id)).toMatchObject({ state: "answered" });
 }, 15_000);
 
 it("a blocking question of the running turn still holds a message of another purpose", async () => {

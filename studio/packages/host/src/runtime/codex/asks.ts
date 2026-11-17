@@ -192,9 +192,14 @@ export class CodexAsks {
     return [...this.questions.values()].some((q) => q.sessionId === sessionId) || [...this.approvals.values()].some((a) => a.sessionId === sessionId);
   }
 
+  /** The person's 停止 (2026-11-17): open async questions close unanswered. */
+  dismissAsync(sessionId: Id): void {
+    for (const q of this.openAsync(sessionId)) this.core.updateItem(q.id, (it) => (it.type === "question" && it.state === "pending" ? { ...it, state: "dismissed" } : it));
+  }
+
   /** 停止 between turns (2026-11-17): the person stops waiting; open async questions close unanswered. */
   endAsyncWait(sessionId: Id): void {
-    for (const q of this.openAsync(sessionId)) this.core.updateItem(q.id, (it) => (it.type === "question" && it.state === "pending" ? { ...it, state: "dismissed" } : it));
+    this.dismissAsync(sessionId);
     this.core.setStatus(sessionId, "idle");
   }
 

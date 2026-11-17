@@ -373,7 +373,7 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
           </span>
         )}
       </div>
-      {item.delivery && <DeliveryLine itemId={item.id} delivery={item.delivery} reason={item.deliveryReason} />}
+      {item.delivery && <DeliveryLine itemId={item.id} delivery={item.delivery} reason={item.deliveryReason} fromPerson={item.fromPerson} />}
     </div>
   );
 }
@@ -382,12 +382,13 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
  * 立即发送 (2026-11-02): a message sent while the model worked and not read yet (Claude: after its next tool call or at
  * the turn's end; Codex: at its next step), or one whose process went before reading it.
  */
-function DeliveryLine({ itemId, delivery, reason }: { itemId: string; delivery: NonNullable<Extract<SessionItem, { type: "user" }>["delivery"]>; reason?: string }) {
+function DeliveryLine({ itemId, delivery, reason, fromPerson }: { itemId: string; delivery: NonNullable<Extract<SessionItem, { type: "user" }>["delivery"]>; reason?: string; fromPerson?: boolean }) {
   const { onDelivery, givingWay, waitsForSubagents } = useContext(DeliveryContext);
   const [asked, setAsked] = useState(false);
   useEffect(() => setAsked(false), [delivery]);
   // `held` (2026-11-04): from an agent or from Studio (中转回复, 值守, 传话…), in the session's inbox until its turn is over;
-  // 立即发送 puts it in now, as a waiting message's does.
+  // 立即发送 puts it in now, as a waiting message's does. `fromPerson` (2026-11-17): the person's own, kept for a turn of
+  // another purpose.
   const held = delivery === "held";
   const expired = delivery === "expired";
   const waiting = delivery === "waiting" || held;
@@ -397,7 +398,9 @@ function DeliveryLine({ itemId, delivery, reason }: { itemId: string; delivery: 
   const title = expired ? reason ?? "此通知已永久过期，保留历史且不能重新发送。" : interrupting
     ? "正在让模型停下当前这一步，停下后马上读到这条（它手上的命令或输出可能要几秒才收得住）"
     : held
-      ? "这条是 AMO 替别处转来的（中转回复、值守、传话、子会话的回报…）：等会话这一轮做完再送进去，不打断它；Studio 重启了也会接着送"
+      ? fromPerson
+        ? "这一轮是在回答询问或处理通知，你的这条要等它结束后再送进去，不打断它；Studio 重启了也会接着送"
+        : "这条是 AMO 替别处转来的（中转回复、值守、传话、子会话的回报…）：等会话这一轮做完再送进去，不打断它；Studio 重启了也会接着送"
       : forSubagents
         ? "DSH 要等它开的子 agent 都跑完，这一轮才结束，这条要等那时才送到。「立即发送」会打断这一轮。不想等的话，让它用 AMO 的子会话（session_start）开子 agent"
         : waiting

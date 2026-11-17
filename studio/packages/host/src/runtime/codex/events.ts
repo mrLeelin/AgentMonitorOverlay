@@ -129,7 +129,9 @@ export class CodexEvents {
           this.core.appendItem(s.id, { type: "error", message: turn.error?.message ?? "turn failed" }, { method: n.method, turnId });
           this.core.setStatus(s.id, "error");
         } else if (s.kind !== "sub" && this.asks.openAsync(s.id).length) {
-          this.core.setStatus(s.id, "awaiting-answer");
+          // Told even when 等待回答 was the status already (asked mid-turn), for what waits for the turn to end: 立即发送
+          // across purposes, the inbox (2026-11-17: no event came, so one waited 15 s and the person's message for good).
+          this.core.updateSession(s.id, { status: "awaiting-answer" });
         } else {
           this.core.setStatus(s.id, s.kind !== "sub" ? "idle" : turn.status === "interrupted" ? "interrupted" : "completed");
         }

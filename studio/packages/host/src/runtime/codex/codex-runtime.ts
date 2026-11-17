@@ -6,7 +6,7 @@ import { McpIdentities } from "../../mcp/identity.js";
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
-import { RuntimeBase, STOP_GRACE_MS, type RuntimeEvents, type SendOptions } from "../runtime.js";
+import { RuntimeBase, STOP_GRACE_MS, type InterruptOptions, type RuntimeEvents, type SendOptions } from "../runtime.js";
 import { personsMessage, unreadDelivery, withDelivery } from "../items.js";
 import { queueMessagePurpose } from "../message-purpose.js";
 import type { CodexServerHandle } from "./server-manager.js";
@@ -191,8 +191,9 @@ export class CodexRuntime extends RuntimeBase {
     }
     const input: codex.v2.UserInput[] = [...(text ? [{ type: "text" as const, text, text_elements: [] }] : []), ...images.map((a) => ({ type: "localImage" as const, path: a.path })), ...extra, ...mentioned];
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
-    // The person's next message is the answer to request_user_input_async (the card, or typed by hand).
-    this.asks.closeAsync(sessionId);
+    // The person's next message is the answer to request_user_input_async (the card, or typed by hand) — theirs only
+    // (2026-11-17): one the inbox brought from an agent or Studio closed the card as answered while nobody had.
+    if (!again || personsMessage(this.store.getItem(again))) this.asks.closeAsync(sessionId);
     const setDelivery = (itemId: Id, delivery: UserDelivery | undefined) => this.updateItem(itemId, (it) => (it.type === "user" ? withDelivery(it, delivery) : it));
     let row = again;
     if (st.activeTurnId) {
@@ -543,7 +544,7 @@ export class CodexRuntime extends RuntimeBase {
     return !!st.activeTurnId && !st.reviewTurns.has(st.activeTurnId) && !st.compacting;
   }
 
-  async interrupt(sessionId: Id): Promise<void> {
+  async interrupt(sessionId: Id, options: InterruptOptions = {}): Promise<void> {
     const session = this.requireSession(sessionId);
     // Pause even between native rounds, when there is temporarily no activeTurnId.
     let pauseError: unknown;
@@ -552,11 +553,17 @@ export class CodexRuntime extends RuntimeBase {
     if (!st.activeTurnId || !session.runtimeRef) {
       // No turn to stop, but still 等待回答 for async questions (2026-11-17: the Free 主控's 停止 found nothing and it
       // waited on): the person stops waiting.
-      if (this.betweenTurns(sessionId)) this.asks.endAsyncWait(sessionId);
+      if (options.person && this.betweenTurns(sessionId)) this.asks.endAsyncWait(sessionId);
       if (pauseError) throw pauseError;
       return;
     }
     this.asks.cancelQuestionsOf(sessionId);
+    // The person stops waiting for this turn's async questions too (2026-11-17: once the turn stopped, the open card put
+    // the session back to 等待回答 until a second 停止). Not when 立即发送 makes the turn give way: they are still asked.
+    if (options.person && this.asks.openAsync(sessionId).length) {
+      this.asks.dismissAsync(sessionId);
+      this.asks.afterAnswer(sessionId);
+    }
     // 停止's fallback (2026-11-04, plans/done/message-delivery.md): the app-server is shared by the channel's sessions, so it
     // is not closed; the turn is taken as stopped here, and what the turn had not read becomes 没送到.
     const turnId = st.activeTurnId;

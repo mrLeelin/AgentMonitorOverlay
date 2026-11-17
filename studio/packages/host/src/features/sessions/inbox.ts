@@ -1,6 +1,7 @@
 import { inTurn, managementRoot, type DecisionRequest, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
 import { newId, type SessionItemInput } from "../../store/store.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
+import { personsMessage } from "../../runtime/items.js";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
 import { HostError, isRemoteCopy } from "../../core/shared.js";
@@ -204,13 +205,17 @@ export class SessionInbox extends Feature<"sharedContext"> {
       return this.forget(sessionId);
     }
     if (this.pauses().has(sessionId)) return;
+    const busy = !free(s) && !(withTurn && s.status === "running" && writable(s));
+    if (!busy) this.refused.delete(sessionId);
     // Busy: only the direct manager's work 传话 and answers go in, into a running work turn the runtime can steer
-    // (2026-11-17, plans/done/lead-instructions-mid-turn.md). The rest still waits for the session to be free.
-    const joining = !free(s) && !(withTurn && s.status === "running" && writable(s));
-    if (!joining) this.refused.delete(sessionId);
-    if (joining && !this.joinsRunningTurn(s)) return;
+    // (2026-11-17, plans/done/lead-instructions-mid-turn.md); and while only the person's answer is awaited (Codex's
+    // 等待回答 with no turn running), the person's own messages, which answer it (2026-11-17: one they wrote during the
+    // turn that asked waited behind the card). The rest still waits for the session to be free.
+    const joining = busy && this.joinsRunningTurn(s);
+    const answering = busy && !joining && writable(s) && this.runtime.betweenTurns?.(s.id) === true;
+    if (busy && !joining && !answering) return;
     const rt = this.runtime;
-    const goes = (row: SessionItem | undefined): row is Extract<SessionItem, { type: "user" }> => row?.type === "user" && row.delivery === "held" && (!joining || this.fromDirectManager(s, row));
+    const goes = (row: SessionItem | undefined): row is Extract<SessionItem, { type: "user" }> => row?.type === "user" && row.delivery === "held" && (!joining || this.fromDirectManager(s, row)) && (!answering || personsMessage(row));
     // The first starts a turn; the others follow it at once (queued at the CLI, steered in, or DSH's next turn) — once
     // the turn is seen to run: Codex tells it (turn/started) only after its turn/start, and a second turn/start before
     // that would not be a steer.

@@ -241,7 +241,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     this.requireSession(sessionId);
     this.f.tasks.leadPromotion.cancel(sessionId);
     this.inbox.pause(sessionId);
-    await this.wrap(() => this.runtime.interrupt(sessionId));
+    await this.wrap(() => this.runtime.interrupt(sessionId, { person: true }));
   }
 
   /** Stage 15: `{ stopLoop: true }` stops the session's loop; `{ autoContinue }` switches going on after a usage limit. */

@@ -25,6 +25,14 @@ export interface SendOptions {
   boundaryDispatch?: boolean;
 }
 
+/**
+ * `person` (2026-11-17): the person's 停止 (sessions' interrupt), which also ends a wait for their answer to Codex's async
+ * questions. 立即发送 across purposes interrupts without it: the person is still asked.
+ */
+export interface InterruptOptions {
+  person?: boolean;
+}
+
 export interface RuntimeEvents {
   /** Every change, already persisted (except `item.delta`, which carries the last persisted seq). */
   event: [HostEvent];
@@ -61,7 +69,7 @@ export interface SessionRuntimeApi {
    * (Codex reads them from their path, Claude gets them as image blocks); `text` may be empty when there are some.
    */
   sendMessage(sessionId: Id, text: string, images?: readonly Attachment[], options?: SendOptions): Promise<{ mode: SendMode }>;
-  interrupt(sessionId: Id): Promise<void>;
+  interrupt(sessionId: Id, options?: InterruptOptions): Promise<void>;
   /**
    * Codex (2026-11-17): the session shows 等待回答 only for request_user_input_async questions its finished turn left
    * open. No turn runs, so a message starts the next one rather than waiting for a turn of another purpose to end.
@@ -217,6 +225,12 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   steerable(sessionId: Id): boolean {
     const s = this.store.getSession(sessionId);
     return !!s && s.runtime !== "remote" && !!(this.runtimes[s.runtime] ?? this.fallback)?.steerable?.(sessionId);
+  }
+
+  /** Codex's 等待回答 with no turn running: only the person's answer is awaited (the inbox lets theirs in, 2026-11-17). */
+  betweenTurns(sessionId: Id): boolean {
+    const s = this.store.getSession(sessionId);
+    return !!s && s.runtime !== "remote" && !!(this.runtimes[s.runtime] ?? this.fallback)?.betweenTurns?.(sessionId);
   }
 
   /** The runtime of a profile: its own, "remote" for a remote copy's model (remoteProfileId), or the one runtime. */
@@ -405,8 +419,8 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   rename(sessionId: Id, title: string) {
     return this.forSession(sessionId).rename(sessionId, title);
   }
-  interrupt(sessionId: Id) {
-    return this.forSession(sessionId).interrupt(sessionId);
+  interrupt(sessionId: Id, options?: InterruptOptions) {
+    return this.forSession(sessionId).interrupt(sessionId, options);
   }
   fork(sessionId: Id, profileId?: Id) {
     return this.forSession(sessionId).fork(sessionId, profileId);
