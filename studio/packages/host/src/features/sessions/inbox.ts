@@ -192,6 +192,9 @@ export class SessionInbox extends Feature<"sharedContext"> {
       if (before !== null) await this.turnSeen(sessionId, before);
       const current = this.store.getItem(it.id);
       if (current?.type !== "user" || current.delivery !== "held") continue;
+      // A native Goal can start its next work turn by itself. Keep read-only questions/notifications held until
+      // it pauses or ends, instead of changing that autonomous work's purpose or marking the message as failed.
+      if (this.store.getSession(sessionId)?.goal?.status === "active" && (current.messagePurpose === "inquiry" || current.messagePurpose === "notification")) continue;
       before = current.seq;
       try {
         this.checkSource(current);

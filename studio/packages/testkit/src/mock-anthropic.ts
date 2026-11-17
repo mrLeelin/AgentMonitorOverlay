@@ -92,10 +92,21 @@ export type ClaudeMockScript = (req: ClaudeMockRequest) => ClaudeMockReply;
  *   an empty reply, so no suggestion is made
  * - `[[refuse]]` → the model refuses (stop_reason "refusal")
  * - `[[context: N]]` → `MOCK: <user text>`, reporting N input tokens read from the cache (a large context)
+ * - Native `/goal` completion checks return their requested `{ ok, reason, impossible? }` schema; `[[goal-blocked]]`
+ *   reports an impossible goal, `[[goal-pending]]` leaves it unfinished, and `[[goal-slow]]` slows the working turn.
  * - anything else → `MOCK: <user text>`, plus ` [images: N]` when the message carried images
  * Tool calls are only made when the request offers that tool, so side requests always get text.
  */
 export const defaultClaudeScript: ClaudeMockScript = (req) => {
+  // Goal's Stop evaluator is a separate structured request, not a normal assistant reply. Keep it local and bounded.
+  const output = req.body.output_config as { format?: { schema?: { properties?: Record<string, unknown> } } } | undefined;
+  if (!req.tools.length && output?.format?.schema?.properties?.ok && output.format.schema.properties.reason && req.lastUserText.startsWith("Based on the conversation transcript above, has the following stopping condition been satisfied?")) {
+    const transcript = JSON.stringify(req.body.messages ?? "");
+    if (transcript.includes("[[goal-blocked]]")) return { kind: "text", text: JSON.stringify({ ok: false, impossible: true, reason: "Mock Goal cannot be completed without the required input." }) };
+    if (transcript.includes("[[goal-pending]]")) return { kind: "text", text: JSON.stringify({ ok: false, reason: "Mock Goal still has work remaining." }) };
+    return { kind: "text", text: JSON.stringify({ ok: true, reason: "Mock Goal work is complete." }) };
+  }
+  if (req.tools.length && req.lastUserText.includes("[[goal-slow]]")) return { kind: "text", text: "Goal 原生工作回合正在检查。".repeat(30), chunks: 100, delayMs: 100 };
   // Claude Code's prompt-suggestion side request ("[SUGGESTION MODE: …]" as the last user text).
   if (req.lastUserText.startsWith("[SUGGESTION MODE")) return { kind: "text", text: JSON.stringify(req.body.messages ?? "").includes("[[suggest]]") ? MOCK_SUGGESTION : "" };
   const retry = /\[\[retry(?::(\d+))?\]\]/.exec(req.lastUserText);

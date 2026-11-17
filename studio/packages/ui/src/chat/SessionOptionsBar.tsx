@@ -6,13 +6,14 @@ import { rememberPick } from "../lib/recents.js";
 import { EffortBars, FastToggle, Mark, nextEffort, PermissionTiles, pickLabel } from "./pickers.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { SessionMcpTray, useSessionMcp } from "../mcp/SessionMcp.js";
+import { SessionGoalButton, SessionGoalTray, useSessionGoal } from "./SessionGoal.js";
 
 // Under the composer: what the session runs with — model, effort, permissions — each one click away
 // (design/ui-directions/new-task.html, "会话中切换"). Clicking the model or the permissions opens that group above the
 // composer; the effort bars are clicked directly. Models switch only within the session's own account (the context
 // stays); another account needs a new session. Codex takes a change from the next turn, Claude at once.
 
-type Tray = "model" | "permission" | "mcp" | null;
+type Tray = "model" | "permission" | "mcp" | "goal" | null;
 
 export function SessionOptionsBar({
   link,
@@ -33,6 +34,7 @@ export function SessionOptionsBar({
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const mcp = useSessionMcp(link, session);
+  const goal = useSessionGoal(link, session);
   const mcpOn = mcp.state?.entries.filter((e) => e.on).length ?? 0;
   const mine = presets.filter((p) => p.profileId === session.profileId);
   const model = choices ? activeModel(choices, session.options) : undefined;
@@ -119,7 +121,12 @@ export function SessionOptionsBar({
           <SessionMcpTray link={link} session={session} state={mcp.state} onState={mcp.setState} disabled={disabled} />
         </div>
       )}
-      {tray && tray !== "mcp" && choices && (
+      {tray === "goal" && goal.supported && (
+        <div className="tray goal-tray" role="dialog" aria-label="Goal 目标" data-testid="options-tray">
+          <SessionGoalTray control={goal} disabled={disabled || !!session.archivedAt} />
+        </div>
+      )}
+      {(tray === "model" || tray === "permission") && choices && (
         <div className="tray" role="dialog" aria-label={tray === "model" ? "换型号" : "权限"} data-testid="options-tray">
           <div className="tray-h">
             {tray === "model" ? "换型号" : "权限"}
@@ -198,6 +205,10 @@ export function SessionOptionsBar({
             <span>MCP{mcp.state ? ` ${mcpOn}` : ""}</span>
           </button>
         )}
+        {goal.supported && <SessionGoalButton control={goal} expanded={tray === "goal"} onClick={() => {
+          if (tray !== "goal") goal.refresh();
+          setTray((value) => value === "goal" ? null : "goal");
+        }} />}
       </div>
       {mine.map((p) => (
         <button

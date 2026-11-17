@@ -1,4 +1,5 @@
 export * from "./entities.js";
+export * from "./goals.js";
 export * from "./task-management.js";
 export * from "./task-workflow.js";
 export * from "./shared-context.js";

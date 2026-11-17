@@ -28,6 +28,8 @@
 
 ## 还开着的事
 
+- Codex、Claude、DSH 原生 Goal 已接入底栏 MCP 右侧，按能力显示目标、预算/续跑轮数和状态；支持暂停/继续/清除、停止和归档联动，异常退出与在途开启竞态已覆盖。定向回归、类型检查、构建及 7 条隔离 Electron 用例通过；Claude 使用真实 SDK/CLI + mock，DSH 的真实插件/自主轮由独立隔离 mock 验证，已检查深浅主题及窄窗口 `screenshots/studio/goal-*.png`。方案 `plans/done/codex-goal-bar.md`、`plans/done/agent-goals.md`。未重启用户 Host，需会话空闲后由用户手动重启源码版加载；已提交，未发布。
+
 - 看板任务卡、画布任务卡及引用卡已显示具体型号，运行/等待中的主会话优先，多主会话汇总并提供悬浮列表，型号切换随会话事件更新；共享卡片高度和旧尺寸排布已同步。58 条定向单测/导航检查、类型检查、构建及 2 条隔离 mock Electron 回归通过，已检查深浅主题截图 `screenshots/studio/task-models-{board,canvas}-{dark,light}.png`。刷新源码版窗口可加载标签；自动排布使用的新尺寸需会话空闲后由用户手动重启 Host 加载。已提交，未发布或重启当前 Host。
 
 - 主控进入待审阅已增加下辖检查：整棵管理树全部提交交付或完成且停止实际工作后才流转，退回、重开、新增或转交任务会重新计算；只读询问及通知保留已有验收，旧状态在启动时修正。136 条定向单测/导航检查、类型检查、构建及 3 条隔离 Electron 回归通过，已检查 `screenshots/studio/lead-review-wait-{pending,returned}.png`。已提交，未发布或重启当前 Host，需会话空闲后由用户手动重启源码版加载。

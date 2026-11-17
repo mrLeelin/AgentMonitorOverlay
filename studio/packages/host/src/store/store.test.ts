@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { emptyCanvas, type CanvasDoc, type Session, type SessionItem } from "@amo-studio/protocol";
+import { emptyCanvas, type CanvasDoc, type Session, type SessionGoal, type SessionItem } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { MIGRATIONS } from "./migrations.js";
 import { Store, StoreTooNewError } from "./store.js";
@@ -40,6 +40,8 @@ function seed(store: Store) {
   return { ws, task, main, fork, sub, other };
 }
 
+const GOAL: SessionGoal = { threadId: "thread-goal", objective: "Complete the assigned task", status: "active", tokenBudget: 50000, tokensUsed: 1234, timeUsedSeconds: 42, createdAt: 1794825600, updatedAt: 1794825642 };
+
 describe("Store", () => {
   it("applies migrations once", () => {
     const path = tempDbPath();
@@ -52,7 +54,7 @@ describe("Store", () => {
     const path = tempDbPath();
     const store = makeStore(path);
     const { ws, task } = seed(store);
-    store.db.exec("DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at;");
+    store.db.exec("DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(26);
     open.pop()!.close();
     const migrated = makeStore(path);
@@ -93,7 +95,7 @@ describe("Store", () => {
     store.putCanvas({ ...doc, links: [...doc.links!, collaboration] } as CanvasDoc);
     store.putCanvas({ ...emptyCanvas("only-collaboration"), links: [collaboration] } as CanvasDoc);
     store.putCanvas({ ...doc, id: "unchanged" });
-    store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at;");
+    store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(27);
     open.pop()!.close();
     const upgraded = makeStore(path);
@@ -128,6 +130,44 @@ describe("Store", () => {
     const db = new DatabaseSync(path);
     expect((db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v).toBe(MIGRATIONS.length + 3);
     db.close();
+  });
+
+  it("persists native Goal snapshots across reopen and preserves them through unrelated updates", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { main, fork } = seed(store);
+    expect(store.getSession(main.id)?.goal).toBeUndefined();
+    const loop = { at: "2026-11-16T03:00:00.000Z", reason: "continue", prompt: "/loop go on" };
+    store.updateSession(main.id, { options: { model: "gpt", effort: "high" }, wake: { loop }, goal: GOAL });
+    store.updateSession(main.id, { title: "Renamed", status: "running" });
+    expect(store.getSession(fork.id)?.goal).toBeUndefined();
+    open.pop()!.close();
+    const reopened = makeStore(path);
+    expect(reopened.getSession(main.id)).toMatchObject({ title: "Renamed", status: "running", options: { model: "gpt", effort: "high" }, wake: { loop }, goal: GOAL, endedAt: null });
+    const cleared = reopened.updateSession(main.id, { goal: null });
+    expect(cleared.goal).toBeNull();
+    expect(reopened.getSession(main.id)).toMatchObject({ goal: null, wake: { loop }, options: { model: "gpt", effort: "high" }, endedAt: null });
+    expect(reopened.updateSession(main.id, { title: "Still cleared" }).goal).toBeNull();
+  });
+
+  it("keeps explicit Goal snapshots in remote copies and accepts older copies without a snapshot", () => {
+    const store = makeStore();
+    const { main } = seed(store);
+    const remote = { ...main, id: "remote-goal", runtime: "remote" as const, goal: GOAL };
+    expect(store.putRemoteSession(remote).goal).toEqual(GOAL);
+    expect(store.putRemoteSession({ ...remote, goal: null }).goal).toBeNull();
+    store.putRemoteSession(remote);
+    const { goal: _goal, ...legacy } = remote;
+    expect(store.putRemoteSession(legacy).goal).toBeUndefined();
+  });
+
+  it("ignores damaged Goal snapshots rather than keeping a task permanently active", () => {
+    const store = makeStore();
+    const { main } = seed(store);
+    for (const value of ["broken-json", JSON.stringify({ status: "active" }), JSON.stringify({ ...GOAL, status: "unknown" })]) {
+      store.db.prepare("UPDATE sessions SET goal = ? WHERE id = ?").run(value, main.id);
+      expect(store.getSession(main.id)?.goal).toBeUndefined();
+    }
   });
 
   it("keeps a session's wake until it is cleared (stage 15)", () => {

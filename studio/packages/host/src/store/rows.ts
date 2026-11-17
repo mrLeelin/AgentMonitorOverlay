@@ -1,5 +1,5 @@
 import type { SQLInputValue } from "node:sqlite";
-import type { Id, Session, SessionItem, SessionOptions, SessionWake, Task, TaskColumn, TaskRemote, Topic, Workspace } from "@amo-studio/protocol";
+import type { Id, Session, SessionGoal, SessionItem, SessionOptions, SessionWake, Task, TaskColumn, TaskRemote, Topic, Workspace } from "@amo-studio/protocol";
 
 // Rows of the store's tables as entities (stage 16 split out of store.ts).
 
@@ -90,11 +90,28 @@ export function toSession(r: Row): Session {
     runtimeRef: strOrNull(r.runtime_ref),
     options: parseOptions(r.options),
     ...parseWake(r.wake),
+    ...parseGoal(r.goal),
     createdAt: str(r.created_at),
     updatedAt: str(r.updated_at),
     archivedAt: strOrNull(r.archived_at),
     endedAt: strOrNull(r.ended_at),
   };
+}
+
+/** Missing snapshots belong to older sessions; an explicit null records a native clear. */
+function parseGoal(v: unknown): { goal?: SessionGoal | null } {
+  if (typeof v !== "string" || !v) return {};
+  try {
+    const goal = JSON.parse(v) as SessionGoal | null;
+    if (goal === null) return { goal: null };
+    if (!goal || typeof goal !== "object" || typeof goal.threadId !== "string" || typeof goal.objective !== "string") return {};
+    if (!["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"].includes(goal.status)) return {};
+    if (![goal.tokensUsed, goal.timeUsedSeconds, goal.createdAt, goal.updatedAt].every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) return {};
+    if (goal.tokenBudget !== null && !(typeof goal.tokenBudget === "number" && Number.isFinite(goal.tokenBudget) && goal.tokenBudget > 0)) return {};
+    return { goal };
+  } catch {
+    return {};
+  }
 }
 
 /** Only a session something will wake carries the field. */

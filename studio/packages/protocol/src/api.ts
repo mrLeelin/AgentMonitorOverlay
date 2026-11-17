@@ -19,6 +19,7 @@ import type { PromptTemplateRoutes } from "./prompt-templates.js";
 import type { QuestionRoutes } from "./questions.js";
 import type { RemoteRoutes } from "./remote.js";
 import type { ViewPackRoutes } from "./viewpacks.js";
+import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "./goals.js";
 
 export const HOST_DEFAULT_PORT = 47900;
 
@@ -761,6 +762,9 @@ export interface HostRoutes
   "POST /api/sessions/:id/items/:itemId/resend": { req: void; res: { mode: "start" | "steer" | "queue" } };
   /** Claude (stage 15): stop the session's loop, or switch going on by itself after a usage limit (Session.wake). */
   "POST /api/sessions/:id/wake": { req: { stopLoop: true } | { autoContinue: boolean }; res: Session };
+  "GET /api/sessions/:id/goal": { req: void; res: SessionGoalState };
+  "PUT /api/sessions/:id/goal": { req: SessionGoalUpdate; res: SessionGoalState };
+  "DELETE /api/sessions/:id/goal": { req: void; res: SessionGoalState };
   "POST /api/sessions/:id/fork": { req: { profileId?: Id }; res: Session };
   /** Renames the session in its runtime too (Codex thread name, Claude session title). */
   "PATCH /api/sessions/:id": { req: { title: string }; res: Session };
@@ -861,6 +865,7 @@ export type HostEvent = { seq: number } & (
   /** The 中转 sessions this computer's sessions sent, all of them, when one changed. */
   | { type: "teamthreads.changed"; threads: import("./entities.js").TeamThread[] }
   | { type: "session.upserted"; session: Session }
+  | { type: "session.goal"; sessionId: Id; goal: SessionGoal | null }
   | { type: "item.appended"; item: SessionItem }
   /** Full replacement, e.g. a finished agent message or an approval that changed state. */
   | { type: "item.updated"; item: SessionItem }

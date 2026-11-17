@@ -9,6 +9,7 @@ import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { SessionInbox } from "./inbox.js";
 import { readSetups, rememberSetups } from "./setups.js";
 import { newId } from "../../store/store.js";
+import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -27,6 +28,43 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
 
   /** One reclaim at a time per session, or the terminal's additions would be imported twice. */
   private readonly reclaiming = new Map<Id, Promise<Session>>();
+
+  getGoal(sessionId: Id): Promise<SessionGoalState> {
+    this.requireSession(sessionId);
+    return this.wrap(() => this.runtime.getGoal?.(sessionId) ?? Promise.resolve({ goal: null, unavailable: "这个 Agent 尚未接入原生 Goal。" }));
+  }
+
+  setGoal(sessionId: Id, body: unknown): Promise<SessionGoalState> {
+    this.requireSession(sessionId);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new HostError("bad_request", "请填写 Goal 目标或状态。");
+    const b = body as Record<string, unknown>, input: SessionGoalUpdate = {};
+    if (Object.keys(b).some((key) => !["objective", "tokenBudget", "roundBudget", "status"].includes(key))) throw new HostError("bad_request", "Goal 参数包含不支持的字段。");
+    if ("objective" in b) {
+      if (typeof b.objective !== "string" || !b.objective.trim() || [...b.objective.trim()].length > 4000) throw new HostError("bad_request", "目标不能为空，且不能超过 4000 字符。");
+      input.objective = b.objective.trim();
+    }
+    if ("tokenBudget" in b) {
+      if (typeof b.tokenBudget !== "number" || !Number.isSafeInteger(b.tokenBudget) || b.tokenBudget <= 0) throw new HostError("bad_request", "Token 预算必须是正整数。");
+      input.tokenBudget = b.tokenBudget;
+    }
+    if ("roundBudget" in b) {
+      if (typeof b.roundBudget !== "number" || !Number.isSafeInteger(b.roundBudget) || b.roundBudget <= 0) throw new HostError("bad_request", "续跑轮数上限必须是正整数。");
+      input.roundBudget = b.roundBudget;
+    }
+    if ("status" in b) {
+      if (b.status !== "active" && b.status !== "paused") throw new HostError("bad_request", "Goal 状态只能是开启或暂停。");
+      input.status = b.status;
+    }
+    if (!Object.keys(input).length) throw new HostError("bad_request", "请填写 Goal 目标或状态。");
+    if (!this.runtime.setGoal) throw new HostError("bad_request", "这个 Agent 尚未接入原生 Goal。");
+    return this.wrap(() => this.runtime.setGoal!(sessionId, input));
+  }
+
+  clearGoal(sessionId: Id): Promise<SessionGoalState> {
+    this.requireSession(sessionId);
+    if (!this.runtime.clearGoal) throw new HostError("bad_request", "这个 Agent 尚未接入原生 Goal。");
+    return this.wrap(() => this.runtime.clearGoal!(sessionId));
+  }
 
   /** Renames a session in its own runtime (the stored title follows the runtime's name). */
   renameSession(sessionId: Id, titleIn: unknown): Promise<Session> {

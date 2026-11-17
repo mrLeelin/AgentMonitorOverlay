@@ -7,6 +7,9 @@ import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 /** The HTTP routes of this feature (see protocol/src/api.ts for each route's request and response). */
 export function sessionsRoutes(service: HostService): Route[] {
   return [
+    route("GET /api/sessions/:id/goal", ({ params }) => service.sessions.getGoal(params.id!)),
+    route("PUT /api/sessions/:id/goal", ({ params, body }) => service.sessions.setGoal(params.id!, body)),
+    route("DELETE /api/sessions/:id/goal", ({ params }) => service.sessions.clearGoal(params.id!)),
     route("PATCH /api/sessions/:id/options", ({ params, body }) => service.sessions.updateSessionOptions(params.id!, body)),
     // 远程副本 (remoteCopy, http/route.ts): renamed on A (RemoteCopies.renameSession, 2026-10-30); its options are A's.
     route("PATCH /api/sessions/:id", ({ params, body }) => service.sessions.renameSession(params.id!, obj(body).title), { remoteCopy: "forward" }),

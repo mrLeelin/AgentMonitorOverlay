@@ -5,13 +5,20 @@ import type { codex } from "@amo-studio/protocol";
 // JSON-RPC client for `codex app-server` over WebSocket with a capability token. One instance = one connection;
 // reconnecting is the caller's job (the server manager re-creates clients after a restart).
 
-export type ClientMethod = codex.ClientRequest["method"];
-export type ParamsOf<M extends ClientMethod> = Extract<codex.ClientRequest, { method: M }>["params"];
+// The stable generated schema omits this experimental request (Codex 0.167.2).
+// Goals start turns themselves, so their settings must be applied without a turn/start.
+export type ThreadSettingsUpdate = Pick<codex.v2.TurnStartParams, "threadId" | "model" | "effort" | "summary" | "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy" | "serviceTier">;
+export type ClientMethod = codex.ClientRequest["method"] | "thread/settings/update";
+export type ParamsOf<M extends ClientMethod> = M extends "thread/settings/update" ? ThreadSettingsUpdate : Extract<codex.ClientRequest, { method: M }>["params"];
 export type ServerNotification = codex.ServerNotification;
 export type ServerRequest = codex.ServerRequest;
 
 /** Responses for the methods the Host uses. Others resolve to `unknown`. */
 export interface ResponseMap {
+  "thread/goal/get": codex.v2.ThreadGoalGetResponse;
+  "thread/goal/set": codex.v2.ThreadGoalSetResponse;
+  "thread/goal/clear": codex.v2.ThreadGoalClearResponse;
+  "thread/settings/update": Record<string, never>;
   initialize: codex.InitializeResponse;
   "thread/start": codex.v2.ThreadStartResponse;
   "thread/resume": codex.v2.ThreadResumeResponse;
@@ -68,6 +75,7 @@ export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private closed = false;
+  private readonly threadSettings = new Map<string, Record<string, unknown>>();
   defaultTimeoutMs = 60_000;
 
   static async connect(options: ConnectOptions): Promise<CodexRpcClient> {
@@ -95,6 +103,7 @@ export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
     });
     await this.request("initialize", {
       clientInfo: { name: options.clientName ?? "amo-studio", title: "AMO Studio", version: options.clientVersion ?? "0.0.0" },
+      capabilities: { experimentalApi: true },
     } as ParamsOf<"initialize">);
     this.notify("initialized");
   }
@@ -111,6 +120,43 @@ export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
       this.pending.set(id, { method, resolve: resolve as (v: unknown) => void, reject, timer });
       this.ws!.send(JSON.stringify({ id, method, params }));
     });
+  }
+
+  /** The RPC only queues ThreadSettings; wait for its application before enabling Goal continuation. */
+  async updateThreadSettings(params: ThreadSettingsUpdate): Promise<void> {
+    let resolveApplied!: () => void;
+    const applied = new Promise<void>((resolve) => { resolveApplied = resolve; });
+    const matches = (actual: unknown, expected: unknown): boolean => {
+      if (expected && typeof expected === "object") return !!actual && typeof actual === "object" && Object.entries(expected).every(([key, value]) => matches((actual as Record<string, unknown>)[key], value));
+      return actual === expected;
+    };
+    const confirms = (settings: Record<string, unknown>) => Object.entries(params).every(([key, value]) => key === "threadId" || value === undefined || matches(settings[key], value));
+    // start/resume and native updates maintain this connection's effective settings. Unchanged snapshots have
+    // no public notification in Codex, so avoid sending an update that cannot acknowledge a change.
+    const known = this.threadSettings.get(params.threadId);
+    if (known && confirms(known)) return;
+    let confirmed = false;
+    const confirm = () => { confirmed = true; resolveApplied(); };
+    const onNotification = (n: ServerNotification) => {
+      if (n.method !== "thread/settings/updated" || n.params.threadId !== params.threadId) return;
+      // Another turn can publish settings while this request is queued; its acknowledgement must not unlock Goal.
+      if (confirms(n.params.threadSettings as unknown as Record<string, unknown>)) confirm();
+    };
+    this.on("notification", onNotification);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await this.request("thread/settings/update", params);
+      // Only a connection without a snapshot needs a readback. Normal Host connections learn it on start/resume;
+      // avoid rejoining an already active Goal merely to read settings, because resume may wake an idle Goal.
+      if (!confirmed && !known) {
+        const snapshot = await this.request("thread/resume", { threadId: params.threadId, excludeTurns: true });
+        if (confirms({ ...snapshot, effort: snapshot.reasoningEffort, sandboxPolicy: snapshot.sandbox })) confirm();
+      }
+      await Promise.race([applied, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Codex 尚未确认会话设置，Goal 未开启，请重试。")), 10000); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.off("notification", onNotification);
+    }
   }
 
   notify(method: string, params?: unknown): void {
@@ -146,10 +192,21 @@ export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
       this.pending.delete(Number(msg.id));
       if (p.timer) clearTimeout(p.timer);
       if (msg.error) p.reject(new RpcError(p.method, msg.error.code, msg.error.message, msg.error.data));
-      else p.resolve(msg.result);
+      else {
+        if (p.method === "thread/start" || p.method === "thread/resume" || p.method === "thread/fork") {
+          const result = msg.result as Record<string, unknown> | undefined;
+          const thread = result?.thread as { id?: string } | undefined;
+          if (thread?.id) this.threadSettings.set(thread.id, { ...result, effort: result?.reasoningEffort, sandboxPolicy: result?.sandbox });
+        }
+        p.resolve(msg.result);
+      }
     } else if (msg.id !== undefined && msg.method) {
       this.emit("request", msg as unknown as ServerRequest);
     } else if (msg.method) {
+      if (msg.method === "thread/settings/updated") {
+        const params = msg.params as { threadId: string; threadSettings: Record<string, unknown> };
+        this.threadSettings.set(params.threadId, params.threadSettings);
+      }
       this.emit("notification", msg as unknown as ServerNotification);
     }
   }

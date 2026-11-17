@@ -39,7 +39,7 @@ export const isRemoteCopy = (s: Pick<Session, "runtime"> | null | undefined): bo
 export function sessionMoving(s: Session): boolean {
   if (s.archivedAt) return false;
   if (inTurn(s.status)) return true;
-  return !!s.wake?.loop || !!s.wake?.limit || s.writer === "terminal-handoff" || s.writer === "terminal-shared";
+  return s.goal?.status === "active" || !!s.wake?.loop || !!s.wake?.limit || s.writer === "terminal-handoff" || s.writer === "terminal-shared";
 }
 
 /** Checks one option value: a short CLI id (model names like "glm-5.3[1m]" included). */

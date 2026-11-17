@@ -37,6 +37,8 @@ import { adoptedKey, isCompactSummary, listOutsideSessions, previewOutsideSessio
 import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
 import { currentMessagePurpose, queueMessagePurpose } from "../message-purpose.js";
 import { claudeSkillPaths } from "./skill-paths.js";
+import { ClaudeGoals } from "./goals.js";
+import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 
 export { claudeCommands, localCommandText } from "./commands.js";
 export { askedQuestions, describeToolUse, retryReason } from "./tool-use.js";
@@ -133,6 +135,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   private readonly asks: ClaudeAsks;
   private readonly subagents: ClaudeSubagents;
   private readonly messages: ClaudeMessages;
+  private readonly goals: ClaudeGoals;
 
   constructor(private readonly options: ClaudeRuntimeOptions) {
     super(options.store, "claude", options.now, options.profiles);
@@ -149,6 +152,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       close: (id) => this.close(id),
       clearIdle: (live) => this.clearIdle(live),
     };
+    this.goals = new ClaudeGoals(this.core, (id) => this.writable(id), (id, live) => this.scheduleIdle(id, live));
     this.accounts = options.accounts ?? new ClaudeAccounts(this.store, { defaultDir: this.local.dir, defaultExplicit: this.local.explicit, ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}) });
     this.accounts.setGuard({ blocked: () => this.switchBlocked(), beforeSwitch: () => this.beforeAccountSwitch() });
     this.usageTracker = new ClaudeUsageTracker(this.store, { accounts: this.accounts, baseUrl: (p) => (p.provider ? this.options.providers[p.provider]?.baseUrl : undefined) });
@@ -307,6 +311,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    */
   private async deliver(session: Session, content: SDKUserMessage["message"]["content"], options: SendOptions, item: (mode: SendMode, delivery: UserDelivery | undefined) => Id, again?: Id): Promise<{ mode: SendMode }> {
     const sessionId = session.id;
+    if (session.goal?.status === "active" && (options.purpose === "inquiry" || options.purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
     await this.closing.get(sessionId);
     options.beforeDispatch?.();
     if (again) this.assertCurrentMessage(sessionId, again);
@@ -418,8 +423,13 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * that has not ended the turn after stopGraceMs is closed, and one that does not even go then is let go.
    */
   async interrupt(sessionId: Id): Promise<void> {
+    this.goals.invalidate(sessionId);
+    let goalError: unknown;
+    if (this.goals.activeOrPending(sessionId)) {
+      try { await this.goals.pause(sessionId); } catch (error) { goalError = error; }
+    }
     const live = this.live.get(sessionId);
-    if (!live?.running) return;
+    if (!live?.running) { if (goalError) throw goalError; return; }
     live.interrupted = true;
     this.asks.declineAll(live);
     const grace = this.options.stopGraceMs ?? STOP_GRACE_MS;
@@ -435,7 +445,12 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       }, "the CLI process did not exit after close; leaving it");
     }, "closing its process");
     await Promise.race([live.q.interrupt().catch((err: unknown) => this.emit("log", `interrupt failed for ${sessionId}: ${String(err)}`)), new Promise((r) => setTimeout(r, grace).unref?.())]);
+    if (goalError) throw new Error(`当前回复已请求停止，但原生 Goal 清除未能确认：${String(goalError)}`);
   }
+
+  getGoal(sessionId: Id): Promise<SessionGoalState> { return this.goals.get(sessionId); }
+  setGoal(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState> { return this.goals.set(sessionId, input, beforeDispatch); }
+  clearGoal(sessionId: Id): Promise<SessionGoalState> { return this.goals.clear(sessionId); }
 
   /** Copies the transcript into a new Claude session (no model call); the branch continues from there. */
   async fork(sessionId: Id, profileId?: Id): Promise<Session> {
@@ -571,6 +586,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   async archive(sessionId: Id): Promise<Session[]> {
+    const ids = new Set<Id>([sessionId]);
+    for (let size = -1; size !== ids.size;) { size = ids.size; for (const s of this.store.listSessions()) if (s.parentId && ids.has(s.parentId)) ids.add(s.id); }
+    for (const id of ids) { this.goals.invalidate(id); if (this.goals.activeOrPending(id)) await this.goals.pause(id); }
     const changed = this.archiveTree(sessionId);
     await Promise.all(changed.map((s) => this.close(s.id)));
     return changed;
@@ -593,6 +611,8 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * marks the session read-only. Returns what the terminal should run; the key is only in `env`.
    */
   async handoff(sessionId: Id): Promise<{ command: string; cwd: string; env: Record<string, string> }> {
+    this.goals.invalidate(sessionId);
+    if (this.goals.activeOrPending(sessionId)) await this.goals.pause(sessionId);
     const session = this.writable(sessionId);
     if (this.isLead(sessionId)) throw Object.assign(new Error("主控的本地文件只读，不能交给可写的终端。"), { code: "read_only" });
     if (this.live.get(sessionId)?.running) throw Object.assign(new Error("回复还在生成，等这一轮结束或先打断，再交给终端"), { code: "conflict" });
@@ -638,6 +658,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   /** Closes every running query and waits for the processes to end (Host shutdown). Sessions resume on the next message. */
   async closeAll(): Promise<void> {
+    for (const session of this.store.listSessions()) if (session.runtime === "claude" && this.goals.activeOrPending(session.id) && !session.archivedAt && session.writer === "workbench") {
+      try { await this.goals.pause(session.id); } catch (error) { this.emit("log", `could not clear Claude Goal before shutdown: ${String(error)}`); }
+    }
+    this.goals.dispose();
     this.wake.shutdown();
     this.accounts.shutdown();
     await Promise.all([...this.live.keys()].map((id) => this.close(id)));
@@ -827,6 +851,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     try {
       for await (const m of live.q) {
         try {
+          if (this.goals.observe(sessionId, live, m)) continue;
           this.onMessage(sessionId, live, m);
         } catch (err) {
           // One message Studio cannot handle stays a line in its conversation (and the log); the session goes on.
@@ -852,6 +877,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (live.finished) return;
     live.finished = true;
     if (this.live.get(sessionId) === live) this.live.delete(sessionId);
+    this.goals.closed(sessionId);
     this.clearIdle(live);
     for (const id of live.streaming) this.updateItem(id, (it) => (it.type === "agent" ? { ...it, markdown: live.text.get(id) ?? it.markdown, streaming: false } : it));
     for (const t of live.thinking) this.updateItem(t.itemId, (it) => (it.type === "reasoning" ? { ...it, text: live.text.get(t.itemId) ?? it.text, streaming: false } : it));
@@ -899,6 +925,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   private scheduleIdle(sessionId: Id, live: Live): void {
     this.clearIdle(live);
+    if (this.store.getSession(sessionId)?.goal?.status === "active") return;
     // A change of the person's MCP servers waited for this turn: the next message starts a process that has it.
     if (live.mcpStale && this.canRestart(live) && !keepsProcess(this.store.getSession(sessionId)?.wake, this.now())) {
       void this.close(sessionId);

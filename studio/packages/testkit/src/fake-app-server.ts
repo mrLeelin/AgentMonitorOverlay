@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { SessionGoal } from "@amo-studio/protocol";
 import { listenInStudioRange } from "./ports.js";
 
 // Scripted stand-in for `codex app-server` over WebSocket. It implements the JSON-RPC subset the Host uses and mirrors
@@ -247,6 +248,8 @@ export interface FakeAppServer {
   port: number;
   token: string;
   threads: Map<string, FakeThread>;
+  /** Native Goal state; no autonomous model loop is simulated by this RPC fixture. */
+  goals: Map<string, SessionGoal>;
   /** Every JSON-RPC request received, for assertions. */
   calls: Array<{ method: string; params: unknown }>;
   close(): Promise<void>;
@@ -261,6 +264,7 @@ export async function startFakeAppServer(options: FakeAppServerOptions = {}): Pr
   const speedTiers = options.speedTiers ?? defaultProvider === "openai";
   const script = options.script ?? defaultTurnScript;
   const threads = new Map<string, FakeThread>();
+  const goals = new Map<string, SessionGoal>();
   const clients = new Set<Client>();
   const pending = new Map<number, PendingApproval>();
   const calls: FakeAppServer["calls"] = [];
@@ -558,6 +562,38 @@ export async function startFakeAppServer(options: FakeAppServerOptions = {}): Pr
       notify(t.id, "thread/name/updated", { threadId: t.id, threadName: params.name });
       return {};
     },
+    "thread/goal/get": (_client, params) => ({ goal: goals.get(requireThread(params).id) ?? null }),
+    "thread/settings/update": (_client, params) => {
+      const t = requireThread(params);
+      if (typeof params.model === "string") t.model = params.model;
+      notify(t.id, "thread/settings/updated", { threadId: t.id, threadSettings: { ...params } });
+      return {};
+    },
+    "thread/goal/set": (_client, params) => {
+      const t = requireThread(params);
+      const old = goals.get(t.id);
+      if (!old && (typeof params.objective !== "string" || !params.objective.trim())) throw rpcError(-32602, "objective is required");
+      if ((!old || params.status === "active") && params.origin !== "user") throw rpcError(-32602, "explicit user authorization is required");
+      const goal: SessionGoal = {
+        threadId: t.id,
+        objective: typeof params.objective === "string" ? params.objective : old!.objective,
+        status: (params.status as SessionGoal["status"] | undefined) ?? old?.status ?? "active",
+        tokenBudget: typeof params.tokenBudget === "number" ? params.tokenBudget : old?.tokenBudget ?? null,
+        tokensUsed: old?.tokensUsed ?? 0,
+        timeUsedSeconds: old?.timeUsedSeconds ?? 0,
+        createdAt: old?.createdAt ?? nowSec(),
+        updatedAt: nowSec(),
+      };
+      goals.set(t.id, goal);
+      notify(t.id, "thread/goal/updated", { threadId: t.id, turnId: t.activeTurn?.id ?? null, goal });
+      return { goal };
+    },
+    "thread/goal/clear": (_client, params) => {
+      const t = requireThread(params);
+      const cleared = goals.delete(t.id);
+      if (cleared) notify(t.id, "thread/goal/cleared", { threadId: t.id });
+      return { cleared };
+    },
     "thread/archive": (_client, params) => {
       const t = requireThread(params);
       t.archived = true;
@@ -719,6 +755,7 @@ export async function startFakeAppServer(options: FakeAppServerOptions = {}): Pr
     port,
     token,
     threads,
+    goals,
     calls,
     close: () =>
       new Promise<void>((resolve) => {

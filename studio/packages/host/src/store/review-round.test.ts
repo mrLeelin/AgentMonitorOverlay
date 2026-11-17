@@ -36,7 +36,7 @@ describe("task review rounds", () => {
       const ws = store.addWorkspace({ name: "migration", path: "C:/sandbox/migration" });
       const task = store.createTask({ title: "Old review", workspaceId: ws.id, column: "review" });
       // Exercise the migration against an actual pre-reminder schema, keeping existing card times.
-      store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at; DELETE FROM schema_migrations WHERE version = 28;");
+      store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; DELETE FROM schema_migrations WHERE version >= 28;");
       store.close();
       store = new Store(path);
       expect(store.getTask(task.id)?.reviewEnteredAt).toBe(task.updatedAt);

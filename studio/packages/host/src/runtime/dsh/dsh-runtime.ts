@@ -44,6 +44,8 @@ import { grantFailurePath, windowsFolderAccess, type FolderAccess, type FolderAc
 import { shellHelpEnv, withoutHostEnv } from "../agent-env.js";
 import { agentNetworkEnv } from "../network.js";
 import { acpServer, type McpLaunch, type McpSource } from "../mcp-launch.js";
+import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import { DshGoalBridge, DSH_GOAL_BRIDGE_ENV, DSH_GOAL_CAPABILITIES, DSH_GOAL_NOTE, dshGoalState } from "./goal-bridge.js";
 
 // DeepSeek sessions on a DeepSeek Harness source clone (stage 17, plans/done/stage-17-dsh.md). Each session runs its own
 // `node <clone>/apps/cli/lib/bin.js --profile acp` in its workspace: DSH's sandbox follows the process's working
@@ -168,6 +170,9 @@ interface Live {
   auto: { timer: NodeJS.Timeout | null; stopping?: boolean } | null;
   /** MCP 设置 (2026-11-04): the other MCP servers the process was given (session/new or resume), to tell a change. */
   mcpKey: string;
+  goalTimer?: NodeJS.Timeout;
+  goalReading?: Promise<SessionGoalState>;
+  goalVersion?: number;
 }
 
 interface QueuedMessage {
@@ -238,6 +243,9 @@ const AUTO_STOP_MS = 3000;
 
 export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   private readonly live = new Map<Id, Live>();
+  private readonly goalBridges = new WeakMap<AcpConnection, DshGoalBridge>();
+  private readonly goalMutations = new Map<Id, Promise<unknown>>();
+  private readonly goalStops = new Map<Id, number>();
   /** Sessions whose process is being started or resumed. */
   private readonly starting = new Map<Id, Promise<Live>>();
   private closing = false;
@@ -258,6 +266,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     // The last Host stopped mid-turn: the turn is over (its process went with the Host), and what waited for it was
     // never read (没送到).
     for (const s of this.store.listSessions()) {
+      if (s.runtime === "dsh" && s.goal?.status === "active") this.updateSession(s.id, { goal: { ...s.goal, status: "paused", lastReason: "DSH 进程恢复后需明确继续目标。" } });
       if (s.runtime !== "dsh" || !inTurn(s.status)) continue;
       this.settleLeftovers(s.id, { approvals: true });
       this.setStatus(s.id, "interrupted");
@@ -265,6 +274,112 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   // ---- operations -------------------------------------------------------------------------------------------------
+
+  async getGoal(sessionId: Id): Promise<SessionGoalState> {
+    const session = this.requireSession(sessionId);
+    if (session.runtime !== "dsh") return { goal: null, unavailable: "这个 Agent 尚未接入 DSH Goal。" };
+    if (session.archivedAt) return { goal: session.goal ?? null, capabilities: DSH_GOAL_CAPABILITIES, note: DSH_GOAL_NOTE };
+    const live = await this.ensureLive(session);
+    return this.readGoal(sessionId, live);
+  }
+
+  setGoal(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState> {
+    const stop = this.goalStops.get(sessionId) ?? 0;
+    return this.goalMutation(sessionId, async () => {
+      if (input.tokenBudget !== undefined) throw Object.assign(new Error("DSH 原生 Goal 使用续跑轮数预算，不支持 Token 预算。"), { code: "bad_request" });
+      const session = this.writable(sessionId);
+      if (session.runtime !== "dsh") throw Object.assign(new Error("这不是 DSH 会话。"), { code: "bad_request" });
+      if (input.status !== "paused" && inTurn(session.status) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
+      const live = await this.ensureLive(session);
+      const selectedPermission = dshPermissionMode(this.requireSession(sessionId).options.permission);
+      if (input.status !== "paused" && live.permission !== selectedPermission && selectedPermission !== "danger-full-access" && live.permission !== "read-only") throw Object.assign(new Error("DSH 保存的是会话创建时的权限，不能用更严格的新权限开启 Goal；请新建对应权限的会话。"), { code: "read_only" });
+      await this.applyOptions(sessionId, live);
+      this.writable(sessionId);
+      beforeDispatch?.();
+      if (input.status !== "paused" && stop !== (this.goalStops.get(sessionId) ?? 0)) throw Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "bad_request" });
+      if (input.status !== "paused") queueMessagePurpose(this.store, sessionId, "work", inTurn(this.requireSession(sessionId).status));
+      const bridge = this.goalBridges.get(live.conn);
+      if (!bridge) throw new Error("当前 DSH 未提供原生 Goal 桥接。");
+      live.goalVersion = (live.goalVersion ?? 0) + 1;
+      try { await bridge.call("set", input); }
+      finally {
+        // A lost response is not evidence that create failed; Stop must fence and compensate that case too.
+        if (input.status !== "paused" && stop !== (this.goalStops.get(sessionId) ?? 0)) await this.pauseNativeGoal(sessionId);
+      }
+      if (input.status !== "paused" && stop !== (this.goalStops.get(sessionId) ?? 0)) throw Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "bad_request" });
+      if (input.status === "paused" && live.auto) { live.auto.stopping = true; this.armAutoEnd(sessionId, live); }
+      const state = await this.readGoal(sessionId, live, true);
+      this.pollGoal(sessionId, live);
+      return state;
+    });
+  }
+
+  clearGoal(sessionId: Id): Promise<SessionGoalState> {
+    this.goalStops.set(sessionId, (this.goalStops.get(sessionId) ?? 0) + 1);
+    return this.goalMutation(sessionId, async () => {
+      const session = this.writable(sessionId), live = await this.ensureLive(session);
+      this.writable(sessionId);
+      const bridge = this.goalBridges.get(live.conn);
+      if (!bridge) throw new Error("当前 DSH 未提供原生 Goal 桥接。");
+      live.goalVersion = (live.goalVersion ?? 0) + 1;
+      await bridge.call("clear");
+      return this.readGoal(sessionId, live, true);
+    });
+  }
+
+  private goalMutation<T>(sessionId: Id, fn: () => Promise<T>): Promise<T> {
+    const pending = (this.goalMutations.get(sessionId) ?? Promise.resolve()).then(fn, fn);
+    this.goalMutations.set(sessionId, pending);
+    void pending.finally(() => { if (this.goalMutations.get(sessionId) === pending) this.goalMutations.delete(sessionId); }).catch(() => undefined);
+    return pending;
+  }
+
+  private readGoal(sessionId: Id, live: Live, fresh = false): Promise<SessionGoalState> {
+    if (!fresh && live.goalReading) return live.goalReading;
+    const version = live.goalVersion ?? 0;
+    const pending = (async (): Promise<SessionGoalState> => {
+      const bridge = this.goalBridges.get(live.conn);
+      if (!bridge) return { goal: null, unavailable: "当前 DSH 未提供原生 Goal 桥接。", capabilities: DSH_GOAL_CAPABILITIES };
+      try {
+        const state = dshGoalState(live.acpId, await bridge.call("get"));
+        if (this.live.get(sessionId) !== live || version !== (live.goalVersion ?? 0)) return { goal: this.store.getSession(sessionId)?.goal ?? null, capabilities: DSH_GOAL_CAPABILITIES, note: DSH_GOAL_NOTE };
+        if (state.goal?.status === "active" && live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = null; }
+        if (JSON.stringify(this.requireSession(sessionId).goal ?? null) !== JSON.stringify(state.goal)) {
+          this.updateSession(sessionId, { goal: state.goal });
+          this.publish({ type: "session.goal", sessionId, goal: state.goal });
+        }
+        return state;
+      } catch (error) {
+        if (/ENOENT|ECONNREFUSED|尚未就绪/.test(String(error))) return { goal: null, unavailable: "当前 DSH 未加载 Goal 桥接；请更新 DSH，并在会话空闲后重新开启会话。", capabilities: DSH_GOAL_CAPABILITIES };
+        throw error;
+      }
+    })();
+    live.goalReading = pending;
+    void pending.finally(() => { if (live.goalReading === pending) live.goalReading = undefined; }).catch(() => undefined);
+    return pending;
+  }
+
+  private pollGoal(sessionId: Id, live: Live): void {
+    if (live.goalTimer) clearTimeout(live.goalTimer);
+    if (this.closing || this.live.get(sessionId) !== live) return;
+    live.goalTimer = setTimeout(() => {
+      void this.readGoal(sessionId, live).catch((error: unknown) => this.emit("log", `DSH Goal read failed: ${String(error)}`)).finally(() => this.pollGoal(sessionId, live));
+    }, this.store.getSession(sessionId)?.goal?.status === "active" || live.inflight || live.auto ? 1000 : 10000);
+    live.goalTimer.unref();
+  }
+
+  private async pauseNativeGoal(sessionId: Id): Promise<void> {
+    this.goalStops.set(sessionId, (this.goalStops.get(sessionId) ?? 0) + 1);
+    const live = this.live.get(sessionId);
+    if (!live) return;
+    const bridge = this.goalBridges.get(live.conn);
+    if (!bridge) return;
+    bridge.stopPendingActivations();
+    live.goalVersion = (live.goalVersion ?? 0) + 1;
+    const native = await bridge.call("get");
+    if (native?.phase === "active") await bridge.call("set", { status: "paused" });
+    await this.readGoal(sessionId, live, true);
+  }
 
   async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
     const profile = this.profile(input.profileId);
@@ -328,10 +443,12 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
    * composer, or B's): the running turn gives way to it (sendNow).
    */
   private async deliver(session: Session, blocks: ImageBlock[], text: string, options: SendOptions, item: (mode: SendMode, live: Live, delivery: UserDelivery | undefined) => Id): Promise<{ mode: SendMode }> {
+    this.checkGoalPurpose(session, options.purpose);
     const sessionId = session.id;
     let live = await this.ensureLive(session);
     if (blocks.length) live = await this.takesImages(session, live);
     options.beforeDispatch?.();
+    this.checkGoalPurpose(this.requireSession(session.id), options.purpose);
     if (live.inflight) {
       const itemId = item("queue", live, "waiting");
       live.queue.push({ itemId, text, images: blocks });
@@ -379,6 +496,10 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     }
   }
 
+  private checkGoalPurpose(session: Session, purpose?: SendOptions["purpose"]): void {
+    if (session.goal?.status === "active" && (purpose === "inquiry" || purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停，再处理只读询问或通知。"), { code: "bad_request" });
+  }
+
   /**
    * A message with pictures: DSH tells at initialize whether its ACP agent takes images, for the model the agent
    * starts on. When the session switched models since its process started, the process starts again on the new one
@@ -423,6 +544,10 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
    * has started, and the session says so.
    */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
+    return this.goalMutation(sessionId, () => this.setGoalOptions(sessionId, options));
+  }
+
+  private async setGoalOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     const before = this.requireSession(sessionId);
     if (this.isLead(before)) options = { ...options, permission: "read-only" };
     const updated = this.updateSession(sessionId, { options });
@@ -437,6 +562,13 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       this.appendItem(sessionId, { type: "notice", level: "info", message }, { method: "dsh/permission", ...(live?.inflight ? live.transcript.turnRef() : {}) });
     }
     if (!live) return updated;
+    // ACP's modelControl applies from the next model step, including the native driver's automatic rounds.
+    // Waiting for endAuto is too late: another native round can start without returning through Studio.
+    if (before.goal?.status === "active") {
+      if (from !== to && to !== "danger-full-access") await this.pauseNativeGoal(sessionId);
+      try { await this.applyOptions(sessionId, live); }
+      catch (error) { await this.pauseNativeGoal(sessionId).catch(() => undefined); throw error; }
+    }
     if (to === "danger-full-access") for (const w of [...live.waiting.values()]) this.settleWaiting(sessionId, live, w, "allow");
     // Not while DSH goes on by itself either: a restart would cut it off (it restarts when that turn ends).
     if (!live.inflight && !live.auto) {
@@ -457,7 +589,11 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   async interrupt(sessionId: Id): Promise<void> {
+    // Goal pause is independent of ACP's prompt queue and cancels DSH's native continuation authority.
+    try { await this.pauseNativeGoal(sessionId); } catch (error) { this.emit("log", `DSH Goal pause failed during stop: ${String(error)}`); }
     const live = this.live.get(sessionId);
+    // The native driver may have started before ACP's first visible update; cancel the exact session regardless.
+    if (live?.conn.alive) live.conn.notify("session/cancel", { sessionId: live.acpId });
     // A turn DSH runs by itself: session/cancel without a prompt stops DSH's own work (its ACP cancel()). The turn
     // ends shortly after DSH's last update, so what it still sends while stopping stays in it.
     if (live?.auto && !live.inflight) {
@@ -486,6 +622,9 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   async archive(sessionId: Id): Promise<Session[]> {
+    const ids = new Set<Id>([sessionId]);
+    for (let size = -1; size !== ids.size;) { size = ids.size; for (const s of this.store.listSessions()) if (s.parentId && ids.has(s.parentId)) ids.add(s.id); }
+    for (const id of ids) if (this.live.has(id)) await this.pauseNativeGoal(id);
     const changed = this.archiveTree(sessionId);
     for (const s of changed) await this.release(s.id);
     return changed;
@@ -602,10 +741,16 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       args = [...launch.args, ...DSH_ACP_ARGS];
       Object.assign(env, launch.env);
     }
-    if (patch) args.push("--patch", patch);
+    const goalBridge = new DshGoalBridge(this.options.dir, patch);
+    env[DSH_GOAL_BRIDGE_ENV] = goalBridge.environment();
+    if (!this.options.agent) args.push("--patch", goalBridge.patch);
+    else if (patch) args.push("--patch", patch);
     const logFile = join(this.options.dir, "logs", `${label}.log`);
     rotateLog(logFile);
-    return new AcpConnection({ command, args, cwd, env, logFile }, (method, params) => this.onRequest(method, params));
+    const conn = new AcpConnection({ command, args, cwd, env, logFile }, (method, params) => this.onRequest(method, params));
+    this.goalBridges.set(conn, goalBridge);
+    conn.on("exit", () => goalBridge.close());
+    return conn;
   }
 
   /** ACP's handshake; `image`: whether the agent takes inline images (for the model it starts on). */
@@ -656,6 +801,8 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   private adopt(session: Session, conn: AcpConnection, applied: Live["applied"], permission: DshPermissionMode, images: boolean, model: string | undefined): Live {
     const live: Live = { conn, acpId: session.runtimeRef!, permission, applied, inflight: false, queue: [], images, model, transcript: new DshTranscript(this.makeCore(), session.id, this.store.getWorkspace(session.workspaceId)?.path, this.subagents), waiting: new Map(), idleTimer: null, measuredAt: 0, auto: null, mcpKey: "" };
     this.live.set(session.id, live);
+    this.goalBridges.get(conn)?.bind(live.acpId, conn.pid);
+    this.pollGoal(session.id, live);
     conn.on("notification", (method, params) => {
       if (method !== "session/update") return;
       const p = params as { sessionId?: string; update?: AcpUpdate };
@@ -673,7 +820,9 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       if ((live.inflight || live.auto) && Date.now() - live.measuredAt >= MEASURE_EVERY_MS) this.measure(live, live.transcript.turnItemId());
     });
     conn.on("exit", (code) => {
+      if (live.goalTimer) clearTimeout(live.goalTimer);
       if (this.live.get(session.id) === live) this.live.delete(session.id);
+      this.goalProcessStopped(session.id);
       // Its subagents ran in this process: what they last wrote is read, those still running stopped with it.
       this.subagents.stopTree(session.id);
       if (live.idleTimer) clearTimeout(live.idleTimer);
@@ -855,6 +1004,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (!live) return;
     this.live.delete(sessionId);
     if (live.idleTimer) clearTimeout(live.idleTimer);
+    if (live.goalTimer) clearTimeout(live.goalTimer);
     for (const w of live.waiting.values()) this.settleWaiting(sessionId, live, w, "cancelled");
     // Archived or the Host closing mid-turn: what waited for the turn goes with the process.
     this.unsent(live);
@@ -862,14 +1012,24 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       await live.conn.request("session/close", { sessionId: live.acpId }, 15_000).catch(() => undefined);
       await live.conn.close();
     }
+    this.goalProcessStopped(sessionId);
+  }
+
+  private goalProcessStopped(sessionId: Id): void {
+    const session = this.store.getSession(sessionId);
+    if (session?.goal?.status === "active") {
+      const goal = { ...session.goal, status: "paused" as const, lastReason: "DSH 进程已关闭，需明确继续目标。" };
+      this.updateSession(sessionId, { goal });
+      this.publish({ type: "session.goal", sessionId, goal });
+    }
   }
 
   private armIdle(sessionId: Id, live: Live): void {
     if (live.idleTimer) clearTimeout(live.idleTimer);
     live.idleTimer = null;
-    if (live.inflight || live.auto) return;
+    if (live.inflight || live.auto || this.store.getSession(sessionId)?.goal?.status === "active") return;
     live.idleTimer = setTimeout(() => {
-      if (!live.inflight && !live.auto && this.live.get(sessionId) === live) void this.release(sessionId);
+      if (!live.inflight && !live.auto && this.store.getSession(sessionId)?.goal?.status !== "active" && this.live.get(sessionId) === live) void this.release(sessionId);
     }, this.options.idleMs ?? 20 * 60_000);
     live.idleTimer.unref();
   }
@@ -886,6 +1046,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       const current = this.writable(sessionId);
       for (const id of sent) this.assertCurrentMessage(sessionId, id);
       beforeDispatch?.();
+      for (const id of sent) { const row = this.store.getItem(id); this.checkGoalPurpose(current, row?.type === "user" ? row.messagePurpose : undefined); }
       if (sent.length) queueMessagePurpose(this.store, sessionId, mergeMessagePurposes(sent.map((id) => { const row = this.store.getItem(id); return row?.type === "user" ? row.messagePurpose ?? "work" : "work"; })), false);
       this.assertInquiryReadOnly(current);
       if (this.isLead(current) && this.store.getKv(`dsh-lead-readonly:${sessionId}`)?.value !== current.runtimeRef) {

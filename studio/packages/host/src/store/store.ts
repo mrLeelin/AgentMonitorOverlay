@@ -254,10 +254,10 @@ export class Store extends DocumentStore {
     const s: Session = { ...input, options: input.options ?? {}, id: input.id ?? newId("s"), createdAt: at, updatedAt: at, archivedAt: null, endedAt: null };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, title, status, writer, runtime_ref, options, created_at, updated_at, archived_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, title, status, writer, runtime_ref, options, goal, created_at, updated_at, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
-      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options), at, at);
+      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options), s.goal === undefined ? null : JSON.stringify(s.goal), at, at);
     return s;
   }
 
@@ -299,18 +299,19 @@ export class Store extends DocumentStore {
   }
 
   /** `wake: null` (or one with neither part) clears it. */
-  updateSession(id: Id, patch: Partial<Pick<Session, "title" | "status" | "writer" | "runtimeRef" | "profileId" | "options" | "wake">>): Session {
+  updateSession(id: Id, patch: Partial<Pick<Session, "title" | "status" | "writer" | "runtimeRef" | "profileId" | "options" | "wake" | "goal">>): Session {
     const s = this.getSession(id);
     if (!s) throw new Error(`session ${id} not found`);
     const at = this.timestamp();
     // A turn ended: the status became an ended one (Session.endedAt). Nothing else moves it.
     const ended = patch.status !== undefined && patch.status !== s.status && ENDED_STATUSES.includes(patch.status);
-    const { wake: _old, ...rest } = { ...s, ...patch, updatedAt: at, ...(ended ? { endedAt: at } : {}) };
+    const { wake: _old, goal: _oldGoal, ...rest } = { ...s, ...patch, updatedAt: at, ...(ended ? { endedAt: at } : {}) };
     const wake = patch.wake === undefined ? s.wake : patch.wake;
-    const next: Session = { ...rest, ...(wake && (wake.loop || wake.limit) ? { wake } : {}) };
+    const goal = patch.goal === undefined ? s.goal : patch.goal;
+    const next: Session = { ...rest, ...(wake && (wake.loop || wake.limit) ? { wake } : {}), ...(goal === undefined ? {} : { goal }) };
     this.db
-      .prepare("UPDATE sessions SET title = ?, status = ?, writer = ?, runtime_ref = ?, profile_id = ?, options = ?, wake = ?, updated_at = ?, ended_at = ? WHERE id = ?")
-      .run(next.title, next.status, next.writer, next.runtimeRef, next.profileId, JSON.stringify(next.options), next.wake ? JSON.stringify(next.wake) : null, next.updatedAt, next.endedAt ?? null, id);
+      .prepare("UPDATE sessions SET title = ?, status = ?, writer = ?, runtime_ref = ?, profile_id = ?, options = ?, wake = ?, goal = ?, updated_at = ?, ended_at = ? WHERE id = ?")
+      .run(next.title, next.status, next.writer, next.runtimeRef, next.profileId, JSON.stringify(next.options), next.wake ? JSON.stringify(next.wake) : null, next.goal === undefined ? null : JSON.stringify(next.goal), next.updatedAt, next.endedAt ?? null, id);
     return next;
   }
 
@@ -337,13 +338,13 @@ export class Store extends DocumentStore {
   putRemoteSession(s: Session): Session {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, title, status, writer, runtime_ref, options, wake, started_by, report_to, created_at, updated_at, archived_at, ended_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, title, status, writer, runtime_ref, options, wake, goal, started_by, report_to, created_at, updated_at, archived_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = excluded.status, writer = excluded.writer, runtime_ref = excluded.runtime_ref, profile_id = excluded.profile_id,
-           options = excluded.options, wake = excluded.wake, started_by = excluded.started_by, report_to = excluded.report_to, updated_at = excluded.updated_at, archived_at = excluded.archived_at, ended_at = excluded.ended_at`,
+           options = excluded.options, wake = excluded.wake, goal = excluded.goal, started_by = excluded.started_by, report_to = excluded.report_to, updated_at = excluded.updated_at, archived_at = excluded.archived_at, ended_at = excluded.ended_at`,
       )
       // A's Host from before endedAt: an ended session's updatedAt stands in, as Focus read it before.
-      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options ?? {}), s.wake ? JSON.stringify(s.wake) : null, s.startedBy ?? null, s.reportTo ?? null, s.createdAt, s.updatedAt, s.archivedAt, s.endedAt !== undefined ? s.endedAt : ENDED_STATUSES.includes(s.status) ? s.updatedAt : null);
+      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options ?? {}), s.wake ? JSON.stringify(s.wake) : null, s.goal === undefined ? null : JSON.stringify(s.goal), s.startedBy ?? null, s.reportTo ?? null, s.createdAt, s.updatedAt, s.archivedAt, s.endedAt !== undefined ? s.endedAt : ENDED_STATUSES.includes(s.status) ? s.updatedAt : null);
     return this.getSession(s.id)!;
   }
 

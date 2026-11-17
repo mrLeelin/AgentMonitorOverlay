@@ -14,6 +14,8 @@ import { codexUsage, reviewTarget, STANDARD_TIER, toModelOption, type CodexModel
 import { CodexAsks } from "./asks.js";
 import { CodexEvents } from "./events.js";
 import { newSessionState, type CodexCore, type SessionState } from "./state.js";
+import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import { RpcError } from "./rpc-client.js";
 
 export { codexRetry, codexUsage, fastTier, reviewTarget } from "./account.js";
 export { describePlan, describeReview, describeTool, inputQuestions } from "./describe.js";
@@ -72,6 +74,9 @@ export class CodexRuntime extends RuntimeBase {
   private readonly skillCache = new Map<string, { at: number; skills: CodexSkill[] }>();
   private readonly asks: CodexAsks;
   private readonly events: CodexEvents;
+  private readonly goalRevisions = new Map<Id, number>();
+  private readonly goalMutations = new Map<Id, Promise<unknown>>();
+  private readonly goalStopVersions = new Map<Id, number>();
 
   constructor(private readonly options: CodexRuntimeOptions) {
     super(options.store, "codex", options.now, options.profiles);
@@ -158,10 +163,16 @@ export class CodexRuntime extends RuntimeBase {
 
   /** `extra`: more input (a skill); `again`: the row of a message sent again (重新发送), reused instead of a new one. */
   private async send(sessionId: Id, text: string, images: readonly Attachment[], extra: readonly codex.v2.UserInput[], options: SendOptions = {}, again?: Id): Promise<{ mode: "start" | "steer" }> {
+    return this.withGoalMutation(sessionId, () => this.sendUnlocked(sessionId, text, images, extra, options, again));
+  }
+
+  private async sendUnlocked(sessionId: Id, text: string, images: readonly Attachment[], extra: readonly codex.v2.UserInput[], options: SendOptions, again?: Id): Promise<{ mode: "start" | "steer" }> {
     const session = this.writable(sessionId);
+    this.checkGoalPurpose(session, options.purpose);
     this.requireLeadThread(session);
     const handle = await this.handleFor(session.profileId);
     this.requireLeadThread(this.writable(sessionId));
+    this.checkGoalPurpose(this.requireSession(sessionId), options.purpose);
     options.beforeDispatch?.();
     if (again) this.assertCurrentMessage(sessionId, again);
     const st = this.sessionState(sessionId);
@@ -269,6 +280,10 @@ export class CodexRuntime extends RuntimeBase {
    * 2026-11-02, the user: a message waiting when 停止 is pressed is sent, not lost (as the Claude Code CLI does too).
    */
   private async afterTurn(sessionId: Id): Promise<void> {
+    return this.withGoalMutation(sessionId, () => this.afterGoalTurn(sessionId));
+  }
+
+  private async afterGoalTurn(sessionId: Id): Promise<void> {
     const st = this.sessionState(sessionId);
     const left = [...st.sent].filter(([, m]) => m.kind === "steer");
     if (!left.length) return;
@@ -292,6 +307,7 @@ export class CodexRuntime extends RuntimeBase {
       this.requireLeadThread(this.writable(sessionId));
       this.assertCurrentMessage(sessionId, first.itemId);
       const firstRow = this.store.getItem(first.itemId);
+      this.checkGoalPurpose(this.requireSession(sessionId), firstRow?.type === "user" ? firstRow.messagePurpose : undefined);
       queueMessagePurpose(this.store, sessionId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work", false);
       this.updateItem(first.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
       await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work"), ...tier });
@@ -317,11 +333,124 @@ export class CodexRuntime extends RuntimeBase {
   /** Switches model, effort or permissions; Codex applies them from the next turn (a running turn keeps its own). */
   /** Options go with the next turn; 完全访问 also accepts what the running turn is waiting for (asks.ts). */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
-    const session = this.requireSession(sessionId);
-    if (this.leadTask(session.taskId)) options = { ...options, permission: "read-only" };
-    const updated = this.updateSession(sessionId, { options });
-    if (options.permission === "full-auto") await this.asks.acceptAll(sessionId);
-    return updated;
+    return this.withGoalMutation(sessionId, async () => {
+      const session = this.requireSession(sessionId);
+      if (this.leadTask(session.taskId)) options = { ...options, permission: "read-only" };
+      // Serialize even the first Goal activation with option edits: neither may capture the other's old permissions.
+      if (session.goal) {
+        const handle = await this.handleFor(session.profileId);
+        await this.syncGoalSettings(handle, { ...this.writable(sessionId), options });
+      }
+      const updated = this.updateSession(sessionId, { options });
+      if (options.permission === "full-auto") await this.asks.acceptAll(sessionId);
+      return updated;
+    });
+  }
+
+  async getGoal(sessionId: Id): Promise<SessionGoalState> {
+    const s = this.requireSession(sessionId);
+    if (s.runtime !== "codex") return { goal: null, unavailable: "这个 Agent 尚未接入原生 Goal。" };
+    if (!s.runtimeRef) return { goal: null, unavailable: "Codex 会话尚未建立。" };
+    return this.readGoal(await this.handleFor(s.profileId), s);
+  }
+
+  setGoal(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState> {
+    if (input.roundBudget !== undefined) return Promise.reject(Object.assign(new Error("Codex Goal 不支持续跑轮数上限，请使用 Token 预算。"), { code: "bad_request" }));
+    const stopVersion = this.goalStopVersions.get(sessionId) ?? 0;
+    const check = () => {
+      if (input.status !== "paused" && stopVersion !== (this.goalStopVersions.get(sessionId) ?? 0)) throw Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "bad_request" });
+      beforeDispatch?.();
+    };
+    return this.withGoalMutation(sessionId, async () => {
+      check();
+      let s = this.goalWritable(sessionId);
+      const handle = await this.handleFor(s.profileId);
+      s = this.goalWritable(sessionId);
+      check();
+      if (input.status !== "paused") {
+        await this.syncGoalSettings(handle, s);
+        this.goalWritable(sessionId);
+        check();
+        queueMessagePurpose(this.store, sessionId, "work", inTurn(this.requireSession(sessionId).status));
+      }
+      const revision = this.goalRevisions.get(sessionId) ?? 0;
+      const result = await handle.client.request("thread/goal/set", { threadId: s.runtimeRef!, ...input, origin: "user" });
+      if ((this.goalRevisions.get(sessionId) ?? 0) === revision) this.recordGoal(sessionId, result.goal);
+      return { goal: this.requireSession(sessionId).goal ?? null };
+    });
+  }
+
+  clearGoal(sessionId: Id): Promise<SessionGoalState> {
+    return this.withGoalMutation(sessionId, async () => {
+      const s = this.goalWritable(sessionId), handle = await this.handleFor(s.profileId);
+      this.goalWritable(sessionId);
+      const revision = this.goalRevisions.get(sessionId) ?? 0;
+      await handle.client.request("thread/goal/clear", { threadId: s.runtimeRef!, origin: "user" });
+      if ((this.goalRevisions.get(sessionId) ?? 0) === revision) this.recordGoal(sessionId, null);
+      return { goal: this.requireSession(sessionId).goal ?? null };
+    });
+  }
+
+  private goalWritable(sessionId: Id): Session {
+    const s = this.writable(sessionId);
+    if (s.runtime !== "codex") throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
+    this.requireLeadThread(s);
+    return s;
+  }
+
+  private checkGoalPurpose(session: Session, purpose?: SendOptions["purpose"]): void {
+    if (session.goal?.status === "active" && (purpose === "inquiry" || purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
+  }
+
+  private withGoalMutation<T>(sessionId: Id, operation: () => Promise<T>): Promise<T> {
+    const next = (this.goalMutations.get(sessionId) ?? Promise.resolve()).then(operation, operation);
+    this.goalMutations.set(sessionId, next);
+    void next.finally(() => { if (this.goalMutations.get(sessionId) === next) this.goalMutations.delete(sessionId); }).catch(() => undefined);
+    return next;
+  }
+
+  private recordGoal(sessionId: Id, goal: SessionGoal | null): void {
+    this.goalRevisions.set(sessionId, (this.goalRevisions.get(sessionId) ?? 0) + 1);
+    const s = this.store.getSession(sessionId);
+    if (!s || (goal && goal.threadId !== s.runtimeRef)) return;
+    if (JSON.stringify(s.goal ?? null) !== JSON.stringify(goal)) this.updateSession(sessionId, { goal });
+    this.publish({ type: "session.goal", sessionId, goal });
+  }
+
+  private async readGoal(handle: CodexServerHandle, session: Session): Promise<SessionGoalState> {
+    const revision = this.goalRevisions.get(session.id) ?? 0;
+    try {
+      const result = await handle.client.request("thread/goal/get", { threadId: session.runtimeRef! }, { timeoutMs: 5000 });
+      if ((this.goalRevisions.get(session.id) ?? 0) === revision) this.recordGoal(session.id, result.goal);
+      return { goal: this.requireSession(session.id).goal ?? null };
+    } catch (err) {
+      if ((err instanceof RpcError && err.code === -32601) || /goals feature is disabled|does not support goals/i.test(String(err))) {
+        this.recordGoal(session.id, null);
+        return { goal: null, unavailable: "当前 Codex CLI 未提供 Goal，或尚未启用 Goals 功能。" };
+      }
+      throw err;
+    }
+  }
+
+  private async syncGoalSettings(handle: CodexServerHandle, session: Session): Promise<void> {
+    const choices = await this.choices(session.profileId);
+    const model = session.options.model ? choices.models.find((m) => m.id === session.options.model) : choices.models.find((m) => m.isDefault);
+    const options = { ...session.options, ...(model ? { model: model.id, effort: session.options.effort ?? model.defaultEffort } : {}) };
+    const { summary: _summary, ...settings } = this.turnOptions(options, session.taskId);
+    await handle.client.updateThreadSettings({ threadId: session.runtimeRef!, ...settings, ...(await this.serviceTier(session)) });
+  }
+
+  /** Stopping or archiving is also a request to stop the next automatic Goal round. */
+  private async pauseGoal(sessionId: Id): Promise<void> {
+    // Stop takes precedence over queued settings/activation, including a settings RPC still awaiting its event.
+    this.goalStopVersions.set(sessionId, (this.goalStopVersions.get(sessionId) ?? 0) + 1);
+    const s = this.requireSession(sessionId);
+    if (!s.runtimeRef) return;
+    const handle = await this.handleFor(s.profileId);
+    const state = await this.readGoal(handle, s);
+    if (state.goal?.status !== "active") return;
+    const result = await handle.client.request("thread/goal/set", { threadId: s.runtimeRef, status: "paused", origin: "user" }, { timeoutMs: 5000 });
+    this.recordGoal(sessionId, result.goal);
   }
 
   /**
@@ -390,8 +519,11 @@ export class CodexRuntime extends RuntimeBase {
 
   async interrupt(sessionId: Id): Promise<void> {
     const session = this.requireSession(sessionId);
+    // Pause even between native rounds, when there is temporarily no activeTurnId.
+    let pauseError: unknown;
+    try { await this.pauseGoal(sessionId); } catch (err) { pauseError = err; }
     const st = this.sessionState(sessionId);
-    if (!st.activeTurnId || !session.runtimeRef) return;
+    if (!st.activeTurnId || !session.runtimeRef) { if (pauseError) throw pauseError; return; }
     this.asks.cancelQuestionsOf(sessionId);
     // 停止's fallback (2026-11-04, plans/done/message-delivery.md): the app-server is shared by the channel's sessions, so it
     // is not closed; the turn is taken as stopped here, and what the turn had not read becomes 没送到.
@@ -404,7 +536,9 @@ export class CodexRuntime extends RuntimeBase {
       this.setStatus(sessionId, "idle");
     }, "taking it as stopped");
     const handle = await this.handleFor(session.profileId);
-    await handle.client.request("turn/interrupt", { threadId: session.runtimeRef, turnId });
+    try { await handle.client.request("turn/interrupt", { threadId: session.runtimeRef, turnId }); }
+    catch (err) { if (!/no active turn|turn not found/i.test(String(err))) throw err; }
+    if (pauseError) throw new Error(`当前回复已请求停止，但 Goal 续跑状态未能确认：${String(pauseError)}`);
   }
 
   /** Forks with an explicit provider so the fork never falls back to the server default. */
@@ -427,6 +561,13 @@ export class CodexRuntime extends RuntimeBase {
 
   /** Archives the session with its forks and subagents, and archives their threads. */
   async archive(sessionId: Id): Promise<Session[]> {
+    const ids = new Set<Id>([sessionId]);
+    const all = this.store.listSessions();
+    for (let oldSize = -1; oldSize !== ids.size;) {
+      oldSize = ids.size;
+      for (const s of all) if (s.parentId && ids.has(s.parentId)) ids.add(s.id);
+    }
+    for (const id of ids) if (!this.store.getSession(id)?.archivedAt) await this.pauseGoal(id);
     const changed = this.archiveTree(sessionId);
     for (const s of changed) {
       if (!s.runtimeRef || s.kind === "sub") continue;
@@ -448,6 +589,7 @@ export class CodexRuntime extends RuntimeBase {
         const handle = await this.handleFor(s.profileId);
         await handle.client.request("thread/unarchive", { threadId: s.runtimeRef });
         await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
+        await this.readGoal(handle, s);
       } catch (err) {
         this.emit("log", `thread/unarchive failed for ${s.id}: ${String(err)}`);
       }
@@ -583,6 +725,11 @@ export class CodexRuntime extends RuntimeBase {
     // One message Studio cannot handle stays a line in its session (and the log); the server and other sessions go on.
     handle.client.on("notification", (n) => {
       try {
+        if (n.method === "thread/goal/updated" || n.method === "thread/goal/cleared") {
+          const s = this.findByThread(n.params.threadId);
+          if (s) this.recordGoal(s.id, n.method === "thread/goal/updated" ? n.params.goal : null);
+          return;
+        }
         this.events.onNotification(handle, n);
       } catch (err) {
         this.events.handlerFailed(n.method, (n.params as { threadId?: string } | undefined)?.threadId, err);
@@ -624,6 +771,7 @@ export class CodexRuntime extends RuntimeBase {
       try {
         // A restarted app-server loads the thread again; only then does the identity header need setting again.
         const r = await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
+        await this.readGoal(handle, s);
         // Turn events may have been missed while disconnected; take the status from the server's view.
         const active = (r.thread as { status?: { type?: string } }).status?.type === "active";
         const st = this.sessionState(s.id);

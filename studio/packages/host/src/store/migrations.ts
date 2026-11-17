@@ -380,4 +380,8 @@ export const MIGRATIONS: readonly Migration[] = [
   ALTER TABLE tasks ADD COLUMN review_entered_at TEXT;
   UPDATE tasks SET review_entered_at = updated_at WHERE column_name = 'review';
   `,
+  // 29: Latest native Goal snapshot, so automatic turn gaps do not finish a still-active task.
+  `
+  ALTER TABLE sessions ADD COLUMN goal TEXT;
+  `,
 ];

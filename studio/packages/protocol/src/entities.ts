@@ -1,6 +1,7 @@
 // Core entities shared by Host, app and UI. See docs/next-gen-vision-architecture-2026-10.md and
 // studio/design/interaction-notes.md for the meaning of each state.
 import type { QuestionFields } from "./questions.js";
+import type { SessionGoal } from "./goals.js";
 
 export type Id = string;
 /** ISO-8601 timestamp. */
@@ -194,6 +195,8 @@ export interface Session {
   options: SessionOptions;
   /** What starts the session's next turn without the person (Claude: its /loop, a usage limit); absent = nothing. */
   wake?: SessionWake | null;
+  /** Latest native Goal snapshot; absent on older sessions, null after it is cleared. */
+  goal?: SessionGoal | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
   archivedAt: Timestamp | null;

@@ -5,6 +5,7 @@ import { newId, type HostEventInput, type SessionItemInput, type Store } from ".
 import { withDelivery } from "./items.js";
 import { profileGone } from "./profiles.js";
 import { consumeMessagePurpose, currentMessagePurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
+import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 
 // What HostService needs from a runtime, and a router that sends each call to the runtime a session (or profile)
 // belongs to. Codex and Claude implement the same operations; a few are runtime-specific (see the comments).
@@ -33,6 +34,9 @@ export interface RuntimeEvents {
 }
 
 export interface SessionRuntimeApi {
+  getGoal?(sessionId: Id): Promise<SessionGoalState>;
+  setGoal?(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState>;
+  clearGoal?(sessionId: Id): Promise<SessionGoalState>;
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
@@ -113,7 +117,7 @@ export interface SessionRuntimeApi {
 }
 
 /** The optional operations: a router made `around` one runtime offers only those that runtime has. */
-const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "listProfileCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "outsideSessions", "outsidePreview", "checkResume"] as const;
+const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "listProfileCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "outsideSessions", "outsidePreview", "checkResume", "getGoal", "setGoal", "clearGoal"] as const;
 
 /**
  * Routes calls to the runtime of the session, or of the profile for new sessions. The Host's own (host-process.ts) has
@@ -219,6 +223,8 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch });
   }
   sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}) {
+    const goalSession = this.store.getSession(sessionId);
+    if (goalSession?.goal?.status === "active" && (options.purpose === "inquiry" || options.purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
     const taskId = this.store.getSession(sessionId)?.taskId;
     if (taskId) this.context?.checkStart?.(taskId, false);
     const context = this.context?.session(sessionId) ?? "", input = this.withContext(text, context);
@@ -248,6 +254,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   private dispatchMessage(sessionId: Id, purpose: MessagePurpose, send: () => Promise<{ mode: SendMode }>): Promise<{ mode: SendMode }> {
     const owner = this.store.getSession(sessionId);
     if (!owner || owner.runtime === "remote") return send();
+    if (owner.goal?.status === "active" && (purpose === "inquiry" || purpose === "notification")) return Promise.reject(Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" }));
     let finish!: () => void;
     const done = new Promise<void>((resolve) => { finish = resolve; });
     let observed = inTurn(owner.status), returned = false, released = false;
@@ -428,6 +435,44 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const r = this.forSession(sessionId);
     if (!r.setWakeChoice) throw new Error("this runtime has no loop");
     return r.setWakeChoice(sessionId, choice);
+  }
+  async getGoal(sessionId: Id): Promise<SessionGoalState> {
+    const r = this.forSession(sessionId);
+    return r.getGoal ? r.getGoal(sessionId) : { goal: null, unavailable: "这个 Agent 尚未接入原生 Goal。" };
+  }
+  async setGoal(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState> {
+    const r = this.forSession(sessionId);
+    if (!r.setGoal) throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
+    const activates = input.status !== "paused";
+    let finish!: () => void;
+    const reservation = { purpose: "work" as const, done: new Promise<void>((resolve) => { finish = resolve; }) };
+    const check = () => {
+      beforeDispatch?.();
+      const s = this.store.getSession(sessionId);
+      const pending = this.dispatching.get(sessionId);
+      if (activates && ((pending && pending !== reservation) || this.purposeBoundaries.has(sessionId))) throw Object.assign(new Error("当前消息还在发送，请等发送完成后再开启 Goal。"), { code: "bad_request" });
+      if (input.status !== "paused" && s?.taskId) this.context?.checkStart?.(s.taskId, false);
+      // A read-only inquiry must finish before the person starts autonomous work in this thread.
+      if (input.status !== "paused" && s && inTurn(s.status) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
+    };
+    check();
+    // Reserve the idle session before any native recovery await, just as an ordinary message does. Messages
+    // arriving while the Goal is being enabled stay in the existing inbox and keep their original purpose.
+    if (activates) this.dispatching.set(sessionId, reservation);
+    try { return await r.setGoal(sessionId, input, check); }
+    finally {
+      if (this.dispatching.get(sessionId) === reservation) {
+        this.dispatching.delete(sessionId);
+        finish();
+        const session = this.store.getSession(sessionId);
+        if (session) this.emit("event", this.store.appendEvent({ type: "session.upserted", session }));
+      } else finish();
+    }
+  }
+  clearGoal(sessionId: Id): Promise<SessionGoalState> {
+    const r = this.forSession(sessionId);
+    if (!r.clearGoal) throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
+    return r.clearGoal(sessionId);
   }
   applyChatSettings(settings: ChatSettings): void {
     for (const r of Object.values(this.runtimes)) r.applyChatSettings?.(settings);

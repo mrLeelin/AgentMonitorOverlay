@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "runtime.goals",
+      "label": "Agent Goal 模式与自动续跑的接入边界",
+      "aliases": ["goal", "Goal 模式", "目标模式", "自动续跑", "持续执行"],
+      "category": "runtime",
+      "purpose": "Codex、Claude、DSH 共用会话底栏 MCP 右侧的 Goal 入口，用户明确填写目标后开启，可暂停、继续、清除并查看原生状态。GET/PUT/DELETE /api/sessions/:id/goal 按运行时路由，Session.goal 保存最近快照，不默认开启。Codex 使用原生 thread/goal 和 Token 预算，开启前同步原生设置；Claude 使用原生 /goal 与结构化目标评估日志，完成与人为清除分开，原生不提供预算；DSH 通过 AMO 数据目录的小型 Cordis 插件和随机认证命名管道控制同一 ACP 进程的 ctx.goals，使用续跑轮数上限，不把 slash 文本当控制。capabilities 决定面板预算/统计，未知指标不显示为零。Claude 与 DSH 暂停会中断当前回复，Codex 暂停只停止续轮。停止/归档同步收住自动续跑，进程退出不保留虚假 active；active 的轮间空档仍计为工作，只读询问和通知等暂停/结束后再送。旧 Host/CLI 明确提示不可用；Pi 与远程副本尚未接入。",
+      "anchors": [
+        { "label": "共用会话选项", "path": "studio/packages/protocol/src/entities.ts", "anchor": "export interface SessionOptions" },
+        { "label": "Goal 状态与接口类型", "path": "studio/packages/protocol/src/goals.ts", "anchor": "export interface SessionGoal" },
+        { "label": "底栏 Goal 与弹出面板", "path": "studio/packages/ui/src/chat/SessionGoal.tsx", "anchor": "export function useSessionGoal" },
+        { "label": "Codex Goal 协议", "path": "studio/packages/protocol/src/codex/v2/ThreadGoalSetParams.ts", "anchor": "export type ThreadGoalSetParams" },
+        { "label": "Codex Goal 生命周期", "path": "studio/packages/host/src/runtime/codex/codex-runtime.ts", "anchor": "async getGoal(" },
+        { "label": "原生设置应用确认", "path": "studio/packages/host/src/runtime/codex/rpc-client.ts", "anchor": "async updateThreadSettings" },
+        { "label": "Codex 事件接入", "path": "studio/packages/host/src/runtime/codex/events.ts", "anchor": "onNotification(handle:" },
+        { "label": "DSH 自动续轮", "path": "studio/packages/host/src/runtime/dsh/dsh-runtime.ts", "anchor": "DSH works with no prompt" },
+        { "label": "DSH 原生目标桥接", "path": "studio/packages/host/src/runtime/dsh/goal-bridge.ts", "anchor": "export class DshGoalBridge" },
+        { "label": "Claude 原生目标控制和日志", "path": "studio/packages/host/src/runtime/claude/goals.ts", "anchor": "export class ClaudeGoals" },
+        { "label": "Pi RPC 与动态命令", "path": "studio/packages/host/src/runtime/pi/pi-runtime.ts" }
+      ],
+      "related": ["runtime.common", "runtime.codex", "runtime.dsh", "runtime.claude", "runtime.pi"],
+      "next": ["studio/plans/done/codex-goal-bar.md", "studio/plans/done/agent-goals.md", "studio/e2e/studio/goals.spec.ts"]
+    }
+  ]
+}

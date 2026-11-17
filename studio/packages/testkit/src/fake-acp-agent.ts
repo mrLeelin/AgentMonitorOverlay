@@ -29,6 +29,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { startFakeDshGoals } from "./fake-dsh-goal-bridge.js";
 
 interface McpServer {
   type?: string;
@@ -377,6 +378,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
 }
 
 let buffer = "";
+startFakeDshGoals(home, (id) => active.has(id), (id) => { active.get(id)?.cancel?.(); });
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => {
   buffer += chunk;

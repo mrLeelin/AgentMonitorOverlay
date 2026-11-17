@@ -76,6 +76,8 @@ export class AcpConnection extends EventEmitter<AcpEvents> {
       const done = (code: number | null) => {
         if (this.exitCode !== undefined) return;
         this.exitCode = code;
+        // An unexpected exit is removed from the runtime's live map, so close() may never own this stream again.
+        this.log?.end();
         const last = this.stderrTail.trim().split(/\r?\n/).slice(-8).join(" | ").slice(-800);
         const err = new AcpError(`DSH 进程已退出（${code ?? "被终止"}）${last ? `：${last}` : ""}`, -32000);
         for (const p of this.pending.values()) {
