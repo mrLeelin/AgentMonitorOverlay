@@ -42,4 +42,5 @@ local-state/
 /shell-prefs.json
 /studio.db-shm
 /studio.db-wal
-studio/screenshots
+# Generated screenshots stay local
+/studio/screenshots/
