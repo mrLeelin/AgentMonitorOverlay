@@ -309,9 +309,34 @@ describe("AMO MCP", () => {
     expect(asked).toMatchObject({ state: "open" });
     expect(service.collab.decisions({ state: "open" })).toMatchObject([{ id: asked.id, sessionId: mainSessionId, taskId: importTask.id, options: ["3 次", "5 次"] }]);
     expect((await call(client, "decision_request", { question: " " })).isError).toBe(true);
+    // Evidence goes in detail (2026-11-17); a blank one is left out.
+    const withDetail = (await call(client, "decision_request", { question: "按哪张表改？", detail: "- `Data!C1` 是 Type\n- HEAD 二进制相同" })).data;
+    const blank = (await call(client, "decision_request", { question: "要备份吗？", detail: "  " })).data;
+    expect(service.collab.decisions({ state: "open" }).find((d) => d.id === withDetail.id)?.detail).toBe("- `Data!C1` 是 Type\n- HEAD 二进制相同");
+    expect(service.collab.decisions({ state: "open" }).find((d) => d.id === blank.id)).not.toHaveProperty("detail");
+    service.collab.answerDecision(withDetail.id, "C 列");
+    service.collab.answerDecision(blank.id, "要");
+    await call(client, "mailbox_read");
     service.collab.answerDecision(asked.id, "3 次");
     const read = (await call(client, "mailbox_read")).data as { messages: Array<{ text: string; from: unknown }> };
     expect(read.messages).toMatchObject([{ text: "针对你的问题「重试几次？」，我的决定：3 次", from: "person" }]);
+    await client.close();
+  });
+
+  // 2026-11-17: a 2220-character question was refused by the Host; the limits are in the tool schemas so the model sees them first.
+  it("shows the Host's text limits in the tool schemas", async () => {
+    const client = await connect(MCP_TOKEN, identities.tokenFor(mainSessionId));
+    const props = async (name: string) => ((await client.listTools()).tools.find((t) => t.name === name)!.inputSchema.properties ?? {}) as Record<string, { maxLength?: number; maxItems?: number; items?: { maxLength?: number } }>;
+    const decision = await props("decision_request");
+    expect(decision.question!.maxLength).toBe(2000);
+    expect(decision.options).toMatchObject({ maxItems: 6, items: { maxLength: 200 } });
+    expect(decision.detail!.maxLength).toBe(8000);
+    expect((await props("task_note_add")).text!.maxLength).toBe(8000);
+    expect((await props("mailbox_send")).text!.maxLength).toBe(8000);
+    expect((await props("canvas_callout")).text!.maxLength).toBe(2000);
+    const tooLong = await call(client, "decision_request", { question: "问".repeat(2001) });
+    expect(tooLong.isError).toBe(true);
+    expect(service.collab.decisions({ state: "open" })).toHaveLength(0);
     await client.close();
   });
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Id } from "@amo-studio/protocol";
-import { HostError } from "../../core/shared.js";
+import { HostError, MAX_NOTE_CHARS, MAX_QUESTION_CHARS, MAX_OPTION_CHARS, MAX_DECISION_OPTIONS } from "../../core/shared.js";
 import { write, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 
 /** The AMO MCP tools of this feature (gathered in mcp/tools.ts). */
@@ -10,7 +10,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       name: "task_note_add",
       title: "记进度",
       description: "Add a short progress note to your own AMO task (what was done, what is next, what blocks). The person sees it on the task page. Cannot move the task between board columns.",
-      inputSchema: { text: z.string() },
+      inputSchema: { text: z.string().max(MAX_NOTE_CHARS) },
       readOnly: false,
       autoApprove: true,
       run: (args) => write(caller, (c) => service.collab.addTaskNote(ownTask(c), { text: args.text, kind: "progress" }, c.sessionId)),
@@ -19,7 +19,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       name: "handoff_submit",
       title: "提交交接",
       description: "Submit a handoff summary for your own AMO task: what is done, what is left, where the relevant files are, and anything the next session must know.",
-      inputSchema: { summary: z.string() },
+      inputSchema: { summary: z.string().max(MAX_NOTE_CHARS) },
       readOnly: false,
       autoApprove: true,
       run: (args) => write(caller, (c) => service.collab.addTaskNote(ownTask(c), { text: args.summary, kind: "handoff" }, c.sessionId)),
@@ -29,7 +29,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       title: "留言",
       description:
         "Leave a message for another AMO session (toSessionId), a task (toTaskId) or a topic (toTopicId); find ids with board_list, task_get, topic_get or session_tree. It does not enter their conversation by itself: the person decides when to forward it, and the recipient can read it with mailbox_read.",
-      inputSchema: { toSessionId: z.string().optional(), toTaskId: z.string().optional(), toTopicId: z.string().optional(), text: z.string() },
+      inputSchema: { toSessionId: z.string().optional(), toTaskId: z.string().optional(), toTopicId: z.string().optional(), text: z.string().max(MAX_NOTE_CHARS) },
       readOnly: false,
       autoApprove: true,
       run: (args) =>
@@ -64,13 +64,14 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       name: "decision_request",
       title: "请求决策",
       description:
-        "Ask for a business decision (offer short options). In a managed task it automatically goes to your direct manager, who answers with task_decision_answer; only the root lead asks the person directly. It does not block your turn. The answer returns by mail during your turn and automatically through your inbox afterward. CLI security approvals and native tool questions remain separate.",
-      inputSchema: { question: z.string(), options: z.array(z.string()).optional() },
+        // 2026-11-17: a question that carried its whole evidence went over the 2000 limit and was refused; the evidence goes in detail.
+        "Ask for a business decision (offer short options). question: the decision itself in a few sentences. detail (Markdown, optional): the evidence and background behind it (files, cells, commits, what you checked); it shows folded under the question. In a managed task it automatically goes to your direct manager, who answers with task_decision_answer; only the root lead asks the person directly. It does not block your turn. The answer returns by mail during your turn and automatically through your inbox afterward. CLI security approvals and native tool questions remain separate.",
+      inputSchema: { question: z.string().max(MAX_QUESTION_CHARS), options: z.array(z.string().max(MAX_OPTION_CHARS)).max(MAX_DECISION_OPTIONS).optional(), detail: z.string().max(MAX_NOTE_CHARS).optional() },
       readOnly: false,
       autoApprove: true,
       run: (args) =>
         write(caller, (c) => {
-          const d = service.collab.requestDecisionFromSession(c.sessionId, args.question, args.options);
+          const d = service.collab.requestDecisionFromSession(c.sessionId, args.question, args.options, args.detail);
           return { id: d.id, state: d.state, routedToTaskId: d.routedToTaskId ?? null, note: d.routedToTaskId ? "问题已交直属主控，答案将自动回到本会话。" : "问题已交给人决定，答案将自动回到本会话。" };
         }),
     },

@@ -257,9 +257,10 @@ describe("managed delivery workflow", () => {
   it("routes business questions to the direct manager, then allows upward escalation and a returned answer", async () => {
     const send = delivery(), top = task("总主控", true), middle = task("音效负责人", true, top.id), child = task("投币音效", false, middle.id);
     const st = session(top), sm = session(middle), sc = session(child);
-    const question = service.collab.requestDecisionFromSession(sc.id, "需要什么音色？", ["卡通", "写实"]);
+    const question = service.collab.requestDecisionFromSession(sc.id, "需要什么音色？", ["卡通", "写实"], "参考：Audio/coin_old.wav");
     expect(question.routedToTaskId).toBe(middle.id);
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining(question.id), undefined, expect.any(String), { purpose: "notification" }));
+    expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining("背景与证据：\n参考：Audio/coin_old.wav"), undefined, expect.any(String), { purpose: "notification" });
     expect(service.orchestration.workflow(middle.id).decisions).toHaveLength(1);
     const escalate = service.collab.requestDecisionFromSession(sm.id, "投币音色需要总主控决定", ["卡通", "写实"]);
     expect(escalate.routedToTaskId).toBe(top.id);

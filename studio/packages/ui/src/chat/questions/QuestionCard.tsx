@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { fieldDefault, formContent, type FormField, type QuestionReply } from "@amo-studio/protocol";
 import { call, type HostLink } from "../../host/client.js";
 import { IconCheck, IconChevronDown, IconChevronRight, IconChevronUp, IconEdit, IconX } from "../icons.js";
@@ -90,13 +90,15 @@ function CardHead({ eyebrow, title, minimized, onMinimize, onClose, busy, intera
 // ---- questions --------------------------------------------------------------------------------------------------
 
 /** Shared question UI: runtime questions and AMO decisions keep their own answer transport. */
-export function PromptCard({ link, sessionId, item, onClose, eyebrow, onReply, allowSkip = true, interaction = "blocking", origin }: Omit<CardProps, "item"> & {
+export function PromptCard({ link, sessionId, item, onClose, eyebrow, onReply, allowSkip = true, interaction = "blocking", origin, detail }: Omit<CardProps, "item"> & {
   item: Pick<QuestionItem, "id" | "questions">;
   eyebrow: string;
   onReply?: (body: QuestionReply) => Promise<string | null>;
   allowSkip?: boolean;
   interaction?: Interaction;
   origin?: string;
+  /** Background shown folded at the top of the body (an AMO decision's evidence, 2026-11-17). */
+  detail?: ReactNode;
 }) {
   const questions = item.questions ?? [];
   const [flow, setFlow] = useState<Flow>(() => savedFlows.get(item.id) ?? startFlow(questions));
@@ -159,6 +161,7 @@ export function PromptCard({ link, sessionId, item, onClose, eyebrow, onReply, a
       {!minimized && (
         <>
           <div className="qc-body">
+            {detail}
             <div className="qc-options" role={q.multiSelect ? "group" : "radiogroup"} aria-label={q.question}>
               {q.options.map((o, i) => {
                 const on = draft.selected.includes(o.label);

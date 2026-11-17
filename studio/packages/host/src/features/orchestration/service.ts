@@ -87,7 +87,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   private currentBusiness(notice: Notice): string | null {
     if (notice.decisionId) {
       const d = this.store.getDecision(notice.decisionId);
-      return d?.state === "open" && d.routedToTaskId === notice.targetTaskId ? `【当前直属任务待决问题】${d.question}\n${d.options.join("\n")}\n问题 ${d.id}\n请用 task_workflow 核对当前归属和最新问题，再按原角色处理。此通知从当前问题记录重新生成，未重放旧通知正文。` : null;
+      return d?.state === "open" && d.routedToTaskId === notice.targetTaskId ? `【当前直属任务待决问题】${d.question}\n${d.options.join("\n")}${detailBlock(d)}\n问题 ${d.id}\n请用 task_workflow 核对当前归属和最新问题，再按原角色处理。此通知从当前问题记录重新生成，未重放旧通知正文。` : null;
     }
     if (notice.resultId) {
       const result = this.results(notice.direction === "up" ? notice.sourceTaskId : notice.targetTaskId).at(-1);
@@ -243,7 +243,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 
   private routeDecision(decision: DecisionRequest): void {
     if (!decision.taskId || !decision.routedToTaskId) return;
-    this.queue({ id: `i-${decision.id}-${decision.routedToTaskId}`, sourceTaskId: decision.taskId, targetTaskId: decision.routedToTaskId, direction: "up", decisionId: decision.id, text: `【直属任务请求决定】${decision.question}\n${decision.options.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n问题 ${decision.id}\n\n用 task_workflow 查看最新待决问题，用 task_decision_answer 回答。你解决不了时，用 decision_request 向你的直属主控提出问题；只有总主控向人提出业务问题。` });
+    this.queue({ id: `i-${decision.id}-${decision.routedToTaskId}`, sourceTaskId: decision.taskId, targetTaskId: decision.routedToTaskId, direction: "up", decisionId: decision.id, text: `【直属任务请求决定】${decision.question}\n${decision.options.map((o, i) => `${i + 1}. ${o}`).join("\n")}${detailBlock(decision)}\n问题 ${decision.id}\n\n用 task_workflow 查看最新待决问题，用 task_decision_answer 回答。你解决不了时，用 decision_request 向你的直属主控提出问题；只有总主控向人提出业务问题。` });
     this.deliver();
   }
 
@@ -416,4 +416,9 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 function requiredText(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim() || value.length > 20_000) throw new HostError("bad_request", `${label}不能为空，且不能超过 20000 字符。`);
   return value.trim();
+}
+
+/** A routed question's evidence (2026-11-17): the manager decides on it, so it travels with the question. */
+function detailBlock(d: DecisionRequest): string {
+  return d.detail ? `\n\n背景与证据：\n${d.detail}\n` : "";
 }

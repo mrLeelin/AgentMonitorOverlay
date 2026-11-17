@@ -25,7 +25,7 @@ test("agents ask for decisions; the person answers on the task page and in Focus
     scope,
     firstSession: {
       profileId: "codex-mock",
-      text: '[[mcp: decision_request {"question":"按关卡拆还是按怪物拆？","options":["按关卡","按怪物","两者都拆：先按关卡拆成 12 张表，再在每张表里按怪物分组，旧的总表保留到下个版本再删"]}]]',
+      text: '[[mcp: decision_request {"question":"按关卡拆还是按怪物拆？","options":["按关卡","按怪物","两者都拆：先按关卡拆成 12 张表，再在每张表里按怪物分组，旧的总表保留到下个版本再删"],"detail":"**现状**\\n- `Drop.xlsx` 共 3 万行，按关卡查要扫全表\\n- 怪物 ID 跨关卡复用 40%"}]]',
     },
   });
   await expect.poll(async () => (await open()).length, { timeout: 60_000 }).toBe(1);
@@ -33,6 +33,14 @@ test("agents ask for decisions; the person answers on the task page and in Focus
   // The shared question popup overlays the conversation; the record stays compact and reopens it.
   const card = page.getByTestId("question-popup").getByTestId("question-card");
   await expect(card).toContainText("按关卡拆还是按怪物拆？");
+  // The evidence sits folded under the question (2026-11-17) and opens as Markdown.
+  const detail = card.getByTestId("decision-detail");
+  await expect(detail).not.toHaveAttribute("open");
+  await detail.getByText("背景与证据").click();
+  await expect(detail.locator("strong")).toHaveText("现状");
+  await expect(detail.locator("code")).toHaveText("Drop.xlsx");
+  await screenshot(app, "studio", "decision-detail-open", page);
+  await detail.getByText("背景与证据").click();
   await expect(page.getByTestId("decision-count")).toHaveCount(0);
   const long = card.getByRole("radio", { name: /两者都拆/ });
   const box = (await long.boundingBox())!;

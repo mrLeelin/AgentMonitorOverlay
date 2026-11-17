@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { CALLOUT_DETAIL_MAX, CALLOUT_OPTIONS_MAX, CALLOUT_TEXT_MAX, REVIEW_BODY_MAX, REVIEW_TITLE_MAX } from "@amo-studio/protocol";
+import { MAX_OPTION_CHARS } from "../../core/shared.js";
 import { write, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 
 const STATUS = z.enum(["todo", "confirmed", "discuss", "parked", "done"]);
@@ -13,7 +15,7 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
         "When the person asks for a review on the canvas: lay it out on your topic's canvas as numbered item cards (#1, #2… continuing the canvas's numbers), each point a card the person can confirm, question or talk over on its own. group: an existing group (id or exact title) to add to, or the title of a new group (recommended: one group per review); omit to put them below everything. Each item: title (one line), body (Markdown: what you found, why it matters, what you suggest), refs (files, commits, links), status (todo by default; confirmed, discuss, parked, done). Studio lays them out. Then use canvas_callout to highlight or ask on the items.",
       inputSchema: {
         group: z.string().optional(),
-        items: z.array(z.object({ title: z.string(), body: z.string().optional(), refs: z.array(z.string()).optional(), status: STATUS.optional() })),
+        items: z.array(z.object({ title: z.string().max(REVIEW_TITLE_MAX), body: z.string().max(REVIEW_BODY_MAX).optional(), refs: z.array(z.string()).optional(), status: STATUS.optional() })),
       },
       readOnly: false,
       autoApprove: true,
@@ -24,7 +26,7 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
       title: "改审阅条目",
       description:
         "Change a review item on your topic's canvas (item: #n or its id): status (todo 待看, confirmed 已确认, discuss 要讨论, parked 搁置, done 完成), title, body, refs, or conclusion (what was decided; shows on the card). Use it when the person answered, or when talking an item over reached a result. Studio automatically returns confirmed conclusions to the source session and asks it to continue when all items from that source in the same group are confirmed, done or parked. Do not send duplicate mailbox messages for these conclusions.",
-      inputSchema: { item: z.string(), status: STATUS.optional(), title: z.string().optional(), body: z.string().optional(), conclusion: z.string().optional(), refs: z.array(z.string()).optional() },
+      inputSchema: { item: z.string(), status: STATUS.optional(), title: z.string().max(REVIEW_TITLE_MAX).optional(), body: z.string().max(REVIEW_BODY_MAX).optional(), conclusion: z.string().max(REVIEW_BODY_MAX).optional(), refs: z.array(z.string()).optional() },
       readOnly: false,
       autoApprove: true,
       run: (args) => write(caller, (c) => service.canvasReview.updateItem(ownTopic(c), args.item, args, c.sessionId)),
@@ -37,9 +39,9 @@ export function canvasReviewTools({ service, caller, ownTopic }: ToolContext): A
       inputSchema: {
         target: z.string(),
         kind: z.enum(["note", "question"]).optional(),
-        text: z.string(),
-        detail: z.string().optional(),
-        options: z.array(z.string()).optional(),
+        text: z.string().max(CALLOUT_TEXT_MAX),
+        detail: z.string().max(CALLOUT_DETAIL_MAX).optional(),
+        options: z.array(z.string().max(MAX_OPTION_CHARS)).max(CALLOUT_OPTIONS_MAX).optional(),
         deep: z.boolean().optional(),
       },
       readOnly: false,

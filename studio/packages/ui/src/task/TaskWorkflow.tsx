@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Id, SharedContextView, Task, TaskResult, TaskWorkflow as Workflow } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
+import { DecisionDetail } from "../collab/DecisionPanel.js";
 import "./workflow.css";
 import "./context.css";
 
@@ -53,6 +54,7 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask }: { link: HostLink
     {workflow.decisions.map((decision) => <div key={decision.id} className="workflow-decision" data-testid="workflow-decision">
       <span className="dim">{decision.taskId ? title(decision.taskId) : "下级任务"} · 待主控处理</span>
       <p className="workflow-text">{decision.question}</p>
+      <DecisionDetail detail={decision.detail} />
       {decision.options.length > 0 && <span className="dim">{decision.options.join(" / ")}</span>}
       {decision.taskId && <button type="button" className="link-btn" onClick={() => onOpenTask(decision.taskId!)}>查看来源任务</button>}
     </div>)}

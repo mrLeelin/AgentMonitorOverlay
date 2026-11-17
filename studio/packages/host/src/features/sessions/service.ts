@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { inTurn, isCommon, type ModelOption, type SubsessionNote, type SubsessionSetup, type Workspace, asyncAnswerText, composeAnnotationRefs, composeRoleUpdate, formContent, type Attachment, type SessionOptions, type ProfileChoices, type ApprovalDecision, type Id, type QuestionAnswer, type QuestionReply, type Session, type SessionItem, type TerminalAttach } from "@amo-studio/protocol";
 import type { SendMode, SendOptions } from "../../runtime/runtime.js";
 import type { TerminalHandle } from "../../terminal/launcher.js";
-import { HostError, isRemoteCopy, optionValue, boundedText, TERMINAL_TOKEN_ENV } from "../../core/shared.js";
+import { HostError, isRemoteCopy, optionValue, boundedText, TERMINAL_TOKEN_ENV, MAX_SESSION_TEXT_CHARS, MAX_SESSION_TITLE_CHARS } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { roleUpdate } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
@@ -401,8 +401,8 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const task = this.requireTask(from.taskId);
     if (task.lead) throw new HostError("read_only", "主控的本地文件只读：请用 task_plan_propose 分配独立的执行任务，不能在主控任务里开执行会话。");
     if (task.archivedAt) throw new HostError("read_only", "这个任务已归档，不能再开会话");
-    const text = boundedText(input.text, "text", 20_000);
-    const title = input.title === undefined || input.title === null || input.title === "" ? null : boundedText(input.title, "title", 100);
+    const text = boundedText(input.text, "text", MAX_SESSION_TEXT_CHARS);
+    const title = input.title === undefined || input.title === null || input.title === "" ? null : boundedText(input.title, "title", MAX_SESSION_TITLE_CHARS);
     if (input.fast !== undefined && input.fast !== null && typeof input.fast !== "boolean") throw new HostError("bad_request", "fast must be true or false");
     if (input.effort !== undefined && input.effort !== null && input.effort !== "" && typeof input.effort !== "string") throw new HostError("bad_request", "effort must be text, e.g. high");
     // 子会话设定 (2026-11-05): what the person set up with @ 开子会话… wins over what the agent writes.
@@ -514,7 +514,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const s = this.store.getSession(input.sessionId);
     if (!s || s.startedBy !== from.id || s.taskId !== from.taskId) throw new HostError("bad_request", `会话 ${input.sessionId} 不是你用 session_start 开的，不能往里发：只能发给你自己开的会话（人开的、别的会话开的、forPerson 开给人的都不行）。`);
     if (s.archivedAt) throw new HostError("bad_request", `会话 ${s.id} 已经归档了：要接着做就用 session_start 开个新的。`);
-    const text = boundedText(input.text, "text", 20_000);
+    const text = boundedText(input.text, "text", MAX_SESSION_TEXT_CHARS);
     const { delivered, waiting } = await this.inbox.put(s.id, `【开启你的会话「${from.title || "未命名会话"}」（${from.id}）发来】\n${text}`);
     return { session: this.requireSession(s.id), delivered, waiting };
   }

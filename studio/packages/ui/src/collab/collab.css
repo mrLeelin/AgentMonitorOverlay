@@ -13,6 +13,12 @@
 .decision-hint { flex: none; margin-left: auto; font-size: var(--fs-cap); color: var(--text-faint); }
 .decision-kind { flex: none; color: var(--text-dim); font-size: 11px; line-height: 18px; white-space: nowrap; }
 .decision-question { font-size: var(--fs-body); line-height: var(--lh); font-weight: 600; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Evidence under the question (2026-11-17): folded; opened, it scrolls on its own so the options stay in reach. */
+.decision-detail { min-width: 0; font-size: var(--fs-sm); color: var(--text); }
+.qc-body > .decision-detail { margin: 8px 10px 0; }
+.decision-detail > summary { cursor: pointer; color: var(--text-dim); font-size: var(--fs-cap); user-select: none; }
+.decision-detail[open] > summary { margin-bottom: 6px; }
+.decision-detail-body { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px; border-radius: var(--r-m); border: 1px solid var(--border); background: var(--bg); overflow-wrap: anywhere; }
 /* Options: whole rows with a number, long text wraps (agents write sentences, not words). */
 .decision-options { display: flex; flex-direction: column; gap: 4px; }
 .decision-option { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 6px 8px; border: 1px solid var(--attention-border); border-radius: var(--r-m); background: var(--panel); color: var(--text); font: inherit; font-size: var(--fs-sm); line-height: 1.5; text-align: left; cursor: pointer; }

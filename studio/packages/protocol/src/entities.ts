@@ -841,6 +841,8 @@ export interface DecisionRequest {
   topicId?: Id | null;
   question: string;
   options: string[];
+  /** Evidence and background (Markdown, 2026-11-17), shown folded under the question; keeps the question itself short. */
+  detail?: string;
   state: "open" | "answered" | "withdrawn";
   answer: string | null;
   createdAt: Timestamp;

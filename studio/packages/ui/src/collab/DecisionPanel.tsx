@@ -3,6 +3,23 @@ import { answerValues, type DecisionRequest, type QuestionReply, type Task } fro
 import { call, type HostLink } from "../host/client.js";
 import { keepWhere, useLiveResource } from "../host/live.js";
 import { PromptCard } from "../chat/questions/QuestionCard.js";
+import { Markdown } from "../lib/markdown.js";
+
+/**
+ * A decision's evidence and background (2026-11-17): folded, so the question stays the first thing read; the agent
+ * writes it as Markdown (files, cells, commits).
+ */
+export function DecisionDetail({ detail }: { detail?: string }) {
+  if (!detail) return null;
+  return (
+    <details className="decision-detail" data-testid="decision-detail">
+      <summary>背景与证据</summary>
+      <div className="decision-detail-body">
+        <Markdown source={detail} />
+      </div>
+    </details>
+  );
+}
 
 /** Open decision requests across all tasks, kept live. */
 export function useOpenDecisions(link: HostLink) {
@@ -59,6 +76,7 @@ export function DecisionCard({
         <span className="decision-hint">回答会作为留言发回</span>
       </div>
       <div className="decision-question">{decision.question}</div>
+      <DecisionDetail detail={decision.detail} />
       {decision.options.length > 0 && (
         <div className="decision-options" role="group" aria-label="选项">
           {decision.options.map((o, i) => (
@@ -115,7 +133,7 @@ export function DecisionPrompt({ link, decision, onClose }: { link: HostLink; de
       return err instanceof Error ? err.message : String(err);
     }
   };
-  return <PromptCard key={decision.id} link={link} sessionId={decision.sessionId} item={item} eyebrow="等你决定" origin="跨工具请求 · AMO MCP" interaction="mail" onClose={onClose} onReply={answer} allowSkip={false} />;
+  return <PromptCard key={decision.id} link={link} sessionId={decision.sessionId} item={item} eyebrow="等你决定" origin="跨工具请求 · AMO MCP" interaction="mail" onClose={onClose} onReply={answer} allowSkip={false} detail={<DecisionDetail detail={decision.detail} />} />;
 }
 
 /** Compact rows reopen a decision's popup; options no longer take space from the conversation. */

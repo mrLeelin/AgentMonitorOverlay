@@ -87,6 +87,10 @@ export interface HostServiceEvents {
 export const MAX_NOTE_CHARS = 8000;
 export const MAX_QUESTION_CHARS = 2000;
 export const MAX_OPTION_CHARS = 200;
+export const MAX_DECISION_OPTIONS = 6;
+/** session_start / session_send: a first message that can carry a whole plan, and a name for the session list. */
+export const MAX_SESSION_TEXT_CHARS = 20_000;
+export const MAX_SESSION_TITLE_CHARS = 100;
 /** Proposals one scheduler session (one round) may make (design/scheduler.md). */
 export const PROPOSALS_PER_ROUND = 3;
 export const SCHEDULER_TASK_KEY = "scheduler:task";

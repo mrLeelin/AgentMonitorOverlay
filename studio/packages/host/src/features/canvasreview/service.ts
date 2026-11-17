@@ -1,6 +1,6 @@
 import { addItems, CALLOUT_DETAIL_MAX, CALLOUT_OPTIONS_MAX, CALLOUT_TEXT_MAX, findItem, isReviewStatus, REVIEW_BODY_MAX, REVIEW_STATUSES, REVIEW_TITLE_MAX, type CanvasCallout, type CanvasDoc, type CanvasItem, type CalloutKind, type Id, type NewItem, type ReviewStatus, type Session } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
-import { boundedText, HostError } from "../../core/shared.js";
+import { boundedText, HostError, MAX_OPTION_CHARS } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { discussionContext } from "./context.js";
 import { CanvasReturns } from "./returns.js";
@@ -106,7 +106,7 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
     if (input.options !== undefined && input.options !== null) {
       if (kind !== "question") throw new HostError("bad_request", "options are for a question");
       if (!Array.isArray(input.options) || input.options.length > CALLOUT_OPTIONS_MAX) throw new HostError("bad_request", `options must be a list of at most ${CALLOUT_OPTIONS_MAX}`);
-      options = input.options.map((o, i) => boundedText(o, `options[${i}]`, 200));
+      options = input.options.map((o, i) => boundedText(o, `options[${i}]`, MAX_OPTION_CHARS));
     }
     const at = new Date().toISOString();
     const callout: CanvasCallout = {

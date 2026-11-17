@@ -1,6 +1,6 @@
 import { inTurn, managementRoot, type Id, type TaskNote, type MailMessage, type MailRecipient, type DecisionRequest, type ChecklistItem, type Session } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
-import { HostError, boundedText, MAX_NOTE_CHARS, MAX_QUESTION_CHARS, MAX_OPTION_CHARS } from "../../core/shared.js";
+import { HostError, boundedText, MAX_NOTE_CHARS, MAX_QUESTION_CHARS, MAX_OPTION_CHARS, MAX_DECISION_OPTIONS } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 
 /** Collaboration (stage 5): notes and handoffs, mail, decision requests, checklists. */
@@ -89,11 +89,12 @@ export class CollabFeature extends Feature<"sessions"> {
     return this.store.listDecisions(filter);
   }
 
-  requestDecisionFromSession(sessionId: Id, questionIn: unknown, optionsIn: unknown): DecisionRequest {
+  requestDecisionFromSession(sessionId: Id, questionIn: unknown, optionsIn: unknown, detailIn?: unknown): DecisionRequest {
     const s = this.requireSession(sessionId);
     const question = boundedText(questionIn, "question", MAX_QUESTION_CHARS);
-    const options = Array.isArray(optionsIn) ? optionsIn.filter((o): o is string => typeof o === "string" && !!o.trim()).map((o) => o.trim().slice(0, MAX_OPTION_CHARS)).slice(0, 6) : [];
-    const d: DecisionRequest = { id: newId("dec"), sessionId, taskId: s.taskId, topicId: s.topicId, question, options, state: "open", answer: null, createdAt: new Date().toISOString(), answeredAt: null };
+    const options = Array.isArray(optionsIn) ? optionsIn.filter((o): o is string => typeof o === "string" && !!o.trim()).map((o) => o.trim().slice(0, MAX_OPTION_CHARS)).slice(0, MAX_DECISION_OPTIONS) : [];
+    const detail = typeof detailIn === "string" && detailIn.trim() ? boundedText(detailIn, "detail", MAX_NOTE_CHARS) : undefined;
+    const d: DecisionRequest = { id: newId("dec"), sessionId, taskId: s.taskId, topicId: s.topicId, question, options, ...(detail ? { detail } : {}), state: "open", answer: null, createdAt: new Date().toISOString(), answeredAt: null };
     const task = s.taskId ? this.store.getTask(s.taskId) : undefined;
     if (task?.managerTaskId && managementRoot(this.store.listTasks(), task.id)) d.routedToTaskId = task.managerTaskId;
     this.store.putDecision(d);
