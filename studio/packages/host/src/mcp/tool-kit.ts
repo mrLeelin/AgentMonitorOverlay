@@ -37,10 +37,14 @@ export interface AmoTool {
 
 export const json = (value: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }] });
 
-/** Runs a read and turns a missing id into a tool error the agent can read, instead of a protocol error. */
-export function answer(read: () => unknown): ToolResult {
+/**
+ * Runs a read and turns a missing id into a tool error the agent can read, instead of a protocol error. `compact`: JSON
+ * on one line, for a read a 主控 makes again and again (task_workflow, 2026-11-17).
+ */
+export function answer(read: () => unknown, compact = false): ToolResult {
   try {
-    return json(read());
+    const value = read();
+    return compact ? { content: [{ type: "text", text: JSON.stringify(value) }] } : json(value);
   } catch (err) {
     if (err instanceof NotFoundError || err instanceof HostError) return { content: [{ type: "text", text: err.message }], isError: true };
     throw err;

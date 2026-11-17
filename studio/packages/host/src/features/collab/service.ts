@@ -1,4 +1,4 @@
-import { inTurn, managementRoot, type Id, type TaskNote, type MailMessage, type MailRecipient, type DecisionRequest, type ChecklistItem, type Session } from "@amo-studio/protocol";
+import { inTurn, managementRoot, type Id, type TaskNote, type MailMessage, type MailRecipient, type DecisionRequest, type ChecklistItem, type MessagePurpose, type Session } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError, boundedText, MAX_NOTE_CHARS, MAX_QUESTION_CHARS, MAX_OPTION_CHARS, MAX_DECISION_OPTIONS } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
@@ -53,7 +53,24 @@ export class CollabFeature extends Feature<"sessions"> {
     };
     this.store.putMail(mail);
     this.publish({ type: "mail.upserted", mail });
+    // 2026-11-17 (the Free 主控): mail never wakes its recipient, so a child's 13 reports to its 主控 went unread while it
+    // waited for replies. To the direct manager it goes in as a notice (a notification: no reopening the manager's work).
+    const manager = this.managerSessionFor(mail);
+    if (manager) void this.forwardMail(mail.id, { sessionId: manager.id }, "notification").catch((err: unknown) => this.log(`${mail.id}: the mail could not go into the manager's session: ${err instanceof Error ? err.message : String(err)}`));
     return mail;
+  }
+
+  /** Where a managed task's mail to its direct manager goes in: the session left for, else the manager's latest main one. */
+  managerSessionFor(mail: MailMessage): Session | undefined {
+    const task = mail.fromTaskId ? this.store.getTask(mail.fromTaskId) : undefined;
+    if (!task?.managerTaskId || !managementRoot(this.store.listTasks(), task.id)) return undefined;
+    const live = (s: Session) => s.kind === "main" && !s.archivedAt && s.runtime !== "remote" && s.writer !== "archived" && s.writer !== "terminal-handoff";
+    if (mail.to.kind === "session") {
+      const to = this.store.getSession(mail.to.sessionId);
+      return to?.taskId === task.managerTaskId && live(to) ? to : undefined;
+    }
+    if (mail.to.kind !== "task" || mail.to.taskId !== task.managerTaskId) return undefined;
+    return this.store.listSessions({ taskId: task.managerTaskId }).filter(live).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   }
 
   updateMail(id: Id, state: unknown): MailMessage {
@@ -66,7 +83,7 @@ export class CollabFeature extends Feature<"sessions"> {
    * through the session's inbox (2026-11-04): an agent's words, so once the session's turn is over (立即发送 on the row
    * sends it at once).
    */
-  async forwardMail(id: Id, input: { sessionId?: unknown } = {}): Promise<MailMessage> {
+  async forwardMail(id: Id, input: { sessionId?: unknown } = {}, purpose: MessagePurpose = "work"): Promise<MailMessage> {
     const mail = this.requireMail(id);
     if (mail.state === "forwarded") throw new HostError("conflict", "this message was already forwarded");
     const target = mail.to.kind === "session" ? mail.to.sessionId : typeof input.sessionId === "string" ? input.sessionId : null;
@@ -74,7 +91,7 @@ export class CollabFeature extends Feature<"sessions"> {
     const session = this.requireSession(target);
     if (mail.to.kind === "task" && session.taskId !== mail.to.taskId) throw new HostError("bad_request", "that session is not part of the task the message was left for");
     if (mail.to.kind === "topic" && session.topicId !== mail.to.topicId) throw new HostError("bad_request", "that session is not one of the topic's own sessions");
-    await this.f.sessions.inbox.put(target, this.mailAsMessage(mail));
+    await this.f.sessions.inbox.put(target, this.mailAsMessage(mail), undefined, undefined, { purpose });
     return this.setMailState(mail, "forwarded");
   }
 

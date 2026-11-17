@@ -85,11 +85,15 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
     const target = this.store.getTask(relay.toTaskId);
     const from = this.store.getSession(relay.fromSessionId);
     const lead = relay.fromTaskId ? this.store.getTask(relay.fromTaskId) : undefined;
+    // 2026-11-17 (the Free 主控): a 主控's 传话 no longer points to mailbox_send. Its 13 mails went unread, as mail wakes
+    // no one, while the child slept and read its mailbox over and over for a reply.
     const message = [
       `【主控「${lead?.title || "主控"}」传话】`,
       relay.text,
       "",
-      relay.purpose === "inquiry" ? "（这是主控通过 AMO Studio 发来的只读询问：仅回答问题，不继续实施、不重新提交交付，也不撤销已有验收。）" : `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给${relay.fromTaskId ? `任务 ${relay.fromTaskId}` : `会话 ${relay.fromSessionId}`}。）`,
+      relay.purpose === "inquiry" ? "（这是主控通过 AMO Studio 发来的只读询问：仅回答问题，不继续实施、不重新提交交付，也不撤销已有验收。）"
+        : relay.fromTaskId ? "（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；要主控拍板的事用 decision_request。日常进展写在本轮回复里，本轮结束会自动报给主控；等答复时结束本轮，答复会自动送回来，不要 sleep 或反复读信箱。）"
+        : `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给会话 ${relay.fromSessionId}。）`,
     ].join("\n");
     try {
       if (!target || target.archivedAt) throw new HostError("bad_request", "the task is gone or archived");

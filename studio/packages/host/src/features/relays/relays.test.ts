@@ -146,7 +146,9 @@ describe("relays (传话)", () => {
     const text = userTexts(delivered.sessionId!)[0]!;
     expect(text).toContain("【主控「迁移主控」传话】");
     expect(text).toContain("先迁数据表，界面等我通知");
-    expect(text).toContain("mailbox_send");
+    // 2026-11-17: a 主控's 传话 points to decision_request and the turn's reply, not to mail that never woke the 主控.
+    expect(text).toContain("decision_request");
+    expect(text).not.toContain("mailbox_send");
     expect(lastMail()).toBe("传话已送到「装甲车」。");
     await expect(service.relays.deliver(yes.id)).rejects.toThrow(/decided already/);
   });

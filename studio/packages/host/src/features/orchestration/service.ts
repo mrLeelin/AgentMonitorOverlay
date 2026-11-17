@@ -25,11 +25,12 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         return latest && (latest.state !== "accepted" || !this.f.sharedContext.isResultCurrent(id, latest)) ? [latest] : [];
       }),
       decisions: this.store.listDecisions({ state: "open" }).filter((d) => d.routedToTaskId === taskId),
+      // pending: only notices still on their way or failed (2026-11-17); the delivered history grew with every 主控 read.
       deliveryNotices: this.notices().filter((n) => ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)).map((n) => {
         const row = this.store.getItem(n.messageId ?? n.id);
         const state = n.expiredAt || row?.type === "user" && row.delivery === "expired" ? "expired" as const : row?.type === "user" ? row.delivery === "unsent" ? "failed" as const : row.delivery === "held" ? "waiting" as const : "delivered" as const : n.error ? "failed" as const : "waiting" as const;
         return { id: n.id, taskId: n.targetTaskId, state, detail: state === "expired" || state === "failed" ? n.expiredReason || (row?.type === "user" ? row.deliveryReason : undefined) || n.error || "通知发送失败。" : state === "waiting" ? "等待目标会话空闲后发送。" : "已送入会话。", ...(n.replacesNoticeId ? { replacesNoticeId: n.replacesNoticeId } : {}) };
-      }),
+      }).filter((n) => view === "full" || n.state === "waiting" || n.state === "failed"),
       deliveryIssues: this.notices().filter((n) => (ids.has(n.sourceTaskId) || ids.has(n.targetTaskId)) && this.valid(n)).flatMap((n) => {
         const row = this.store.getItem(n.messageId ?? n.id);
         const unsent = row?.type === "user" && row.delivery === "unsent";
@@ -148,7 +149,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, ...basis, state: "submitted", createdAt: at, updatedAt: at };
     this.store.transaction(() => {
       this.saveResults(task.id, [...results, result]);
-      if (task.managerTaskId) this.queue({ id: `i-${result.id}-submit`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", resultId: result.id, text: `【下级任务提交交付】「${task.title}」（${task.id}）\n结果 ${result.id}\n${summary}\n\n验证：${verification}${result.contextBasis ? `\n需求依据：${result.contextBasis.contextId} v${result.contextBasis.version}` : ""}${result.prerequisiteResultIds?.length ? `\n前置结果：${result.prerequisiteResultIds.join("、")}` : ""}${result.contextMismatch ? `\n待处理差异：${result.contextMismatch}` : ""}\n\n请先用 task_workflow 读取最新结果，再用 task_review_result 验收或退回。提交不代表已完成；直属任务全部验收后再提交你自己的汇总。` });
+      if (task.managerTaskId) this.queue({ id: `i-${result.id}-submit`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", resultId: result.id, text: `【下级任务提交交付】「${task.title}」（${task.id}）\n结果 ${result.id}\n${summary}\n\n验证：${verification}${result.contextBasis ? `\n需求依据：${result.contextBasis.contextId} v${result.contextBasis.version}` : ""}${result.prerequisiteResultIds?.length ? `\n前置结果：${result.prerequisiteResultIds.join("、")}` : ""}${result.contextMismatch ? `\n待处理差异：${result.contextMismatch}` : ""}\n\n可直接用 task_review_result 验收或退回（结果全文和 resultId 见上）；要核对其他下级或历史时再用 task_workflow。提交不代表已完成；直属任务全部验收后再提交你自己的汇总。` });
     });
     this.f.tasks.updateTask(task.id, { column: "review" });
     this.changed(task.id);
@@ -226,7 +227,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         } else if ((latest?.state === "accepted" && event.task.column !== "done" || latest?.state === "submitted" && event.task.column !== "review") && !event.task.archivedAt) {
           this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "交付后任务重新开始，须重新提交验证和验收。", updatedAt: new Date().toISOString() }]);
           if (event.task.managerTaskId) {
-            this.queue({ id: `i-${latest.id}-reopened`, sourceTaskId: event.task.id, targetTaskId: event.task.managerTaskId, direction: "up", text: `【下级任务重新开始】「${event.task.title}」之前的验收已失效，请等待最新交付并重新验收。` });
+            // Not when the manager's own 传话 restarted it (2026-11-17: the Free 主控 was woken only to say 已知悉).
+            if (!this.reopenedByManager(event.task, latest)) this.queue({ id: `i-${latest.id}-reopened`, sourceTaskId: event.task.id, targetTaskId: event.task.managerTaskId, direction: "up", text: `【下级任务重新开始】「${event.task.title}」之前的验收已失效，请等待最新交付并重新验收。` });
             const manager = this.store.getTask(event.task.managerTaskId);
             if (manager && !manager.archivedAt && (manager.column === "done" || manager.column === "review") && ["accepted", "submitted"].includes(this.results(manager.id).at(-1)?.state ?? "")) this.f.tasks.updateTask(manager.id, { column: "doing" });
           }
@@ -243,7 +245,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
 
   private routeDecision(decision: DecisionRequest): void {
     if (!decision.taskId || !decision.routedToTaskId) return;
-    this.queue({ id: `i-${decision.id}-${decision.routedToTaskId}`, sourceTaskId: decision.taskId, targetTaskId: decision.routedToTaskId, direction: "up", decisionId: decision.id, text: `【直属任务请求决定】${decision.question}\n${decision.options.map((o, i) => `${i + 1}. ${o}`).join("\n")}${detailBlock(decision)}\n问题 ${decision.id}\n\n用 task_workflow 查看最新待决问题，用 task_decision_answer 回答。你解决不了时，用 decision_request 向你的直属主控提出问题；只有总主控向人提出业务问题。` });
+    this.queue({ id: `i-${decision.id}-${decision.routedToTaskId}`, sourceTaskId: decision.taskId, targetTaskId: decision.routedToTaskId, direction: "up", decisionId: decision.id, text: `【直属任务请求决定】${decision.question}\n${decision.options.map((o, i) => `${i + 1}. ${o}`).join("\n")}${detailBlock(decision)}\n问题 ${decision.id}\n\n可直接用 task_decision_answer 回答（问题 id 见上）。问的是用户想要什么（需求含义、业务规则或数值），而你没有用户的明确说法时，不要替用户选：用 decision_request 往上问，只有总主控向人提问；纯技术取舍可以自己定。` });
     this.deliver();
   }
 
@@ -270,12 +272,15 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     // need the parent's attention; reporting this progress automatically creates empty polling turns.
     if (task.lead && turn.state === "completed") return;
     if (turn.state === "completed" && this.reportedDecision(task, turn)) return;
+    // A question of the child's still waits for this manager: that decision is what it acts on, and a status repeating it
+    // only woke the Free 主控 again (2026-11-17).
+    if (turn.state === "completed" && this.store.listDecisions({ state: "open" }).some((d) => d.taskId === task.id && d.routedToTaskId === task.managerTaskId)) return;
     const latest = this.results(task.id).at(-1);
     if (latest && latest.createdAt >= turn.startedAt && latest.state === "submitted") return;
     const [last] = this.store.findItems(session.id, "agent", {}, { newest: true, limit: 1 });
     const agent = last?.type === "agent" && last.createdAt >= turn.startedAt ? last : null;
     const reply = agent ? agent.markdown.slice(0, 6000) : "（暂无文字结果）";
-    this.queue({ id: `i-${turn.id}-manager`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", turnId: turn.id, text: `【下级任务本轮状态】「${task.title}」（${task.id}）：${turn.state}\n${turn.state === "failed" ? turn.error ?? "运行失败" : reply}${agent && agent.markdown.length > 6000 ? `\n【回复已截断，共 ${agent.markdown.length} 字符；用 task_read_reply 读取完整回复，itemId: ${agent.id}】` : ""}\n\n这只是本轮回复，不等于任务验收完成。先用 task_workflow 查看交付与待决问题，必要时 task_message 继续派工。` });
+    this.queue({ id: `i-${turn.id}-manager`, sourceTaskId: task.id, targetTaskId: task.managerTaskId, direction: "up", turnId: turn.id, text: `【下级任务本轮状态】「${task.title}」（${task.id}）：${turn.state}\n${turn.state === "failed" ? turn.error ?? "运行失败" : reply}${agent && agent.markdown.length > 6000 ? `\n【回复已截断，共 ${agent.markdown.length} 字符；用 task_read_reply 读取完整回复，itemId: ${agent.id}】` : ""}\n\n这只是本轮回复，不等于任务验收完成。没有要处理的就直接结束本轮；需要时用 task_message 继续派工，核对全部交付和待决问题再用 task_workflow。` });
   }
 
   /** A worker's question already has its own durable notification, even if the manager answered immediately. */
@@ -286,6 +291,11 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   private changed(taskId: Id): void { this.publish({ type: "task.upserted", task: this.requireTask(taskId) }); }
+
+  /** The manager sent this child work (not an inquiry) after the delivery: its own 传话 restarted the task. */
+  private reopenedByManager(task: Task, latest: TaskResult): boolean {
+    return this.store.listRelays().some((r) => r.fromTaskId === task.managerTaskId && r.toTaskId === task.id && r.purpose !== "inquiry" && r.createdAt >= latest.updatedAt);
+  }
   private queue(notice: Notice): void {
     const notices = this.notices();
     if (notices.some((n) => n.id === notice.id)) return;

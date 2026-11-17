@@ -28,7 +28,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       name: "mailbox_send",
       title: "留言",
       description:
-        "Leave a message for another AMO session (toSessionId), a task (toTaskId) or a topic (toTopicId); find ids with board_list, task_get, topic_get or session_tree. It does not enter their conversation by itself: the person decides when to forward it, and the recipient can read it with mailbox_read.",
+        "Leave a message for another AMO session (toSessionId), a task (toTaskId) or a topic (toTopicId); find ids with board_list, task_get, topic_get or session_tree. It does not enter their conversation by itself: the person decides when to forward it, and the recipient can read it with mailbox_read. The exception is a managed task's message to its direct manager, which goes into the manager's conversation as a notice once the manager is free. Report routine progress in your turn's final reply instead (it reaches your manager when the turn ends), and ask for decisions with decision_request.",
       inputSchema: { toSessionId: z.string().optional(), toTaskId: z.string().optional(), toTopicId: z.string().optional(), text: z.string().max(MAX_NOTE_CHARS) },
       readOnly: false,
       autoApprove: true,
@@ -44,7 +44,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
                   : null;
           if (!to) throw new HostError("bad_request", "give toSessionId, toTaskId or toTopicId");
           const m = service.collab.sendMail(c.sessionId, to, args.text);
-          return { id: m.id, to: m.to, state: m.state };
+          return { id: m.id, to: m.to, state: m.state, ...(service.collab.managerSessionFor(m) ? { note: "已作为通知送进直属主控的会话（主控空闲时送进去）。日常进展写在本轮回复里即可，要拍板用 decision_request。" } : {}) };
         }),
     },
     {
@@ -65,7 +65,7 @@ export function collabTools({ service, caller, ownTask }: ToolContext): AmoTool[
       title: "请求决策",
       description:
         // 2026-11-17: a question that carried its whole evidence went over the 2000 limit and was refused; the evidence goes in detail.
-        "Ask for a business decision (offer short options). question: the decision itself in a few sentences. detail (Markdown, optional): the evidence and background behind it (files, cells, commits, what you checked); it shows folded under the question. In a managed task it automatically goes to your direct manager, who answers with task_decision_answer; only the root lead asks the person directly. It does not block your turn. The answer returns by mail during your turn and automatically through your inbox afterward. CLI security approvals and native tool questions remain separate.",
+        "Ask for a business decision (offer short options). question: the decision itself in a few sentences. detail (Markdown, optional): the evidence and background behind it (files, cells, commits, what you checked); it shows folded under the question. In a managed task it automatically goes to your direct manager, who answers with task_decision_answer; only the root lead asks the person directly. It does not block your turn. The answer returns by mail during your turn and automatically through your inbox afterward: when nothing else is left to do, end your turn instead of sleeping or polling mailbox_read, and the answer starts your next one. CLI security approvals and native tool questions remain separate.",
       inputSchema: { question: z.string().max(MAX_QUESTION_CHARS), options: z.array(z.string().max(MAX_OPTION_CHARS)).max(MAX_DECISION_OPTIONS).optional(), detail: z.string().max(MAX_NOTE_CHARS).optional() },
       readOnly: false,
       autoApprove: true,
