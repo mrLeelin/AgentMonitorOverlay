@@ -63,6 +63,11 @@ export interface SessionRuntimeApi {
   sendMessage(sessionId: Id, text: string, images?: readonly Attachment[], options?: SendOptions): Promise<{ mode: SendMode }>;
   interrupt(sessionId: Id): Promise<void>;
   /**
+   * Codex (2026-11-17): the session shows 等待回答 only for request_user_input_async questions its finished turn left
+   * open. No turn runs, so a message starts the next one rather than waiting for a turn of another purpose to end.
+   */
+  betweenTurns?(sessionId: Id): boolean;
+  /**
    * 立即发送 (2026-11-02, Claude and Codex): a message still waiting (`delivery: "waiting"`) is read by the model now —
    * the running turn gives way, as the CLIs' Send now does. Nothing when it is not waiting any more.
    */
@@ -194,6 +199,15 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.byRuntime(s.runtime);
   }
 
+  /**
+   * In a turn, as message purposes see it. Not Codex's 等待回答 after its turn ended (betweenTurns): 2026-11-17 the Free
+   * 主控's answer to its async question was held for that "turn" of another purpose, and nothing ever ended it.
+   */
+  private inNativeTurn(session: Session): boolean {
+    // Not forSession: this runs in event listeners, where a throw would cut off the listeners after it.
+    return inTurn(session.status) && !(this.runtimes[session.runtime] ?? this.fallback)?.betweenTurns?.(session.id);
+  }
+
   /** The runtime of a profile: its own, "remote" for a remote copy's model (remoteProfileId), or the one runtime. */
   private forProfile(profileId: Id): SessionRuntimeApi | undefined {
     const profile = this.profiles.find((p) => p.id === profileId);
@@ -231,7 +245,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     options = { ...options, skillText: options.skillText ?? text };
     const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
     const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";
-    if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && inTurn(session.status) && purpose !== currentMessagePurpose(this.store, sessionId)))) {
+    if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && this.inNativeTurn(session) && purpose !== currentMessagePurpose(this.store, sessionId)))) {
       if (!this.context?.defer) throw Object.assign(new Error("当前回合用途不同，请等这一轮结束后再发送。"), { code: "conflict" });
       return this.context.defer(sessionId, input, images, { ...options, purpose });
     }
@@ -248,7 +262,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   }
   private prepareMessagePurpose(sessionId: Id, purpose: MessagePurpose): void {
     const session = this.store.getSession(sessionId);
-    queueMessagePurpose(this.store, sessionId, purpose, !!session && inTurn(session.status));
+    queueMessagePurpose(this.store, sessionId, purpose, !!session && this.inNativeTurn(session));
   }
   /** An idle session may already be recovering inside an awaited native send. Reserve it before that first await. */
   private dispatchMessage(sessionId: Id, purpose: MessagePurpose, send: () => Promise<{ mode: SendMode }>): Promise<{ mode: SendMode }> {
@@ -257,7 +271,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     if (owner.goal?.status === "active" && (purpose === "inquiry" || purpose === "notification")) return Promise.reject(Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" }));
     let finish!: () => void;
     const done = new Promise<void>((resolve) => { finish = resolve; });
-    let observed = inTurn(owner.status), returned = false, released = false;
+    let observed = this.inNativeTurn(owner), returned = false, released = false;
     const release = () => {
       if (released) return;
       released = true;
@@ -271,7 +285,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       if (event.type !== "session.upserted" || event.session.id !== sessionId) return;
       const current = this.store.getSession(sessionId);
       // A turn row precedes setStatus(running) in Codex. Releasing there would reenter the inbox while still idle.
-      if (current && (inTurn(current.status) || current.status === "error" || current.status === "interrupted" || current.status === "completed")) { observed = true; if (returned) release(); }
+      if (current && (this.inNativeTurn(current) || current.status === "error" || current.status === "interrupted" || current.status === "completed")) { observed = true; if (returned) release(); }
     };
     this.dispatching.set(sessionId, { purpose, done });
     this.on("event", listener);
@@ -326,7 +340,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       return Promise.resolve({ mode: "queue" });
     }
     if (session?.runtime !== "remote" && !options.boundaryDispatch && this.purposeBoundaries.has(sessionId)) return Promise.resolve({ mode: "queue" });
-    if (session?.runtime !== "remote" && session && inTurn(session.status) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") && (item.messagePurpose ?? "work") !== currentMessagePurpose(this.store, sessionId)) {
+    if (session?.runtime !== "remote" && session && this.inNativeTurn(session) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") && (item.messagePurpose ?? "work") !== currentMessagePurpose(this.store, sessionId)) {
       if (options.now) return this.crossPurposeBoundary(sessionId, itemId, images, options);
       if (item.delivery === "unsent" && this.context?.defer) return this.context.defer(sessionId, item.text, images, { ...options, purpose: item.messagePurpose ?? "work", deferredItemId: itemId });
       return Promise.resolve({ mode: "queue" });
@@ -346,12 +360,12 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     this.purposeBoundaries.set(sessionId, itemId);
     let cleanup: () => void = () => undefined;
     const ended = new Promise<void>((resolve, reject) => {
-      const listener = (event: HostEvent) => { if (event.type === "session.upserted" && event.session.id === sessionId && !inTurn(event.session.status)) resolve(); };
+      const listener = (event: HostEvent) => { if (event.type === "session.upserted" && event.session.id === sessionId && !this.inNativeTurn(event.session)) resolve(); };
       this.on("event", listener);
       const timer = setTimeout(() => reject(Object.assign(new Error("旧回合尚未结束，消息仍在等待；请稍后重试立即发送。"), { code: "conflict" })), STOP_GRACE_MS);
       timer.unref?.();
       cleanup = () => { clearTimeout(timer); this.off("event", listener); };
-      const current = this.store.getSession(sessionId); if (!current || !inTurn(current.status)) resolve();
+      const current = this.store.getSession(sessionId); if (!current || !this.inNativeTurn(current)) resolve();
     });
     try {
       await Promise.all([ended, this.forSession(sessionId).interrupt(sessionId)]);
@@ -453,7 +467,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       if (activates && ((pending && pending !== reservation) || this.purposeBoundaries.has(sessionId))) throw Object.assign(new Error("当前消息还在发送，请等发送完成后再开启 Goal。"), { code: "bad_request" });
       if (input.status !== "paused" && s?.taskId) this.context?.checkStart?.(s.taskId, false);
       // A read-only inquiry must finish before the person starts autonomous work in this thread.
-      if (input.status !== "paused" && s && inTurn(s.status) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
+      if (input.status !== "paused" && s && this.inNativeTurn(s) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
     };
     check();
     // Reserve the idle session before any native recovery await, just as an ordinary message does. Messages

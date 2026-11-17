@@ -371,7 +371,7 @@ export class CodexRuntime extends RuntimeBase {
         await this.syncGoalSettings(handle, s);
         this.goalWritable(sessionId);
         check();
-        queueMessagePurpose(this.store, sessionId, "work", inTurn(this.requireSession(sessionId).status));
+        queueMessagePurpose(this.store, sessionId, "work", inTurn(this.requireSession(sessionId).status) && !this.betweenTurns(sessionId));
       }
       const revision = this.goalRevisions.get(sessionId) ?? 0;
       const result = await handle.client.request("thread/goal/set", { threadId: s.runtimeRef!, ...input, origin: "user" });
@@ -517,13 +517,28 @@ export class CodexRuntime extends RuntimeBase {
     return asking;
   }
 
+  /**
+   * 等待回答 with no turn running: request_user_input_async questions a finished turn left open (events.ts,
+   * turn/completed). The router lets a message start the next turn then (2026-11-17, the Free 主控).
+   */
+  betweenTurns(sessionId: Id): boolean {
+    // A turn row still running is a turn this Host took over after a restart: activeTurnId comes only with turn/started.
+    return this.store.getSession(sessionId)?.status === "awaiting-answer" && !this.sessionState(sessionId).activeTurnId && !this.asks.waiting(sessionId) && !this.store.findItems(sessionId, "turn", { state: "running" }, { limit: 1 }).length;
+  }
+
   async interrupt(sessionId: Id): Promise<void> {
     const session = this.requireSession(sessionId);
     // Pause even between native rounds, when there is temporarily no activeTurnId.
     let pauseError: unknown;
     try { await this.pauseGoal(sessionId); } catch (err) { pauseError = err; }
     const st = this.sessionState(sessionId);
-    if (!st.activeTurnId || !session.runtimeRef) { if (pauseError) throw pauseError; return; }
+    if (!st.activeTurnId || !session.runtimeRef) {
+      // No turn to stop, but still 等待回答 for async questions (2026-11-17: the Free 主控's 停止 found nothing and it
+      // waited on): the person stops waiting.
+      if (this.betweenTurns(sessionId)) this.asks.endAsyncWait(sessionId);
+      if (pauseError) throw pauseError;
+      return;
+    }
     this.asks.cancelQuestionsOf(sessionId);
     // 停止's fallback (2026-11-04, plans/done/message-delivery.md): the app-server is shared by the channel's sessions, so it
     // is not closed; the turn is taken as stopped here, and what the turn had not read becomes 没送到.

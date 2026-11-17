@@ -187,6 +187,17 @@ export class CodexAsks {
     for (const q of this.openAsync(sessionId)) this.core.updateItem(q.id, (it) => (it.type === "question" && it.state === "pending" ? { ...it, state: "answered" } : it));
   }
 
+  /** A request_user_input, MCP form or approval of the session's turn waits for the person. */
+  waiting(sessionId: Id): boolean {
+    return [...this.questions.values()].some((q) => q.sessionId === sessionId) || [...this.approvals.values()].some((a) => a.sessionId === sessionId);
+  }
+
+  /** 停止 between turns (2026-11-17): the person stops waiting; open async questions close unanswered. */
+  endAsyncWait(sessionId: Id): void {
+    for (const q of this.openAsync(sessionId)) this.core.updateItem(q.id, (it) => (it.type === "question" && it.state === "pending" ? { ...it, state: "dismissed" } : it));
+    this.core.setStatus(sessionId, "idle");
+  }
+
   /**
    * The connection to a server dropped (crash or restart). Answers can no longer reach pending approvals, so they are
    * closed here; if the turn is still waiting, the server replays the request after resubscribing.
