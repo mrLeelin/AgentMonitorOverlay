@@ -2,9 +2,9 @@ import { EventEmitter } from "node:events";
 import type { ApprovalDecision, Attachment, ChatSettings, HostEvent, Id, ModelProfile, ProfileChoices, QuestionReply, Session, SessionItem, SessionOptions, SessionRuntime, SessionStatus, SlashCommandList, SlashCommandResult, Workspace, AccountUsage, McpApply, OutsideSessionList, OutsideSessionPreview } from "@amo-studio/protocol";
 import { inTurn, parseRemoteProfileId, type MessagePurpose } from "@amo-studio/protocol";
 import { newId, type HostEventInput, type SessionItemInput, type Store } from "../store/store.js";
-import { withDelivery } from "./items.js";
+import { unreadDelivery, withDelivery } from "./items.js";
 import { profileGone } from "./profiles.js";
-import { consumeMessagePurpose, currentMessagePurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
+import { consumeMessagePurpose, currentMessagePurpose, joinsPurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
 import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 
 // What HostService needs from a runtime, and a router that sends each call to the runtime a session (or profile)
@@ -67,6 +67,11 @@ export interface SessionRuntimeApi {
    * open. No turn runs, so a message starts the next one rather than waiting for a turn of another purpose to end.
    */
   betweenTurns?(sessionId: Id): boolean;
+  /**
+   * Codex (2026-11-17): a message can join the turn running now (turn/steer). The inbox lets the direct manager's work
+   * 传话 and answers in then, instead of holding them until the turn ends.
+   */
+  steerable?(sessionId: Id): boolean;
   /**
    * 立即发送 (2026-11-02, Claude and Codex): a message still waiting (`delivery: "waiting"`) is read by the model now —
    * the running turn gives way, as the CLIs' Send now does. Nothing when it is not waiting any more.
@@ -208,6 +213,12 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return inTurn(session.status) && !(this.runtimes[session.runtime] ?? this.fallback)?.betweenTurns?.(session.id);
   }
 
+  /** A message can join the session's running turn now (Codex's turn/steer); false where the runtime cannot. */
+  steerable(sessionId: Id): boolean {
+    const s = this.store.getSession(sessionId);
+    return !!s && s.runtime !== "remote" && !!(this.runtimes[s.runtime] ?? this.fallback)?.steerable?.(sessionId);
+  }
+
   /** The runtime of a profile: its own, "remote" for a remote copy's model (remoteProfileId), or the one runtime. */
   private forProfile(profileId: Id): SessionRuntimeApi | undefined {
     const profile = this.profiles.find((p) => p.id === profileId);
@@ -245,7 +256,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     options = { ...options, skillText: options.skillText ?? text };
     const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
     const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";
-    if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && this.inNativeTurn(session) && purpose !== currentMessagePurpose(this.store, sessionId)))) {
+    if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && this.inNativeTurn(session) && !joinsPurpose(purpose, currentMessagePurpose(this.store, sessionId))))) {
       if (!this.context?.defer) throw Object.assign(new Error("当前回合用途不同，请等这一轮结束后再发送。"), { code: "conflict" });
       return this.context.defer(sessionId, input, images, { ...options, purpose });
     }
@@ -340,7 +351,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       return Promise.resolve({ mode: "queue" });
     }
     if (session?.runtime !== "remote" && !options.boundaryDispatch && this.purposeBoundaries.has(sessionId)) return Promise.resolve({ mode: "queue" });
-    if (session?.runtime !== "remote" && session && this.inNativeTurn(session) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") && (item.messagePurpose ?? "work") !== currentMessagePurpose(this.store, sessionId)) {
+    if (session?.runtime !== "remote" && session && this.inNativeTurn(session) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") && !joinsPurpose(item.messagePurpose ?? "work", currentMessagePurpose(this.store, sessionId))) {
       if (options.now) return this.crossPurposeBoundary(sessionId, itemId, images, options);
       if (item.delivery === "unsent" && this.context?.defer) return this.context.defer(sessionId, item.text, images, { ...options, purpose: item.messagePurpose ?? "work", deferredItemId: itemId });
       return Promise.resolve({ mode: "queue" });
@@ -613,7 +624,7 @@ export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
       else if (item.type === "tool" && item.status === "running") this.updateItem(item.id, (it) => (it.type === "tool" ? { ...it, status: "failed" } : it));
       else if (item.type === "background" && item.state === "running") this.updateItem(item.id, (it) => (it.type === "background" ? { ...it, state: "stopped" } : it));
       else if (item.type === "compaction" && item.state === "running") this.updateItem(item.id, (it) => (it.type === "compaction" ? { ...it, state: "failed" } : it));
-      else if (item.type === "user" && item.delivery === "waiting") this.updateItem(item.id, (it) => (it.type === "user" ? withDelivery(it, "unsent") : it));
+      else if (item.type === "user" && item.delivery === "waiting") this.updateItem(item.id, (it) => (it.type === "user" ? withDelivery(it, unreadDelivery(it)) : it));
       else if (opts.approvals && item.type === "approval" && item.state === "pending") this.updateItem(item.id, (it) => (it.type === "approval" ? { ...it, state: "resolved-elsewhere" } : it));
     }
     return cut;

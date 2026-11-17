@@ -56,7 +56,7 @@ export class CollabFeature extends Feature<"sessions"> {
     // 2026-11-17 (the Free 主控): mail never wakes its recipient, so a child's 13 reports to its 主控 went unread while it
     // waited for replies. To the direct manager it goes in as a notice (a notification: no reopening the manager's work).
     const manager = this.managerSessionFor(mail);
-    if (manager) void this.forwardMail(mail.id, { sessionId: manager.id }, "notification").catch((err: unknown) => this.log(`${mail.id}: the mail could not go into the manager's session: ${err instanceof Error ? err.message : String(err)}`));
+    if (manager) void this.forwardMail(mail.id, { sessionId: manager.id }, { purpose: "notification" }).catch((err: unknown) => this.log(`${mail.id}: the mail could not go into the manager's session: ${err instanceof Error ? err.message : String(err)}`));
     return mail;
   }
 
@@ -83,7 +83,7 @@ export class CollabFeature extends Feature<"sessions"> {
    * through the session's inbox (2026-11-04): an agent's words, so once the session's turn is over (立即发送 on the row
    * sends it at once).
    */
-  async forwardMail(id: Id, input: { sessionId?: unknown } = {}, purpose: MessagePurpose = "work"): Promise<MailMessage> {
+  async forwardMail(id: Id, input: { sessionId?: unknown } = {}, options: { purpose?: MessagePurpose; answersDecisionId?: Id } = {}): Promise<MailMessage> {
     const mail = this.requireMail(id);
     if (mail.state === "forwarded") throw new HostError("conflict", "this message was already forwarded");
     const target = mail.to.kind === "session" ? mail.to.sessionId : typeof input.sessionId === "string" ? input.sessionId : null;
@@ -91,7 +91,7 @@ export class CollabFeature extends Feature<"sessions"> {
     const session = this.requireSession(target);
     if (mail.to.kind === "task" && session.taskId !== mail.to.taskId) throw new HostError("bad_request", "that session is not part of the task the message was left for");
     if (mail.to.kind === "topic" && session.topicId !== mail.to.topicId) throw new HostError("bad_request", "that session is not one of the topic's own sessions");
-    await this.f.sessions.inbox.put(target, this.mailAsMessage(mail), undefined, undefined, { purpose });
+    await this.f.sessions.inbox.put(target, this.mailAsMessage(mail), undefined, undefined, { purpose: options.purpose ?? "work", ...(options.answersDecisionId ? { answersDecisionId: options.answersDecisionId } : {}) });
     return this.setMailState(mail, "forwarded");
   }
 
@@ -147,26 +147,31 @@ export class CollabFeature extends Feature<"sessions"> {
     for (const d of this.store.listDecisions({ state: "answered" })) if (d.mailId && this.store.getMail(d.mailId)?.state === "unread") this.deliverAnswer(d);
   }
 
-  /** Sessions with an answered decision still to hand on: session id -> mail ids. */
-  private readonly answersFor = new Map<Id, Set<Id>>();
+  /** Sessions with an answered decision still to hand on: session id -> mail id -> decision id. */
+  private readonly answersFor = new Map<Id, Map<Id, Id>>();
 
   private deliverAnswer(d: DecisionRequest): void {
     const s = this.store.getSession(d.sessionId);
     // A subagent cannot take a message of its own, an archived session none: the answer stays mail, as before.
     if (!d.mailId || !s || s.archivedAt || s.kind === "sub") return;
-    const ids = this.answersFor.get(s.id) ?? new Set<Id>();
-    ids.add(d.mailId);
-    this.answersFor.set(s.id, ids);
+    // The direct manager's answer goes in now if the turn can take it (2026-11-17, plans/done/lead-instructions-mid-turn.md:
+    // the Free child found one by mailbox_read 7 minutes late). Others stay mail until the turn is over.
+    if (inTurn(s.status) && this.f.sessions.inbox.joinsWithAnswer(s, d)) return this.forwardAnswer(s, d.mailId, d.id);
+    const answers = this.answersFor.get(s.id) ?? new Map<Id, Id>();
+    answers.set(d.mailId, d.id);
+    this.answersFor.set(s.id, answers);
     if (!inTurn(s.status)) this.forwardAnswers(s);
   }
 
   private forwardAnswers(s: Session): void {
-    const ids = this.answersFor.get(s.id);
+    const answers = this.answersFor.get(s.id);
     this.answersFor.delete(s.id);
-    for (const id of ids ?? []) {
-      if (this.store.getMail(id)?.state !== "unread") continue; // read with mailbox_read during the turn
-      void this.forwardMail(id).catch((err: unknown) => this.log(`${s.id}: the answer to a decision could not go into the session: ${err instanceof Error ? err.message : String(err)}`));
-    }
+    for (const [mailId, decisionId] of answers ?? []) this.forwardAnswer(s, mailId, decisionId);
+  }
+
+  private forwardAnswer(s: Session, mailId: Id, decisionId: Id): void {
+    if (this.store.getMail(mailId)?.state !== "unread") return; // read with mailbox_read during the turn
+    void this.forwardMail(mailId, {}, { answersDecisionId: decisionId }).catch((err: unknown) => this.log(`${s.id}: the answer to a decision could not go into the session: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   private mailAsMessage(mail: MailMessage): string {

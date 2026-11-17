@@ -92,7 +92,7 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
       relay.text,
       "",
       relay.purpose === "inquiry" ? "（这是主控通过 AMO Studio 发来的只读询问：仅回答问题，不继续实施、不重新提交交付，也不撤销已有验收。）"
-        : relay.fromTaskId ? "（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；要主控拍板的事用 decision_request。日常进展写在本轮回复里，本轮结束会自动报给主控；等答复时结束本轮，答复会自动送回来，不要 sleep 或反复读信箱。）"
+        : relay.fromTaskId ? "（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；要主控拍板的事用 decision_request。主控之后的指示和答复可能直接插进你正在做的这一轮，读到就按最新的做。日常进展写在本轮回复里，本轮结束会自动报给主控；等答复时结束本轮，答复会自动送回来，不要 sleep 或反复读信箱。）"
         : `（这是主控通过 AMO Studio 传来的。完成工作后用 task_submit_result 提交成果，由直属主控验收；日常补充用 mailbox_send 给会话 ${relay.fromSessionId}。）`,
     ].join("\n");
     try {
@@ -111,7 +111,9 @@ export class RelaysFeature extends Feature<"collab" | "sessions" | "tasks"> {
         return expired;
       }
       const delivered = this.save({ ...this.requireRelay(id), state: "delivered", decidedAt: new Date().toISOString(), sessionId });
-      this.tellLead(delivered, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : `传话已送到「${target.title || "未命名任务"}」。`);
+      // Joined the running turn (2026-11-17): in, but not read until the model's next step.
+      const steered = row?.type === "user" && row.delivery === "waiting";
+      this.tellLead(delivered, held ? `传话已放进「${target.title || "未命名任务"}」的会话，它这一轮做完就送进去。` : steered ? `传话已插进「${target.title || "未命名任务"}」正在做的这一轮，它做完手上这一步就会读到。` : `传话已送到「${target.title || "未命名任务"}」。`);
       return delivered;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

@@ -112,6 +112,23 @@ export function contentText(content: unknown): string {
 
 type UserItem = Extract<SessionItem, { type: "user" }>;
 
+/**
+ * The person's own message (2026-11-17): one Studio sent for them, or one of theirs the inbox holds (`fromPerson`) — not
+ * one the inbox brought from an agent or from Studio (a 传话, an answer, a notice…), which goes by the inbox's rules.
+ */
+export function personsMessage(item: SessionItem | undefined): boolean {
+  return item?.type === "user" && (item.raw?.method !== "user/inbox" || item.fromPerson === true);
+}
+
+/**
+ * Where a message taken in but never read goes when its turn or process is gone (2026-11-17): the person's becomes
+ * 没送到 (or goes on as the next turn, Codex), an inbox one goes back to the inbox — held, sent again by its rules (not
+ * while the person has stopped the session), and after a restart too.
+ */
+export function unreadDelivery(item: UserItem): "unsent" | "held" {
+  return personsMessage(item) ? "unsent" : "held";
+}
+
 /** A person's message with its delivery set, or taken off (it reached the model). 立即发送, 2026-11-02. */
 export function withDelivery(item: UserItem, delivery: UserDelivery | undefined): UserItem {
   if (item.delivery === "expired") return item;

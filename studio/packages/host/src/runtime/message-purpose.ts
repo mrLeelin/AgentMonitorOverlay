@@ -10,6 +10,11 @@ export function currentMessagePurpose(store: Store, sessionId: Id): MessagePurpo
   return state(store, sessionId).active ?? "work";
 }
 export const keepsAcceptance = (purpose: MessagePurpose): boolean => purpose === "inquiry" || purpose === "notification";
+/**
+ * Whether a message may join a running turn of `active` purpose. Work and reopen both write and restart the task, so
+ * either joins the other (2026-11-17: the Free 主控's work 传话 waited out a 23-minute reopen turn); others must match.
+ */
+export const joinsPurpose = (purpose: MessagePurpose, active: MessagePurpose): boolean => purpose === active || (!keepsAcceptance(purpose) && !keepsAcceptance(active));
 export function mergeMessagePurposes(purposes: readonly MessagePurpose[]): MessagePurpose {
   return purposes.includes("reopen") ? "reopen" : purposes.includes("work") ? "work" : purposes.includes("inquiry") ? "inquiry" : "notification";
 }

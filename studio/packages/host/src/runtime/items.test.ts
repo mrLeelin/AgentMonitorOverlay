@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classifyCommand, countDiff, unwrapShell, fileDiff, shortPath, tail, textDiff } from "./items.js";
+import type { SessionItem } from "@amo-studio/protocol";
+import { classifyCommand, countDiff, unwrapShell, fileDiff, personsMessage, shortPath, tail, textDiff, unreadDelivery } from "./items.js";
 
 describe("classifyCommand", () => {
   it("recognises simple reads, searches and listings", () => {
@@ -55,5 +56,20 @@ describe("paths and output", () => {
   it("keeps the tail of long output", () => {
     expect(tail("abcdef", 3)).toBe("…\ndef");
     expect(tail("abc", 3)).toBe("abc");
+  });
+});
+
+describe("whose message", () => {
+  const user = (extra: Record<string, unknown>) => ({ id: "i", sessionId: "s", seq: 1, createdAt: "", type: "user", text: "t", ...extra }) as Extract<SessionItem, { type: "user" }>;
+  // 2026-11-17: what Codex took in and never read goes back to the inbox when an agent or Studio sent it, and is the
+  // person's 没送到 (or their next turn) when they did.
+  it("tells the person's messages from what the inbox brought", () => {
+    expect(personsMessage(user({ raw: { runtime: "codex", method: "user/steer" } }))).toBe(true);
+    expect(personsMessage(user({}))).toBe(true);
+    expect(personsMessage(user({ raw: { runtime: "codex", method: "user/inbox" }, relayFromSessionId: "lead" }))).toBe(false);
+    expect(personsMessage(user({ raw: { runtime: "codex", method: "user/inbox" }, fromPerson: true }))).toBe(true);
+    expect(personsMessage(undefined)).toBe(false);
+    expect(unreadDelivery(user({ raw: { runtime: "codex", method: "user/steer" } }))).toBe("unsent");
+    expect(unreadDelivery(user({ raw: { runtime: "codex", method: "user/inbox" } }))).toBe("held");
   });
 });

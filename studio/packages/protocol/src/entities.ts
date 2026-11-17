@@ -399,7 +399,7 @@ export type SessionItem =
    * ran and not read by the model yet (Claude reads it after the next tool call or at the turn's end, Codex at its next
    * step); `unsent` — its process went before it was read (it can be sent again). Absent: it reached the model.
    */
-  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; deliveryReason?: string; deliveryEndedAt?: Timestamp; replacesItemId?: Id; messagePurpose?: MessagePurpose; rebaseOnContextUpgrade?: boolean; relayFromSessionId?: Id })
+  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; deliveryReason?: string; deliveryEndedAt?: Timestamp; replacesItemId?: Id; messagePurpose?: MessagePurpose; rebaseOnContextUpgrade?: boolean; relayFromSessionId?: Id; /** The direct manager's answer to this session's decision (2026-11-17: it may join a running turn). */ answersDecisionId?: Id; /** The person's own message the inbox holds (2026-11-17): kept for a turn of another purpose to end. */ fromPerson?: boolean })
   | (ItemBase & { type: "agent"; markdown: string; streaming: boolean })
   /** The model's thinking before or between steps. */
   | (ItemBase & { type: "reasoning"; text: string; streaming: boolean; durationMs?: number })

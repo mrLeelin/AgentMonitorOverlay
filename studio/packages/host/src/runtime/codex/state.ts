@@ -21,6 +21,8 @@ export interface SessionState {
    * names, while turn/started names another one with it as `rootTurnId` (Codex 0.162; spikes/s12-e-codex-cli.mjs).
    */
   reviewTurns: Set<string>;
+  /** thread/compact/start ran and its turn is not over: Codex takes no turn/steer in it (activeTurnNotSteerable, 2026-11-17). */
+  compacting: boolean;
   /** notice key -> its item, for the turn in progress (repeats update the row) */
   notices: Map<string, Id>;
   /** The turn whose item shows a retry (cleared when the model answers). */
@@ -40,7 +42,7 @@ export interface SessionState {
 }
 
 export function newSessionState(): SessionState {
-  return { activeTurnId: null, items: new Map(), text: new Map(), turns: new Map(), reasoning: new Map(), reviewTurns: new Set(), notices: new Map(), retrying: null, callFirstAt: null, sent: new Map() };
+  return { activeTurnId: null, items: new Map(), text: new Map(), turns: new Map(), reasoning: new Map(), reviewTurns: new Set(), compacting: false, notices: new Map(), retrying: null, callFirstAt: null, sent: new Map() };
 }
 
 export interface PendingApproval {

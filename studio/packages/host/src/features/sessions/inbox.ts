@@ -1,5 +1,6 @@
-import { inTurn, managementRoot, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
+import { inTurn, managementRoot, type DecisionRequest, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
 import { newId, type SessionItemInput } from "../../store/store.js";
+import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
 import { HostError, isRemoteCopy } from "../../core/shared.js";
@@ -44,6 +45,11 @@ export class SessionInbox extends Feature<"sharedContext"> {
    */
   private paused: Set<Id> | null = null;
   private readonly contextQueueing = new Set<Id>();
+  /**
+   * Sessions whose running turn refused a message joining it (2026-11-17: a review or a compaction takes none): the rest
+   * waits for that turn to end. Cleared once the session is free.
+   */
+  private readonly refused = new Set<Id>();
 
   private pauses(): Set<Id> {
     if (!this.paused) {
@@ -85,7 +91,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
    * A message from an agent or from Studio into `sessionId`: shown at once, sent now when the session is free, else
    * when it is. `delivered`: it went in now; `waiting`: how many of the session's are still held.
    */
-  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[] } = {}): Promise<{ delivered: boolean; waiting: number }> {
+  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[]; answersDecisionId?: Id; fromPerson?: boolean } = {}): Promise<{ delivered: boolean; waiting: number }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt || s.writer === "archived") throw new HostError("read_only", "这个会话已归档，不能再往里发消息");
     if (s.kind === "sub") throw new HostError("read_only", "子 agent 不能单独接收消息");
@@ -126,12 +132,28 @@ export class SessionInbox extends Feature<"sharedContext"> {
     const resumed = new Set(this.store.listSessions().map((s) => s.id));
     this.host.on("event", (e) => {
       if (e.type === "session.upserted" && this.ids().has(e.session.id)) void this.flush(e.session.id).catch(() => undefined);
+      if (e.type === "item.updated" && e.item.type === "user" && e.item.delivery === "held") this.heldAgain(e.item.sessionId);
       if (e.type === "session.upserted" && resumed.has(e.session.id)) this.queueContext(e.session);
       if (e.type === "task.upserted") for (const session of this.store.listSessions()) { this.reconcile(session.id); if (session.taskId === e.task.id) this.queueContext(session); }
     });
-    for (const session of this.store.listSessions()) this.reconcile(session.id);
+    for (const session of this.store.listSessions()) {
+      this.reconcile(session.id);
+      // Held again by a runtime starting up (what the last Host's turns took in and never read), before this listened.
+      if (!isRemoteCopy(session) && this.held(session.id).length) this.remember(session.id);
+    }
     for (const id of this.ids()) void this.flush(id).catch(() => undefined);
     for (const session of this.store.listSessions()) this.queueContext(session);
+  }
+
+  /**
+   * A message back in the inbox (2026-11-17): a runtime took it in and it was never read — 停止, a restart, a dropped
+   * app-server — so it goes again by the inbox's rules, not started again by the runtime nor left 没送到.
+   */
+  private heldAgain(sessionId: Id): void {
+    const s = this.store.getSession(sessionId);
+    if (!s || isRemoteCopy(s)) return;
+    this.remember(sessionId);
+    void this.flush(sessionId).catch(() => undefined);
   }
 
   private queueContext(session: Session): void {
@@ -182,16 +204,24 @@ export class SessionInbox extends Feature<"sharedContext"> {
       return this.forget(sessionId);
     }
     if (this.pauses().has(sessionId)) return;
-    if (!free(s) && !(withTurn && s.status === "running" && writable(s))) return;
+    // Busy: only the direct manager's work 传话 and answers go in, into a running work turn the runtime can steer
+    // (2026-11-17, plans/done/lead-instructions-mid-turn.md). The rest still waits for the session to be free.
+    const joining = !free(s) && !(withTurn && s.status === "running" && writable(s));
+    if (!joining) this.refused.delete(sessionId);
+    if (joining && !this.joinsRunningTurn(s)) return;
     const rt = this.runtime;
+    const goes = (row: SessionItem | undefined): row is Extract<SessionItem, { type: "user" }> => row?.type === "user" && row.delivery === "held" && (!joining || this.fromDirectManager(s, row));
     // The first starts a turn; the others follow it at once (queued at the CLI, steered in, or DSH's next turn) — once
     // the turn is seen to run: Codex tells it (turn/started) only after its turn/start, and a second turn/start before
     // that would not be a steer.
     let before: number | null = null;
     for (const it of held) {
+      if (!goes(this.store.getItem(it.id))) continue; // without waiting for the last one's turn (2026-11-17)
       if (before !== null) await this.turnSeen(sessionId, before);
       const current = this.store.getItem(it.id);
-      if (current?.type !== "user" || current.delivery !== "held") continue;
+      if (!goes(current)) continue;
+      // Joining: rechecked for each, as the person may have stopped the session, or its turn ended, meanwhile.
+      if (joining && !this.joinsRunningTurn(this.store.getSession(sessionId) ?? s)) break;
       // A native Goal can start its next work turn by itself. Keep read-only questions/notifications held until
       // it pauses or ends, instead of changing that autonomous work's purpose or marking the message as failed.
       if (this.store.getSession(sessionId)?.goal?.status === "active" && (current.messagePurpose === "inquiry" || current.messagePurpose === "notification")) continue;
@@ -204,11 +234,50 @@ export class SessionInbox extends Feature<"sharedContext"> {
         before = null; // No turn was started by a failed dispatch; do not delay the next independent message.
         const why = err instanceof Error ? err.message : String(err);
         if (this.store.getItem(it.id)?.type === "user" && (this.store.getItem(it.id) as Extract<SessionItem, { type: "user" }>).delivery === "expired") continue;
+        // Joining only brings a message in sooner (2026-11-17): refused by that turn, it waits for the turn to end as
+        // before, instead of becoming 没送到 — and nothing more tries that turn.
+        if (joining) { this.refused.add(sessionId); this.hold(it.id); continue; }
         this.mark(it.id, "unsent", why);
         this.publish({ type: "item.appended", item: this.store.appendItem(this.row(s, { type: "notice", level: "warning", message: `这条消息没能送进会话：${why}。可以点它下面的「重新发送」再试。` }, "inbox/failed")) });
       }
     }
     if (!this.held(sessionId).length) this.forget(sessionId);
+  }
+
+  /**
+   * A running turn the direct manager's work 传话 and answers may join (2026-11-17, plans/done/lead-instructions-mid-turn.md):
+   * the runtime can steer into it (Codex), the person did not stop the session, no Goal runs on, the turn may write
+   * (not an inquiry or a notification), and it did not refuse one already.
+   */
+  joinsRunningTurn(s: Session): boolean {
+    return s.status === "running" && writable(s) && !this.pauses().has(s.id) && !this.refused.has(s.id) && s.goal?.status !== "active" && !keepsAcceptance(currentMessagePurpose(this.store, s.id)) && this.runtime.steerable?.(s.id) === true;
+  }
+
+  /** The direct manager's answer to the session's decision, which can join its running turn now (collab, 2026-11-17). */
+  joinsWithAnswer(s: Session, decision: DecisionRequest): boolean {
+    return this.managerAnswer(s, decision) && this.joinsRunningTurn(s);
+  }
+
+  /** The direct manager's work 传话 to this session, or its answer to this session's decision. */
+  private fromDirectManager(s: Session, item: Extract<SessionItem, { type: "user" }>): boolean {
+    const managerTaskId = s.taskId ? this.store.getTask(s.taskId)?.managerTaskId : undefined;
+    if (!managerTaskId || keepsAcceptance(item.messagePurpose ?? "work")) return false;
+    if (item.relayFromSessionId) return this.store.getSession(item.relayFromSessionId)?.taskId === managerTaskId;
+    const decision = item.answersDecisionId ? this.store.getDecision(item.answersDecisionId) : undefined;
+    return !!decision && this.managerAnswer(s, decision);
+  }
+
+  private managerAnswer(s: Session, decision: DecisionRequest): boolean {
+    const managerTaskId = s.taskId ? this.store.getTask(s.taskId)?.managerTaskId : undefined;
+    return !!managerTaskId && decision.state === "answered" && decision.routedToTaskId === managerTaskId;
+  }
+
+  /** Back to held: a message a running turn refused, to go in once the turn is over. */
+  private hold(itemId: Id): void {
+    const it = this.store.getItem(itemId);
+    if (it?.type !== "user" || (it.delivery !== "unsent" && it.delivery !== "waiting")) return;
+    const { deliveryReason: _why, ...rest } = it;
+    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...rest, delivery: "held" }) });
   }
 
   /**
@@ -279,8 +348,8 @@ export class SessionInbox extends Feature<"sharedContext"> {
     }
   }
 
-  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[] } = {}): SessionItem {
-    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", ...(options.images?.length ? { images: options.images } : {}), ...(options.replacesItemId ? { replacesItemId: options.replacesItemId } : {}), ...(options.rebaseOnContextUpgrade ? { rebaseOnContextUpgrade: true } : {}), ...(relayFromSessionId ? { relayFromSessionId } : {}) }, "user/inbox");
+  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[]; answersDecisionId?: Id; fromPerson?: boolean } = {}): SessionItem {
+    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", ...(options.images?.length ? { images: options.images } : {}), ...(options.replacesItemId ? { replacesItemId: options.replacesItemId } : {}), ...(options.rebaseOnContextUpgrade ? { rebaseOnContextUpgrade: true } : {}), ...(relayFromSessionId ? { relayFromSessionId } : {}), ...(options.answersDecisionId ? { answersDecisionId: options.answersDecisionId } : {}), ...(options.fromPerson ? { fromPerson: true } : {}) }, "user/inbox");
     const item = this.store.appendItem({ ...row, ...(messageId ? { id: messageId } : {}) });
     this.publish({ type: "item.appended", item });
     return item;

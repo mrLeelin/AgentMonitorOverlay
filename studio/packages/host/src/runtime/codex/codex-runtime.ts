@@ -7,7 +7,7 @@ import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
 import { RuntimeBase, STOP_GRACE_MS, type RuntimeEvents, type SendOptions } from "../runtime.js";
-import { withDelivery } from "../items.js";
+import { personsMessage, unreadDelivery, withDelivery } from "../items.js";
 import { queueMessagePurpose } from "../message-purpose.js";
 import type { CodexServerHandle } from "./server-manager.js";
 import { codexUsage, reviewTarget, STANDARD_TIER, toModelOption, type CodexModel, type CodexSkill, type GetAccountRateLimitsResponse } from "./account.js";
@@ -278,6 +278,8 @@ export class CodexRuntime extends RuntimeBase {
    * A turn ended with steered messages it never read (stopped, given way to 立即发送, or ended as they came): Codex has
    * dropped them, so they go on as the next turn, as the TUI does — the first starts it, the rest are steered into it.
    * 2026-11-02, the user: a message waiting when 停止 is pressed is sent, not lost (as the Claude Code CLI does too).
+   * The person's messages only (2026-11-17): one the inbox brought (a 传话, an answer…) goes back to it, held, and is
+   * sent by its rules — after 停止, with the person's next message; before, it started the stopped session again.
    */
   private async afterTurn(sessionId: Id): Promise<void> {
     return this.withGoalMutation(sessionId, () => this.afterGoalTurn(sessionId));
@@ -285,9 +287,15 @@ export class CodexRuntime extends RuntimeBase {
 
   private async afterGoalTurn(sessionId: Id): Promise<void> {
     const st = this.sessionState(sessionId);
-    const left = [...st.sent].filter(([, m]) => m.kind === "steer");
+    const steered = [...st.sent].filter(([, m]) => m.kind === "steer");
+    if (!steered.length) return;
+    for (const [clientId] of steered) st.sent.delete(clientId);
+    const left = steered.filter(([, m]) => {
+      if (personsMessage(this.store.getItem(m.itemId))) return true;
+      this.updateItem(m.itemId, (it) => (it.type === "user" ? withDelivery(it, "held") : it));
+      return false;
+    });
     if (!left.length) return;
-    for (const [clientId] of left) st.sent.delete(clientId);
     const lost = (from: number) => {
       for (const [, m] of left.slice(from)) this.updateItem(m.itemId, (it) => (it.type === "user" ? withDelivery(it, "unsent") : it));
     };
@@ -526,6 +534,15 @@ export class CodexRuntime extends RuntimeBase {
     return this.store.getSession(sessionId)?.status === "awaiting-answer" && !this.sessionState(sessionId).activeTurnId && !this.asks.waiting(sessionId) && !this.store.findItems(sessionId, "turn", { state: "running" }, { limit: 1 }).length;
   }
 
+  /**
+   * A message can join the running turn: it is one this Host follows (turn/started gave its id), so turn/steer has it —
+   * not a review or a compaction, which Codex keeps to themselves (activeTurnNotSteerable, 2026-11-17).
+   */
+  steerable(sessionId: Id): boolean {
+    const st = this.sessionState(sessionId);
+    return !!st.activeTurnId && !st.reviewTurns.has(st.activeTurnId) && !st.compacting;
+  }
+
   async interrupt(sessionId: Id): Promise<void> {
     const session = this.requireSession(sessionId);
     // Pause even between native rounds, when there is temporarily no activeTurnId.
@@ -691,7 +708,9 @@ export class CodexRuntime extends RuntimeBase {
       // The person's command opens the turn in the conversation (Codex writes no message of its own for it).
       this.appendItem(sessionId, { type: "user", text: `/${name}${args ? ` ${args}` : ""}` }, { method: "command" });
       if (name === "compact") {
-        await handle.client.request("thread/compact/start", { threadId: session.runtimeRef! });
+        st.compacting = true;
+        try { await handle.client.request("thread/compact/start", { threadId: session.runtimeRef! }); }
+        catch (err) { st.compacting = false; throw err; }
       } else {
         const r = (await handle.client.request("review/start", { threadId: session.runtimeRef!, target: reviewTarget(args), delivery: "inline" })) as unknown as { turn: { id: string } };
         st.reviewTurns.add(r.turn.id);
@@ -727,8 +746,10 @@ export class CodexRuntime extends RuntimeBase {
   private settleTurn(sessionId: Id, notify: boolean): void {
     // Approvals are not settled here: the app-server replays the ones still wanted after resubscribing (asks.ts).
     const cut = this.settleLeftovers(sessionId);
-    // Steered and never read (now unsent): the turn (and Codex's copy of it) is gone.
-    this.state.get(sessionId)?.sent.clear();
+    // Steered and never read (now unsent, or held again for the inbox's): the turn (and Codex's copy of it) is gone.
+    const st = this.state.get(sessionId);
+    st?.sent.clear();
+    if (st) st.compacting = false;
     if (cut && notify) this.appendItem(sessionId, { type: "notice", level: "warning", message: "这一轮回复被中断了（Host 或 Codex 重启）。发一条消息即可接着对话。" });
   }
 
@@ -764,7 +785,7 @@ export class CodexRuntime extends RuntimeBase {
       // Steered messages the app-server had not read went with it (2026-11-02).
       for (const [id, st] of this.state) {
         if (!st.sent.size || this.store.getSession(id)?.profileId !== handle.profileId) continue;
-        for (const m of st.sent.values()) this.updateItem(m.itemId, (it) => (it.type === "user" && it.delivery === "waiting" ? withDelivery(it, "unsent") : it));
+        for (const m of st.sent.values()) this.updateItem(m.itemId, (it) => (it.type === "user" && it.delivery === "waiting" ? withDelivery(it, unreadDelivery(it)) : it));
         st.sent.clear();
       }
     });

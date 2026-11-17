@@ -152,7 +152,8 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       this.inbox.checkSource(row);
       if (row.delivery === "unsent") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "held" }) });
     }
-    await this.inbox.put(sessionId, text, undefined, itemId, { purpose: options.purpose ?? "work", images: images.map((image) => ({ id: image.id, path: image.path })) });
+    // A new one comes through sendMessage, the person's: marked so (2026-11-17), it counts as theirs, not an agent's.
+    await this.inbox.put(sessionId, text, undefined, itemId, { purpose: options.purpose ?? "work", images: images.map((image) => ({ id: image.id, path: image.path })), ...(options.deferredItemId ? {} : { fromPerson: true }) });
     if (options.now) {
       if (!this.runtime.resend) throw new HostError("bad_request", "此运行时不支持立即发送。");
       await this.wrap(() => this.runtime.resend!(sessionId, itemId, images, { now: true }));

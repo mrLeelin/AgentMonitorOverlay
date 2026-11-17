@@ -121,6 +121,7 @@ export class CodexEvents {
         if (st.activeTurnId === turnId || st.activeTurnId === n.params.turn.id) st.activeTurnId = null;
         this.setRetry(s.id, turnId, null);
         st.reviewTurns.delete(turnId);
+        st.compacting = false;
         const turn = { ...(n.params.turn as { id: string; status: string; error?: { message: string } | null; startedAt?: number | null; completedAt?: number | null }), id: turnId };
         this.asks.cancelQuestionsOf(s.id);
         this.closeTurn(s.id, turn);
