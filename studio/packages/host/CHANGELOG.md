@@ -2,6 +2,8 @@
 
 ## 下一版
 
+- 新增 `GET /api/sessions/:id/context-usage`：Claude 会话从运行中的进程读上下文分项和说明文件（getContextUsage，summary 级别，不额外计数），进程退出后返回上一次的结果；其他模型返回原因。新增 `POST /api/sessions/:id/mcp/:name/reconnect`：Claude 会话单独重连一个 MCP，不写配置文件，重连后刷新状态。
+
 - 主控新增 `task_workflow` 精简全树核对（`view: summary`），显示最新交付有效性、实际前置、当前等待和会话记录创建时间；新增 `task_read_result` 按结果分页读完整证据，保留原有 full/pending 调用。角色说明与依赖启动提示明确集中取证、引用上游结果和按需复核，减少重复全量读取及逐层复制。
 
 - 交付汇总兼容通知正文冻结：后续交付加入待送汇总时，以新通知替代旧行并保留来源；部分交付已处理时仍保留其余交付的有效通知，最终交付继续由用户验收。

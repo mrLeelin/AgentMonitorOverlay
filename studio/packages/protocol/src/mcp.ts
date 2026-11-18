@@ -158,4 +158,6 @@ export interface McpRoutes {
   "GET /api/sessions/:id/mcp": { req: void; res: McpSessionState };
   /** `apply`: when the change reaches the session. */
   "PUT /api/sessions/:id/mcp": { req: { choices: McpChoices }; res: McpSessionState & { apply: McpApply } };
+  /** 任务页侧栏「重连」(2026-11-18, Claude): the running process connects one server again; `error` when it could not. */
+  "POST /api/sessions/:id/mcp/:name/reconnect": { req: void; res: McpSessionState & { error?: string } };
 }

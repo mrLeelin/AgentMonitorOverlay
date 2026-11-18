@@ -9,7 +9,7 @@ import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { SessionInbox } from "./inbox.js";
 import { readSetups, rememberSetups } from "./setups.js";
 import { newId } from "../../store/store.js";
-import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import type { ContextBreakdown, SessionContextUsage, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -28,6 +28,25 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
 
   /** One reclaim at a time per session, or the terminal's additions would be imported twice. */
   private readonly reclaiming = new Map<Id, Promise<Session>>();
+
+  /** 任务页侧栏 (2026-11-18): the last context breakdown read per session, shown again once its process has exited. Memory only. */
+  private readonly contextSeen = new Map<Id, ContextBreakdown>();
+
+  async contextUsage(sessionId: Id): Promise<SessionContextUsage> {
+    const s = this.requireSession(sessionId);
+    if (s.runtime !== "claude") return { sessionId, breakdown: null, live: false, unavailable: "这个模型不提供分项，只显示总量。" };
+    try {
+      const now = await this.runtime.contextUsage?.(sessionId);
+      if (now) {
+        this.contextSeen.set(sessionId, now);
+        return { sessionId, breakdown: now, live: true };
+      }
+    } catch (e) {
+      return { sessionId, breakdown: this.contextSeen.get(sessionId) ?? null, live: false, unavailable: `读不到分项：${e instanceof Error ? e.message : String(e)}` };
+    }
+    const seen = this.contextSeen.get(sessionId) ?? null;
+    return { sessionId, breakdown: seen, live: false, ...(seen ? {} : { unavailable: "会话进程没开着，发一条消息后再看分项。" }) };
+  }
 
   getGoal(sessionId: Id): Promise<SessionGoalState> {
     this.requireSession(sessionId);

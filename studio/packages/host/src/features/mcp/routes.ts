@@ -13,5 +13,6 @@ export function mcpRoutes(service: HostService): Route[] {
     route("PUT /api/mcp/projects/:id", ({ params, body }) => service.mcp.setProject(params.id!, obj(body))),
     route("GET /api/sessions/:id/mcp", ({ params }) => service.mcp.session(params.id!)),
     route("PUT /api/sessions/:id/mcp", ({ params, body }) => service.mcp.setSession(params.id!, obj(body))),
+    route("POST /api/sessions/:id/mcp/:name/reconnect", ({ params }) => service.mcp.reconnect(params.id!, params.name!)),
   ];
 }

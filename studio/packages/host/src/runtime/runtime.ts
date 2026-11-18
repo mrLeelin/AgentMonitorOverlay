@@ -5,7 +5,7 @@ import { newId, type HostEventInput, type SessionItemInput, type Store } from ".
 import { unreadDelivery, withDelivery } from "./items.js";
 import { profileGone } from "./profiles.js";
 import { consumeMessagePurpose, currentMessagePurpose, joinsPurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
-import type { SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import type { SessionGoalState, SessionGoalUpdate, ContextBreakdown } from "@amo-studio/protocol";
 
 // What HostService needs from a runtime, and a router that sends each call to the runtime a session (or profile)
 // belongs to. Codex and Claude implement the same operations; a few are runtime-specific (see the comments).
@@ -129,13 +129,17 @@ export interface SessionRuntimeApi {
   refreshMcp?(sessionId: Id): Promise<McpApply>;
   /** Claude: the MCP servers of the session's running process as it reports them now; null when none runs. */
   mcpStatus?(sessionId: Id): Promise<Array<{ name: string; status: string; error?: string; source?: string }> | null>;
+  /** Claude (任务页侧栏，2026-11-18): the running process's context, by category; null when none runs. */
+  contextUsage?(sessionId: Id): Promise<ContextBreakdown | null>;
+  /** Claude (2026-11-18): reconnects one MCP server of the running process (throws on failure); false when none runs. */
+  reconnectMcp?(sessionId: Id, name: string): Promise<boolean>;
   on(event: "event", listener: (e: HostEvent) => void): unknown;
   on(event: "log", listener: (line: string) => void): unknown;
   on(event: "message-delivered", listener: (sessionId: Id, text: string) => void): unknown;
 }
 
 /** The optional operations: a router made `around` one runtime offers only those that runtime has. */
-const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "listProfileCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "outsideSessions", "outsidePreview", "checkResume", "getGoal", "setGoal", "clearGoal"] as const;
+const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", "listProfileCommands", "runCommand", "stopBackground", "setWakeChoice", "applyChatSettings", "refreshMcp", "mcpStatus", "contextUsage", "reconnectMcp", "outsideSessions", "outsidePreview", "checkResume", "getGoal", "setGoal", "clearGoal"] as const;
 
 /**
  * Routes calls to the runtime of the session, or of the profile for new sessions. The Host's own (host-process.ts) has
@@ -610,6 +614,14 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   async mcpStatus(sessionId: Id): Promise<Array<{ name: string; status: string; error?: string; source?: string }> | null> {
     const r = this.forSession(sessionId);
     return r.mcpStatus ? r.mcpStatus(sessionId) : null;
+  }
+  async contextUsage(sessionId: Id): Promise<ContextBreakdown | null> {
+    const r = this.forSession(sessionId);
+    return r.contextUsage ? r.contextUsage(sessionId) : null;
+  }
+  async reconnectMcp(sessionId: Id, name: string): Promise<boolean> {
+    const r = this.forSession(sessionId);
+    return r.reconnectMcp ? r.reconnectMcp(sessionId, name) : false;
   }
 }
 

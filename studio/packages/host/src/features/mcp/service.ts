@@ -163,6 +163,26 @@ export class McpFeature extends Feature {
     return { sessionId, runtime: s.runtime, loadLocal: this.loadLocal(), entries, perSession: !codex, live: !!live };
   }
 
+  /**
+   * 任务页侧栏的「重连」(2026-11-18): the running Claude process connects one server again. Nothing is written (no
+   * toggleMcpServer); a failure comes back as `error`, with the statuses read again either way.
+   */
+  async reconnect(sessionId: Id, name: string): Promise<McpSessionState & { error?: string }> {
+    const s = this.requireSession(sessionId);
+    if (s.archivedAt) throw new HostError("read_only", "已归档的会话不能重连 MCP");
+    if (s.runtime !== "claude") throw new HostError("bad_request", "只有 Claude 会话能单独重连 MCP");
+    let error: string | undefined;
+    try {
+      if (!(await this.runtime.reconnectMcp?.(sessionId, name))) throw new HostError("conflict", "会话进程没开着；发一条消息，它启动时会重新连上所有 MCP");
+    } catch (e) {
+      if (e instanceof HostError) throw e;
+      error = e instanceof Error ? e.message : String(e);
+    }
+    const live = await this.runtime.mcpStatus?.(sessionId).catch(() => null);
+    if (live) this.noteStatus(sessionId, live);
+    return { ...(await this.session(sessionId)), ...(error ? { error } : {}) };
+  }
+
   async setSession(sessionId: Id, input: unknown): Promise<McpSessionState & { apply: McpApply }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt) throw new HostError("read_only", "已归档的会话不能改 MCP");

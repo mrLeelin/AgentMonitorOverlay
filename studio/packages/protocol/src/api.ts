@@ -774,6 +774,8 @@ export interface HostRoutes
   "GET /api/sessions/:id/goal": { req: void; res: SessionGoalState };
   "PUT /api/sessions/:id/goal": { req: SessionGoalUpdate; res: SessionGoalState };
   "DELETE /api/sessions/:id/goal": { req: void; res: SessionGoalState };
+  /** 任务页侧栏「环境与上下文」(2026-11-18)：上下文分项；只有 Claude 给得出，其他运行时只有 unavailable。 */
+  "GET /api/sessions/:id/context-usage": { req: void; res: import("./context-usage.js").SessionContextUsage };
   "POST /api/sessions/:id/fork": { req: { profileId?: Id }; res: Session };
   /** Renames the session in its runtime too (Codex thread name, Claude session title). */
   "PATCH /api/sessions/:id": { req: { title: string }; res: Session };

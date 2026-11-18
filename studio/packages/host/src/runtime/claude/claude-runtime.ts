@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { createSdkMcpServer, forkSession, getSessionInfo, getSessionMessages, query, renameSession, tool, type HookCallbackMatcher, type HookEvent, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { inTurn, parseSlashCommand, type ApprovalDecision, type Attachment, type ChatSettings, type Id, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionReply, type Session, type SessionItem, type SessionOptions, type UserDelivery, type SlashCommandList, type SlashCommandResult, type Workspace, type AccountUsage, type McpApply, type OutsideSessionList, type OutsideSessionPreview } from "@amo-studio/protocol";
+import { inTurn, parseSlashCommand, type ApprovalDecision, type Attachment, type ChatSettings, type Id, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionReply, type Session, type SessionItem, type SessionOptions, type UserDelivery, type SlashCommandList, type SlashCommandResult, type Workspace, type AccountUsage, type McpApply, type OutsideSessionList, type OutsideSessionPreview, type ContextBreakdown } from "@amo-studio/protocol";
 import { readChatSettings } from "../chat-settings.js";
 import { CLAUDE_BUILTIN_MODELS, CLAUDE_DEFAULT_PERMISSION, CLAUDE_PERMISSIONS, claudePermissionMode } from "../choices.js";
 import type { Store } from "../../store/store.js";
@@ -1052,6 +1052,31 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         const source = x.source ?? x.scope;
         return { name: x.name, status: x.status, ...(x.error ? { error: x.error } : {}), ...(source ? { source } : {}) };
       });
+  }
+
+  async contextUsage(sessionId: Id): Promise<ContextBreakdown | null> {
+    const live = this.live.get(sessionId);
+    if (!live || live.finished) return null;
+    // summary：用上一次回复的用量和本地估算，不额外调 token 计数接口（full 会每类调一次）。
+    const u = await withTimeout(live.q.getContextUsage({ detail: "summary" }), 5_000);
+    return {
+      used: u.totalTokens,
+      window: u.maxTokens,
+      percent: u.percentage,
+      categories: u.categories.map((c) => ({ ...(c.id ? { id: c.id } : {}), name: c.name, tokens: c.tokens, kind: c.kind ?? (c.isDeferred ? "deferred" : "used") })),
+      memoryFiles: u.memoryFiles.map((f) => ({ path: f.path, type: f.type, tokens: f.tokens })),
+      ...(u.model ? { model: u.model } : {}),
+      at: new Date().toISOString(),
+    };
+  }
+
+  async reconnectMcp(sessionId: Id, name: string): Promise<boolean> {
+    const live = this.live.get(sessionId);
+    if (!live || live.finished) return false;
+    if (name === AMO_MCP_NAME) throw new Error("amo 是 Studio 自带的，不用重连");
+    // 只让进程重新连这一个服务器，不改任何文件（toggleMcpServer 才会写 ~/.claude.json，见 mcpOptions 的说明）。
+    await withTimeout(live.q.reconnectMcpServer(name), 30_000);
+    return true;
   }
 
   /** Nothing of the process's own is under way: no turn, approval, question, background command or running agent. */

@@ -233,7 +233,7 @@
         { "label": "启动时带上", "path": "studio/packages/host/src/runtime/mcp-launch.ts" },
         { "label": "设置页", "path": "studio/packages/ui/src/settings/McpPage.tsx" }
       ],
-      "related": ["host.agentMcp", "runtime.common"],
+      "related": ["host.agentMcp", "runtime.common", "ui.envPanel"],
       "next": ["studio/plans/done/mcp.md"]
     },
     {
@@ -527,6 +527,23 @@
       ],
       "related": ["studio.sessions", "studio.cli", "ui.shell"],
       "next": ["studio/plans/done/stage-9-chat.md"]
+    },
+    {
+      "id": "ui.envPanel",
+      "label": "任务页侧栏：环境与上下文",
+      "aliases": ["环境与上下文", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
+      "category": "ui",
+      "purpose": "任务页侧栏最上面（2026-11-18 用户定，默认展开）：电脑、项目和分支；上下文按分项占多少（只有 Claude 的 getContextUsage 给得出，进程退出后显示上一次的，其他模型只显示每轮记下的总量并写明）；读进来的 CLAUDE.md；会话的 MCP 和状态，Claude 会话连不上的可「重连」（reconnectMcpServer，实测不写 ~/.claude.json）。打开、每轮结束、点刷新时读，不轮询。",
+      "anchors": [
+        { "label": "面板", "path": "studio/packages/ui/src/task/EnvPanel.tsx", "anchor": "export function EnvPanel" },
+        { "label": "接口类型", "path": "studio/packages/protocol/src/context-usage.ts", "anchor": "export interface SessionContextUsage" },
+        { "label": "读分项和缓存", "path": "studio/packages/host/src/features/sessions/service.ts", "anchor": "async contextUsage(sessionId: Id)" },
+        { "label": "Claude 取分项", "path": "studio/packages/host/src/runtime/claude/claude-runtime.ts", "anchor": "async contextUsage(sessionId: Id)" },
+        { "label": "重连 MCP", "path": "studio/packages/host/src/features/mcp/service.ts", "anchor": "async reconnect(sessionId: Id" },
+        { "label": "e2e", "path": "studio/e2e/studio/env-panel.spec.ts" }
+      ],
+      "related": ["ui.chat", "studio.mcpServers", "runtime.claude", "runtime.common"],
+      "next": ["studio/e2e/studio/env-panel.spec.ts", "studio/packages/host/src/runtime/claude/mcp-reconnect.integration.test.ts"]
     },
     {
       "id": "ui.focus",

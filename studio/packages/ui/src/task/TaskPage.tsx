@@ -21,6 +21,7 @@ import { MailPanel, useTaskMail } from "../collab/MailPanel.js";
 import { DecisionPanel, useOpenDecisions } from "../collab/DecisionPanel.js";
 import { NotesPanel, useTaskNotes } from "../collab/NotesPanel.js";
 import { ChecklistPanel } from "../collab/ChecklistPanel.js";
+import { EnvPanel } from "./EnvPanel.js";
 import { EditableName } from "./EditableName.js";
 import { openReview, useIsGitRepo } from "../gitreview/open.js";
 import { latestMainSession } from "../gitreview/logic.js";
@@ -158,7 +159,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   // 会话里用中转 (2026-10-30): what its sessions ask to send through 中转, and whom they wait on there.
   const teamSends = useTeamSends(link);
   const teamThreads = useTeamThreads(link);
-  const [sidebar, setSidebarState] = useState(() => readFlag(SIDEBAR_KEY));
+  // 2026-11-18（用户定）：侧栏顶上有了「环境与上下文」，没手动开关过侧栏的人默认打开；开关过的照旧。
+  const [sidebar, setSidebarState] = useState(() => readStored(SIDEBAR_KEY) === null || readFlag(SIDEBAR_KEY));
   const setSidebar = (on: boolean) => {
     setSidebarState(on);
     writeFlag(SIDEBAR_KEY, on);
@@ -755,6 +757,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           onCollapse={() => setSidebar(false)}
           header={
             <>
+            <EnvPanel link={link} session={session ?? null} items={items} workspace={workspaces.find((w) => w.id === (session?.workspaceId ?? task.workspaceId))} branch={git.repo ? git.branch : null} machine={remote?.device?.name ?? null} />
             <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />
             <MailPanel
               mail={mail}
@@ -779,7 +782,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           refs={annotationRefs}
         />
         )}
-        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：进度、批注、留言、清单" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
+        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：环境与上下文、进度、批注、留言、清单" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
       </div>
       {early && (
         <ConfirmDialog
