@@ -2,6 +2,8 @@
 
 ## 下一版
 
+- 修复 Claude 订阅（本机登录）拿不到 Claude Code 的真实型号列表：查型号时用的工作目录 `claude-home` 只在 token 登录时才建，不存在时 Claude Code 起不来，型号一直退回内置列表，Opus 也不显示 Fast。现在查型号前先建好这个目录。
+
 - 新增 `GET /api/sessions/:id/context-usage`：Claude 会话从运行中的进程读上下文分项和说明文件（getContextUsage，summary 级别，不额外计数），进程退出后返回上一次的结果；其他模型返回原因。新增 `POST /api/sessions/:id/mcp/:name/reconnect`：Claude 会话单独重连一个 MCP，不写配置文件，重连后刷新状态。
 
 - 主控新增 `task_workflow` 精简全树核对（`view: summary`），显示最新交付有效性、实际前置、当前等待和会话记录创建时间；新增 `task_read_result` 按结果分页读完整证据，保留原有 full/pending 调用。角色说明与依赖启动提示明确集中取证、引用上游结果和按需复核，减少重复全量读取及逐层复制。

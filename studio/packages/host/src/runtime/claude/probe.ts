@@ -3,6 +3,7 @@ import type { ModelOption, ModelProfile, SlashCommandList } from "@amo-studio/pr
 import { requireClaudeCode } from "./executable.js";
 import { claudeCommands } from "./commands.js";
 import { claudeSkillPaths } from "./skill-paths.js";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +38,10 @@ export const CLAUDE_FAST_NOTE = "Claude 的 fast mode：输出更快；按额外
 
 /** Claude Code's model list for the account. */
 export function askModels(profile: ModelProfile, env: Record<string, string | undefined>, cwd: string): Promise<ModelOption[]> {
+  // cwd is Studio's own claude-home, made only on a token login: with a local login it was missing, the CLI could
+  // not start in it (the SDK says "binary failed to launch"), and every list fell back to the built-in one, without
+  // Fast (2026-11-18).
+  mkdirSync(cwd, { recursive: true });
   return asking({ cwd, env, settingSources: [], permissionMode: "default" }, async (q) => {
     const list = await withTimeout(q.supportedModels(), 20_000);
     return list.map((m) => ({
