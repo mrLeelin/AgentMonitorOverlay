@@ -2,6 +2,7 @@ import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, u
 import type { Annotation, ApprovalDecision, Session, SessionItem, TurnUsage } from "@amo-studio/protocol";
 import { splitAnnotationRefs, splitRoleUpdate } from "@amo-studio/protocol";
 import { Markdown } from "../lib/markdown.js";
+import { TaskRunner } from "../board/TaskRunner.js";
 import { copyText } from "../host/client.js";
 import { IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconEdit, IconTerminal, IconSparkle } from "./icons.js";
 import { ProcessGroup, Shimmer, MemberRow } from "./ProcessRows.js";
@@ -164,6 +165,7 @@ function TranscriptBody({ session, items, annotations, model, busy, view, onAppr
       ))}
       {sessionRunning && (
         <RunningStatus
+          session={session}
           turn={runningTurn}
           compacting={!!last?.running && [...segmentMembers(last), ...last.tail].some((i) => i.type === "compaction" && i.state === "running")}
           awaiting={session?.status === "awaiting-answer" ? "等你回答" : session?.status === "awaiting-approval" ? "等待你的确认" : null}
@@ -599,11 +601,11 @@ function UsageButton({ usage, speed, approx = false, subs = null, model }: { usa
 // ---- running status ---------------------------------------------------------------------------------------------
 
 /**
- * The live line at the bottom while the session works: the robot, the elapsed time and (once known) the speed.
+ * The live line at the bottom while the session works: the runner, the elapsed time and (once known) the speed.
  * `awaiting`: what the session waits for from the person ("等待你的确认", "等你回答"), or null while it works. While the
  * CLI retries a model request or compacts the context, the line says so instead (stage 12, S12-E).
  */
-function RunningStatus({ turn, awaiting, compacting }: { turn: TurnItem | null; awaiting: string | null; compacting: boolean }) {
+function RunningStatus({ session, turn, awaiting, compacting }: { session: Session; turn: TurnItem | null; awaiting: string | null; compacting: boolean }) {
   const startedAt = turn?.startedAt;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -627,7 +629,7 @@ function RunningStatus({ turn, awaiting, compacting }: { turn: TurnItem | null; 
       <span className="sr-only" role="status" aria-live="polite">
         {awaiting ?? "正在工作"}
       </span>
-      <img className={`run-bot${awaiting ? " waiting" : ""}`} src="./icon.svg" alt="" aria-hidden="true" />
+      {awaiting ? <img className="run-bot" src="./icon.svg" alt="" aria-hidden="true" /> : <TaskRunner sessions={[session]} />}
       <Shimmer active={!awaiting} className="run-text">
         {label}
       </Shimmer>

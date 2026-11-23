@@ -35,6 +35,10 @@ test("approves and declines commands from the approval card", async () => {
   const card = page.getByTestId("approval").first();
   await expect(card).toHaveAttribute("data-state", "pending", { timeout: 30_000 });
   await expect(card).toContainText("cmd /c echo e2e-approved");
+  const status = page.getByTestId("run-status");
+  await expect(status).toContainText("等待你的确认");
+  await expect(status.locator(".run-bot")).toBeVisible();
+  await expect(status.locator(".card-runner")).toHaveCount(0);
   await expect(page.getByTestId("needs-you")).toHaveText(/需要你 1/);
   await card.getByRole("button", { name: "批准" }).click();
   await expect(card).toHaveAttribute("data-state", "accepted");
@@ -93,13 +97,28 @@ test("steers a running reply and interrupts another", async () => {
   await expect(composer(page)).toHaveText("");
 
   // 停止 before anything came back (2026-10-28): the message goes back into the composer to be reworded.
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await composer(page).fill("改一下掉落表 [[wait]]");
   await composer(page).press("Enter");
   await expect(composer(page)).toHaveText("");
   await expect(page.getByRole("button", { name: "打断" })).toBeVisible({ timeout: 30_000 });
+  const status = page.getByTestId("run-status");
+  const runner = status.locator(".card-runner");
+  await expect(status.locator(".run-text")).toHaveText(/^正在工作，用时/);
+  await expect(runner).toBeVisible();
+  await expect(runner).toHaveAttribute("data-skin", "default");
+  await expect(runner).toHaveCSS("animation-name", "card-runner-frames");
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await screenshot(studio.app, "studio", "chat-runner-dark", page);
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await screenshot(studio.app, "studio", "chat-runner-light", page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(runner).toHaveCSS("animation-name", "none");
+  await expect(runner).toBeVisible();
   await page.getByRole("button", { name: "打断" }).click();
   await expect(composer(page)).toHaveText("改一下掉落表 [[wait]]");
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible({ timeout: 30_000 });
+  await expect(status).toHaveCount(0);
 });
 
 test("input settings keep follow-ups in separate Codex turns and allow Enter to make a newline", async () => {

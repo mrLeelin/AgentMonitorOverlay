@@ -275,7 +275,7 @@
 @keyframes shimmer-sweep { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) {
   .shimmer { animation: none; color: var(--chat-dim); background: none; }
-  .stream-caret, .run-bot { animation: none; }
+  .stream-caret { animation: none; }
 }
 
 /* ---- approvals, errors, notices -------------------------------------------------------------------------------- */
@@ -321,15 +321,11 @@
 .usage-panel dt { color: var(--chat-dim); }
 .usage-panel dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ---- running status: the robot nods while the session works ---------------------------------------------------- */
+/* ---- running status ------------------------------------------------------------------------------------------- */
 
 .run-status { display: flex; align-items: center; gap: 8px; padding-top: 4px; font-size: 13px; color: var(--chat-dim); }
-.run-bot {
-  flex: none; width: 18px; height: 18px;
-  animation: bot-bob 1.4s ease-in-out infinite;
-}
-.run-bot.waiting { animation: none; filter: grayscale(0.4); }
-@keyframes bot-bob { 0%, 100% { transform: translateY(0) rotate(0); } 30% { transform: translateY(-2px) rotate(-6deg); } 60% { transform: translateY(0) rotate(5deg); } }
+.run-bot { flex: none; width: 18px; height: 18px; filter: grayscale(0.4); }
+.run-status .card-runner { margin: -3px; }
 .run-text { font-variant-numeric: tabular-nums; }
 
 /* ---- back to bottom ------------------------------------------------------------------------------------------------ */
