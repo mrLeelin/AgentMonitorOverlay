@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { isCommon, type StateSnapshot, type StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { setThemePref, THEME_LABELS, useThemePref, type ThemePref } from "../lib/theme.js";
@@ -27,6 +27,9 @@ import { pickDirectory } from "../folders/FolderPicker.js";
 import { GitEditorPage } from "./GitEditorPage.js";
 import { PromptTemplateManager } from "../attach/PromptTemplateDialog.js";
 import { SkillsPage } from "./SkillsPage.js";
+import { IconChevronRight, IconSearch, IconX } from "../chat/icons.js";
+import { PageActionsSlot } from "./PageActions.js";
+import { SettingField } from "./SettingField.js";
 
 const GROUPS = [
   { id: "general", label: "通用" },
@@ -39,7 +42,7 @@ type SettingsGroup = (typeof GROUPS)[number]["id"];
 
 /** Stable page ids keep links from the rest of Studio opening the right group. */
 const PAGES = [
-  { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 工作步骤 发送 跳到最新 建议 远程 Enter 回车 换行 快捷键 排队 插话 后续消息 放进待办" },
+  { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 对话 工作步骤 发送 跳到最新 建议 远程 输入 Enter 回车 换行 快捷键 排队 插话 后续消息 放进待办" },
   { id: "common", group: "general", label: "项目与目录", keywords: "默认 公共 工作 文件夹 访问 权限" },
   { id: "scratchpad", group: "general", label: "便签", keywords: "随手记 快捷键" },
   { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 隐藏 压缩" },
@@ -59,6 +62,20 @@ const PAGES = [
 ] as const;
 export type SettingsPage = (typeof PAGES)[number]["id"];
 
+/** 页头说明 (2026-11-23 设置整理): the paragraph each page opened with, moved word for word under the page's title. */
+const INTROS: Partial<Record<SettingsPage, string>> = {
+  scratchpad: "便签是独立的小程序，跟 Studio 一起安装。Studio 重启不会关掉它，它的设置也在它自己那里（托盘图标右键 → 设置…）。",
+  subsession: "设置 AI 开子会话时的默认选项，以及如何使用每个模型。",
+  "prompt-templates": "管理全局和各项目的常用提示词。在输入框中输入 @，选择「提示词模板…」即可粘入。",
+  quota: "Studio 能跟踪的额度：GPT、Claude 订阅的用量，和设置了余额查询的渠道（在 设置 → 模型 里给渠道选查询方式）。左下角点开能看每个窗口剩多少、什么时候重置。",
+  mcp: "会话除了 Studio 自带的 amo，还能用哪些 MCP。这里是全局的默认；某个项目可以在「编辑项目」里另外开关，某个会话可以在输入框上方的「MCP」按钮里开关。改了以后，正在运行的 Claude 会话下一次调用工具就能用上 Studio 里加的；换掉本机配置的那几个，要等这一轮回复结束后从下一条消息起生效。DeepSeek 会话从下一条消息起生效。Codex 只用 Studio 里加的、全局开着的，要等 Codex 下次启动（比如重启 Studio）才生效，也不能按项目或会话开关。",
+  skills: "集中浏览本机与项目中的技能，找到需要的工作方法。",
+  "git-editor": "点击任务标题下的分支名，用这里选的 Git 编辑器打开该项目的仓库。",
+  duty: "到点了就做一件事：开一个会话、跑一条命令，或者 Studio 自带的任务。等待和计时不用模型，只有动作是开会话时才用额度；同一项上一次还没结束，这次就跳过。Studio 退出时值守也停。",
+  experimental: "还在试的新功能，默认都关着。打开后入口才出现；用着别扭、出错可以随时关掉，关掉不影响任务和会话的数据。",
+  data: "已归档的项目、专题、任务和会话。恢复后回到原处；彻底删除后找不回来。项目文件夹里的文件，以及 Codex、Claude Code 自己保存的对话记录，都不会被删除。",
+};
+
 // The page last open, for the next time 设置 opens in this window.
 let lastPage: SettingsPage = "ui";
 let lastGroup: SettingsGroup | null = "general";
@@ -75,13 +92,10 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
   const pages = PAGES.filter((p) => terms.every((term) => `${GROUPS.find((g) => g.id === p.group)!.label} ${p.label} ${p.keywords}`.toLowerCase().includes(term)));
   // Search previews never overwrite the page/group to restore when it is cleared.
   const page = searching ? pages.find((p) => p.id === searchPage)?.id ?? pages.find((p) => p.id === selectedPage)?.id ?? pages[0]?.id : selectedPage;
-  const theme = useThemePref();
-  const view = useTranscriptView();
-  const jumpOnSend = useScrollOnSend();
-  const chat = useChatSettings(link);
   const [dir, setDir] = useState(settings?.commonWorkspace?.path ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
   const size = useDialogSize();
 
   useEffect(() => { lastPage = selectedPage; lastGroup = expanded; }, [selectedPage, expanded]);
@@ -142,6 +156,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
         <div className="settings-body">
           <div className="settings-sidebar">
             <div className="settings-search">
+              <span className="settings-search-icon" aria-hidden="true"><IconSearch /></span>
               <input
                 className="field"
                 type="search"
@@ -157,7 +172,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                   }
                 }}
               />
-              {search && <button type="button" className="settings-search-clear" aria-label="清空设置搜索" onClick={() => setSearch("")}>×</button>}
+              {search && <button type="button" className="settings-search-clear" aria-label="清空设置搜索" onClick={() => setSearch("")}><IconX /></button>}
             </div>
             <nav className="settings-nav" aria-label="设置分类" onKeyDown={(e) => {
               const target = e.target as HTMLElement;
@@ -193,7 +208,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                     aria-controls={`settings-group-pages-${group.id}`}
                     onClick={() => toggleGroup(group.id)}
                   >
-                    <span className="settings-group-arrow" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
+                    <span className="settings-group-arrow" aria-hidden="true"><IconChevronRight /></span>
                     {group.label}
                   </button>}
                   <div className="settings-group-pages" id={`settings-group-pages-${group.id}`} hidden={!isOpen} role="tablist" aria-label={group.label} aria-orientation="vertical">
@@ -219,109 +234,20 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
             </nav>
           </div>
           <div className="settings-page" id="settings-page" role={page ? "tabpanel" : undefined} aria-labelledby={page ? `settings-tab-${page}` : undefined} key={page}>
-            {!page && <p className="settings-search-empty" role="status">没有匹配的设置，试试其他关键词。</p>}
-            {page === "network" && <NetworkPage link={link} value={settings?.network} />}
-            {page === "ui" && (
-              <section className="settings-section" aria-label="界面">
-                <span className="settings-heading">界面</span>
-                <div className="settings-row">
-                  <span className="settings-label">主题</span>
-                  <div role="radiogroup" aria-label="主题" className="chips">
-                    {(Object.keys(THEME_LABELS) as ThemePref[]).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        role="radio"
-                        className="chip"
-                        aria-checked={theme === p}
-                        aria-pressed={theme === p}
-                        onClick={() => setThemePref(p)}
-                      >
-                        {THEME_LABELS[p]}
-                      </button>
-                    ))}
-                  </div>
+            {page ? (
+              <header className="settings-page-head">
+                <div className="settings-page-heading">
+                  <h2 className="settings-page-title">{PAGES.find((p) => p.id === page)!.label}</h2>
+                  {INTROS[page] && <p className="settings-page-intro">{INTROS[page]}</p>}
                 </div>
-                <span className="settings-hint">只影响这台电脑上的 Studio；Focus 悬浮窗会一起切换。</span>
-                <PetSkinRow />
-                {window.amo?.uiScale && <UiScaleRow />}
-                <div className="settings-row">
-                  <span className="settings-label">工作步骤展示</span>
-                  <div role="radiogroup" aria-label="工作步骤展示" className="chips">
-                    {(Object.keys(TRANSCRIPT_VIEW_LABELS) as TranscriptView[]).map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        role="radio"
-                        className="chip"
-                        aria-checked={view === v}
-                        aria-pressed={view === v}
-                        title={TRANSCRIPT_VIEW_HINTS[v]}
-                        onClick={() => setTranscriptView(v)}
-                      >
-                        {TRANSCRIPT_VIEW_LABELS[v]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <span className="settings-hint">{TRANSCRIPT_VIEW_HINTS[view]}。</span>
-                <InputSettings />
-                <div className="settings-row">
-                  <span className="settings-label">发送后跳到最新</span>
-                  <div role="radiogroup" aria-label="发送后跳到最新" className="chips">
-                    {([true, false] as const).map((on) => (
-                      <button
-                        key={String(on)}
-                        type="button"
-                        role="radio"
-                        className="chip"
-                        aria-checked={jumpOnSend === on}
-                        aria-pressed={jumpOnSend === on}
-                        onClick={() => setScrollOnSend(on)}
-                        data-testid={`scroll-on-send-${on ? "on" : "off"}`}
-                      >
-                        {on ? "开启" : "关闭"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <span className="settings-hint">在输入框发出消息后，对话直接跳到最末尾并跟着回复往下走，不管之前看到哪里。关闭后停在原来看的位置。</span>
-                <div className="settings-row">
-                  <span className="settings-label">建议的下一句</span>
-                  <div role="radiogroup" aria-label="建议的下一句" className="chips">
-                    {([true, false] as const).map((on) => (
-                      <button
-                        key={String(on)}
-                        type="button"
-                        role="radio"
-                        className="chip"
-                        aria-checked={chat.settings.promptSuggestions === on}
-                        aria-pressed={chat.settings.promptSuggestions === on}
-                        onClick={() => void chat.update({ promptSuggestions: on }).catch((err: unknown) => setMessage({ text: err instanceof HostApiError ? err.message : String(err), error: true }))}
-                      >
-                        {on ? "显示" : "关闭"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <span className="settings-hint">Claude 会话每轮回答后，在输入框上方给出建议的下一句，点一下填进输入框。默认关闭：每轮会多一次很小的模型请求。</span>
-                {/* 2026-10-29: 远程 was a page of 设置 until it got its own; this line is for whoever looks for it here. */}
-                <div className="settings-row" data-testid="settings-remote-moved">
-                  <span className="settings-label">远程</span>
-                  <span className="settings-hint">远程功能在顶栏的「远程」里。</span>
-                  {onOpenRemote && (
-                    <button type="button" className="link-btn" onClick={onOpenRemote} data-testid="settings-open-remote">
-                      打开
-                    </button>
-                  )}
-                </div>
-                {message && (
-                  <span className={message.error ? "form-error" : "settings-hint"} role={message.error ? "alert" : "status"} data-testid="settings-message">
-                    {message.text}
-                  </span>
-                )}
-              </section>
+                <div className="settings-page-actions" ref={setActionsSlot} />
+              </header>
+            ) : (
+              <p className="settings-search-empty" role="status">没有匹配的设置，试试其他关键词。</p>
             )}
+            <PageActionsSlot.Provider value={actionsSlot}>
+            {page === "network" && <NetworkPage link={link} value={settings?.network} />}
+            {page === "ui" && <UiPage link={link} onOpenRemote={onOpenRemote} />}
 
             {page === "models" && <ModelsPage link={link} settings={settings} />}
             {page === "subsession" && <SubsessionPage link={link} settings={settings} />}
@@ -342,8 +268,6 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                       选择…
                     </button>
                   )}
-                </div>
-                <div className="settings-row end">
                   <button type="button" className="btn-primary small" onClick={() => void saveCommon(dir.trim())} disabled={busy || !dir.trim() || dir.trim() === settings?.commonWorkspace?.path}>
                     保存
                   </button>
@@ -369,11 +293,95 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
             {page === "mcp" && <McpPage link={link} />}
             {page === "skills" && <SkillsPage link={link} projects={state.workspaces.filter((w) => !isCommon(w) && !w.archivedAt)} />}
             {page === "maintenance" && <MaintenancePage link={link} />}
+            </PageActionsSlot.Provider>
           </div>
         </div>
         <span className="settings-grip" role="separator" aria-label="拖动改变设置窗口大小，双击恢复默认" title="拖动改变大小，双击恢复默认" data-testid="settings-grip" {...size.grip} />
       </div>
     </div>
+  );
+}
+
+/**
+ * 设置 → 界面, in three parts since 2026-11-23 (设置整理): how Studio looks, how a conversation shows, how the composer
+ * sends. Everything here is kept on this machine except 建议的下一句 (the Host's chat settings).
+ */
+function UiPage({ link, onOpenRemote }: { link: HostLink; onOpenRemote?: () => void }) {
+  const theme = useThemePref();
+  const view = useTranscriptView();
+  const jumpOnSend = useScrollOnSend();
+  const chat = useChatSettings(link);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <section className="settings-section" aria-label="外观">
+        <span className="settings-heading">外观</span>
+        <SettingField label="主题" hint="只影响这台电脑上的 Studio；Focus 悬浮窗会一起切换。">
+          <div role="radiogroup" aria-label="主题" className="chips">
+            {(Object.keys(THEME_LABELS) as ThemePref[]).map((p) => (
+              <button key={p} type="button" role="radio" className="chip" aria-checked={theme === p} aria-pressed={theme === p} onClick={() => setThemePref(p)}>
+                {THEME_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        </SettingField>
+        {window.amo?.uiScale && <UiScaleRow />}
+        <PetSkinRow />
+      </section>
+      <section className="settings-section" aria-label="对话">
+        <span className="settings-heading">对话</span>
+        <SettingField label="工作步骤展示" hint={`${TRANSCRIPT_VIEW_HINTS[view]}。`}>
+          <div role="radiogroup" aria-label="工作步骤展示" className="chips">
+            {(Object.keys(TRANSCRIPT_VIEW_LABELS) as TranscriptView[]).map((v) => (
+              <button key={v} type="button" role="radio" className="chip" aria-checked={view === v} aria-pressed={view === v} title={TRANSCRIPT_VIEW_HINTS[v]} onClick={() => setTranscriptView(v)}>
+                {TRANSCRIPT_VIEW_LABELS[v]}
+              </button>
+            ))}
+          </div>
+        </SettingField>
+        <SettingField label="发送后跳到最新" hint="在输入框发出消息后，对话直接跳到最末尾并跟着回复往下走，不管之前看到哪里。关闭后停在原来看的位置。">
+          <div role="radiogroup" aria-label="发送后跳到最新" className="chips">
+            {([true, false] as const).map((on) => (
+              <button key={String(on)} type="button" role="radio" className="chip" aria-checked={jumpOnSend === on} aria-pressed={jumpOnSend === on} onClick={() => setScrollOnSend(on)} data-testid={`scroll-on-send-${on ? "on" : "off"}`}>
+                {on ? "开启" : "关闭"}
+              </button>
+            ))}
+          </div>
+        </SettingField>
+        <SettingField label="建议的下一句" hint="Claude 会话每轮回答后，在输入框上方给出建议的下一句，点一下填进输入框。默认关闭：每轮会多一次很小的模型请求。">
+          <div role="radiogroup" aria-label="建议的下一句" className="chips">
+            {([true, false] as const).map((on) => (
+              <button
+                key={String(on)}
+                type="button"
+                role="radio"
+                className="chip"
+                aria-checked={chat.settings.promptSuggestions === on}
+                aria-pressed={chat.settings.promptSuggestions === on}
+                onClick={() => { setError(null); void chat.update({ promptSuggestions: on }).catch((err: unknown) => setError(err instanceof HostApiError ? err.message : String(err))); }}
+              >
+                {on ? "显示" : "关闭"}
+              </button>
+            ))}
+          </div>
+        </SettingField>
+        {error && <span className="form-error" role="alert" data-testid="settings-message">{error}</span>}
+      </section>
+      <section className="settings-section" aria-label="输入">
+        <span className="settings-heading">输入</span>
+        <InputSettings />
+      </section>
+      {/* 2026-10-29: 远程 was a page of 设置 until it got its own; this line is for whoever looks for it here (a note
+          under the page since 2026-11-23). */}
+      <p className="settings-footnote" data-testid="settings-remote-moved">
+        远程功能在顶栏的「远程」里。
+        {onOpenRemote && (
+          <button type="button" className="link-btn primary" onClick={onOpenRemote} data-testid="settings-open-remote">
+            打开
+          </button>
+        )}
+      </p>
+    </>
   );
 }
 
@@ -383,32 +391,27 @@ function InputSettings() {
   const [followup, setFollowup] = useFollowupMode();
   const [todo, setTodo] = useTodoShortcut(enter, newline);
   const todoConflict = todoCtrlConflict(enter, newline);
+  const fieldId = useId();
   return (
     <>
-      <label className="settings-row input-settings-row">
-        <span className="settings-label">发送与开始快捷键</span>
-        <select className="field" value={`${enter}-${newline}`} onChange={(e) => {
+      <SettingField label="发送与开始快捷键" htmlFor={`${fieldId}-send`} hint={todo === "ctrl" ? "Ctrl+Enter 已用于放进待办。先更改待办快捷键，即可将它用于开始或换行。" : "会话里的发送键也是新建任务的开始键。换行方式相同。"}>
+        <select id={`${fieldId}-send`} className="field" value={`${enter}-${newline}`} onChange={(e) => {
           const shortcut = CHAT_SHORTCUTS.find((option) => option.id === e.target.value);
           if (shortcut && !(todo === "ctrl" && todoCtrlConflict(shortcut.mode, shortcut.newline))) setChatShortcuts(shortcut.mode, shortcut.newline);
         }}>
           {CHAT_SHORTCUTS.map(({ id, label, mode, newline }) => <option key={id} value={id} disabled={todo === "ctrl" && !!todoCtrlConflict(mode, newline)}>{label}</option>)}
         </select>
-      </label>
-      <span className="settings-hint">{todo === "ctrl" ? "Ctrl+Enter 已用于放进待办。先更改待办快捷键，即可将它用于开始或换行。" : "会话里的发送键也是新建任务的开始键。换行方式相同。"}</span>
-      <label className="settings-row input-settings-row">
-        <span className="settings-label">后续消息处理方式</span>
-        <select className="field" value={followup} onChange={(e) => setFollowup(e.target.value as typeof followup)}>
+      </SettingField>
+      <SettingField label="后续消息处理方式" htmlFor={`${fieldId}-followup`} hint="会话运行时，Ctrl+Shift+Enter 可让这一条消息采用另一种方式。部分模型只支持等本轮结束。">
+        <select id={`${fieldId}-followup`} className="field" value={followup} onChange={(e) => setFollowup(e.target.value as typeof followup)}>
           {Object.entries(FOLLOWUP_MODES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-      </label>
-      <span className="settings-hint">会话运行时，Ctrl+Shift+Enter 可让这一条消息采用另一种方式。部分模型只支持等本轮结束。</span>
-      <label className="settings-row input-settings-row">
-        <span className="settings-label">放进待办快捷键</span>
-        <select className="field" value={todo} onChange={(e) => setTodo(e.target.value as typeof todo)}>
+      </SettingField>
+      <SettingField label="放进待办快捷键" htmlFor={`${fieldId}-todo`} hint={todoConflict ? `Ctrl+Enter 已用于${todoConflict}。可以选择其他组合键，或点击「放进待办」。` : "适用于快速新任务和新建任务。关闭快捷键后仍可点击「放进待办」。"}>
+        <select id={`${fieldId}-todo`} className="field" value={todo} onChange={(e) => setTodo(e.target.value as typeof todo)}>
           {Object.entries(TODO_SHORTCUTS).map(([value, label]) => <option key={value} value={value} disabled={value === "ctrl" && !!todoConflict}>{label}</option>)}
         </select>
-      </label>
-      <span className="settings-hint">{todoConflict ? `Ctrl+Enter 已用于${todoConflict}。可以选择其他组合键，或点击「放进待办」。` : "适用于快速新任务和新建任务。关闭快捷键后仍可点击「放进待办」。"}</span>
+      </SettingField>
     </>
   );
 }
@@ -437,16 +440,14 @@ function DefaultFolderSection() {
             选择…
           </button>
         )}
-      </div>
-      <div className="settings-row end">
+        <button type="button" className="btn-primary small" onClick={() => save(path)} disabled={path.trim() === saved}>
+          保存
+        </button>
         {saved && (
           <button type="button" className="btn-ghost small" onClick={() => save("")}>
             清除
           </button>
         )}
-        <button type="button" className="btn-primary small" onClick={() => save(path)} disabled={path.trim() === saved}>
-          保存
-        </button>
       </div>
     </section>
   );
@@ -470,30 +471,26 @@ function UiScaleRow() {
     return api.onChange(setScale);
   }, []);
   return (
-    <>
-      <div className="settings-row">
-        <span className="settings-label">界面大小</span>
-        <div role="radiogroup" aria-label="界面大小" className="chips">
-          {UI_SCALE_LABELS.map(([s, label]) => (
-            <button
-              key={s}
-              type="button"
-              role="radio"
-              className="chip"
-              aria-checked={scale !== null && Math.abs(scale - s) < 0.001}
-              aria-pressed={scale !== null && Math.abs(scale - s) < 0.001}
-              onClick={() => {
-                setScale(s);
-                void window.amo?.uiScale?.set(s);
-              }}
-            >
-              {label} {Math.round(s * 100)}%
-            </button>
-          ))}
-        </div>
+    <SettingField label="界面大小" hint="文字和图标一起放大缩小，所有 Studio 窗口（含 Focus）一起变。快捷键：Ctrl + = 放大，Ctrl + - 缩小，Ctrl + 0 恢复标准。">
+      <div role="radiogroup" aria-label="界面大小" className="chips">
+        {UI_SCALE_LABELS.map(([s, label]) => (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            className="chip"
+            aria-checked={scale !== null && Math.abs(scale - s) < 0.001}
+            aria-pressed={scale !== null && Math.abs(scale - s) < 0.001}
+            onClick={() => {
+              setScale(s);
+              void window.amo?.uiScale?.set(s);
+            }}
+          >
+            {label} {Math.round(s * 100)}%
+          </button>
+        ))}
       </div>
-      <span className="settings-hint">文字和图标一起放大缩小，所有 Studio 窗口（含 Focus）一起变。快捷键：Ctrl + = 放大，Ctrl + - 缩小，Ctrl + 0 恢复标准。</span>
-    </>
+    </SettingField>
   );
 }
 
@@ -501,9 +498,8 @@ function UiScaleRow() {
 function PetSkinRow() {
   const skin = usePetSkin();
   return (
-    <>
+    <SettingField label="Focus 桌宠">
       <div className="settings-row">
-        <span className="settings-label">Focus 桌宠</span>
         <div role="radiogroup" aria-label="Focus 桌宠" className="chips">
           {(Object.keys(PET_SKINS) as PetSkin[]).map((k) => (
             <button key={k} type="button" role="radio" className="chip" aria-checked={skin === k} aria-pressed={skin === k} onClick={() => writePetSkin(k)} data-testid={`pet-skin-${k}`}>
@@ -521,6 +517,6 @@ function PetSkinRow() {
           选了 AMO 娘，左上角和窗口（标题栏、任务栏）的图标也换成她，并跟着换表情：出错或等你审批是「待命」，没额度是「睿智」，有会话在跑是「认真」，只剩等你审核是「开心」，什么都没有是她的头像。
         </span>
       )}
-    </>
+    </SettingField>
   );
 }

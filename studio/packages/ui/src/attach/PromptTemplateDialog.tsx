@@ -303,8 +303,6 @@ function PromptTemplates({ link, workspaceId, projects, remote, onDone, manage =
     <section className="settings-section prompt-manager" aria-label="提示词模板" data-testid="prompt-manager" onKeyDown={(e) => {
       if (e.key === "Escape" && editing) { e.stopPropagation(); closeEdit(); }
     }}>
-      <span className="settings-heading">提示词模板</span>
-      <span className="settings-hint">管理全局和各项目的常用提示词。在输入框中输入 @，选择「提示词模板…」即可粘入。</span>
       {contents}
     </section>
   );

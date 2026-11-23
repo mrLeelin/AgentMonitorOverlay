@@ -3,11 +3,12 @@ import type { CatalogSkill, SkillCatalog, SkillSource, Workspace } from "@amo-st
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { viewFile } from "../files/FileLinks.js";
 import { revealInExplorer } from "../lib/openin.js";
+import { IconChevronRight } from "../chat/icons.js";
 import "./skills.css";
 
 type Scope = "global" | "project" | "discover";
 type Status = "all" | "normal" | "diagnostic";
-const SCOPES = [{ id: "global", label: "全局技能", icon: "◎" }, { id: "project", label: "项目技能", icon: "▣" }, { id: "discover", label: "发现技能", icon: "◇" }] as const;
+const SCOPES = [{ id: "global", label: "全局技能" }, { id: "project", label: "项目技能" }, { id: "discover", label: "发现技能" }] as const;
 const DIRECTORIES = [
   { id: "git", name: "Git 仓库", title: "Anthropic Skills", subtitle: "anthropics / skills", description: "浏览官方示例技能，查看 SKILL.md、脚本和配套资源。", url: "https://github.com/anthropics/skills", action: "浏览仓库" },
   { id: "clawhub", name: "ClawHub", title: "ClawHub", subtitle: "技能与插件社区", description: "前往 ClawHub 搜索技能，查看作者、说明和安装方式。", url: "https://clawhub.ai/", action: "前往 ClawHub" },
@@ -76,10 +77,6 @@ export function SkillsPage({ link, projects }: { link: HostLink; projects: Works
   }
 
   return <section className="skills-page" aria-label="技能展览" data-testid="skills-page">
-    <header className="skills-header">
-      <div className="skills-title-line"><h2>技能展览</h2><span className="skills-label">Agent Skills</span></div>
-      <p>集中浏览本机与项目中的技能，找到需要的工作方法。</p>
-    </header>
     <div className="skills-tabs" role="tablist" aria-label="技能范围" onKeyDown={(e) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
       e.preventDefault();
@@ -88,14 +85,14 @@ export function SkillsPage({ link, projects }: { link: HostLink; projects: Works
       changeScope(next.id);
       document.getElementById(`skills-scope-${next.id}`)?.focus();
     }}>
-      {SCOPES.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={scope === tab.id ? 0 : -1} aria-selected={scope === tab.id} aria-controls="skills-content" id={`skills-scope-${tab.id}`} onClick={() => changeScope(tab.id)}><span aria-hidden="true">{tab.icon}</span>{tab.label}</button>)}
+      {SCOPES.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={scope === tab.id ? 0 : -1} aria-selected={scope === tab.id} aria-controls="skills-content" id={`skills-scope-${tab.id}`} onClick={() => changeScope(tab.id)}>{tab.label}</button>)}
     </div>
     <div id="skills-content" role="tabpanel" aria-labelledby={`skills-scope-${scope}`} className="skills-content">
       {scope === "discover" ? <>
         <div className="skills-discover-tabs" role="group" aria-label="技能目录">{DIRECTORIES.map((d) => <button key={d.id} type="button" className="btn-ghost small" aria-pressed={directory === d.id} onClick={() => setDirectory(d.id)}>{d.name}</button>)}</div>
+        {/* 设置整理 (2026-11-23): the directory's name leads, where it lives under it; no glyph tile, no line over the title. */}
         <article className="skills-discover-card">
-          <span className="skills-discover-mark" aria-hidden="true">{directory === "git" ? "⌘" : directory === "clawhub" ? "◇" : "$"}</span>
-          <span className="skills-eyebrow">{activeDirectory.subtitle}</span><h3>{activeDirectory.title}</h3><p>{activeDirectory.description}</p>
+          <h3>{activeDirectory.title}</h3><span className="skills-discover-source">{activeDirectory.subtitle}</span><p>{activeDirectory.description}</p>
           <button type="button" className="btn-primary small" onClick={() => void visit(activeDirectory.url)}>{activeDirectory.action} ↗</button>
         </article>
         <p className="settings-hint">在浏览器中查看目录及安装说明。安装完成后，回到全局或项目技能页点击「刷新」。</p>
@@ -110,7 +107,7 @@ export function SkillsPage({ link, projects }: { link: HostLink; projects: Works
           <select className="field" aria-label="技能来源" value={source} onChange={(e) => setSource(e.target.value)}><option value="all">全部来源</option>{catalog?.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
           <select className="field" aria-label="技能状态" value={status} onChange={(e) => setStatus(e.target.value as Status)}><option value="all">全部状态</option><option value="normal">无诊断提示</option><option value="diagnostic">有诊断提示</option></select>
           <input className="field skills-search" type="search" aria-label="搜索技能" placeholder="搜索技能名称、描述或路径" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button type="button" className="btn-ghost small skills-refresh" aria-label="刷新技能" title="重新扫描技能目录" disabled={loading || (scope === "project" && !workspaceId)} onClick={() => setRevision((n) => n + 1)}>↻</button>
+          <button type="button" className="btn-ghost small skills-refresh" aria-label="刷新技能" title="重新扫描技能目录" disabled={loading || (scope === "project" && !workspaceId)} onClick={() => setRevision((n) => n + 1)}>刷新</button>
         </div>
         {loading ? <div className="skills-empty" role="status">正在读取技能目录…</div> : error ? <div className="skills-empty skills-error" role="alert"><strong>技能目录读取失败</strong><span>{error}</span><button type="button" className="btn-ghost small" onClick={() => setRevision((n) => n + 1)}>重试</button></div> : scope === "project" && !workspaceId ? <div className="skills-empty">先在 Studio 添加项目，再查看项目技能。</div> : catalog && <>
           {filtered && <div className="skills-result" role="status">找到 {shown} 个技能条目<button type="button" className="link-btn" onClick={() => { setSearch(""); setSource("all"); setStatus("all"); }}>清除筛选</button></div>}
@@ -120,9 +117,9 @@ export function SkillsPage({ link, projects }: { link: HostLink; projects: Works
             return <div className="skills-source" key={s.id} data-testid="skill-source" data-source={s.id}>
               <div className="skills-source-head">
                 <button type="button" className="skills-source-toggle" aria-expanded={open} aria-controls={`skills-source-${s.id}`} onClick={() => setExpanded((prev) => new Map(prev).set(s.id, !open))}>
-                  <span className="skills-chevron" aria-hidden="true">{open ? "▾" : "▸"}</span><span className={`skills-source-icon skills-icon-${s.id}`} aria-hidden="true">{s.name.slice(0, 1)}</span><strong>{s.name}</strong><span className="skills-source-count">{s.visible.length} 个技能</span><span className="skills-source-path" title={s.root}>{s.root}</span>
+                  <span className="skills-chevron" aria-hidden="true"><IconChevronRight /></span><span className={`skills-source-icon skills-icon-${s.id}`} aria-hidden="true">{s.name.slice(0, 1)}</span><strong>{s.name}</strong><span className="skills-source-count">{s.visible.length} 个技能</span><span className="skills-source-path" title={s.root}>{s.root}</span>
                 </button>
-                <button type="button" className="skills-folder btn-ghost small" aria-label={`打开 ${s.name} 技能目录`} title={s.exists ? "在资源管理器中打开目录" : "目录不存在"} disabled={!s.exists} onClick={() => void reveal(s.root)}>▱</button>
+                <button type="button" className="skills-folder btn-ghost small" aria-label={`打开 ${s.name} 技能目录`} title={s.exists ? "在资源管理器中打开目录" : "目录不存在"} disabled={!s.exists} onClick={() => void reveal(s.root)}>打开</button>
               </div>
               {open && <div id={`skills-source-${s.id}`} className="skills-source-body">
                 {s.diagnostics.map((d, i) => <p key={i} className="skills-diagnostic">{d}</p>)}

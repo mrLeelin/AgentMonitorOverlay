@@ -89,7 +89,7 @@ export function AutoCompactSection({ link, settings, profile }: { link: HostLink
       ) : (
         <div className="settings-row">
           <input
-            className="field"
+            className="field auto-compact-input"
             inputMode="numeric"
             aria-label="自动压缩点（千 token）"
             value={text}

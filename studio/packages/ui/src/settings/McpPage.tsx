@@ -47,10 +47,6 @@ export function McpPage({ link }: { link: HostLink }) {
   return (
     <>
       <section className="settings-section" aria-label="MCP">
-        <span className="settings-heading">MCP</span>
-        <span className="settings-hint">
-          会话除了 Studio 自带的 amo，还能用哪些 MCP。这里是全局的默认；某个项目可以在「编辑项目」里另外开关，某个会话可以在输入框上方的「MCP」按钮里开关。改了以后，正在运行的 Claude 会话下一次调用工具就能用上 Studio 里加的；换掉本机配置的那几个，要等这一轮回复结束后从下一条消息起生效。DeepSeek 会话从下一条消息起生效。Codex 只用 Studio 里加的、全局开着的，要等 Codex 下次启动（比如重启 Studio）才生效，也不能按项目或会话开关。
-        </span>
         <label className="settings-row feature-row">
           <input type="checkbox" checked={state.loadLocal} disabled={busy} onChange={(e) => void setGlobal({ loadLocal: e.target.checked })} data-testid="mcp-load-local" />
           <span className="feature-text">

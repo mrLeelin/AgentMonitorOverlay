@@ -4,6 +4,7 @@ import { call, HostApiError, type HostLink } from "../host/client.js";
 import { onHostEvent } from "../host/events.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { formatDay } from "../task/Archived.js";
+import { SettingField } from "./SettingField.js";
 
 // 设置 → 数据管理 (2026-10-14): what is archived (projects, topics, tasks, sessions), restored to where it was or
 // deleted for good. Deleting asks first and says what goes with it.
@@ -222,19 +223,15 @@ export function DataPage({ link }: { link: HostLink }) {
 
   return (
     <section className="settings-section" aria-label="数据管理">
-      <span className="settings-heading">数据管理</span>
-      <span className="settings-hint">
-        已归档的项目、专题、任务和会话。恢复后回到原处；彻底删除后找不回来。项目文件夹里的文件，以及 Codex、Claude Code 自己保存的对话记录，都不会被删除。
-      </span>
-      <label className="settings-row">
-        <span className="settings-label">归档任务自动删除</span>
-        <select className="field" aria-label="归档任务自动删除" value={retentionDays ?? "never"} disabled={!retentionLoaded || retentionSaving} onChange={(e) => void saveRetention(e.target.value)}>
-          {[1, 3, 5, 7].map((days) => <option key={days} value={days}>{days} 天后自动删除</option>)}
-          <option value="never">不自动删除</option>
-        </select>
-        {retentionSaving && <span className="settings-hint" role="status">保存中…</span>}
-      </label>
-      <span className="settings-hint">从任务归档时开始计时，已有的归档任务也适用。到期后彻底删除任务及所属的已归档会话，删除后不能恢复；提前恢复任务可取消自动删除。</span>
+      <SettingField label="归档任务自动删除" htmlFor="data-retention" hint="从任务归档时开始计时，已有的归档任务也适用。到期后彻底删除任务及所属的已归档会话，删除后不能恢复；提前恢复任务可取消自动删除。">
+        <div className="settings-row">
+          <select id="data-retention" className="field" aria-label="归档任务自动删除" value={retentionDays ?? "never"} disabled={!retentionLoaded || retentionSaving} onChange={(e) => void saveRetention(e.target.value)}>
+            {[1, 3, 5, 7].map((days) => <option key={days} value={days}>{days} 天后自动删除</option>)}
+            <option value="never">不自动删除</option>
+          </select>
+          {retentionSaving && <span className="settings-hint" role="status">保存中…</span>}
+        </div>
+      </SettingField>
       <div className="data-toolbar">
         <div role="radiogroup" aria-label="类型" className="chips">
           {FILTERS.map((f) => (

@@ -38,8 +38,8 @@ test("sending jumps to the end of the conversation, unless turned off in 设置 
   await send(page, `第三条 ${filler(40)}`);
   await expect.poll(() => fromBottom(page)).toBeLessThan(40);
 
-  // Off: the place being read stays.
-  await page.getByRole("button", { name: "设置" }).click();
+  // Off: the place being read stays. Exact: the task page's 「直属主控：未分配 · 设置归属」 is a button with 设置 in it too.
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
   await selectSettingsPage(dialog, "界面");
   await dialog.getByTestId("scroll-on-send-off").click();

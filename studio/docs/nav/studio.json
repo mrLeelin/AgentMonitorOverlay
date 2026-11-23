@@ -306,7 +306,7 @@
       "label": "设置、常用预设、功能开关",
       "aliases": ["设置", "搜索设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY", "快捷键", "Enter", "放进待办"],
       "category": "host",
-      "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。左侧采用五类二级折叠菜单，GROUPS/PAGES 定义归类；搜索跨分类名称、页面名称和 keywords 筛选，清空恢复原页和展开状态，新增设置项时同步补充分组和关键词。",
+      "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。左侧采用五类二级折叠菜单，GROUPS/PAGES 定义归类；搜索跨分类名称、页面名称和 keywords 筛选，清空恢复原页和展开状态，新增设置项时同步补充分组和关键词。每页的页头由设置窗口统一画（标题即菜单名，说明写在 INTROS，页面自己的按钮用 SettingsPageActions 放到页头右侧），页面里不再写自己的标题；单个设置用 SettingField（标签一列、控件一列、说明紧贴控件）。",
       "anchors": [
         { "label": "ConfigFeature", "path": "studio/packages/host/src/features/config/service.ts", "anchor": "export class ConfigFeature" },
         { "label": "开关和 kv 名", "path": "studio/packages/host/src/core/shared.ts", "anchor": "EXPERIMENTAL" },
@@ -314,6 +314,8 @@
         { "label": "模型代理与连通性测试", "path": "studio/packages/host/src/runtime/network.ts", "anchor": "export function networkEnv" },
         { "label": "网络设置页", "path": "studio/packages/ui/src/settings/NetworkPage.tsx", "anchor": "export function NetworkPage" },
         { "label": "设置窗口", "path": "studio/packages/ui/src/settings/SettingsDialog.tsx", "anchor": "export function SettingsDialog" },
+        { "label": "页头说明", "path": "studio/packages/ui/src/settings/SettingsDialog.tsx", "anchor": "const INTROS" },
+        { "label": "设置行", "path": "studio/packages/ui/src/settings/SettingField.tsx", "anchor": "export function SettingField" },
         { "label": "本机输入设置与快捷键", "path": "studio/packages/ui/src/chat/inputPrefs.ts", "anchor": "export const ENTER_MODES" },
         { "label": "本机主题、保存和窗口同步", "path": "studio/packages/ui/src/lib/theme.ts", "anchor": "export function toggleTheme" },
         { "label": "读设置", "path": "studio/packages/ui/src/settings/useSettings.ts" }

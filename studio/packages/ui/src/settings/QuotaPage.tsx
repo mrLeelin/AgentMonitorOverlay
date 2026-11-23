@@ -30,8 +30,6 @@ export function QuotaPage({ link, settings }: { link: HostLink; settings: Studio
   const rows = (profiles ?? []).filter((p) => p.balance || usage?.some((u) => u.profileId === p.id));
   return (
     <section className="settings-section" aria-label="额度">
-      <span className="settings-heading">额度</span>
-      <span className="settings-hint">Studio 能跟踪的额度：GPT、Claude 订阅的用量，和设置了余额查询的渠道（在 设置 → 模型 里给渠道选查询方式）。左下角点开能看每个窗口剩多少、什么时候重置。</span>
       {profiles && usage && rows.length === 0 && <span className="settings-hint">还没有能跟踪的额度。</span>}
       <div className="quota-list">
         {rows.map((p) => (

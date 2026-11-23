@@ -34,8 +34,6 @@ export function NotesLinkSection({ bridge }: { bridge: ScratchpadBridge }) {
   const running = status?.running ?? false;
   return (
     <section className="settings-section" aria-label="便签" data-testid="notes-link">
-      <span className="settings-heading">便签</span>
-      <span className="settings-hint">便签是独立的小程序，跟 Studio 一起安装。Studio 重启不会关掉它，它的设置也在它自己那里（托盘图标右键 → 设置…）。</span>
       <div className="settings-row">
         <span className={`notes-dot${running ? " on" : ""}`} aria-hidden="true" />
         <span data-testid="notes-link-state">{status === null ? "正在查看…" : running ? "运行中" : "没有在运行"}</span>

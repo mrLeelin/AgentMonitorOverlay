@@ -5,6 +5,7 @@ import { effortLabel, modelName, useChoicesFor } from "../lib/choices.js";
 import { pickable } from "../lib/profiles.js";
 import { useProfiles } from "../lib/balance.js";
 import { Mark } from "../chat/pickers.js";
+import { SettingsPageActions } from "./PageActions.js";
 
 // 2026-11-11: A 版分栏。切换型号只负责导航，不创建空配置；默认型号仍与渠道通用设置共用 model:null。
 // Fast / 权限按型号覆盖渠道，用法单独填写时优先；渠道的强度只用于默认型号。
@@ -106,7 +107,7 @@ export function SubsessionPage({ link, settings }: { link: HostLink; settings: S
   }
 
   if (!profiles) return <span className="settings-hint">正在读取渠道…</span>;
-  if (!profile || !pick) return <section className="settings-section"><span className="settings-heading">子会话</span><span className="settings-hint">还没有可用的渠道，请先到「模型」设置添加。</span></section>;
+  if (!profile || !pick) return <section className="settings-section"><span className="settings-hint">还没有可用的渠道，请先到「模型」设置添加。</span></section>;
   const models = choices.get(profile.id)?.models ?? [];
   const defaultModel = models.find((m) => m.isDefault) ?? models[0];
   const entries = models.filter((m) => !m.isDefault).map((m) => ({ model: m.id, label: modelName(m) ?? m.id, retired: false }));
@@ -121,15 +122,14 @@ export function SubsessionPage({ link, settings }: { link: HostLink; settings: S
   const status = pending ? "正在保存…" : failures.current.has(selectedKey) ? "保存失败，请重试" : drafts[selectedKey] !== undefined && drafts[selectedKey].trim() !== note.note.trim() ? "离开输入框后保存" : configured ? "已保存" : "尚未单独设置";
   return (
     <section className="settings-section subsession-page" aria-label="子会话">
-      <header className="subsession-page-head">
-        <div><span className="settings-heading">子会话</span><p className="settings-hint">设置 AI 开子会话时的默认选项，以及如何使用每个模型。</p></div>
+      <SettingsPageActions>
         <details className="subsession-rules"><summary>ⓘ 生效规则</summary><div>
           <p><b>什么时候用</b><br />在「@ 开子会话」里作为初始值；AI 自己开子会话、没有指定选项时也会使用。</p>
           <p><b>启动选项</b><br />型号单独设置优先；Fast 和权限未设置时沿用渠道。思考强度只适用于当前型号，渠道的强度只用于默认型号。</p>
           <p><b>用法说明</b><br />写给主模型看，帮助它选择模型和交代任务。型号单独填写用法时优先使用，否则沿用渠道通用说明。</p>
           <p><b>保存方式</b><br />每段最多 {SUBSESSION_NOTE_MAX} 字，离开输入框时保存；选项改了立即保存。</p>
         </div></details>
-      </header>
+      </SettingsPageActions>
       <div className="subsession-channel-tabs" role="group" aria-label="选择渠道" data-testid="subsession-channels">
         {channels.map((p) => <button key={p.id} type="button" className="subsession-channel-tab" aria-pressed={p.id === profile.id} data-testid="subsession-channel" data-profile={p.id} onClick={() => { setSelection({ profileId: p.id, model: null }); setQuery(""); }}>
           <Mark profile={p} small /><span>{p.label}</span>{p.hidden && <span className="subsession-secondary">已隐藏</span>}<small>{notes.filter((n) => n.profileId === p.id && n.model !== null).length} 项</small>

@@ -32,8 +32,6 @@ export function ExperimentalSection({ link, on }: { link: HostLink; on: readonly
 
   return (
     <section className="settings-section" aria-label="测试功能">
-      <span className="settings-heading">测试功能</span>
-      <span className="settings-hint">还在试的新功能，默认都关着。打开后入口才出现；用着别扭、出错可以随时关掉，关掉不影响任务和会话的数据。</span>
       {EXPERIMENTAL_FEATURES.map((f) => (
         <label key={f.id} className="settings-row feature-row">
           <input type="checkbox" checked={shown.includes(f.id)} disabled={busy} onChange={(e) => void toggle(f.id, e.target.checked)} data-testid={`experimental-${f.id}`} />

@@ -81,8 +81,6 @@ export function DutyPage({ link, state: snapshot }: { link: HostLink; state: Sta
 
   return (
     <section className="settings-section" aria-label="值守">
-      <span className="settings-heading">值守</span>
-      <span className="settings-hint">到点了就做一件事：开一个会话、跑一条命令，或者 Studio 自带的任务。等待和计时不用模型，只有动作是开会话时才用额度；同一项上一次还没结束，这次就跳过。Studio 退出时值守也停。</span>
       {!state ? (
         <span className="settings-hint">读取中…</span>
       ) : (

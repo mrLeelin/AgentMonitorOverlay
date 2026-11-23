@@ -100,3 +100,4 @@
 - `packages/host/src/runtime/dsh/dsh-runtime.integration.test.ts` 的「session_start with write in a folder not set up」在全量 vitest 负载下偶尔超时，单独跑能过（11-05、11-06 都见过），原因没查。
 - 端到端里 Claude 的 mock 配置没法向 Claude Code 要型号列表（会超时），所以测试模式给 mock 配了内置列表（`packages/host/src/bin.ts`）。
 - Studio 里 agent 的命令 PATH 去掉了 WindowsApps，用不到应用商店版的 `pwsh`、`python3`、`winget`（本机 `python`、`node`、`git` 不受影响）。
+- 几个测试在 `Lin/BaseBranch` 的 09931c7（2026-11-23）上就过不了，设置整理时发现、没查：e2e 的 `pi.spec.ts:44` 点「排队」后消息是 `held` 不是 `waiting`；`dsh.spec.ts` 第 61、87 行的输入框提示和排队消息文字对不上，第 222 行的模型列表对不上；`scroll-on-send.spec.ts` 第 37 行把对话滚到顶后偶尔量出 0。前几条看起来和同一天把「后续消息」默认改成等本轮结束有关。全量 vitest 有 10 个失败：`tutorial-terms`（教程里画布和输入框的 6 句话源码里已经没有了）、`kv-keys`（`settings:archived-task-retention-days` 没登记）、Host 的 `store`、`review-round`、`issues`、`dsh/session-log`、`codex/lead-mcp` 测试；它们读的文件这次都没改。

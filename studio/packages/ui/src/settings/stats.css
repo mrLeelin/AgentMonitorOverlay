@@ -17,9 +17,7 @@
 }
 
 .stats { display: flex; flex-direction: column; gap: 14px; container-type: inline-size; }
-.stats-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.stats-top .spacer { flex: 1; }
-.stats-note { font-size: var(--fs-cap); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.stats-note { font-size: var(--fs-cap); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
 .stats-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .stats-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-l); background: var(--panel); color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }

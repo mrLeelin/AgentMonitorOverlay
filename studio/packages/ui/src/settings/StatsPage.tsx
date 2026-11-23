@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TokenStats } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
+import { SettingsPageActions } from "./PageActions.js";
 import {
   activeModels, addDays, byDate, columns, firstDate, fmtTokens, mondayOf, niceMax, rangeStart, smoothPath, statModels, sumRange, value, ymd,
   type ByDate, type Column, type Grain, type Metric, type StatModel, type Usage,
@@ -97,19 +98,20 @@ export function StatsPage({ link }: { link: HostLink }) {
   const ids = models.filter((m) => !hidden.has(m.id)).map((m) => m.id);
   const cols = useMemo(() => (grain === "total" ? [] : columns(data, grain, today)), [data, grain, today]);
 
+  // 重新统计 sits on the page's 页头 since 2026-11-23 (设置整理); when it was last counted stays at the top of the page.
   const head = (
-    <div className="stats-top">
-      <span className="settings-heading">Token 用量</span>
+    <>
+      <SettingsPageActions>
+        <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void load()}>
+          {busy ? "统计中…" : "重新统计"}
+        </button>
+      </SettingsPageActions>
       {stats && (
         <span className="stats-note" data-testid="stats-counted">
           打开时已重新统计 · {new Date(stats.generatedAt).toLocaleTimeString("zh-CN", { hour12: false })} · {stats.turns.toLocaleString("en")} 轮 · 用时 {(stats.ms / 1000).toFixed(1)} 秒
         </span>
       )}
-      <span className="spacer" />
-      <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void load()}>
-        {busy ? "统计中…" : "重新统计"}
-      </button>
-    </div>
+    </>
   );
   if (!stats || !models.length) {
     return (

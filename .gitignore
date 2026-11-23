@@ -44,3 +44,4 @@ local-state/
 /studio.db-wal
 # Generated screenshots stay local
 /studio/screenshots/
+.omc

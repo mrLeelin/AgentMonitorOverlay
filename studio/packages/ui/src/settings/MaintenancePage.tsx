@@ -89,9 +89,10 @@ export function MaintenancePage({ link }: { link: HostLink }) {
                     {exe ?? "没有找到"}
                   </code>
                   <span className="spacer" />
+                  {/* The two CLIs weigh the same (2026-11-23 设置整理): neither is the one to pick. */}
                   <button
                     type="button"
-                    className={cli === "claude" ? "btn-primary small" : "btn-ghost small"}
+                    className="btn-ghost small"
                     onClick={() => void open(cli)}
                     disabled={busy || !exe}
                     title={exe ? `在工程目录打开 ${CLI_NAME[cli]}` : MISSING[cli]}
