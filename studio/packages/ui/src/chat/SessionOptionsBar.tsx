@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ModelProfile, Session, SessionOptions, SessionPreset, Task, Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { optionsSummary, sameOptions, sessionModel, useProfileChoices } from "../lib/choices.js";
 import { isHiddenPick, rememberPick } from "../lib/recents.js";
-import { EffortBars, FastToggle, Mark, nextEffort, PermissionTiles, pickLabel } from "./pickers.js";
+import { ComposerMore, FastToggle, Mark, nextEffort, PermissionTiles, pickLabel, RISKY_PERMISSIONS } from "./pickers.js";
+import { EffortPicker, withEffort } from "./EffortPicker.js";
+import { IconShield, IconChevronDown } from "./icons.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { SessionMcpTray, useSessionMcp } from "../mcp/SessionMcp.js";
 import { SessionGoalButton, SessionGoalTray, useSessionGoal } from "./SessionGoal.js";
@@ -16,6 +18,7 @@ import { SessionGoalButton, SessionGoalTray, useSessionGoal } from "./SessionGoa
 type Tray = "model" | "permission" | "mcp" | "goal" | null;
 
 export function SessionOptionsBar({
+  children,
   link,
   session,
   profile,
@@ -25,6 +28,7 @@ export function SessionOptionsBar({
   sessions,
   projects,
 }: {
+  children: ReactNode;
   link: HostLink;
   session: Session;
   profile: ModelProfile | undefined;
@@ -36,6 +40,8 @@ export function SessionOptionsBar({
 }) {
   const { choices } = useProfileChoices(link, session.profileId);
   const [tray, setTray] = useState<Tray>(null);
+  const [more, setMore] = useState(false);
+  const optionsId = useId();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -93,13 +99,14 @@ export function SessionOptionsBar({
     rememberPick({ profileId: session.profileId, model: m?.isDefault ? null : id });
     void apply(next, `型号换成「${label}」`);
   };
-  const setEffort = (effort: string) => void apply({ ...session.options, effort }, "思考强度已改");
+  const setEffort = (effort: string | null) => apply(withEffort(session.options, effort), effort === null ? "已恢复默认强度" : "思考强度已改");
   const setFast = (on: boolean) => void apply(session.options, on ? "Fast 已开" : "Fast 已关", on);
+  const fastProps = { fast: session.runtime === "codex" || session.runtime === "claude" ? model?.fast : undefined, value: session.options.fast, onChange: setFast, disabled: disabled || busy, when };
   const setPermission = (id: string) => void apply({ ...session.options, permission: id }, `权限换成「${choices?.permissions.find((p) => p.id === id)?.label ?? id}」`);
 
   // Alt M: models, Alt P: permissions, Alt E: one effort up.
   useEffect(() => {
-    if (disabled) return;
+    if (disabled || busy) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey) return;
       const k = e.key.toLowerCase();
@@ -122,7 +129,7 @@ export function SessionOptionsBar({
   const permission = choices?.permissions.find((p) => p.id === (session.options.permission ?? choices.defaultPermission));
 
   return (
-    <div className="session-options" ref={box}>
+    <div className="session-options" ref={box} data-testid="session-options">
       {tray === "mcp" && (
         <div className="tray" role="dialog" aria-label="MCP" data-testid="options-tray">
           <SessionMcpTray link={link} session={session} state={mcp.state} onState={mcp.setState} disabled={disabled} />
@@ -165,7 +172,8 @@ export function SessionOptionsBar({
           )}
         </div>
       )}
-      <div className="status-line" data-testid="session-options" title={optionsSummary(choices, { ...session.options, model: model?.id ?? session.options.model })}>
+      <div className="status-line" title={optionsSummary(choices, { ...session.options, model: model?.id ?? session.options.model })}>
+        {children}
         <button
           type="button"
           className="seg-btn"
@@ -181,11 +189,13 @@ export function SessionOptionsBar({
         >
           <Mark profile={profile} small />
           <span>{label.main}</span>
+          <IconChevronDown />
         </button>
         {model && model.efforts.length > 0 && (
-          <EffortBars efforts={model.efforts} value={session.options.effort ?? null} fallback={model.defaultEffort} onChange={setEffort} disabled={disabled || busy} small />
+          <EffortPicker key={session.id + "/" + model.id} efforts={model.efforts} value={session.options.effort ?? null} fallback={model.defaultEffort}
+            fastControl={<FastToggle {...fastProps} iconOnly />}
+            modelLabel={label.main} onChange={setEffort} onOpen={() => setTray(null)} onModel={() => setTray("model")} disabled={disabled} saving={busy} />
         )}
-        {(session.runtime === "codex" || session.runtime === "claude") && <FastToggle fast={model?.fast} value={session.options.fast} onChange={setFast} disabled={disabled || busy} small when={when} />}
         <button
           type="button"
           className="seg-btn"
@@ -193,10 +203,18 @@ export function SessionOptionsBar({
           disabled={disabled || !choices}
           onClick={() => setTray((t) => (t === "permission" ? null : "permission"))}
           data-testid="switch-permission"
+          data-risky={permission && (RISKY_PERMISSIONS.has(permission.id) || permission.id === DSH_FULL_ACCESS) || undefined}
         >
-          <span aria-hidden="true">⛨</span>
+          <IconShield />
           <span>{permission?.label ?? "默认权限"}</span>
         </button>
+        {(session.runtime !== "remote" || mine.length > 0 || goal.supported) && <ComposerMore expanded={more} controls={optionsId} onClick={() => {
+          setMore(!more);
+          setTray(null);
+        }} />}
+      </div>
+      <div id={optionsId} className="composer-extra" hidden={!more}>
+        <FastToggle {...fastProps} small />
         {session.runtime !== "remote" && (
           <button
             type="button"
@@ -216,21 +234,21 @@ export function SessionOptionsBar({
           if (tray !== "goal") goal.refresh();
           setTray((value) => value === "goal" ? null : "goal");
         }} />}
+        {mine.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`preset-chip${sameOptions(p.options, session.options) ? " active" : ""}`}
+            aria-pressed={sameOptions(p.options, session.options)}
+            disabled={disabled || busy}
+            title={optionsSummary(choices, p.options)}
+            onClick={() => void apply(p.options, `已换成预设「${p.name}」`)}
+            data-testid="preset-chip"
+          >
+            {p.name}
+          </button>
+        ))}
       </div>
-      {mine.map((p) => (
-        <button
-          key={p.id}
-          type="button"
-          className={`preset-chip${sameOptions(p.options, session.options) ? " active" : ""}`}
-          aria-pressed={sameOptions(p.options, session.options)}
-          disabled={disabled || busy}
-          title={optionsSummary(choices, p.options)}
-          onClick={() => void apply(p.options, `已换成预设「${p.name}」`)}
-          data-testid="preset-chip"
-        >
-          {p.name}
-        </button>
-      ))}
       {note && (
         <span className={note.error ? "form-error" : "applied"} role={note.error ? "alert" : "status"} data-testid="options-note">
           {note.error ? note.text : `✓ ${note.text}`}

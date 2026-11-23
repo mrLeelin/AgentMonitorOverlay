@@ -27,6 +27,7 @@ async function openTask(title: string, profileId = "codex-mock") {
   sessions.push(result.session.id);
   await studio.page.getByTestId("task-card").filter({ hasText: title }).click();
   await expect.poll(async () => (await studio!.api<StateSnapshot>("GET", "/api/state")).sessions.find((s) => s.id === result.session.id)?.status, { timeout: 60_000 }).toBe("idle");
+  await studio.page.getByRole("button", { name: "更多选项", exact: true }).click();
   return result.session;
 }
 
@@ -61,6 +62,7 @@ test("Codex Goal 从底栏开启原生自动轮，暂停、恢复、刷新和清
   await studio!.api("POST", `/api/sessions/${session.id}/interrupt`);
   await expect(page.getByTestId("goal-status")).toHaveText("已暂停");
   await page.reload();
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await expect(page.getByTestId("switch-goal")).toContainText("已暂停");
   await page.getByTestId("switch-goal").click();
   await expect(page.getByTestId("goal-objective")).toContainText("验证结果");
@@ -153,6 +155,7 @@ test("Claude 底栏使用原生 Goal，完成检查与清除同步且不显示 T
     await screenshot(app, "studio", `goal-claude-complete-${theme}`, page);
   }
   await page.reload();
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await expect(page.getByTestId("switch-goal")).toContainText("已完成");
   await page.getByTestId("switch-goal").click();
   await page.getByTestId("goal-clear").click();

@@ -26,6 +26,7 @@ async function openGoal() {
   });
   await page.getByTestId("task-card").filter({ hasText: "Goal 输入" }).click();
   await expect(page.getByTestId("msg-agent").first()).toBeVisible();
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await page.getByTestId("switch-goal").click();
   await expect(page.getByTestId("goal-objective-input")).toBeEnabled();
   return { page, app: studio.app, input: page.getByTestId("goal-objective-input"), sent, target, ws, dir };

@@ -119,6 +119,7 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   const first = page.getByLabel("第一句话");
   await first.fill("这张图里是什么");
@@ -130,8 +131,7 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await page.getByTestId("lightbox").click();
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
   // Filing in 待办 does not take images.
-  await page.getByTestId("draft-file").click();
-  await expect(page.getByRole("alert")).toContainText("放进待办不带图片");
+  await expect(page.getByTestId("draft-file")).toBeDisabled();
   await screenshot(studio.app, "stage-18", "S18-newtask-image", page);
   await first.press("Enter");
 
@@ -147,6 +147,7 @@ for (const start of ["button", "Enter"] as const) {
     studio = await launchStudio();
     const { page } = studio;
     await page.getByRole("button", { name: "+ 新任务" }).click();
+    await page.getByTestId("all-models").click();
     await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
     const first = page.getByLabel("第一句话");
     await first.fill(start === "button" ? "   " : "");
@@ -169,7 +170,8 @@ for (const start of ["button", "Enter"] as const) {
     // Empty input still cannot start, including after its last image is removed.
     await pasteImage(page, "多余.png", first);
     await page.getByRole("button", { name: /移除.*多余\.png/ }).click();
-    await page.getByTestId("draft-start").click();
+    await expect(page.getByTestId("draft-start")).toBeDisabled();
+    await first.press("Enter");
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.getByTestId("task-title")).toHaveCount(0);
   });

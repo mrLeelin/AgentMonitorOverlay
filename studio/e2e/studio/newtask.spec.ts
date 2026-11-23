@@ -99,9 +99,11 @@ test("creates a task from the blank task page and streams the first reply", asyn
   await expect(page.getByTestId("scope-hint")).toContainText("不指定项目：在公共目录里运行");
   await projects.getByRole("button", { name: "alpha" }).click();
   await expect(page.getByTestId("scope-hint")).toContainText("在 alpha 里运行");
-  // The model is a tile, one click; the effort is a set of bars; the permissions a segmented control.
+  // The compact model control opens the existing choices and their context menus.
+  await page.getByTestId("all-models").click();
   const tile = page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" });
   await tile.click();
+  await page.getByTestId("all-models").click();
   await expect(tile).toHaveAttribute("aria-pressed", "true");
   // Right click on a tile: that account's own models in a small menu.
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click({ button: "right" });
@@ -109,11 +111,14 @@ test("creates a task from the blank task page and streams the first reply", asyn
   await expect(menu.getByRole("menuitemradio")).toHaveText(["mock-claude", "mock-claude-b"]);
   await menu.getByRole("menuitemradio", { name: "mock-claude-b" }).click();
   await expect(menu).toHaveCount(0);
+  await page.getByTestId("all-models").click();
   await expect(page.getByRole("group", { name: "模型" }).locator('[data-testid="model-tile"][aria-pressed="true"]')).toContainText("mock-claude-b");
   await tile.click();
-  await page.getByTestId("effort").getByRole("button", { name: "低" }).click();
+  await page.getByTestId("effort").click();
+  await page.getByRole("slider", { name: "推理强度" }).press("Home");
+  await page.keyboard.press("Escape");
   await expect(page.getByTestId("effort-label")).toHaveText("低");
-  await expect(page.getByRole("group", { name: "权限" }).getByRole("button", { name: "逐条询问" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("权限", { exact: true }).locator("option:checked")).toHaveText("逐条询问");
   await screenshot(studio.app, "stage-1", "S1-10-new-task", page);
 
   await page.getByLabel("第一句话").fill("列出目录结构 [[slow]]");

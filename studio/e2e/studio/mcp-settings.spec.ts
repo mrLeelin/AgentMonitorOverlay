@@ -67,6 +67,7 @@ test("MCP: settings page, a project's .mcp.json, a session's own choice", async 
   await edit.getByRole("button", { name: "取消" }).click();
 
   // The composer's MCP: figma off for this session alone; from its next message.
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await page.getByTestId("switch-mcp").click();
   const tray = page.getByTestId("mcp-tray");
   await expect(tray.getByTestId("mcp-tray-shared-new")).toBeVisible();

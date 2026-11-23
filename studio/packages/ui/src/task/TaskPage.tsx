@@ -443,7 +443,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           {!task.archivedAt && !(copy && copy.state === "revoked") && (
             <button
               type="button"
-              className="btn-ghost small with-icon"
+              className="btn-primary small with-icon"
               aria-expanded={creating}
               title={copy ? `在这个任务里开一个新会话（在 ${copy.name} 上跑，只能选那边允许的模型）` : "在这个任务里开一个新会话"}
               onClick={() => {
@@ -513,37 +513,38 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           <button type="button" className="btn-ghost small icon-only" aria-label="任务的更多操作" title="更多" onClick={(e) => setTaskMenu(below(e.currentTarget))} data-testid="task-more">
             ⋯
           </button>
-          <span className="head-sep" aria-hidden="true" />
-          <button
-            type="button"
-            className="btn-ghost small sidebar-toggle"
-            aria-pressed={!sessionsHidden}
-            title={sessionsHidden ? "显示会话列表" : "隐藏会话列表"}
-            onClick={() => setSessionsHidden(!sessionsHidden)}
-            data-testid="sessions-toggle"
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="2" y="2.5" width="12" height="11" rx="1" />
-              <path d="M6 2.5v11" />
-            </svg>
-            会话
-            {sessionsHidden && liveCount > 1 && <span className="sidebar-count">{liveCount}</span>}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost small sidebar-toggle"
-            aria-pressed={sidebar}
-            title={sidebar ? "收起侧栏" : "显示侧栏：环境、进度和批注"}
-            onClick={() => setSidebar(!sidebar)}
-            data-testid="sidebar-toggle"
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="2" y="2.5" width="12" height="11" rx="1" />
-              <path d="M10 2.5v11" />
-            </svg>
-            侧栏
-            {!sidebar && sideCount > 0 && <span className="sidebar-count">{sideCount}</span>}
-          </button>
+          <div className="task-head-panels" role="group" aria-label="显示面板">
+            <button
+              type="button"
+              className="btn-ghost small sidebar-toggle"
+              aria-pressed={!sessionsHidden}
+              title={sessionsHidden ? "显示会话列表" : "隐藏会话列表"}
+              onClick={() => setSessionsHidden(!sessionsHidden)}
+              data-testid="sessions-toggle"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="2" y="2.5" width="12" height="11" rx="1" />
+                <path d="M6 2.5v11" />
+              </svg>
+              会话
+              {sessionsHidden && liveCount > 1 && <span className="sidebar-count">{liveCount}</span>}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost small sidebar-toggle"
+              aria-pressed={sidebar}
+              title={sidebar ? "收起侧栏" : "显示侧栏：环境、进度和批注"}
+              onClick={() => setSidebar(!sidebar)}
+              data-testid="sidebar-toggle"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="2" y="2.5" width="12" height="11" rx="1" />
+                <path d="M10 2.5v11" />
+              </svg>
+              侧栏
+              {!sidebar && sideCount > 0 && <span className="sidebar-count">{sideCount}</span>}
+            </button>
+          </div>
         </div>
       </div>
       </TaskHeader>

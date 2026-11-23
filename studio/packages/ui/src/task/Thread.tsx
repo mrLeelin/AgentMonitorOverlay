@@ -760,56 +760,58 @@ ${d}` : restored));
             <MentionList mentions={mentions} />
             <SlashMenu slash={slash} />
             <div className="chat-bar">
-              <button
-                type="button"
-                className="round-btn attach"
-                aria-label="添加图片或文件"
-                title={isRemote ? "添加图片或文件（也可以粘贴截图或拖进来）：发送时一起传到那台电脑，每个最多 20 MB" : "添加图片或文件（也可以粘贴或拖进来）"}
-                disabled={readOnly}
-                onClick={() => picker.current?.click()}
-              >
-                <IconPaperclip />
-              </button>
-              <input
-                ref={picker}
-                type="file"
-                multiple
-                hidden
-                data-testid="attach-input"
-                onChange={(e) => {
-                  attach.addDropped([...(e.currentTarget.files ?? [])]);
-                  e.currentTarget.value = "";
-                }}
-              />
-              <SessionOptionsBar link={link} session={session} profile={profile} presets={presets} disabled={readOnly || isRemote} tasks={tasks} sessions={sessions} projects={projects ?? []} />
-              <span
-                className="composer-hint"
-                {...(blocked ? { "data-testid": "remote-blocked" } : {})}
-                title={blocked || attachHold || (sending && sending === session?.id ? `Host 还没回应这条消息，${SEND_GIVE_UP_MS / 1000} 秒内还没有，文字会放回输入框` : halting ? "模型手上的命令或回复收住可能要几秒，这一轮结束前会一直显示" : sendsNow ? `${followupHint}${oppositeHint}${immediateHint}` : undefined)}
-              >{blocked || attachHold || (sending && sending === session?.id ? "正在发送…" : "") || (halting === "stop" ? "正在停止…" : halting === "now" ? "正在打断，停下后马上发出…" : "") || (generating && !readOnly && !planReview ? followupHint : "")}</span>
-              <span className="spacer" />
-              {generating && !readOnly && !blocked && (
+              <SessionOptionsBar link={link} session={session} profile={profile} presets={presets} disabled={readOnly || isRemote} tasks={tasks} sessions={sessions} projects={projects ?? []}>
                 <button
                   type="button"
-                  className={`round-btn stop${halting === "stop" ? " stopping" : ""}`}
-                  onClick={stop}
-                  disabled={halting === "stop"}
-                  aria-label={halting === "stop" ? "正在停止" : "打断"}
-                  title={halting === "stop" ? "正在停止：等模型收住手上的这一步" : unansweredPrompt(items) ? "停止生成：还没有回复，刚发的消息放回输入框" : "停止生成"}
+                  className="round-btn attach"
+                  aria-label="添加图片或文件"
+                  title={isRemote ? "添加图片或文件（也可以粘贴截图或拖进来）：发送时一起传到那台电脑，每个最多 20 MB" : "添加图片或文件（也可以粘贴或拖进来）"}
+                  disabled={readOnly}
+                  onClick={() => picker.current?.click()}
                 >
-                  <IconStop />
+                  <IconPaperclip />
                 </button>
-              )}
-              <button
-                type="button"
-                className="round-btn send"
-                onClick={() => void send()}
-                disabled={!canSend}
-                aria-label={isRevising ? "发送修改意见" : sendLabel}
-                title={isRevising ? "把修改意见发给 Claude" : generating ? `${followupHint}${oppositeHint}${immediateHint}` : sendKeys}
-              >
-                <IconArrowUp />
-              </button>
+                <input
+                  ref={picker}
+                  type="file"
+                  multiple
+                  hidden
+                  data-testid="attach-input"
+                  onChange={(e) => {
+                    attach.addDropped([...(e.currentTarget.files ?? [])]);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </SessionOptionsBar>
+              <div className="chat-send-actions">
+                <span
+                  className="composer-hint"
+                  {...(blocked ? { "data-testid": "remote-blocked" } : {})}
+                  title={blocked || attachHold || (sending && sending === session?.id ? `Host 还没回应这条消息，${SEND_GIVE_UP_MS / 1000} 秒内还没有，文字会放回输入框` : halting ? "模型手上的命令或回复收住可能要几秒，这一轮结束前会一直显示" : sendsNow ? `${followupHint}${oppositeHint}${immediateHint}` : undefined)}
+                >{blocked || attachHold || (sending && sending === session?.id ? "正在发送…" : "") || (halting === "stop" ? "正在停止…" : halting === "now" ? "正在打断，停下后马上发出…" : "") || (generating && !readOnly && !planReview ? followupHint : "")}</span>
+                {generating && !readOnly && !blocked && (
+                  <button
+                    type="button"
+                    className={`round-btn stop${halting === "stop" ? " stopping" : ""}`}
+                    onClick={stop}
+                    disabled={halting === "stop"}
+                    aria-label={halting === "stop" ? "正在停止" : "打断"}
+                    title={halting === "stop" ? "正在停止：等模型收住手上的这一步" : unansweredPrompt(items) ? "停止生成：还没有回复，刚发的消息放回输入框" : "停止生成"}
+                  >
+                    <IconStop />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="round-btn send"
+                  onClick={() => void send()}
+                  disabled={!canSend}
+                  aria-label={isRevising ? "发送修改意见" : sendLabel}
+                  title={isRevising ? "把修改意见发给 Claude" : generating ? `${followupHint}${oppositeHint}${immediateHint}` : sendKeys}
+                >
+                  <IconArrowUp />
+                </button>
+              </div>
             </div>
           </div>
           )}

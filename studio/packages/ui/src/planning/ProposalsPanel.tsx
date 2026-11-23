@@ -101,7 +101,7 @@ function ProposalCard({
     }
   }
   return (
-    <div className="proposal-card" data-testid="proposal-card">
+    <div className="proposal-card" id={`proposal-${proposal.id}`} data-testid="proposal-card" tabIndex={-1}>
       <span className="proposal-title">{todo?.text ?? "（待办已不存在）"}</span>
       <span className="proposal-sub">
         在 {workspace?.name ?? "?"}

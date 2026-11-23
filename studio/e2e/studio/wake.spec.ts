@@ -31,6 +31,7 @@ test("a loop and a usage limit above the composer: stop the loop, switch going o
   await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click();
   await page.getByLabel("第一句话").fill("hello loop");
   await page.getByLabel("第一句话").press("Enter");

@@ -153,6 +153,7 @@ export function FastToggle({
   disabled,
   small = false,
   when,
+  iconOnly = false,
 }: {
   fast: ModelOption["fast"];
   value: boolean | undefined;
@@ -161,25 +162,27 @@ export function FastToggle({
   small?: boolean;
   /** "下一轮生效" and the like, added to the tooltip. */
   when?: string;
+  iconOnly?: boolean;
 }) {
-  if (!fast) return null;
-  const on = value === true;
+  if (!fast && !iconOnly) return null;
+  const on = !!fast && value === true;
   // Codex's own note ("2x speed, increased usage"), or Claude's (billed as extra usage, 2026-11-05).
-  const note = fast.description ?? "更快的响应速度";
+  const note = fast?.description ?? "更快的响应速度";
   return (
     <button
       type="button"
-      className={small ? "fast-toggle small" : "fast-toggle"}
+      className={iconOnly ? "effort-fast" : small ? "fast-toggle small" : "fast-toggle"}
+      aria-label={iconOnly ? "Fast 加速" : undefined}
       aria-pressed={on}
-      disabled={disabled}
-      title={`Fast ${on ? "已开" : "已关"}：${note}${when ? `。${when}` : ""}`}
+      disabled={disabled || !fast}
+      title={fast ? `Fast ${on ? "已开" : "已关"}：${note}${when ? `。${when}` : ""}` : "当前模型不支持 Fast 加速"}
       onClick={() => onChange(!on)}
-      data-testid="fast-toggle"
+      data-testid={iconOnly ? "effort-fast" : "fast-toggle"}
     >
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M7 1 2.5 7H6l-1 4 4.5-6H6z" fill="currentColor" />
       </svg>
-      Fast
+      {!iconOnly && "Fast"}
     </button>
   );
 }
@@ -193,6 +196,15 @@ export function nextEffort(efforts: readonly string[], current: string | null | 
 
 /** Settings that let commands run without asking: marked, so they are never picked by accident. */
 export const RISKY_PERMISSIONS = new Set(["full-auto", "bypassPermissions"]);
+
+/** Shared disclosure in the conversation and first-message toolbars. */
+export function ComposerMore({ expanded, controls, onClick }: { expanded: boolean; controls: string; onClick(): void }) {
+  return <button type="button" className="composer-more" aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round">
+      <path d="M3 7h6m4 0h8M3 17h10m4 0h4" /><circle cx="11" cy="7" r="2" /><circle cx="15" cy="17" r="2" />
+    </svg>更多选项
+  </button>;
+}
 
 /** The four most used first, the rest behind "更多" (Codex has six). */
 const PERMISSION_ORDER = ["ask", "default", "auto-review", "auto", "acceptEdits", "workspace-write", "plan", "full-auto", "bypassPermissions"];

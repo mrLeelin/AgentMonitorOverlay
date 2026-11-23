@@ -30,6 +30,7 @@ test("开始 and 开始新会话 cover the page with a spinner while the session
   // A new task: the draft page is covered, with the model's name, until the task page opens.
   await app.context().route("**/api/tasks", slowPost(1500));
   await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   await page.getByLabel("第一句话").fill("先看看目录");
   await page.getByRole("button", { name: "开始" }).click();

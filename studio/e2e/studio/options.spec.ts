@@ -41,8 +41,12 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
 
   // New task with the highest effort: one click on the last bar.
   await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
-  await page.getByTestId("effort").getByRole("button", { name: "最高" }).click();
+  await page.getByTestId("effort").click();
+  await page.getByRole("slider", { name: "推理强度" }).press("End");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await expect(page.getByTestId("preset-chip")).toHaveText("快速全自动");
   await screenshot(app, "stage-9", "options-newtask", page);
   await page.getByLabel("第一句话").fill("first effort");
@@ -56,6 +60,7 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
   await expect(summary).toContainText("逐条询问");
 
   // One click on the preset: low effort, full access — a command runs without an approval card.
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   await page.getByTestId("preset-chip").filter({ hasText: "快速全自动" }).click();
   await expect(page.getByTestId("preset-chip").filter({ hasText: "快速全自动" })).toHaveAttribute("aria-pressed", "true");
   await expect(summary).toContainText("完全访问");
@@ -66,9 +71,28 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
   await expect(page.locator('[data-testid="approval"]')).toHaveCount(0);
   expect(lastBody("[[shell: cmd /c echo auto-run]]")?.reasoning?.effort).toBe("low");
 
-  // Back to high effort (a bar, no panel) and ask-every-command (the permission tray).
-  await summary.getByTestId("effort").getByRole("button", { name: "高", exact: true }).click();
+  // Crossing several detents previews them; only releasing the slider writes a session option.
+  const effortWrites: Array<string | null> = [];
+  page.on("request", request => {
+    if (request.method() === "PATCH" && request.url().endsWith("/options")) effortWrites.push(request.postDataJSON().effort);
+  });
+  await summary.getByTestId("effort").click();
+  const slider = page.getByRole("slider", { name: "推理强度" });
+  const box = (await slider.boundingBox())!;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 15, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 15, y, { steps: 6 });
+  await expect(slider).toHaveAttribute("aria-valuetext", "最高");
+  await expect(summary.getByTestId("effort-label")).toHaveText("最高");
+  await page.mouse.move(box.x + box.width / 2, y, { steps: 4 });
+  await expect(slider).toHaveAttribute("aria-valuetext", "高");
+  expect(effortWrites).toEqual([]);
+  await page.mouse.up();
   await expect(summary.getByTestId("effort-label")).toHaveText("高");
+  expect(effortWrites).toEqual(["high"]);
+  await expect(slider).toBeFocused();
+  await page.keyboard.press("Escape");
   await page.getByTestId("switch-permission").click();
   const tray = page.getByRole("dialog", { name: "权限" });
   await expect(tray.getByRole("button", { name: /完全访问/ })).toHaveAttribute("aria-pressed", "true");
@@ -81,6 +105,10 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
   await composer.press("Enter");
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: after switching", { timeout: 60_000 });
   expect(lastBody("after switching")?.reasoning?.effort).toBe("high");
+  await summary.getByTestId("effort").click();
+  await page.getByRole("button", { name: "恢复模型默认推理强度" }).click();
+  await expect.poll(() => effortWrites.at(-1)).toBeNull();
+  await expect(page.getByRole("button", { name: "恢复模型默认推理强度" })).toBeDisabled();
 });
 
 test("Fast (stage 13): a Codex model with a fast tier runs at it from the next turn, off again on a click", async () => {
@@ -95,10 +123,15 @@ test("Fast (stage 13): a Codex model with a fast tier runs at it from the next t
   expect(lastBody("standard speed")?.service_tier).toBeUndefined();
 
   const summary = page.getByTestId("session-options");
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
   const fast = summary.getByTestId("fast-toggle");
   await expect(fast).toHaveAttribute("aria-pressed", "false");
   await expect(fast).toHaveAttribute("title", /2x speed, increased usage/);
-  await fast.click();
+  await summary.getByTestId("effort").click();
+  const bolt = page.getByRole("dialog", { name: "选择推理强度" }).getByRole("button", { name: "Fast 加速" });
+  await bolt.click();
+  await expect(bolt).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
   await expect(fast).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("options-note")).toContainText("Fast 已开，下一轮生效");
   await screenshot(app, "stage-13", "S13-C-fast", page);
@@ -126,8 +159,10 @@ test("Claude sessions offer Claude Code's models, efforts and permission modes",
   const summary = page.getByTestId("session-options");
   await expect(summary).toContainText("高");
   await expect(summary).toContainText("只做计划");
-  // Five effort bars, as Claude Code offers them.
-  await expect(summary.getByTestId("effort").getByRole("button")).toHaveCount(5);
+  // Claude Code offers five slider positions.
+  await summary.getByTestId("effort").click();
+  await expect(page.getByRole("slider", { name: "推理强度" })).toHaveAttribute("max", "4");
+  await page.keyboard.press("Escape");
   // Models switch within the same account only.
   await page.getByTestId("switch-model").click();
   const models = page.getByRole("dialog", { name: "换型号" });
@@ -239,10 +274,10 @@ test("设置 → 模型: hide a model from pickers, keep existing sessions and r
   expect(lastModel("continue after hiding")).toBe(original);
 
   await page.getByRole("button", { name: "+ 新任务", exact: true }).click();
+  await page.getByTestId("all-models").click();
   const tiles = page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").locator(".mtile-main");
   await expect(tiles.filter({ hasText: /^mock-claude$/ })).toHaveCount(0);
   await expect(page.getByTestId("preset-chip").filter({ hasText: "原型号预设" })).toHaveCount(0);
-  await page.getByTestId("all-models").click();
   const account = page.getByTestId("model-drawer").getByRole("group", { name: "Mock Claude", exact: true });
   await expect(account.getByRole("button")).toHaveText([replacement]);
   await account.getByRole("button", { name: replacement, exact: true }).click();

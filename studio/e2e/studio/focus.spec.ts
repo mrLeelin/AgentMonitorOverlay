@@ -450,7 +450,7 @@ test("Focus 桌宠 「AMO 娘」: her faces on Focus, and the top-left and windo
   await selectSettingsPage(dialog, "界面");
   await dialog.getByTestId("pet-skin-robot").click();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("brand-mark")).toHaveAttribute("src", "./icon.svg");
+  await expect(page.getByTestId("brand-mark")).toHaveAttribute("src", "./workbench-mark.svg");
   await expect.poll(appIcon).toMatch(/assets[\\/]icon\.png$/);
 });
 

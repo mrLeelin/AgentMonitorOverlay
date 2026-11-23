@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BackButton } from "../shell/BackButton.js";
 import type { ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import type { Scope } from "../board/Board.js";
@@ -9,7 +9,8 @@ import { pickFolder, shortModel } from "../lib/profiles.js";
 import { StartingCover } from "../lib/StartingCover.js";
 import { useSettings } from "../settings/useSettings.js";
 import { PRIMARY_ENTER_LABELS, TODO_SHORTCUTS, useTaskEnter } from "../chat/inputPrefs.js";
-import { EffortBars, FastToggle, nextEffort, PermissionSegments } from "../chat/pickers.js";
+import { ComposerMore, FastToggle, Mark, nextEffort, pickLabel, RISKY_PERMISSIONS } from "../chat/pickers.js";
+import { EffortPicker, withEffort } from "../chat/EffortPicker.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { draftText, submitDraft, useTaskDraft, type WorktreeChoice } from "./draft.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
@@ -27,7 +28,7 @@ import { SlashMenu, useSlashCommands } from "../chat/cli/SlashMenu.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
 import { IconPaperclip } from "../attach/icons.js";
-import { IconBranch } from "../chat/icons.js";
+import { IconBranch, IconChevronDown, IconShield } from "../chat/icons.js";
 import { useRemote } from "../remote/remote.js";
 import { RemoteDraft } from "./RemoteDraft.js";
 import { remoteModeShown } from "./remoteTargets.js";
@@ -83,7 +84,10 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const rows = useDraftChoices({ draft, update, workspaces, topics, tasks });
   const projects = rows.projects;
   const [drawer, setDrawer] = useState(false);
-  const [morePerms, setMorePerms] = useState(false);
+  const modelButton = useRef<HTMLButtonElement>(null);
+  const modelPickerId = useId();
+  const [moreOptions, setMoreOptions] = useState(false);
+  const optionsId = useId();
   const [busy, setBusy] = useState(false);
   // 正在启动: the page is covered while the first session starts (filing in 待办 is quick).
   const [starting, setStarting] = useState<string | null>(null);
@@ -101,7 +105,10 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const presets = settings?.presets ?? [];
   const { choices } = useProfileChoices(link, draft.pick.profileId);
   const model = choices ? activeModel(choices, draft.pick.model ? { model: draft.pick.model } : {}) : undefined;
-  const runtime = profiles.find((p) => p.id === draft.pick.profileId)?.runtime;
+  const profile = profiles.find((p) => p.id === draft.pick.profileId);
+  const runtime = profile?.runtime;
+  const permission = draft.options.permission ?? choices?.defaultPermission;
+  const fastProps = { fast: model?.fast, value: draft.options.fast, onChange: (fast: boolean) => update({ options: { ...draft.options, fast } }), disabled: busy };
   // 接续已有会话 (2026-11-05): the outside session picked; not kept in the draft (it may be taken on elsewhere meanwhile).
   const [resume, setResume] = useState<OutsideSession | null>(null);
   const [pickingResume, setPickingResume] = useState(false);
@@ -426,7 +433,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
             />
             <MentionList mentions={mentions} />
             <SlashMenu slash={slash} inline />
-            <div className="cbar">
+            <div className="cbar draft-tools">
               <button type="button" className="round-btn attach" aria-label="添加图片或文件" title="添加图片或文件（也可以粘贴或拖进来）" onClick={() => picker.current?.click()}>
                 <IconPaperclip />
               </button>
@@ -455,27 +462,36 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               >
                 <IconBranch />
               </button>
-              <ModelRow link={link} profiles={profiles} pick={draft.pick} onPick={(pick) => update({ pick })} drawer={drawer} onToggleDrawer={() => setDrawer((v) => !v)} />
-            </div>
-            <div className="cbar">
+              <button ref={modelButton} type="button" className="seg-btn composer-model-pick" aria-expanded={drawer} aria-controls={drawer ? modelPickerId : undefined} title="选择模型" data-testid="all-models" onClick={() => setDrawer(!drawer)}>
+                <Mark profile={profile} small /><span>{pickLabel(profile, model?.id ?? draft.pick.model, choices?.models).main}</span><IconChevronDown />
+              </button>
               {model && model.efforts.length > 0 && (
-                <EffortBars efforts={model.efforts} value={draft.options.effort ?? null} fallback={model.defaultEffort} onChange={(effort) => update({ options: { ...draft.options, effort } })} />
+                <EffortPicker key={draft.pick.profileId + "/" + model.id} efforts={model.efforts} value={draft.options.effort ?? null} fallback={model.defaultEffort}
+                  fastControl={<FastToggle {...fastProps} iconOnly />}
+                  modelLabel={pickLabel(profile, model.id, choices?.models).main} onChange={effort => update({ options: withEffort(draft.options, effort) })}
+                  onOpen={() => setDrawer(false)} onModel={() => setDrawer(true)} />
               )}
-              <FastToggle fast={model?.fast} value={draft.options.fast} onChange={(fast) => update({ options: { ...draft.options, fast } })} />
-              <button type="button" className="chip" aria-pressed={!!draft.goal} disabled={busy || !!resume || (!draft.goal && !supportsDraftGoal(runtime))} onClick={() => { update({ goal: draft.goal ? undefined : { tokenBudget: "", roundBudget: "" } }); setError(""); }} title={resume ? "接续后在会话内开启 Goal" : "把第一句话作为目标，开始后自动继续执行"} data-testid="draft-goal-toggle">Goal{draft.goal ? " 已开启" : ""}</button>
               {draft.lead ? <span className="drawer-note" data-testid="draft-lead-permission">主控只读项目，具体修改交给执行任务</span> : choices ? (
-                <PermissionSegments
-                  choices={choices}
-                  value={draft.options.permission ?? null}
-                  onChange={(permission) => update({ options: { ...draft.options, permission } })}
-                  expanded={morePerms}
-                  onExpand={() => setMorePerms(true)}
-                />
+                <label className="composer-permission" data-risky={permission && (RISKY_PERMISSIONS.has(permission) || permission === DSH_FULL_ACCESS) || undefined}>
+                  <IconShield /><select aria-label="权限" value={permission ?? ""} onChange={e => update({ options: { ...draft.options, permission: e.target.value } })}>
+                    {choices.permissions.map(p => <option key={p.id} value={p.id} disabled={!!p.unavailable} title={p.unavailable ?? p.description}>{p.label}</option>)}
+                  </select>
+                </label>
               ) : (
                 <span className="drawer-note">正在读取这个模型的选项…</span>
               )}
+              <ComposerMore expanded={moreOptions} controls={optionsId} onClick={() => { setMoreOptions(!moreOptions); setDrawer(false); }} />
             </div>
-            {draft.goal && <div className="draft-goal goal-content" data-testid="draft-goal-options">
+            {drawer && <div className="draft-model-picker" id={modelPickerId} onKeyDown={e => {
+              if (e.key === "Escape" && !e.currentTarget.querySelector(".model-menu")) { setDrawer(false); modelButton.current?.focus(); }
+            }}>
+              <ModelRow link={link} profiles={profiles} pick={draft.pick} onPick={pick => { update({ pick }); setDrawer(false); modelButton.current?.focus(); }} drawer />
+            </div>}
+            <div className="composer-extra draft-extra" id={optionsId} hidden={!moreOptions}>
+              <FastToggle {...fastProps} small />
+              <button type="button" className="chip small" aria-pressed={!!draft.goal} disabled={busy || !!resume || (!draft.goal && !supportsDraftGoal(runtime))} onClick={() => { update({ goal: draft.goal ? undefined : { tokenBudget: "", roundBudget: "" } }); setError(""); }} title={resume ? "接续后在会话内开启 Goal" : "把第一句话作为目标，开始后自动继续执行"} data-testid="draft-goal-toggle">Goal {draft.goal ? "已开启" : "关闭"}</button>
+            </div>
+            {moreOptions && draft.goal && <div className="draft-goal goal-content" data-testid="draft-goal-options">
               <div className="tray-note">第一句话就是 Goal 目标，开始后 Agent 会围绕目标自动继续执行；最多 4000 个字符（含引用内容）。</div>
               {runtime === "codex" && <label className="goal-field goal-budget">Token 预算（可选）<input inputMode="numeric" value={draft.goal.tokenBudget} placeholder="留空不设预算" onChange={(e) => update({ goal: { ...draft.goal!, tokenBudget: e.target.value } })} data-testid="draft-goal-budget" /></label>}
               {runtime === "dsh" && <label className="goal-field goal-budget">续跑轮数上限（可选）<input inputMode="numeric" value={draft.goal.roundBudget} placeholder="使用 Agent 默认上限" onChange={(e) => update({ goal: { ...draft.goal!, roundBudget: e.target.value } })} data-testid="draft-goal-budget" /></label>}
@@ -489,7 +505,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               active={profiles.find((p) => p.id === draft.pick.profileId)?.runtime === "dsh" && !!choices && (draft.options.permission ?? choices.defaultPermission) === "workspace-write"}
               onUseFull={() => update({ options: { ...draft.options, permission: DSH_FULL_ACCESS } })}
             />
-            {presets.length > 0 && (
+            {moreOptions && presets.length > 0 && (
               <div className="cbar presets" role="group" aria-label="常用预设">
                 <span className="pick-lab">预设</span>
                 {presets
@@ -507,13 +523,13 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               </div>
             )}
             <div className="cbar draft-actions">
-              <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId} data-testid="draft-start">
+              <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId || (!resume && !draft.text.trim() && attach.empty)} data-testid="draft-start">
                 {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : draft.goal ? "开始 Goal" : "开始"} <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>
               </button>
               <button type="button" className="btn-ghost draft-templates" onClick={() => mentions.askTemplate(input.current?.selectionStart ?? draft.text.length)} disabled={busy} title="打开提示词模板，选择后插入第一句话" data-testid="draft-templates">
                 提示词模板
               </button>
-              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume || !!worktree} title={resume ? "接续的会话不能放进待办" : worktree ? "新建工作树需要直接开始" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
+              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume || !!worktree || !!draft.goal || !attach.empty || !draft.text.trim()} title={resume ? "接续的会话不能放进待办" : worktree ? "新建工作树需要直接开始" : draft.goal ? "关闭 Goal 后可以放进待办" : !attach.empty ? "移除附件后可以放进待办" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
                 放进待办 {todoShortcut !== "off" && <kbd>{TODO_SHORTCUTS[todoShortcut]}</kbd>}
               </button>
             </div>

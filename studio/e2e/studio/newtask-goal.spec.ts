@@ -20,6 +20,7 @@ async function openDraft(profileId = "codex-mock") {
     localStorage.setItem("amo.taskDraft", JSON.stringify({ title: "新建 Goal 验证", text: "[[goal-slow]] 检查当前实现并交付验证证据。", projectId: null, topicId: null, pick: { profileId, model: null }, options: {} }));
   }, profileId);
   await studio.page.getByRole("button", { name: "+ 新任务" }).click();
+  await studio.page.getByRole("button", { name: "更多选项", exact: true }).click();
   await studio.page.getByTestId("draft-goal-toggle").click();
 }
 
@@ -30,12 +31,12 @@ for (const [profileId, budget] of [["codex-mock", "50000"], ["claude-mock", null
     await expect(page.getByTestId("draft-start")).toContainText("开始 Goal");
     if (budget) await page.getByTestId("draft-goal-budget").fill(budget);
     else await expect(page.getByTestId("draft-goal-budget")).toHaveCount(0);
-    await page.getByTestId("draft-file").click();
-    await expect(page.getByRole("alert")).toContainText("Goal 需要直接开始");
+    await expect(page.getByTestId("draft-file")).toBeDisabled();
     expect((await studio!.api<StateSnapshot>("GET", "/api/state")).tasks).toHaveLength(0);
 
     if (profileId === "codex-mock") {
       await page.reload();
+      await page.getByRole("button", { name: "更多选项", exact: true }).click();
       await expect(page.getByTestId("draft-goal-toggle")).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByTestId("draft-goal-budget")).toHaveValue(budget!);
       for (const [width, theme] of [[1280, "dark"], [1280, "light"], [1000, "dark"]] as const) {

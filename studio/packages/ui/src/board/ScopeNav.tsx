@@ -7,6 +7,7 @@ import { moveNav, navOrder, useNavOrder } from "./navOrder.js";
 import type { Scope } from "./Board.js";
 import { UsageFooter } from "./UsageFooter.js";
 import { KindIcon } from "./KindIcon.js";
+import { BoardGlyph } from "../shell/WorkbenchShortcuts.js";
 import { GroupItems, ProjectReviewMenu, type MenuGroups, type ProjectMenuAt } from "../gitreview/ProjectReviewMenu.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { EditProjectDialog } from "./EditProjectDialog.js";
@@ -51,6 +52,7 @@ interface ScopeNavProps {
   live: boolean;
   /** Opens the settings (the button under the Host status). */
   onSettings?: () => void;
+  shortcuts?: ReactNode;
   onScope(scope: Scope): void;
   /**
    * 全景 (测试功能, 11-04, the user's call): its own entry under 全部任务 — later the list of panoramas, one for now. Left
@@ -72,7 +74,7 @@ function readFolded(): Record<PinKind, boolean> {
  * pinned (they come first, here and wherever they are picked) and each section folds down to its pinned entries. The
  * lists scroll between the fixed top and the Host / usage footer.
  */
-export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, panorama }: ScopeNavProps) {
+export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, shortcuts, panorama }: ScopeNavProps) {
   const [adding, setAdding] = useState(false);
   const [newTopic, setNewTopic] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -448,7 +450,9 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     <>
     <nav className="scope-nav" aria-label="范围">
       <div className="nav-top">
-        {row(null, null, { kind: "all" }, "全部任务", liveTasks, "scope-all")}
+        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !panorama?.current} onClick={() => onScope({ kind: "all" })}>
+          <BoardGlyph />全部任务<span className="wb-count">{liveTasks.length}</span>
+        </button>
         {panorama && (
           <div className="nav-item">
             <button type="button" className="nav-row" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">
@@ -456,6 +460,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
             </button>
           </div>
         )}
+        {shortcuts}
       </div>
 
       <div className="nav-scroll" data-folder-drop={folderOver || undefined}

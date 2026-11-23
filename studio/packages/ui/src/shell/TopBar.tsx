@@ -52,7 +52,7 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="brand">
-        <img className={mark.includes("/mascot/") ? "brand-mark mascot" : "brand-mark"} src={mark} alt="" aria-hidden="true" data-testid="brand-mark" />
+        <img className={mark.includes("/mascot/") ? "brand-mark mascot" : "wb-brand-mark"} src={mark === "./icon.svg" ? "./workbench-mark.svg" : mark} alt="" aria-hidden="true" data-testid="brand-mark" />
         <span className="brand-name">AMO Studio</span>
         {scopeName && (
           <>

@@ -140,6 +140,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
         <div className="board-tools">
           <label className="board-toggle" title="每一列里，任务按专题分组排列；没归专题的排在最后">
             <input type="checkbox" checked={groupOn} onChange={(e) => setGroupByTopic(e.target.checked)} data-testid="board-group-topics" />
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
             按专题分组
           </label>
         </div>

@@ -510,6 +510,7 @@
       "purpose": "所有窗口的 React 界面（ui 包，Vite 构建）：视图表 VIEWS、读 Host 数据的统一做法（host/live.ts 的 useLiveResource，事件推来再更新）、按路由键有类型的 call()、公共控件（lib/Modal 等）。",
       "anchors": [
         { "label": "主窗口", "path": "studio/packages/ui/src/App.tsx", "anchor": "export function App" },
+        { "label": "最近会话与待处理快捷入口", "path": "studio/packages/ui/src/shell/WorkbenchShortcuts.tsx", "anchor": "export function ShortcutMenu" },
         { "label": "视图表", "path": "studio/packages/ui/src/features.ts", "anchor": "export const VIEWS" },
         { "label": "读 Host 数据", "path": "studio/packages/ui/src/host/live.ts", "anchor": "export function useLiveResource" },
         { "label": "调路由", "path": "studio/packages/ui/src/host/client.ts" },
@@ -523,12 +524,13 @@
       "label": "对话区",
       "aliases": ["对话", "Transcript", "chat", "详细", "完全展开", "思考", "审批", "提问", "questions", "会话工具栏", "有序列表", "自动续号"],
       "category": "ui",
-      "purpose": "会话的对话区：轮次和折叠（详细 / 完全展开）、思考、工具行、审批和提问、会话选项栏、输入框。",
+      "purpose": "会话的对话区：轮次和折叠（详细 / 完全展开）、思考、工具行、审批和提问。输入框底部从附件、模型、思考强度到权限依次排列，「更多选项」中可设置 Fast、Goal、MCP 和常用预设。",
       "anchors": [
         { "label": "对话区", "path": "studio/packages/ui/src/chat/Transcript.tsx", "anchor": "export const Transcript" },
         { "label": "轮次折叠", "path": "studio/packages/ui/src/chat/turns.ts" },
         { "label": "输入框换行和列表续号", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "function insertLineBreak" },
         { "label": "会话选项栏", "path": "studio/packages/ui/src/chat/SessionOptionsBar.tsx" },
+        { "label": "聊天和新建任务的推理强度滑条", "path": "studio/packages/ui/src/chat/EffortPicker.tsx", "anchor": "export function EffortPicker" },
         { "label": "会话行数据", "path": "studio/packages/ui/src/host/useSessionItems.ts" }
       ],
       "related": ["studio.sessions", "studio.cli", "ui.shell"],
@@ -574,7 +576,7 @@
       "label": "新建任务页",
       "aliases": ["新建任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建", "分支与工作树", "worktree"],
       "category": "ui",
-        "purpose": "新建任务：选项目、模型、强度，第一句话；本机新开会话时，附件按钮旁可为 Codex、Claude、DSH 或 Pi 设置启动分支和独立工作树；可直接勾选 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
+        "purpose": "新建任务：选项目、模型、强度，第一句话；本机新开会话时，附件按钮旁可为 Codex、Claude、DSH 或 Pi 设置启动分支和独立工作树；「更多选项」中可开启 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
       "anchors": [
         { "label": "新建任务页", "path": "studio/packages/ui/src/newtask/NewTaskPage.tsx", "anchor": "export function NewTaskPage" },
         { "label": "新建任务与对话共用的发送和换行按键", "path": "studio/packages/ui/src/chat/inputPrefs.ts", "anchor": "export function useTaskEnter" },

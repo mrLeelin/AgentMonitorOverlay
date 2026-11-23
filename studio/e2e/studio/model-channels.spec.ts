@@ -86,8 +86,8 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
 
   await page.getByTestId("back").click();
   await page.getByRole("button", { name: "+ 新任务" }).click();
-  await expect(page.getByRole("group", { name: "模型" })).not.toContainText("中转 GPT");
   await page.getByTestId("all-models").click();
+  await expect(page.getByRole("group", { name: "模型" })).not.toContainText("中转 GPT");
   await expect(page.getByTestId("model-drawer")).not.toContainText("中转 GPT");
 });
 
@@ -168,13 +168,15 @@ test("设置 → 模型 → 快速选择: the automatic row, dragged into the pe
 
   // The new-task page shows them in that order; the model the draft has now (Mock 模型) always shows, in the last place.
   await page.getByRole("button", { name: "+ 新任务" }).click();
-  const tiles = page.getByRole("group", { name: "模型" }).getByRole("button").filter({ hasNotText: "全部型号" });
+  await page.getByTestId("all-models").click();
+  const tiles = page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile");
   await expect(tiles).toHaveCount(3);
   await expect(tiles.nth(0)).toHaveAttribute("title", /^Mock Claude/);
   await expect(tiles.nth(1)).toHaveAttribute("title", /^Claude/);
   await expect(tiles.nth(2)).toHaveAttribute("title", /^Mock 模型/);
   await tiles.nth(0).click();
   await page.keyboard.press("Alt+3");
+  await page.getByTestId("all-models").click();
   await expect(tiles.nth(2)).toHaveAttribute("title", /mock-claude-b|Mock Claude B/i);
 });
 
@@ -309,6 +311,7 @@ test("without a Claude Code client the Claude channels are unavailable, and 设�
 
   // Not offered for a new task.
   await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
   const tiles = page.getByRole("group", { name: "模型" }).getByTestId("model-tile");
   await expect(tiles.filter({ hasText: "Mock 模型" })).not.toHaveCount(0);
   await expect(tiles.filter({ hasText: "Mock Claude" })).toHaveCount(0);
@@ -334,6 +337,7 @@ test("hiding the picked model moves 新建任务 to the default; Claude 订阅 s
   studio = await launchStudio();
   const { page, app } = studio;
   await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
   const tiles = page.getByRole("group", { name: "模型" }).getByTestId("model-tile");
   await expect(tiles.filter({ hasText: "Mock 模型" })).toHaveAttribute("aria-pressed", "true");
 

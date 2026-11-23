@@ -23,6 +23,7 @@ test("a Claude session: approve a command, queue a message, branch, follow a sub
   // New task on the Claude profile; the first message asks for a command that needs approval.
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click();
   await page.getByLabel("第一句话").fill("[[shell: mkdir e2e-claude-dir]]");
   await page.getByLabel("第一句话").press("Enter");

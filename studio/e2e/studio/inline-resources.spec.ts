@@ -39,6 +39,7 @@ async function newDraft() {
   studio = await launchStudio();
   const page = studio.page;
   await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   return { page, input: page.getByLabel("第一句话") };
 }

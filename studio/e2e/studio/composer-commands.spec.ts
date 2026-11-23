@@ -84,6 +84,7 @@ test("new-task / and $ menus follow the selected project and model without creat
   });
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha", exact: true }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   const composer = page.getByLabel("第一句话");
   await composer.pressSequentially("/");
@@ -103,6 +104,7 @@ test("new-task / and $ menus follow the selected project and model without creat
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "beta", exact: true }).click();
   await expect(menu.getByRole("option")).toContainText("$beta-skill");
   expect(requests.at(-1)).toEqual({ profileId: "codex-mock", workspaceId: beta.id });
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click();
   await expect.poll(() => requests.at(-1)?.profileId).toBe("claude-mock");
   await expect(menu.getByRole("option")).toContainText("$beta-skill");
@@ -123,6 +125,7 @@ test("new-task discovers a real Codex project skill and sends it in the first me
   await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "skill-project", exact: true }).click();
+  await page.getByTestId("all-models").click();
   await page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
   const composer = page.getByLabel("第一句话");
   await composer.fill("/release");

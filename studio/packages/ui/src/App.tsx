@@ -5,7 +5,7 @@ import { ScopeNav } from "./board/ScopeNav.js";
 import { canvasTopicFor } from "./canvas/topic.js";
 import { useHostState } from "./host/useHostState.js";
 import { QuickStart } from "./newtask/QuickStart.js";
-import { needsPerson, taskSessions, taskStatus } from "./lib/status.js";
+import { BellGlyph, NeedsGlyph, RecentGlyph, ShortcutMenu, ThemeShortcut, pendingItems, recentSessions } from "./shell/WorkbenchShortcuts.js";
 import { useUnreadMail } from "./collab/useInbox.js";
 import { useOpenDecisions } from "./collab/DecisionPanel.js";
 import { decisionNeedsPerson } from "./focus/managedAttention.js";
@@ -264,11 +264,6 @@ export function App() {
   const planning = featureOn(disabled, "planning");
   const decisionsByTask = new Map<string, number>();
   for (const d of openDecisions) if (d.taskId) decisionsByTask.set(d.taskId, (decisionsByTask.get(d.taskId) ?? 0) + 1);
-  // A task needs the person when a session waits for approval or review, or an agent asked for a decision.
-  // Pending scheduler proposals wait for the person too (one each: they are not tasks yet).
-  const needs =
-    state.tasks.filter((t) => !t.archivedAt).filter((t) => needsPerson(taskStatus(taskSessions(t, state.sessions))) || decisionsByTask.has(t.id)).length +
-    (planning ? proposals.length : 0);
   const scopeName =
     scope.kind === "topic" ? (state.topics.find((t) => t.id === scope.id)?.title ?? "") : scope.kind === "workspace" ? (state.workspaces.find((w) => w.id === scope.id)?.name ?? "") : "";
   const ctx: ViewContext = {
@@ -282,6 +277,25 @@ export function App() {
   };
   // A page of a feature that was just turned off falls back to the board.
   const shown: View = views.some((d) => d.kind === view.kind) ? view : { kind: "board" };
+  // Keep the board in place when the target is already visible. Else visit its task or owning topic.
+  const locateTask = (taskId: string, sessionId?: string) => {
+    const card = shown.kind === "board" && document.querySelector<HTMLButtonElement>(`.board .card[data-task-id="${CSS.escape(taskId)}"]`);
+    if (card) {
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } else setView({ kind: "task", taskId, ...(sessionId ? { sessionId } : {}), nav: Date.now() });
+  };
+  const waiting = pendingItems(state, openDecisions, planning ? proposals : [], locateTask, id => {
+    setView({ kind: "board" });
+    requestAnimationFrame(() => document.getElementById(`proposal-${id}`)?.focus());
+  });
+  const recent = () => recentSessions(state, session => {
+    if (session.taskId) locateTask(session.taskId, session.id);
+    else if (session.topicId) {
+      setScope({ kind: "topic", id: session.topicId });
+      setView({ kind: "canvas" });
+    }
+  });
   const def = views.find((d) => d.kind === shown.kind) as ViewDef<typeof shown.kind> | undefined;
   // "+ 新任务" over a canvas works as the canvas's own: the task goes into that topic and "←" returns to the canvas.
   const canvasTopic = shown.kind === "canvas" ? canvasTopicFor(scope, state) : undefined;
@@ -301,7 +315,7 @@ export function App() {
       <TopBar
         mark={mascot?.src}
         onView={setView}
-        needs={needs}
+        needs={waiting.length}
         scopeName={scopeName}
         focus={focus}
         onMarks={() => openMarks(marksTarget())}
@@ -319,6 +333,10 @@ export function App() {
           sessions={state.sessions}
           scope={scope}
           live={live}
+          shortcuts={<>
+            <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
+            <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />
+          </>}
           onScope={(s) => {
             setScope(s);
             // 切专题只换画布内容；全部任务和项目仍打开看板。
@@ -335,7 +353,11 @@ export function App() {
             scope={scope}
             onView={setView}
             onNew={() => setView(canvasTopic ? { kind: "new", topicId: canvasTopic.id, back: { kind: "canvas" } } : { kind: "new" })}
-            search={<SearchBox state={state} onOpen={openHit} />}
+            search={<div className="wb-search-tools">
+              <SearchBox state={state} onOpen={openHit} />
+              <ShortcutMenu label="待处理通知" icon={<BellGlyph />} items={() => waiting} empty="当前没有待处理事项" toolbar />
+              <ThemeShortcut />
+            </div>}
           />
           {/* A page that fails to render says so; the title bar, the left column and the sessions carry on. */}
           <main className="main">
