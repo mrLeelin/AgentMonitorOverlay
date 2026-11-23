@@ -151,6 +151,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
           <div
             className={over === col && dragging.some((t) => t.column !== col) ? "column drop" : "column"}
             key={col}
+            data-column={col}
             data-testid={`column-${col}`}
             onDragOver={(e) => {
               if (!dragging.length || !onMove) return;

@@ -1,0 +1,64 @@
+/* Shared by the main workbench and its dialogs. The saved theme or system preference sets color-scheme on html. */
+.studio-workbench {
+  --bg: light-dark(#fafbf6, #131313);
+  --panel: light-dark(#fff, #1a1a1a);
+  --bg-header: light-dark(#fafbf6, #131313);
+  --bg-nav: light-dark(#f2f4ec, #181817);
+  --panel-raised: light-dark(#f1f4ea, #20201f);
+  --chip: light-dark(#e7ebde, #262623);
+  --selected: light-dark(#e2edcf, #30342b);
+  --border: light-dark(#d4dacb, #383834);
+  --border-strong: light-dark(#a4b297, #58594f);
+  --text: light-dark(#252d23, #f1efe9);
+  --text-dim: light-dark(#59664f, #a7a69f);
+  --text-faint: light-dark(#66725d, #97978d);
+  --primary: light-dark(#466827, #c9ee97);
+  --primary-hover: light-dark(#364e23, #ddf8bc);
+  --on-primary: light-dark(#fff, #1a2414);
+  --action-fill: light-dark(#caec9b, #c9ee97);
+  --action-fill-hover: light-dark(#b5df7a, #ddf8bc);
+  --completed-text: light-dark(#755b98, #c7b6ed);
+  --tint: light-dark(#edf5df, #252a20);
+  --tint-strong: light-dark(#e2edcf, #30342b);
+  --selection: var(--selected);
+  --divider: var(--border);
+  --attention: light-dark(#855127, #edb78b);
+  --attention-bg: light-dark(#f8ebd9, #393027);
+  --attention-border: light-dark(#cda984, #7c634e);
+  --running: var(--primary);
+  --running-text: var(--primary);
+  --canvas-bg: light-dark(#f3f5ed, #141513);
+  --canvas-dot: light-dark(#cbd3c0, #30342a);
+  --group-bg: light-dark(#eef2e8ba, #21231dc7);
+  --group-bar: light-dark(#e4e9dd, #2e312a);
+  --group-border: var(--border-strong);
+  --panel-float: var(--panel);
+  --edge: var(--text-dim);
+  --menu-bg: var(--panel);
+  --menu-hover: var(--chip);
+  --chat-brand: var(--primary);
+  --chat-brand-dim: var(--primary-hover);
+  --chat-bubble: var(--selected);
+  --chat-label: var(--text);
+  --chat-dim: var(--text-dim);
+  --chat-caption: var(--text-faint);
+  --chat-input-bg: var(--panel);
+  --chat-input-border: var(--border-strong);
+  --font-display: var(--font-ui);
+  --r-s: 4px;
+  --r-m: 7px;
+  --r-l: 10px;
+  --r-btn: 6px;
+}
+.studio-workbench .btn-primary { background: var(--action-fill); color: #1a2414; border-color: var(--action-fill); }
+.studio-workbench .btn-primary:hover:not(:disabled) { background: var(--action-fill-hover); }
+.studio-workbench :is(.topbar, .column-head) { border-bottom-color: var(--border); }
+.studio-workbench :is(.nav-row[aria-current="true"], .view-tab[aria-current="page"], .settings-tab[aria-selected="true"]) { color: var(--primary); }
+.studio-workbench .column-count { color: var(--text-dim); }
+.studio-workbench [data-column="doing"] .column-name { color: var(--primary); }
+.studio-workbench [data-column="review"] .column-name { color: var(--attention); }
+.studio-workbench [data-column="done"] .column-name { color: var(--completed-text); }
+.studio-workbench .card:hover { border-color: var(--primary); background: var(--tint); }
+@media (prefers-reduced-motion: no-preference) {
+  .studio-workbench :is(.card, .nav-row, .canvas-card) { transition: background-color 150ms ease-out, border-color 150ms ease-out; }
+}

@@ -44,6 +44,7 @@ import "./viewpacks/viewpacks.css";
 import "./taskplans/taskplans.css";
 import "./relays/relays.css";
 import "./teamrelay/teamrelay.css";
+import "./styles/workbench.css";
 import { applyTheme, followThemeChanges } from "./lib/theme.js";
 import { WindowBoundary } from "./lib/ErrorBoundary.js";
 import { Toaster } from "./lib/toast.js";
@@ -69,6 +70,7 @@ const canvasMini = location.hash.startsWith("#canvas-mini");
 // The angry robot flying about the screen (2026-10-15 evening), loaded with #bot.
 const bot = location.hash === "#bot";
 if (bot) document.documentElement.classList.add("bot-mode");
+if (!focus && !bot && !review && !marks && !viewer && !canvasMini) document.body.classList.add("studio-workbench");
 
 // Each window drag, summarised into logs/resize-trace.log (2026-10-15: the main window flickered when dragged).
 startResizeTrace();

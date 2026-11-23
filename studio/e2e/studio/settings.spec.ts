@@ -29,10 +29,10 @@ test("light theme from the settings dialog, remembered and shared with Focus", a
   await page.getByRole("button", { name: "设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置" });
   await dialog.getByRole("radio", { name: "深色" }).click();
-  expect(await bg(page)).toBe("rgb(17, 19, 22)");
+  expect(await bg(page)).toBe("rgb(19, 19, 19)");
   await dialog.getByRole("radio", { name: "浅色" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  expect(await bg(page)).toBe("rgb(239, 237, 232)");
+  expect(await bg(page)).toBe("rgb(250, 251, 246)");
   await screenshot(app, "settings", "settings-dialog-light", page);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -60,6 +60,10 @@ test("light theme from the settings dialog, remembered and shared with Focus", a
   await page.getByRole("button", { name: "设置" }).click();
   await dialog.getByRole("radio", { name: "跟随系统" }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(() => bg(page)).toBe("rgb(250, 251, 246)");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => bg(page)).toBe("rgb(19, 19, 19)");
 });
 
 test("界面大小 zooms every window, Focus too (its window grows with it), and is remembered", async () => {
