@@ -784,6 +784,8 @@ export interface HostRoutes
   "POST /api/sessions/:id/interrupt": { req: void; res: { ok: true } };
   /** 立即发送 on a message still waiting (delivery `waiting`): the running turn gives way and the model reads it now. Nothing when it is not waiting any more. */
   "POST /api/sessions/:id/items/:itemId/send-now": { req: void; res: { ok: true } };
+  "PATCH /api/sessions/:id/items/:itemId/queued": { req: { text: string; originalText: string }; res: { ok: true } };
+  "DELETE /api/sessions/:id/items/:itemId/queued": { req: void; res: { ok: true } };
   /** 重新发送 a message its process never read (delivery `unsent`): the same item goes again. */
   "POST /api/sessions/:id/items/:itemId/resend": { req: void; res: { mode: "start" | "steer" | "queue" } };
   /** Claude (stage 15): stop the session's loop, or switch going on by itself after a usage limit (Session.wake). */

@@ -31,6 +31,8 @@ export function sessionsRoutes(service: HostService): Route[] {
     }, { remoteCopy: "forward" }),
     // 立即发送 / 重新发送 (2026-11-02): on a copy, done on A, like a message.
     route("POST /api/sessions/:id/items/:itemId/send-now", async ({ params }) => (await service.sessions.sendNow(params.id!, params.itemId!), { ok: true }), { remoteCopy: "forward" }),
+    route("PATCH /api/sessions/:id/items/:itemId/queued", ({ params, body }) => { const b = obj(body); service.sessions.inbox.changeQueued(params.id!, params.itemId!, { text: str(b.text, "text"), originalText: str(b.originalText, "originalText") }); return { ok: true }; }),
+    route("DELETE /api/sessions/:id/items/:itemId/queued", ({ params }) => { service.sessions.inbox.changeQueued(params.id!, params.itemId!); return { ok: true }; }),
     route("POST /api/sessions/:id/items/:itemId/resend", ({ params }) => service.sessions.resend(params.id!, params.itemId!), { remoteCopy: "forward" }),
     route("POST /api/sessions/:id/wake", ({ params, body }) => service.sessions.setWakeChoice(params.id!, body)),
     route("POST /api/sessions/:id/interrupt", async ({ params }) => (await service.sessions.interrupt(params.id!), { ok: true }), { remoteCopy: "forward" }),

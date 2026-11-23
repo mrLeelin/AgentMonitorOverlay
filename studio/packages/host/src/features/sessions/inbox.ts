@@ -1,4 +1,4 @@
-import { inTurn, managementRoot, type DecisionRequest, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
+import { inTurn, managementRoot, splitAnnotationRefs, splitFileRefItems, splitRoleUpdate, type DecisionRequest, type Id, type MessageImage, type MessagePurpose, type Session, type SessionItem } from "@amo-studio/protocol";
 import { newId, type SessionItemInput } from "../../store/store.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
 import { personsMessage } from "../../runtime/items.js";
@@ -51,6 +51,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
   private known: Set<Id> | null = null;
   /** One delivery at a time per session; `again`: something came meanwhile, look once more after it. */
   private readonly flushing = new Map<Id, Promise<void>>();
+  private readonly dispatchingItems = new Set<Id>();
   private readonly again = new Set<Id>();
   /**
    * Sessions the person stopped (2026-11-04, the user): what is held waits for their next message, and goes in with it,
@@ -135,7 +136,26 @@ export class SessionInbox extends Feature<"sharedContext"> {
     this.checkSource(item);
     const rt = this.runtime;
     if (!rt.resend) throw new HostError("bad_request", "this Host cannot send a held message");
-    await this.wrap(() => rt.resend!(sessionId, itemId, this.sessions.retainedImages(item), { now: true }));
+    if (this.dispatchingItems.has(itemId)) throw new HostError("conflict", "这条消息正在发送，请稍后再试。");
+    this.dispatchingItems.add(itemId);
+    try { await this.wrap(() => rt.resend!(sessionId, itemId, this.sessions.retainedImages(item), { now: true })); }
+    finally { this.dispatchingItems.delete(itemId); }
+  }
+
+  changeQueued(sessionId: Id, itemId: Id, edit?: { text: string; originalText: string }): void {
+    const session = this.requireSession(sessionId);
+    const item = this.store.getItem(itemId);
+    if (session.archivedAt || session.writer === "archived" || session.writer === "terminal-handoff") throw new HostError("read_only", "会话当前不可修改。");
+    if (item?.type !== "user" || item.sessionId !== sessionId || item.delivery !== "held" || !item.fromPerson || !item.afterTurn || this.dispatchingItems.has(itemId)) throw new HostError("conflict", "消息已不在排队中，请刷新后重试。");
+    if (!edit) {
+      this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, delivery: "expired", queueCancelled: true, deliveryReason: "已删除排队消息", deliveryEndedAt: new Date().toISOString() }) });
+      return;
+    }
+    const own = splitRoleUpdate(item.text).text;
+    if (item.text !== edit.originalText) throw new HostError("conflict", "消息已变化，请重新打开编辑。");
+    if (!edit.text.trim()) throw new HostError("bad_request", "消息不能为空。");
+    if (item.images?.length || item.queuedSkillText || splitAnnotationRefs(own).refs.length || splitFileRefItems(own).refs.length || /\n\n(?:提到的(?:任务|会话|项目)：|子会话的(?:开法|设定)（|「@快速提交」)|\[AMO_SHARED_CONTEXT:/u.test(own) || !item.text.startsWith(own)) throw new HostError("bad_request", "含附件或特殊引用的排队消息暂不支持编辑。");
+    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, text: edit.text + item.text.slice(own.length) }) });
   }
 
   /** Watches sessions get free; sends what the last Host left held, and moves session_send's old queue in. */
@@ -250,7 +270,10 @@ export class SessionInbox extends Feature<"sharedContext"> {
       try {
         this.checkSource(current);
         if (!rt.resend) throw new Error("this Host cannot send a held message");
-        await rt.resend(sessionId, it.id, this.sessions.retainedImages(current));
+        if (this.dispatchingItems.has(it.id)) continue;
+        this.dispatchingItems.add(it.id);
+        try { await rt.resend(sessionId, it.id, this.sessions.retainedImages(current)); }
+        finally { this.dispatchingItems.delete(it.id); }
       } catch (err) {
         before = null; // No turn was started by a failed dispatch; do not delay the next independent message.
         const why = err instanceof Error ? err.message : String(err);

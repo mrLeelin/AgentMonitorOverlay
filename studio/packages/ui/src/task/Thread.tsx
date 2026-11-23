@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type SetStateAction } from "react";
 import { readSessionDraft, writeSessionDraft } from "./sessionDraft.js";
-import type { Annotation, ApprovalDecision, DecisionRequest, ModelProfile, Session, SessionItem, SessionPreset, SlashCommand, SubsessionNote, SubsessionSetup, Task, Workspace } from "@amo-studio/protocol";
+import { splitAnnotationRefs, splitRoleUpdate, type Annotation, type ApprovalDecision, type DecisionRequest, type ModelProfile, type Session, type SessionItem, type SessionPreset, type SlashCommand, type SubsessionNote, type SubsessionSetup, type Task, type Workspace } from "@amo-studio/protocol";
 import { call, copyText, HostApiError, type HostLink } from "../host/client.js";
 import { SessionOptionsBar } from "../chat/SessionOptionsBar.js";
 import { readSelection, type SelectionAnchor } from "../lib/selection.js";
@@ -17,6 +17,8 @@ import { useAttachments } from "../attach/useAttachments.js";
 import { AttachmentInput } from "../attach/AttachmentInput.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage } from "../attach/inlineResources.js";
+import { splitFileRefItems } from "../attach/refs.js";
+import { splitMentionRefs } from "../attach/mentions.js";
 import { AttachLink } from "../attach/MessageAttachments.js";
 import { IconPaperclip } from "../attach/icons.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
@@ -613,7 +615,7 @@ ${d}` : restored));
               <QuestionSeatContext.Provider value={seat}>
                 {/* A remote session's approvals grey while its computer is away (or the grant is gone): they are checked again there. */}
                 <SubagentStatusContext.Provider value={subagentStatus}>
-                  <Transcript session={session} items={items} annotations={annotations} model={model} busy={busy || !!blocked} view={view} onApprove={onApprove} onJump={onJump} keepTurn={initialScroll?.key} {...(onDelivery && !readOnly && !blocked ? { onDelivery: deliver } : {})} givingWay={halting === "now"} waitsForSubagents={waitsForSubagents} />
+                  <Transcript session={session} items={items.filter((item) => !(item.type === "user" && (item.queueCancelled || (onDelivery && !readOnly && !blocked && !archived && item.fromPerson && item.afterTurn && item.delivery === "held"))))} annotations={annotations} model={model} busy={busy || !!blocked} view={view} onApprove={onApprove} onJump={onJump} keepTurn={initialScroll?.key} {...(onDelivery && !readOnly && !blocked ? { onDelivery: deliver } : {})} givingWay={halting === "now"} waitsForSubagents={waitsForSubagents} />
                 </SubagentStatusContext.Provider>
               </QuestionSeatContext.Provider>
             </AttachLink.Provider>
@@ -720,6 +722,9 @@ ${d}` : restored));
               }}
             />
           )}
+          {!archived && onDelivery && !readOnly && !blocked && items.filter((item): item is Extract<SessionItem, { type: "user" }> => item.type === "user" && !!item.fromPerson && !!item.afterTurn && item.delivery === "held").map((item) => (
+            <QueuedMessage key={item.id} item={item} sessionId={session.id} link={link} remote={isRemote} onSend={() => deliver(item.id, "now")} onError={onError} />
+          ))}
           {!archived && (
           <div className={`composer-card${readOnly ? " disabled" : ""}${dragging ? " dropping" : ""}`}>
             {annotationRefs && annotationRefs.list.length > 0 && !isRevising && <AnnotationRefChips refs={annotationRefs} annotations={annotations} />}
@@ -876,5 +881,35 @@ ${d}` : restored));
         />
       )}
     </>
+  );
+}
+
+function QueuedMessage({ item, sessionId, link, remote, onSend, onError }: { item: Extract<SessionItem, { type: "user" }>; sessionId: string; link: HostLink; remote: boolean; onSend(): void; onError?: (text: string) => void }) {
+  const own = splitRoleUpdate(item.text).text;
+  const annotations = splitAnnotationRefs(own);
+  const files = splitFileRefItems(annotations.text);
+  const mention = splitMentionRefs(files.text);
+  const editable = !remote && !item.images?.length && !item.queuedSkillText && !annotations.refs.length && !files.refs.length && !mention.blocks && !own.includes("[AMO_SHARED_CONTEXT:");
+  const [editing, setEditing] = useState<{ text: string; originalText: string } | null>(null);
+  const [pending, setPending] = useState(false);
+  const update = async (remove: boolean) => {
+    setPending(true);
+    try {
+      if (remove) await call(link, "DELETE /api/sessions/:id/items/:itemId/queued", { id: sessionId, itemId: item.id });
+      else if (editing) await call(link, "PATCH /api/sessions/:id/items/:itemId/queued", { id: sessionId, itemId: item.id }, editing);
+      setEditing(null);
+    } catch (error) { onError?.(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
+  };
+  return (
+    <div className={`queued-message${editing ? " editing" : ""}`} data-testid="queued-message">
+      <span className="queued-message-icon" aria-hidden="true">⇥</span>
+      {editing ? <textarea aria-label="编辑排队消息" value={editing.text} onChange={(e) => setEditing({ ...editing, text: e.target.value })} autoFocus /> : <span className="queued-message-text" title={mention.text}>{mention.text || (item.images?.length ? `图片 ${item.images.length} 张` : "排队消息")}</span>}
+      {editing ? <><button type="button" className="queued-message-send" disabled={pending || !editing.text.trim()} onClick={() => void update(false)}>保存</button><button type="button" className="queued-message-send" disabled={pending} onClick={() => setEditing(null)}>取消</button></> : <>
+        <button type="button" className="queued-message-send" disabled={pending} onClick={onSend} title="立即送入当前会话" data-testid="send-now">↪ 立即发送</button>
+        <button type="button" className="queued-message-send" disabled={!editable || pending} title={editable ? "编辑消息" : "含附件、引用或远程消息暂不支持编辑"} aria-label="编辑消息" onClick={() => setEditing({ text: own, originalText: item.text })}>✎</button>
+        <button type="button" className="queued-message-send" disabled={remote || pending} title={remote ? "远程消息暂不支持删除" : "删除排队消息"} aria-label="删除排队消息" onClick={() => void update(true)}>✕</button>
+      </>}
+    </div>
   );
 }

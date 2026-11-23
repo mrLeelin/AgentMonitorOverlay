@@ -341,6 +341,13 @@
 /* ---- composer -------------------------------------------------------------------------------------------------- */
 
 .composer-dock { padding: 4px 24px 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.queued-message { box-sizing: border-box; width: 100%; max-width: var(--chat-width); display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--chat-input-border); border-radius: var(--r-l); background: var(--chat-input-bg); color: var(--chat-label); }
+.queued-message-icon { color: var(--chat-caption); }
+.queued-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queued-message-send { flex: none; border: 0; background: transparent; color: var(--chat-dim-hover); cursor: pointer; font: inherit; }
+.queued-message-send:hover { color: var(--chat-label); }
+.queued-message-send:disabled { opacity: .4; cursor: not-allowed; }
+.queued-message textarea { flex: 1; min-width: 0; min-height: 54px; resize: vertical; border: 1px solid var(--chat-input-border); border-radius: 6px; padding: 6px; background: var(--chat-panel); color: var(--chat-label); font: inherit; }
 .composer-card { width: 100%; max-width: var(--chat-width); display: flex; flex-direction: column; gap: 2px; padding-top: 8px; border-radius: calc(var(--r-l) + 4px); border: 1px solid var(--chat-input-border); background: var(--chat-input-bg); box-shadow: var(--chat-elevation); }
 .composer-card:focus-within { border-color: color-mix(in srgb, var(--chat-brand) 45%, var(--chat-input-border)); }
 .composer-card.disabled { opacity: 0.7; }
