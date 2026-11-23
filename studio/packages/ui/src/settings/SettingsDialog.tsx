@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { isCommon, type StateSnapshot, type StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { setThemePref, THEME_LABELS, useThemePref, type ThemePref } from "../lib/theme.js";
@@ -27,16 +27,16 @@ import { pickDirectory } from "../folders/FolderPicker.js";
 import { GitEditorPage } from "./GitEditorPage.js";
 import { PromptTemplateManager } from "../attach/PromptTemplateDialog.js";
 import { SkillsPage } from "./SkillsPage.js";
-import { IconChevronRight, IconSearch, IconX } from "../chat/icons.js";
+import { IconAgent, IconChevronRight, IconEnvironment, IconPlan, IconSearch, IconShield, IconTerminal, IconX } from "../chat/icons.js";
 import { PageActionsSlot } from "./PageActions.js";
 import { SettingField } from "./SettingField.js";
 
 const GROUPS = [
-  { id: "general", label: "通用" },
-  { id: "models", label: "模型与会话" },
-  { id: "tools", label: "工具与自动化" },
-  { id: "advanced", label: "高级设置" },
-  { id: "maintenance", label: "数据与维护" },
+  { id: "general", label: "通用", icon: IconPlan },
+  { id: "models", label: "模型与会话", icon: IconAgent },
+  { id: "tools", label: "工具与自动化", icon: IconTerminal },
+  { id: "advanced", label: "高级设置", icon: IconShield },
+  { id: "maintenance", label: "数据与维护", icon: IconEnvironment },
 ] as const;
 type SettingsGroup = (typeof GROUPS)[number]["id"];
 
@@ -86,6 +86,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
   const [selectedPage, setPage] = useState<SettingsPage>(startPage ?? lastPage);
   const [expanded, setExpanded] = useState<SettingsGroup | null>(startPage ? groupFor(startPage) : lastGroup);
   const [search, setSearch] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
   const [searchPage, setSearchPage] = useState<SettingsPage | null>(null);
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const searching = terms.length > 0;
@@ -144,40 +145,41 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop settings-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="设置" style={size.style}>
-        <div className="modal-head">
-          <span className="modal-title">设置</span>
-          <span className="spacer" />
-          <button type="button" className="link-btn" onClick={onClose} aria-label="关闭设置">
-            关闭
-          </button>
-        </div>
+        <button type="button" className="settings-close" onClick={onClose} aria-label="关闭设置" title="关闭设置"><IconX /></button>
         <div className="settings-body">
           <div className="settings-sidebar">
-            <div className="settings-search">
-              <span className="settings-search-icon" aria-hidden="true"><IconSearch /></span>
-              <input
-                className="field"
-                type="search"
-                aria-label="搜索设置"
-                placeholder="搜索设置"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setSearchPage(null); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape" && search) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSearch("");
-                  }
-                }}
-              />
-              {search && <button type="button" className="settings-search-clear" aria-label="清空设置搜索" onClick={() => setSearch("")}><IconX /></button>}
+            <div className="settings-sidebar-head">
+              <span className="settings-title" aria-hidden="true">设置</span>
+              <div className="settings-search">
+                <span className="settings-search-icon" aria-hidden="true"><IconSearch /></span>
+                <input
+                  ref={searchInput}
+                  className="field"
+                  type="search"
+                  aria-label="搜索设置"
+                  placeholder="搜索设置"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setSearchPage(null); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && search) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSearch("");
+                    }
+                  }}
+                />
+                {search && <button type="button" className="settings-search-clear" aria-label="清空设置搜索" onClick={() => {
+                  setSearch("");
+                  searchInput.current?.focus();
+                }}><IconX /></button>}
+              </div>
             </div>
             <nav className="settings-nav" aria-label="设置分类" onKeyDown={(e) => {
               const target = e.target as HTMLElement;
               if (!["ArrowDown", "ArrowUp", "Home", "End", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
-              const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.getClientRects().length > 0);
+              const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button")].filter((b) => !b.closest("[inert]"));
               const index = buttons.indexOf(target as HTMLButtonElement);
               if (index < 0) return;
               e.preventDefault();
@@ -200,99 +202,107 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                 if (!children.length) return null;
                 const isOpen = searching || expanded === group.id;
                 return <div className="settings-group" data-settings-group={group.id} key={group.id}>
-                  {searching ? <div className="settings-group-label">{group.label}</div> : <button
+                  {searching ? <div className="settings-group-label"><group.icon />{group.label}</div> : <button
                     type="button"
                     className="settings-group-toggle"
                     id={`settings-group-${group.id}`}
                     aria-expanded={isOpen}
                     aria-controls={`settings-group-pages-${group.id}`}
+                    data-current={page && groupFor(page) === group.id ? "true" : undefined}
                     onClick={() => toggleGroup(group.id)}
                   >
-                    <span className="settings-group-arrow" aria-hidden="true"><IconChevronRight /></span>
+                    <group.icon />
                     {group.label}
+                    <span className="settings-group-arrow" aria-hidden="true"><IconChevronRight /></span>
                   </button>}
-                  <div className="settings-group-pages" id={`settings-group-pages-${group.id}`} hidden={!isOpen} role="tablist" aria-label={group.label} aria-orientation="vertical">
-                    {children.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        role="tab"
-                        id={`settings-tab-${p.id}`}
-                        aria-selected={page === p.id}
-                        aria-controls="settings-page"
-                        data-page={p.id}
-                        tabIndex={page === p.id ? 0 : -1}
-                        className="settings-tab"
-                        onClick={() => open(p.id)}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
+                  <div className="settings-group-reveal" data-expanded={isOpen}>
+                    <div className="settings-group-pages" id={`settings-group-pages-${group.id}`} inert={!isOpen} aria-hidden={!isOpen} role="tablist" aria-label={group.label} aria-orientation="vertical">
+                      <div className="settings-group-tabs">
+                        {children.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            role="tab"
+                            id={`settings-tab-${p.id}`}
+                            aria-selected={page === p.id}
+                            aria-controls="settings-page"
+                            data-page={p.id}
+                            tabIndex={page === p.id ? 0 : -1}
+                            className="settings-tab"
+                            onClick={() => open(p.id)}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>;
               })}
             </nav>
           </div>
           <div className="settings-page" id="settings-page" role={page ? "tabpanel" : undefined} aria-labelledby={page ? `settings-tab-${page}` : undefined} key={page}>
-            {page ? (
-              <header className="settings-page-head">
-                <div className="settings-page-heading">
-                  <h2 className="settings-page-title">{PAGES.find((p) => p.id === page)!.label}</h2>
-                  {INTROS[page] && <p className="settings-page-intro">{INTROS[page]}</p>}
-                </div>
-                <div className="settings-page-actions" ref={setActionsSlot} />
-              </header>
-            ) : (
-              <p className="settings-search-empty" role="status">没有匹配的设置，试试其他关键词。</p>
-            )}
+            <header className="settings-page-head">
+              <h2 className="settings-page-title">{page ? PAGES.find((p) => p.id === page)!.label : "搜索设置"}</h2>
+              {page && <div className="settings-page-actions" ref={setActionsSlot} />}
+            </header>
             <PageActionsSlot.Provider value={actionsSlot}>
-            {page === "network" && <NetworkPage link={link} value={settings?.network} />}
-            {page === "ui" && <UiPage link={link} onOpenRemote={onOpenRemote} />}
-
-            {page === "models" && <ModelsPage link={link} settings={settings} />}
-            {page === "subsession" && <SubsessionPage link={link} settings={settings} />}
-            {page === "prompt-templates" && <PromptTemplateManager link={link} projects={state.workspaces.filter((w) => !isCommon(w))} />}
-            {page === "quota" && <QuotaPage link={link} settings={settings} />}
-            {page === "stats" && <StatsPage link={link} />}
-
-            {page === "common" && <DefaultFolderSection />}
-            {page === "git-editor" && <GitEditorPage link={link} />}
-            {page === "common" && (
-              <section className="settings-section" aria-label="公共目录">
-                <span className="settings-heading">公共目录</span>
-                <span className="settings-hint">没有指定项目的任务、调度 agent，以及没选项目的专题会话都在这个文件夹里运行。默认是数据目录下的 common 文件夹。</span>
-                <div className="settings-row">
-                  <input className="field" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="例如 D:\AMO\common" aria-label="公共目录" />
-                  {window.amo?.pickDirectory && (
-                    <button type="button" className="btn-ghost small" onClick={() => void pick()} disabled={busy}>
-                      选择…
-                    </button>
-                  )}
-                  <button type="button" className="btn-primary small" onClick={() => void saveCommon(dir.trim())} disabled={busy || !dir.trim() || dir.trim() === settings?.commonWorkspace?.path}>
-                    保存
-                  </button>
-                </div>
-                {message && (
-                  <span className={message.error ? "form-error" : "settings-hint"} role={message.error ? "alert" : "status"} data-testid="settings-message">
-                    {message.text}
-                  </span>
+              <div className="settings-page-content">
+                {page ? INTROS[page] && <p className="settings-page-intro">{INTROS[page]}</p> : (
+                  <div className="settings-search-empty" role="status">
+                    <IconSearch />
+                    <strong>没有匹配的设置</strong>
+                    <span>试试其他关键词。</span>
+                  </div>
                 )}
-              </section>
-            )}
-            {page === "common" && <FolderAccessSection link={link} />}
-            {page === "features" && <FeaturesSection link={link} disabled={settings?.disabledFeatures ?? []} teamAutoSend={settings?.teamAutoSend ?? false} shellHelp={settings?.shellHelp ?? true} />}
-            {page === "experimental" && (
-              <>
-                <ExperimentalSection link={link} on={settings?.experimentalFeatures ?? []} />
-                <DevUiSection link={link} dir={settings?.devUiDir ?? null} />
-              </>
-            )}
-            {page === "scratchpad" && <ScratchpadSettings link={link} settings={settings} />}
-            {page === "data" && <DataPage link={link} />}
-            {page === "duty" && <DutyPage link={link} state={state} />}
-            {page === "mcp" && <McpPage link={link} />}
-            {page === "skills" && <SkillsPage link={link} projects={state.workspaces.filter((w) => !isCommon(w) && !w.archivedAt)} />}
-            {page === "maintenance" && <MaintenancePage link={link} />}
+                {page === "network" && <NetworkPage link={link} value={settings?.network} />}
+                {page === "ui" && <UiPage link={link} onOpenRemote={onOpenRemote} />}
+
+                {page === "models" && <ModelsPage link={link} settings={settings} />}
+                {page === "subsession" && <SubsessionPage link={link} settings={settings} />}
+                {page === "prompt-templates" && <PromptTemplateManager link={link} projects={state.workspaces.filter((w) => !isCommon(w))} />}
+                {page === "quota" && <QuotaPage link={link} settings={settings} />}
+                {page === "stats" && <StatsPage link={link} />}
+
+                {page === "common" && <DefaultFolderSection />}
+                {page === "git-editor" && <GitEditorPage link={link} />}
+                {page === "common" && (
+                  <section className="settings-section" aria-label="公共目录">
+                    <span className="settings-heading">公共目录</span>
+                    <span className="settings-hint">没有指定项目的任务、调度 agent，以及没选项目的专题会话都在这个文件夹里运行。默认是数据目录下的 common 文件夹。</span>
+                    <div className="settings-row">
+                      <input className="field" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="例如 D:\AMO\common" aria-label="公共目录" />
+                      {window.amo?.pickDirectory && (
+                        <button type="button" className="btn-ghost small" onClick={() => void pick()} disabled={busy}>
+                          选择…
+                        </button>
+                      )}
+                      <button type="button" className="btn-primary small" onClick={() => void saveCommon(dir.trim())} disabled={busy || !dir.trim() || dir.trim() === settings?.commonWorkspace?.path}>
+                        保存
+                      </button>
+                    </div>
+                    {message && (
+                      <span className={message.error ? "form-error" : "settings-hint"} role={message.error ? "alert" : "status"} data-testid="settings-message">
+                        {message.text}
+                      </span>
+                    )}
+                  </section>
+                )}
+                {page === "common" && <FolderAccessSection link={link} />}
+                {page === "features" && <FeaturesSection link={link} disabled={settings?.disabledFeatures ?? []} teamAutoSend={settings?.teamAutoSend ?? false} shellHelp={settings?.shellHelp ?? true} />}
+                {page === "experimental" && (
+                  <>
+                    <ExperimentalSection link={link} on={settings?.experimentalFeatures ?? []} />
+                    <DevUiSection link={link} dir={settings?.devUiDir ?? null} />
+                  </>
+                )}
+                {page === "scratchpad" && <ScratchpadSettings link={link} settings={settings} />}
+                {page === "data" && <DataPage link={link} />}
+                {page === "duty" && <DutyPage link={link} state={state} />}
+                {page === "mcp" && <McpPage link={link} />}
+                {page === "skills" && <SkillsPage link={link} projects={state.workspaces.filter((w) => !isCommon(w) && !w.archivedAt)} />}
+                {page === "maintenance" && <MaintenancePage link={link} />}
+              </div>
             </PageActionsSlot.Provider>
           </div>
         </div>

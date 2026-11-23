@@ -42,6 +42,7 @@ test("settings groups collapse, remember selection and restore after cross-group
   await expect(nav.getByRole("tab")).toHaveCount(5);
   await nav.getByRole("tab", { name: "子会话", exact: true }).click();
   await dialog.getByLabel("清空设置搜索").click();
+  await expect(search).toBeFocused();
   await expect(dialog.getByTestId("prompt-manager")).toBeVisible();
 
   await group("模型与会话").click();
@@ -96,4 +97,32 @@ test("settings reopens the last page with its parent group expanded", async () =
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "工具与自动化", exact: true })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByRole("tab", { name: "MCP", exact: true })).toHaveAttribute("aria-selected", "true");
+});
+
+test("settings keeps the page title in view and respects reduced motion", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.evaluate(() => { localStorage.setItem("amo.settings.size", JSON.stringify({ w: 640, h: 460 })); });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  const title = dialog.getByRole("heading", { name: "界面", exact: true });
+  const content = dialog.locator(".settings-page-content");
+  const top = (await title.boundingBox())!.y;
+  await content.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  expect(await content.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  expect((await title.boundingBox())!.y).toBe(top);
+
+  const general = dialog.getByRole("button", { name: "通用", exact: true });
+  await general.focus();
+  await general.press("ArrowLeft");
+  await general.press("ArrowDown");
+  const models = dialog.getByRole("button", { name: "模型与会话", exact: true });
+  await expect(models).toBeFocused();
+  await models.press("ArrowRight");
+  await models.press("ArrowDown");
+  await expect(dialog.getByRole("tab", { name: "模型与渠道", exact: true })).toBeFocused();
+  await expect(dialog.getByRole("heading", { name: "模型与渠道", exact: true })).toBeVisible();
+  expect(await dialog.evaluate((el) => el.getAnimations({ subtree: true }).filter((a) => a.effect?.getTiming().iterations !== Infinity).length)).toBe(0);
+  await screenshot(app, "studio", "settings-workspace-compact-models", page);
 });
