@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>色谱看板 · AMO Studio 设计预览</title>
+<style>
+* { box-sizing: border-box; }
+:root { color-scheme: light dark; font: 14px/1.55 "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--ink); }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+.theme-control { border: 1px solid var(--line); background: var(--paper); color: var(--ink); padding: 5px 10px; border-radius: 6px; font-size: 12px; }
+::selection { background: var(--focus); color: var(--bg); }
+
+:root { --bg:light-dark(#faf9f4,#16151c); --paper:light-dark(#fffefa,#24222d); --ink:light-dark(#211b2c,#f4f0f8); --dim:light-dark(#645f70,#b9b1c4); --line:light-dark(#dcd9de,#433d4e); --focus:light-dark(#542ac3,#c3a5ff); --rail:light-dark(#4922b5,#342070); }
+.shell { display:grid; grid-template-columns:190px minmax(0,1fr); min-height:100vh; }
+aside { display:flex; flex-direction:column; gap:28px; background:var(--rail); color:#fff; padding:30px 14px 18px; }
+.brand { display:flex; gap:10px; align-items:center; padding:0 8px 22px; border-bottom:1px solid #ffffff50; font-size:18px; font-weight:700; letter-spacing:-.04em; }
+.brand i { width:24px; height:24px; border:6px solid #ffd45e; border-radius:50% 50% 50% 3px; transform:rotate(-12deg); }
+aside nav { display:grid; gap:4px; }
+aside h2 { font-size:12px; color:#e1d7ff; margin:0 10px 7px; }
+aside button { text-align:left; border:0; background:none; color:white; border-radius:6px; padding:9px 10px; }
+aside button:hover { background:#ffffff1a; }
+aside button[aria-pressed=true] { background:#ffda65; color:#302019; font-weight:700; }
+.rail-footer { margin-top:auto; font-size:12px; padding:10px; color:#eee7ff; }
+main { min-width:0; padding:0 clamp(18px,3.4vw,56px) 28px; }
+header { min-height:74px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--dim); font-size:13px; }
+.heading { padding:40px 0 24px; display:flex; align-items:baseline; gap:15px; }
+.heading h1 { font-size:clamp(28px,3.2vw,48px); letter-spacing:-.045em; line-height:1.1; }
+.total { color:var(--dim); font-size:13px; }
+.lanes { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.lane { min-width:0; --stripe:#ffb54f; }
+.lane:nth-child(2) { --stripe:#9181ff; } .lane:nth-child(3) { --stripe:#ff86ac; } .lane:nth-child(4) { --stripe:#68dfb7; }
+.lane-head { display:flex; align-items:flex-end; justify-content:space-between; padding:16px; height:94px; border-radius:14px 14px 3px 3px; color:#241c30; background:var(--stripe); }
+.lane-head h2 { font-size:19px; }.lane-head b { font-size:42px; line-height:.98; letter-spacing:-.07em; font-variant-numeric:tabular-nums; }
+.card { width:100%; text-align:left; background:var(--paper); border:1px solid var(--line); border-radius:4px 4px 10px 10px; margin-top:8px; padding:16px; display:grid; gap:10px; }
+.card:hover, .card[aria-expanded=true] { border-color:var(--focus); }
+.card small,.card p,.meta,.empty { color:var(--dim); }.card small { font-size:11px; font-weight:600; }.card strong { font-size:16px; line-height:1.5; }.card p { font-size:13px; }
+.meta { padding-top:10px; border-top:1px solid var(--line); display:flex; justify-content:space-between; gap:8px; font-size:11px; }
+.detail { margin:0; padding:14px 16px 14px 32px; background:var(--paper); border-radius:0 0 8px 8px; font-size:12px; }.detail li+li { margin-top:5px; }
+.empty { padding:18px 8px; font-size:13px; }
+@media (prefers-reduced-motion:no-preference) { .card { transition:border-color 140ms ease; } .detail:not([hidden]) { animation:open 160ms ease-out; } @keyframes open { from {opacity:.55; transform:translateY(-3px)} } }
+@media (max-width:1120px) { .shell {grid-template-columns:156px minmax(0,1fr)} .lanes {grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 12px;} }
+@media (max-width:660px) { .shell {display:block} aside {padding:14px 18px; gap:12px} .brand {padding:0;border:0} aside nav {display:flex;flex-wrap:wrap} aside h2,.rail-footer {display:none} header {min-height:46px} .heading {padding:24px 0 18px} .lane-head {height:72px;} }
+@media (max-width:460px) { .lanes {grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="shell"><aside>
+  <div class="brand"><i aria-hidden="true"></i>AMO Studio</div>
+  <nav aria-label="任务范围"><button data-filter="all" aria-pressed="true">全部任务</button><button data-filter="review" aria-pressed="false">待我审阅</button></nav>
+  <nav aria-label="项目"><h2>项目</h2><button data-filter="AMO Studio" aria-pressed="false">AMO Studio</button><button data-filter="素材管线" aria-pressed="false">素材管线</button></nav>
+  <div class="rail-footer">本地工作台</div>
+</aside><main>
+  <header><span>工作空间　/　看板</span><span data-theme-slot></span></header>
+  <div class="heading"><h1>全部任务</h1><span class="total"></span></div>
+  <div class="lanes"></div>
+</main></div>
+<script>
+const root = document.documentElement;
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') root.style.colorScheme = theme;
+}
+applyTheme(new URLSearchParams(location.search).get('theme') || 'light');
+if (window.parent === window) {
+  const toggle = document.createElement('button');
+  toggle.className = 'theme-control';
+  toggle.textContent = '深色模式';
+  toggle.setAttribute('aria-pressed', String(root.style.colorScheme === 'dark'));
+  toggle.addEventListener('click', () => {
+    applyTheme(root.style.colorScheme === 'dark' ? 'light' : 'dark');
+    toggle.setAttribute('aria-pressed', String(root.style.colorScheme === 'dark'));
+  });
+  document.querySelector('[data-theme-slot]').append(toggle);
+} else {
+  window.addEventListener('message', (event) => {
+    if (event.source === window.parent) applyTheme(event.data?.previewTheme);
+  });
+}
+const tasks = [
+  {
+    "title": "重新设计设置导航",
+    "desc": "把搜索与分类放在左栏，滚动长设置页时保留标题和操作。",
+    "project": "AMO Studio",
+    "status": "待审阅",
+    "model": "Codex",
+    "time": "15:40",
+    "history": [
+      "核对分类与搜索的入口",
+      "完成窄窗口与深浅主题检查",
+      "提交导航预览，等待确认"
+    ]
+  },
+  {
+    "title": "梳理画布的拖拽反馈",
+    "desc": "拖动任务时标明目标位置，松开后保留选中状态。",
+    "project": "AMO Studio",
+    "status": "进行中",
+    "model": "Claude",
+    "time": "14:20",
+    "history": [
+      "检查框选与移动的手势",
+      "比较两种落点提示",
+      "正在验证连续拖动"
+    ]
+  },
+  {
+    "title": "调整模型切换入口",
+    "desc": "让常用模型和当前渠道在新建任务时更容易找到。",
+    "project": "AMO Studio",
+    "status": "待办",
+    "model": "Codex",
+    "time": "13:10",
+    "history": [
+      "记录常用模型的选择路径",
+      "整理项目默认值"
+    ]
+  },
+  {
+    "title": "核对图集导出尺寸",
+    "desc": "逐项检查导出倍率、透明边缘和命名规则。",
+    "project": "素材管线",
+    "status": "进行中",
+    "model": "Codex",
+    "time": "11:30",
+    "history": [
+      "读取图集清单",
+      "已检查两组导出尺寸",
+      "正在核对透明边缘"
+    ]
+  },
+  {
+    "title": "整理图标资源",
+    "desc": "统一工具栏图标的线宽、视觉中心和导出命名。",
+    "project": "素材管线",
+    "status": "完成",
+    "model": "Claude",
+    "time": "10:45",
+    "history": [
+      "整理图标来源",
+      "统一导出设置",
+      "完成资源检查"
+    ]
+  },
+  {
+    "title": "检查会话恢复流程",
+    "desc": "确认重新打开工作台后能够回到上次处理的任务。",
+    "project": "AMO Studio",
+    "status": "待办",
+    "model": "Codex",
+    "time": "09:15",
+    "history": [
+      "列出恢复场景",
+      "准备隔离测试数据"
+    ]
+  }
+];
+const lanes = document.querySelector('.lanes');
+
+function render(filter, title) {
+  const visible = tasks.filter(t => filter === 'all' || (filter === 'review' ? t.status === '待审阅' : t.project === filter));
+  document.querySelector('h1').textContent = title;
+  document.querySelector('.total').textContent = visible.length + ' 项任务';
+  lanes.innerHTML = ['待办','进行中','待审阅','完成'].map(status => {
+    const rows = visible.filter(t => t.status === status);
+    const cards = rows.map(t => `<button class="card" aria-expanded="false"><small>${t.project}</small><strong>${t.title}</strong><p>${t.desc}</p><span class="meta"><span>${t.model}</span><time>${t.time}</time></span></button><ul class="detail" hidden>${t.history.map(s=>'<li>'+s+'</li>').join('')}</ul>`).join('');
+    return `<section class="lane"><div class="lane-head"><h2>${status}</h2><b>${rows.length}</b></div>${cards || '<p class="empty">暂无任务</p>'}</section>`;
+  }).join('');
+}
+document.querySelectorAll('[data-filter]').forEach(button => button.onclick = () => {
+  document.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+  render(button.dataset.filter,button.textContent);
+});
+lanes.onclick = e => {
+  const card=e.target.closest('.card');
+  if (!card) return;
+  const detail=card.nextElementSibling;
+  detail.hidden=!detail.hidden;
+  card.setAttribute('aria-expanded',String(!detail.hidden));
+};
+render('all','全部任务');
+</script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMO Studio · B 方案控件预览</title>
+<style>
+:root{color-scheme: light dark;--bg:light-dark(#fafbf6, #131313);--surface:light-dark(#ffffff, #1a1a1a);--surface2:light-dark(#edf0e6, #222220);--line:light-dark(#d4dacb, #383834);--muted:light-dark(#59664f, #a7a69f);--text:light-dark(#252d23, #f1efe9);--accent:light-dark(#466827, #c9ee97);--orange:light-dark(#a36334, #edb78b);--purple:light-dark(#755b98, #c7b6ed)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 'DM Sans','Noto Sans SC','Microsoft YaHei',sans-serif}button{font:inherit;color:inherit;cursor:pointer}button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{min-height:100vh;display:grid;grid-template-columns:222px minmax(0,1fr)}.sidebar{background:light-dark(#f2f4ec, #181817);border-right:1px solid light-dark(#d4dacb, #333330);display:flex;flex-direction:column;min-height:100vh;padding:25px 15px 14px}.brand{display:flex;align-items:center;gap:11px;padding:0 8px 27px;font-size:16px;font-weight:700;letter-spacing:-.03em;white-space:nowrap}.mark{width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:light-dark(#caec9b, var(--accent));color:#1a2414}.mark svg{width:19px;height:19px;stroke-width:2}.nav{display:grid;gap:4px}.nav button,.project{border:0;background:none;text-align:left;color:var(--muted);display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:9px;width:100%;font-size:13px}.nav button:hover,.project:hover{background:light-dark(#e7ebde, #282825);color:var(--text)}.nav button.active{background:light-dark(#e2edcf, #30342b);color:var(--accent);font-weight:600}.count{margin-left:auto;color:light-dark(#59664f, #a5a59c);font-size:11px}.section{display:flex;align-items:center;padding:28px 11px 10px;color:light-dark(#59664f, #898980);font-size:11px;font-weight:600}.section button{margin-left:auto;background:none;border:0;color:light-dark(#59664f, #b0b0a7);font-size:18px;line-height:1}.project .dot{height:7px;width:7px;border-radius:50%;background:#b9a5de}.project:nth-of-type(3) .dot{background:#e1a77b}.project:nth-of-type(4) .dot{background:#a9cc99}.sidebar-bottom{margin-top:auto;border-top:1px solid var(--line);padding:16px 8px 2px;display:flex;gap:10px;align-items:center;color:var(--muted);font-size:12px}.online{width:7px;height:7px;background:#9acb78;border-radius:50%}.settings{margin-left:auto;border:0;background:none;color:var(--muted);padding:4px;display:flex}
+main{min-width:0}.topbar{height:70px;display:flex;align-items:center;gap:12px;padding:0 32px;border-bottom:1px solid light-dark(#d4dacb, #30302c)}.crumb{color:var(--muted);font-size:13px}.crumb b{color:light-dark(#252d23, #eee);font-weight:600}.top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}.search{height:36px;width:220px;display:flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--line);border-radius:9px;background:light-dark(#ffffff, #20201f);color:var(--muted);font-size:12px}.search input{min-width:0;flex:1;background:none;border:0;outline:0;color:var(--text);font:inherit}.search kbd{font-size:10px;background:light-dark(#e7ebde, #33332f);color:light-dark(#59664f, #c4c3b9);padding:1px 5px;border-radius:4px}.top-btn{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--line);border-radius:9px;background:transparent;color:light-dark(#59664f, #b6b5ad)}.top-btn:hover{background:var(--surface2);color:var(--text)}
+.content{padding:37px 36px 45px;max-width:1800px;margin:auto}.heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:28px}.heading h1{font-size:27px;letter-spacing:-.035em;line-height:1.2;margin:0 0 7px}.heading p{color:var(--muted);margin:0;font-size:13px}.primary{display:inline-flex;align-items:center;gap:8px;padding:10px 15px;border:0;border-radius:9px;background:light-dark(#caec9b, var(--accent));color:#1c2817;font-weight:700;font-size:13px}.primary:hover{background:light-dark(#b5df7a, #ddf8bc)}.primary svg{width:16px;height:16px;stroke-width:2}.toolbar{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);margin-bottom:24px}.tabs{display:flex;gap:24px}.tab{position:relative;padding:0 2px 15px;border:0;background:none;color:var(--muted);font-size:13px}.tab.active{color:var(--text);font-weight:600}.tab.active:after{position:absolute;content:'';bottom:-1px;left:0;right:0;height:2px;background:var(--accent);border-radius:2px}.filter{margin-left:auto;margin-bottom:11px;border:1px solid var(--line);background:none;color:light-dark(#59664f, #c9c8bf);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:7px;font-size:12px}.filter.active{border-color:light-dark(#829a66, #88a66d);color:var(--accent)}
+.board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:20px;overflow-x:auto;padding:0 0 20px}.column{min-width:0}.column-head{display:flex;align-items:center;gap:9px;margin-bottom:14px;font-weight:600;font-size:13px}.status-dot{height:8px;width:8px;border-radius:50%;background:light-dark(#59664f, #8b8c83)}.column:nth-child(2) .status-dot{background:var(--accent)}.column:nth-child(3) .status-dot{background:var(--orange)}.column:nth-child(4) .status-dot{background:var(--purple)}.amount{font-size:11px;font-weight:500;padding:2px 7px;color:light-dark(#59664f, #bebeb5);background:light-dark(#e7ebde, #2a2a27);border-radius:6px}.add{margin-left:auto;border:0;background:none;color:light-dark(#59664f, #9c9b92);font-size:19px;line-height:1}.cards{display:flex;flex-direction:column;gap:10px;min-height:120px}.card{position:relative;display:block;text-align:left;width:100%;padding:16px;border:1px solid light-dark(#d4dacb, #393934);border-radius:11px;background:var(--surface);color:var(--text)}.card:hover{border-color:light-dark(#829a66, #8b9b76);background:light-dark(#f5f8ef, #20221d)}.card.selected{border-color:var(--accent);background:light-dark(#ecf4df, #252a20)}.card-top{display:flex;align-items:center;gap:6px;color:light-dark(#59664f, #aaa99f);font-size:11px;margin-bottom:13px}.card-top svg{width:13px;height:13px}.project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card-title{display:block;font-weight:600;font-size:14px;line-height:1.5;overflow-wrap:anywhere}.card-desc{display:block;color:var(--muted);font-size:12px;line-height:1.6;margin-top:7px}.card-foot{display:flex;align-items:center;gap:6px;margin-top:19px;color:light-dark(#59664f, #aaa99f);font-size:11px}.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:5px;background:light-dark(#e2edcf, #30332b);color:light-dark(#49652f, #c8e3a6);font-weight:500}.pill.wait{background:light-dark(#f8ebd9, #393027);color:light-dark(#855127, #edbd97)}.pill.done{background:light-dark(#eee8f6, #302c38);color:light-dark(#665080, #d6c8f1)}.time{margin-left:auto}.avatar{display:grid;place-items:center;width:19px;height:19px;border-radius:6px;background:light-dark(#e7ebde, #35352e);color:light-dark(#47563d, #e2dfd2);font-size:10px;font-weight:700}.empty{height:92px;border:1px dashed light-dark(#c5ccba, #3e3e38);border-radius:11px;display:grid;place-items:center;color:light-dark(#59664f, #898980);font-size:12px}
+.notice{position:fixed;left:50%;bottom:20px;transform:translate(-50%,16px);opacity:0;pointer-events:none;padding:9px 14px;border-radius:8px;background:light-dark(#2b4023, #d5efb6);color:light-dark(#eff6e7, #1a2513);font-size:12px;transition:opacity .18s,transform .18s}.notice.show{opacity:1;transform:translate(-50%,0)}.board[data-view="list"]{grid-template-columns:1fr}.board[data-view="list"] .column{display:grid;grid-template-columns:160px 1fr;gap:16px}.board[data-view="list"] .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.board[data-view="list"] .column-head{align-self:start;padding-top:17px}.board[data-view="list"] .empty{height:72px}
+@media(prefers-reduced-motion:no-preference){.card,.nav button,.project,.primary,.filter,.top-btn{transition:background-color .18s ease,border-color .18s ease,color .18s ease}.content{animation:arrive .35s cubic-bezier(.16,1,.3,1)}@keyframes arrive{from{opacity:.8;transform:translateY(8px)}}}
+@media(max-width:1050px){.sidebar{width:65px;padding-inline:10px}.app{grid-template-columns:65px minmax(0,1fr)}.brand{padding-inline:6px}.brand>span:not(.mark),.brand small,.nav button span,.nav .count,.section,.project span:not(.dot),.sidebar-bottom span:not(.online),.settings{display:none}.nav button,.project{justify-content:center;padding:11px}.content{padding:28px 24px}.search{width:165px}}
+@media(max-width:650px){.topbar{padding:0 18px}.search{width:36px;padding:0 9px}.search input,.search kbd{display:none}.content{padding:25px 16px}.heading h1{font-size:23px}.board{grid-template-columns:repeat(4,240px)}.heading p{max-width:210px}.board[data-view="list"] .column{grid-template-columns:1fr;gap:0}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+  .theme-toggle { flex: none; padding: 6px 10px; border-radius: 7px; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+  .top-actions { position:relative; }
+  .tool-pop { position:absolute; top:calc(100% + 8px); right:0; z-index:4; width:min(365px,calc(100vw - 28px)); max-height:min(60vh,420px); overflow-y:auto; padding:6px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 12px 32px #0003; }
+  .tool-pop h2, .tool-pop p { margin:0; padding:8px; color:var(--muted); font-size:12px; }
+  .tool-pop button { display:block; width:100%; text-align:left; border:0; border-radius:6px; background:none; color:var(--text); padding:9px; }
+  .tool-pop button:hover,.tool-pop button:focus-visible { background:var(--surface2); }
+  .tool-pop small { display:block; margin-top:3px; color:var(--muted); }
+  .topic-title { display:flex; align-items:center; gap:7px; margin:2px 0 0; font-size:12px; font-weight:600; color:var(--muted); }
+  .topic-title::after { content:''; flex:1; height:1px; background:var(--line); }
+  .topic-block { display:grid; gap:8px; align-content:start; }
+  .top-btn[aria-expanded=true] { color:var(--accent); border-color:var(--accent); }
+  .search:focus-within,.theme-toggle[aria-pressed=true] { border-color:var(--accent); }
+  @media(max-width:650px) { .search {width:clamp(125px,27vw,180px);} .search input {display:block;} }
+  @media(prefers-reduced-motion:no-preference) { .tool-pop:not([hidden]) {animation:tool-open 130ms ease-out;} @keyframes tool-open {from{opacity:.6; transform:translateY(-3px)}} }
+</style>
+</head>
+<body>
+<div class="app"><aside class="sidebar">
+  <div class="brand"><span class="mark"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><rect x="8" y="9" width="8" height="7" rx="2"/><path d="M10.5 12h.01M13.5 12h.01"/></svg></span><span>AMO Studio</span></div>
+  <nav class="nav" aria-label="工作台导航"><button class="active" data-message="已显示全部任务"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 4v16"/></svg><span>全部任务</span><span class="count">12</span></button><button data-message="已切换到最近会话"><svg viewBox="0 0 24 24"><path d="M4 5h16v12H8l-4 3z"/><path d="M8 9h8M8 13h5"/></svg><span>最近会话</span></button><button data-message="已切换到待你处理"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16h.01"/></svg><span>待你处理</span><span class="count">3</span></button></nav>
+  <div class="section">专题 <button type="button" aria-label="新建专题">+</button></div><button class="project"><span class="dot"></span><span>工作台体验优化</span><span class="count">8</span></button><button class="project"><span class="dot"></span><span>任务协作</span><span class="count">4</span></button>
+  <div class="section">项目 <button type="button" aria-label="添加项目">+</button></div><button class="project"><span class="dot"></span><span>AMO Studio</span><span class="count">9</span></button><button class="project"><span class="dot"></span><span>设计系统</span><span class="count">3</span></button>
+  <div class="sidebar-bottom"><span class="online"></span><span>Host 运行中</span><button class="settings" aria-label="设置"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M19 12a7 7 0 0 0-.1-1.2l1.5-1.2-1.5-2.6-1.8.6a7 7 0 0 0-2-1.2l-.3-1.9h-3l-.3 1.9a7 7 0 0 0-2 1.2l-1.8-.6-1.5 2.6 1.5 1.2a7 7 0 0 0 0 2.4l-1.5 1.2 1.5 2.6 1.8-.6a7 7 0 0 0 2 1.2l.3 1.9h3l.3-1.9a7 7 0 0 0 2-1.2l1.8.6 1.5-2.6-1.5-1.2A7 7 0 0 0 19 12z"/></svg></button></div>
+</aside><main><header class="topbar"><div class="crumb">工作台 <span aria-hidden="true"> / </span> <b>全部任务</b></div><div class="top-actions"><label class="search"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input aria-label="搜索任务或会话" aria-controls="search-hits" autocomplete="off" placeholder="搜索任务或会话"><kbd>Ctrl K</kbd></label><button class="top-btn" id="bell" aria-label="需要你处理" title="需要你处理" aria-expanded="false" aria-controls="pending"><svg viewBox="0 0 24 24"><path d="M6 16V10a6 6 0 0 1 12 0v6l2 2H4zM10 20h4"/></svg></button><section class="tool-pop" id="search-hits" aria-label="搜索结果" hidden></section><section class="tool-pop" id="pending" aria-label="需要你处理的事项" hidden><h2>需要你处理</h2></section></div></header>
+<div class="content"><div class="heading"><div><h1>全部任务</h1></div><button class="primary" data-message="这是设计预览，新建任务将在正式界面中可用"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建任务</button></div>
+<div class="toolbar"><div class="tabs" role="tablist"><button class="tab active" role="tab" aria-selected="true" data-view="board">看板</button><button class="tab" role="tab" aria-selected="false" data-view="list">列表</button></div><button class="filter active" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg>按专题分组</button></div>
+<section class="board" aria-label="任务看板" data-view="board">
+<div class="column"><header class="column-head"><span class="status-dot"></span>待办<span class="amount">2</span><button class="add" aria-label="新建待办">+</button></header><div class="cards">
+<button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">AMO Studio</span></span><span class="card-title">整理设置界面的交互与层级</span><span class="card-desc">统一导航、内容区和动效反馈。</span><span class="card-foot"><span class="pill">待开始</span><span class="time">今天</span></span></button>
+<button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">设计系统</span></span><span class="card-title">整理常用组件的状态样式</span><span class="card-foot"><span class="pill">待开始</span><span class="time">昨天</span></span></button></div></div>
+<div class="column"><header class="column-head"><span class="status-dot"></span>进行中<span class="amount">2</span><button class="add" aria-label="新建进行中任务">+</button></header><div class="cards">
+<button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">AMO Studio</span></span><span class="card-title">优化会话页面的阅读体验</span><span class="card-desc">让消息、工具调用和输入区更容易区分。</span><span class="card-foot"><span class="avatar">C</span><span>Claude · 工作中</span><span class="time">刚刚</span></span></button>
+<button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">AMO Studio</span></span><span class="card-title">改进画布的操作反馈</span><span class="card-foot"><span class="avatar">G</span><span>Codex · 工作中</span><span class="time">4 分钟前</span></span></button></div></div>
+<div class="column"><header class="column-head"><span class="status-dot"></span>待审阅<span class="amount">1</span></header><div class="cards"><button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">设计系统</span></span><span class="card-title">统一任务卡片的信息展示</span><span class="card-desc">状态、模型和所属项目已整理。</span><span class="card-foot"><span class="pill wait">需要你查看</span><span class="time">12 分钟前</span></span></button></div></div>
+<div class="column"><header class="column-head"><span class="status-dot"></span>已完成<span class="amount">1</span></header><div class="cards"><button class="card"><span class="card-top"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/></svg><span class="project-name">AMO Studio</span></span><span class="card-title">整理模型与渠道设置</span><span class="card-foot"><span class="pill done">已完成</span><span class="time">昨天</span></span></button></div></div>
+</section></div></main></div><div class="notice" role="status"></div>
+<script>
+    if (window === window.top) {
+      const root = document.documentElement;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'theme-toggle';
+      toggle.textContent = '深色模式';
+      function setDark(dark) {
+        root.style.colorScheme = dark ? 'dark' : 'light';
+        toggle.setAttribute('aria-pressed', String(dark));
+      }
+      setDark(true);
+      toggle.addEventListener('click', () => setDark(root.style.colorScheme !== 'dark'));
+      document.querySelector('.top-actions').append(toggle);
+    } else {
+      const applyTheme = (theme) => {
+        if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
+      };
+      applyTheme(new URLSearchParams(location.search).get('theme'));
+      window.addEventListener('message', (event) => {
+        if (event.source === window.parent) applyTheme(event.data?.previewTheme);
+      });
+    }
+const notice=document.querySelector('.notice');let timer;function show(text){notice.textContent=text;notice.classList.add('show');clearTimeout(timer);timer=setTimeout(()=>notice.classList.remove('show'),1800)}
+document.querySelectorAll('.card').forEach(card=>card.addEventListener('click',()=>{document.querySelectorAll('.card').forEach(item=>item.classList.remove('selected'));card.classList.add('selected');show('已选中：'+card.querySelector('.card-title').textContent)}));
+document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(item=>{item.classList.remove('active');item.setAttribute('aria-selected','false')});tab.classList.add('active');tab.setAttribute('aria-selected','true');document.querySelector('.board').dataset.view=tab.dataset.view}));
+// The board, search results and pending menu share the same sample tasks.
+const cards = [...document.querySelectorAll('.card')];
+const topics = ['工作台体验优化', '任务协作', '工作台体验优化', '工作台体验优化', '任务协作', '任务协作'];
+const sessions = ['', '', 'Claude · 会话排版检查', 'Codex · 画布拖动验证', '', ''];
+const groups = [...document.querySelectorAll('.cards')].map(list => ({ list, items: [...list.querySelectorAll('.card')] }));
+const filter = document.querySelector('.filter');
+function groupCards(grouped) {
+  filter.classList.toggle('active',grouped);
+  filter.setAttribute('aria-pressed',String(grouped));
+  groups.forEach(({list,items}) => {
+    if (!grouped) { list.replaceChildren(...items); return; }
+    const sections = new Map();
+    items.forEach(card => {
+      const topic = topics[cards.indexOf(card)];
+      if (!sections.has(topic)) {
+        const section = document.createElement('div');
+        section.className = 'topic-block';
+        const heading = document.createElement('h2');
+        heading.className = 'topic-title';
+        heading.textContent = topic;
+        section.append(heading);
+        sections.set(topic,section);
+      }
+      sections.get(topic).append(card);
+    });
+    list.replaceChildren(...sections.values());
+  });
+}
+groupCards(true);
+filter.onclick = () => groupCards(filter.getAttribute('aria-pressed') !== 'true');
+
+const search = document.querySelector('.search input');
+const bell = document.getElementById('bell');
+const hits = document.getElementById('search-hits');
+const pending = document.getElementById('pending');
+function dismiss() {
+  hits.hidden = pending.hidden = true;
+  bell.setAttribute('aria-expanded','false');
+}
+function makeHit(label, hint, card) {
+  const button = document.createElement('button');
+  const detail = document.createElement('small');
+  button.textContent = label;
+  detail.textContent = hint;
+  button.append(detail);
+  button.onclick = () => {
+    dismiss();
+    card.click();
+    card.focus();
+  };
+  return button;
+}
+function findTasks() {
+  dismiss();
+  const query = search.value.trim().toLowerCase();
+  if (!query) return;
+  hits.replaceChildren();
+  cards.forEach((card,i) => {
+    const title = card.querySelector('.card-title').textContent;
+    const project = card.querySelector('.project-name').textContent;
+    if ([title, project, topics[i]].some(s => s.toLowerCase().includes(query))) {
+      hits.append(makeHit(title, '任务 · '+project+' / '+topics[i], card));
+    }
+    if (sessions[i] && sessions[i].toLowerCase().includes(query)) {
+      hits.append(makeHit(sessions[i], '会话 · '+title, card));
+    }
+  });
+  if (!hits.children.length) {
+    const empty = document.createElement('p');
+    empty.textContent = '没有找到匹配的任务或会话';
+    hits.append(empty);
+  }
+  hits.hidden = false;
+}
+search.oninput = search.onfocus = findTasks;
+search.onkeydown = event => {
+  if (hits.hidden || event.isComposing) return;
+  const first = hits.querySelector('button');
+  if (event.key==='ArrowDown' && first) { event.preventDefault(); first.focus(); }
+  if (event.key==='Enter' && first) { event.preventDefault(); first.click(); }
+};
+for (const card of cards.filter(c=>c.querySelector('.pill.wait'))) {
+  pending.append(makeHit(card.querySelector('.card-title').textContent, '待审阅 · 查看任务',card));
+}
+bell.onclick = () => {
+  const open = pending.hidden;
+  dismiss(); pending.hidden = !open;
+  bell.setAttribute('aria-expanded',String(open));
+};
+document.addEventListener('keydown',event => {
+  if ((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='k') {
+    event.preventDefault(); search.focus(); search.select(); findTasks();
+  } else if (event.key==='Escape') {
+    if (!pending.hidden) bell.focus(); else if (!hits.hidden) search.focus();
+    dismiss();
+  }
+});
+document.addEventListener('pointerdown',event => {
+  if (!event.target.closest('.search,#bell,.tool-pop')) dismiss();
+});
+document.querySelector('.top-actions').addEventListener('focusout',event => {
+  if (!event.currentTarget.contains(event.relatedTarget)) dismiss();
+});
+document.querySelectorAll('[data-message]').forEach(button=>button.addEventListener('click',()=>show(button.dataset.message)));
+</script></body></html>

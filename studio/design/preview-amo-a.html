@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AMO Studio · 方案 A</title>
+  <style>
+    :root { color-scheme: light dark; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; color: light-dark(#222b38, #e8edfb); background: light-dark(#f2f3f0, #131620); font-size: 14px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 680px; }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 2px solid light-dark(#355ef4, #a5b3ff); outline-offset: 3px; }
+    ::selection { background: light-dark(#cbd6ff, #465586); }
+    .app { min-height: calc(100vh - 40px); display: grid; grid-template-columns: 216px minmax(0, 1fr); }
+    .sidebar { display: flex; flex-direction: column; padding: 27px 15px 18px; background: light-dark(#fafbf9, #191d29); border-right: 1px solid light-dark(#e3e6e3, #373f52); }
+    .brand { display: flex; align-items: center; gap: 11px; padding: 0 9px 31px; font-weight: 750; font-size: 16px; letter-spacing: -.02em; }
+    .brand-mark { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 10px; background: light-dark(#1e2739, #303e68); color: white; font-size: 16px; font-weight: 800; }
+    .nav { display: flex; flex-direction: column; gap: 5px; }
+    .nav button { width: 100%; height: 40px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; color: light-dark(#697282, #bcc6d9); display: flex; align-items: center; gap: 11px; }
+    .nav button.active { background: light-dark(#e9edff, #303954); color: light-dark(#304bd7, #bdc7ff); font-weight: 700; }
+    .nav svg, .top svg, .actions svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .nav-label { display: flex; justify-content: space-between; padding: 27px 12px 10px; color: light-dark(#7b8490, #a9b5cb); font-size: 11px; font-weight: 650; }
+    .nav .nav-label button { width: auto; height: auto; padding: 0; border: 0; color: light-dark(#87909d, #a9b5cb); background: none; font-size: 17px; }
+    .project-dot { width: 8px; height: 8px; border-radius: 50%; background: #aeb9ce; margin: 0 4px; }
+    .project-dot.purple { background: #9d8ce0; }
+    .project-dot.green { background: #65aa97; }
+    .sidebar-bottom { margin-top: auto; padding: 15px 10px 0; border-top: 1px solid light-dark(#e8eae7, #373f52); color: light-dark(#707b89, #a9b5cb); font-size: 12px; line-height: 2; }
+    .sidebar-bottom span { color: light-dark(#38876b, #a0dcbc); }
+    .main { min-width: 0; display: flex; flex-direction: column; }
+    .top { height: 69px; padding: 0 32px; border-bottom: 1px solid light-dark(#e3e6e3, #373f52); background: light-dark(#fafbf9, #191d29); display: flex; align-items: center; gap: 18px; }
+    .crumb { color: light-dark(#8b93a0, #a9b5cb); font-size: 13px; }
+    .crumb strong { color: light-dark(#323d4d, #e8edfb); font-weight: 600; }
+    .grow { flex: 1; }
+    .search { display: flex; align-items: center; gap: 9px; width: 238px; padding: 9px 12px; border: 1px solid light-dark(#e6e8e6, #373f52); border-radius: 9px; color: light-dark(#7d8792, #a9b5cb); background: light-dark(#f6f7f5, #262e3d); font-size: 12px; }
+    .search kbd { margin-left: auto; font: inherit; color: light-dark(#8d96a2, #a9b5cb); }
+    .top-icon { padding: 7px; display: grid; place-items: center; border: 0; background: transparent; color: light-dark(#697282, #bcc6d9); }
+    .avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: light-dark(#e2e8e8, #262e3d); color: light-dark(#4e6973, #c6d9e5); font-size: 11px; font-weight: 700; }
+    .content { flex: 1; padding: 38px 40px 32px; }
+    .heading { display: flex; align-items: flex-end; gap: 20px; }
+    h1 { margin: 0; font-size: 27px; letter-spacing: -.03em; line-height: 1.3; }
+    .subtitle { margin: 8px 0 0; color: light-dark(#738090, #bcc6d9); font-size: 13px; }
+    .actions { margin-left: auto; display: flex; align-items: center; gap: 9px; }
+    .actions button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 13px; border: 1px solid light-dark(#e0e4e3, #373f52); border-radius: 9px; background: light-dark(#fff, #222736); color: light-dark(#586575, #bcc6d9); font-weight: 600; font-size: 12px; }
+    .actions .primary { color: light-dark(white, #1a2034); background: light-dark(#304ddd, #a5b3ff); border-color: light-dark(#304ddd, #a5b3ff); padding: 0 16px; }
+    .toolbar { display: flex; align-items: center; gap: 24px; margin-top: 30px; border-bottom: 1px solid light-dark(#dfe3e0, #373f52); }
+    .tab { position: relative; padding: 0 2px 14px; border: 0; background: none; color: light-dark(#7b8492, #a9b5cb); font-size: 13px; font-weight: 600; }
+    .tab.active { color: light-dark(#304bd7, #bdc7ff); }
+    .tab.active::after { position: absolute; content: ""; bottom: -1px; left: 0; right: 0; height: 2px; border-radius: 2px; background: light-dark(#4764ef, #a5b3ff); }
+    .toolbar-note { margin-left: auto; padding-bottom: 13px; color: light-dark(#78828d, #a9b5cb); font-size: 12px; }
+    .board { display: grid; grid-template-columns: repeat(4, minmax(195px, 1fr)); gap: 24px; min-width: 850px; padding-top: 27px; }
+    .board-scroll { overflow-x: auto; }
+    .column-head { display: flex; align-items: center; gap: 9px; margin-bottom: 15px; font-weight: 700; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca9b6; }
+    .doing .dot { background: #6285ef; }.review .dot { background: #d7a149; }.done .dot { background: #57a484; }
+    .count { color: light-dark(#98a1ad, #a9b5cb); font-size: 12px; font-weight: 500; }
+    .add { margin-left: auto; border: 0; background: none; color: light-dark(#8e99a5, #a9b5cb); font-size: 19px; line-height: 1; }
+    .cards { display: flex; flex-direction: column; gap: 10px; }
+    .card { width: 100%; min-height: 142px; padding: 17px; text-align: left; border: 1px solid light-dark(#e4e8e6, #373f52); border-radius: 12px; background: light-dark(#fff, #222736); color: light-dark(#263342, #e8edfb); box-shadow: 0 3px 12px light-dark(#29384b08, #0000001f); }
+    .card:hover { border-color: light-dark(#b8c7f4, #7184bf); box-shadow: 0 7px 18px light-dark(#52679414, #00000030); }
+    .card.selected { border-color: light-dark(#8095ed, #93a4ff); background: light-dark(#f8f9ff, #292f48); }
+    .card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: light-dark(#7b8793, #a9b5cb); font-size: 11px; }
+    .badge { padding: 4px 7px; border-radius: 6px; background: light-dark(#eef1ff, #303954); color: light-dark(#4760c3, #bdc7ff); }
+    .badge.amber { background: light-dark(#fbf1df, #453727); color: light-dark(#986525, #f2c784); }.badge.green { background: light-dark(#e7f5ed, #263a32); color: light-dark(#3a7e62, #a0dcbc); }
+    .card h2 { margin: 16px 0 7px; font-size: 14px; line-height: 1.45; font-weight: 700; }
+    .card p { margin: 0; color: light-dark(#778391, #bcc6d9); font-size: 12px; line-height: 1.55; }
+    .card-foot { display: flex; gap: 7px; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid light-dark(#f0f2f0, #373f52); color: light-dark(#8a94a0, #a9b5cb); font-size: 11px; }
+    .tiny { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; background: light-dark(#e9edff, #303954); color: light-dark(#5064bd, #bdc7ff); font-size: 9px; font-weight: bold; }
+    .empty { min-height: 110px; display: grid; place-items: center; border: 1px dashed light-dark(#dce1df, #455066); border-radius: 12px; color: light-dark(#96a09f, #a9b5cb); font-size: 12px; }
+    .preview-note { padding: 12px 16px; color: light-dark(#657287, #bcc6d9); font-size: 12px; background: light-dark(#edf1ff, #21283d); border-bottom: 1px solid light-dark(#dce4ff, #373f52); }
+    @media (prefers-reduced-motion: no-preference) {
+      .content { animation: enter 440ms cubic-bezier(.16, 1, .3, 1) both; }
+      .card { transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+      .nav button, .actions button { transition: background-color 160ms ease, color 160ms ease; }
+      .nav button:hover { background: light-dark(#eef1f4, #262e3d); color: light-dark(#334155, #e8edfb); }
+      .actions .primary:hover { background: light-dark(#243cb5, #b9c5ff); }
+      @keyframes enter { from { opacity: .65; clip-path: inset(0 0 5% 0); } to { opacity: 1; clip-path: inset(0); } }
+    }
+    @media (max-width: 1000px) { .app { grid-template-columns: 170px minmax(0,1fr); }.content { padding: 30px 24px; }.top { padding-inline: 24px; }.search { width: 170px; } }
+    @media (max-width: 760px) { .app { grid-template-columns: 64px minmax(0,1fr); }.sidebar { padding-inline: 9px; }.brand { padding-inline: 7px; }.brand-name, .nav button span, .nav-label, .sidebar-bottom { display: none; }.nav button { justify-content: center; padding: 0; }.search { display: none; }.content { padding: 25px 20px; } }
+    .theme-toggle { flex: none; padding: 6px 10px; border-radius: 7px; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="preview-note">方案 A · 轻盈工作台　｜　交互演示，可点击卡片切换选中状态</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">A</span><span class="brand-name">AMO Studio</span></div>
+      <nav class="nav" aria-label="主导航">
+        <button class="active"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/></svg><span>全部任务</span></button>
+        <div class="nav-label">专题 <button aria-label="添加专题">＋</button></div>
+        <button><span class="project-dot purple"></span><span>产品迭代</span></button>
+        <button><span class="project-dot green"></span><span>素材管线</span></button>
+        <div class="nav-label">项目 <button aria-label="添加项目">＋</button></div>
+        <button><svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>AMO Studio</span></button>
+        <button><svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>游戏项目</span></button>
+      </nav>
+      <div class="sidebar-bottom"><span>●</span> Host 运行中<br>⚙　设置</div>
+    </aside>
+    <main class="main">
+      <header class="top"><div class="crumb">工作台　/　<strong>全部任务</strong></div><div class="grow"></div><div class="search"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4 4"/></svg>搜索任务或会话 <kbd>Ctrl K</kbd></div><button class="top-icon" aria-label="书签"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></button><span class="avatar">AM</span></header>
+      <section class="content">
+        <div class="heading"><div><h1>全部任务</h1><p class="subtitle">查看任务进展，继续推进手头的工作。</p></div><div class="actions"><button>筛选</button><button class="primary">＋ 新任务</button></div></div>
+        <div class="toolbar"><button class="tab active" aria-selected="true">看板</button><button class="tab" aria-selected="false">画布</button><span class="toolbar-note">按专题分组　⌄</span></div>
+        <div class="board-scroll"><div class="board">
+          <section class="column todo"><div class="column-head"><i class="dot"></i>待办 <span class="count">2</span><button class="add" aria-label="新建待办">＋</button></div><div class="cards">
+            <button class="card"><div class="card-top"><span>产品迭代</span><span class="badge">待开始</span></div><h2>整理设置界面的交互</h2><p>梳理设置入口与页面切换。</p><div class="card-foot"><span class="tiny">C</span> Codex <span class="grow"></span>刚刚</div></button>
+            <button class="card"><div class="card-top"><span>素材管线</span><span class="badge">待开始</span></div><h2>检查资源导入流程</h2><p>确认导入结果和错误提示。</p><div class="card-foot"><span class="tiny">A</span> Claude <span class="grow"></span>昨天</div></button>
+          </div></section>
+          <section class="column doing"><div class="column-head"><i class="dot"></i>进行中 <span class="count">2</span><button class="add" aria-label="新建进行中任务">＋</button></div><div class="cards">
+            <button class="card selected"><div class="card-top"><span>产品迭代</span><span class="badge">运行中</span></div><h2>优化工作台布局</h2><p>调整看板、会话和画布的视觉层级。</p><div class="card-foot"><span class="tiny">C</span> Codex <span class="grow"></span>进行中</div></button>
+            <button class="card"><div class="card-top"><span>AMO Studio</span><span class="badge">运行中</span></div><h2>整理会话管理入口</h2><p>检查常用操作和当前状态。</p><div class="card-foot"><span class="tiny">A</span> Claude <span class="grow"></span>3 分钟前</div></button>
+          </div></section>
+          <section class="column review"><div class="column-head"><i class="dot"></i>待审阅 <span class="count">1</span></div><div class="cards"><button class="card"><div class="card-top"><span>产品迭代</span><span class="badge amber">需要查看</span></div><h2>任务列表交互调整</h2><p>已完成，等待确认。</p><div class="card-foot"><span class="tiny">C</span> Codex <span class="grow"></span>12 分钟前</div></button></div></section>
+          <section class="column done"><div class="column-head"><i class="dot"></i>完成 <span class="count">1</span></div><div class="cards"><button class="card"><div class="card-top"><span>素材管线</span><span class="badge green">已完成</span></div><h2>完善资源目录</h2><p>调整目录展示与搜索。</p><div class="card-foot"><span class="tiny">A</span> Claude <span class="grow"></span>昨天</div></button></div></section>
+        </div></div>
+      </section>
+    </main>
+  </div>
+  <script>
+    if (window === window.top) {
+      const root = document.documentElement;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'theme-toggle';
+      toggle.textContent = '深色模式';
+      function setDark(dark) {
+        root.style.colorScheme = dark ? 'dark' : 'light';
+        toggle.setAttribute('aria-pressed', String(dark));
+      }
+      setDark(false);
+      toggle.addEventListener('click', () => setDark(root.style.colorScheme !== 'dark'));
+      document.querySelector('.top').append(toggle);
+    } else {
+      const applyTheme = (theme) => {
+        if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
+      };
+      applyTheme(new URLSearchParams(location.search).get('theme'));
+      window.addEventListener('message', (event) => {
+        if (event.source === window.parent) applyTheme(event.data?.previewTheme);
+      });
+    }
+    document.querySelectorAll('.card').forEach((card) => card.addEventListener('click', () => {
+      document.querySelectorAll('.card').forEach((item) => item.classList.remove('selected'));
+      card.classList.add('selected');
+    }));
+  </script>
+</body>
+</html>

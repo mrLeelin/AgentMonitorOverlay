@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AMO Studio · 输入区布局预览</title>
+<style>
+:root { color-scheme:dark; --bg:#131413; --panel:#1c1e1b; --field:#20221e; --soft:#262923; --line:#3c4138; --rule:#30342d; --text:#f1f2ea; --muted:#b1b7a8; --minor:#9ca592; --accent:#c8ed96; --accent-ink:#1c2917; --accent-wash:#303b27; --risk:#edba92; --risk-wash:#362e26; --shadow:#0003; }
+:root[data-theme=light] {color-scheme:light; --bg:#f4f5ef; --panel:#fffefa; --field:#fafbf6; --soft:#edf0e5; --line:#cad1bf; --rule:#dce1d4; --text:#242b20; --muted:#55604c; --minor:#66715b; --accent:#c6e99a; --accent-ink:#23351a; --accent-wash:#e5efd8; --risk:#77471d; --risk-wash:#f7ead9; --shadow:#2236180c;}
+* {box-sizing:border-box} body {margin:0; background:var(--bg); color:var(--text); font:14px/1.5 "Segoe UI","Microsoft YaHei UI",sans-serif;}
+button,select,textarea {font:inherit;color:inherit;} button,select {cursor:pointer;} button:disabled {cursor:default;}
+button:focus-visible,select:focus-visible,summary:focus-visible {outline:2px solid var(--accent);outline-offset:2px;} :root[data-theme=light] :focus-visible {outline-color:#47682c;}
+svg {width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+header {min-height:65px;padding:12px clamp(16px,4vw,56px);display:flex;align-items:center;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--rule);background:var(--panel);}
+.brand {display:flex;align-items:center;gap:10px;font-size:16px;font-weight:680;white-space:nowrap}
+.mark {display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);width:28px;height:28px;border-radius:8px;}
+header .page-name {border-left:1px solid var(--line);padding-left:16px;color:var(--muted);}.theme {margin-left:auto;}
+.group {display:inline-flex;align-items:center;padding:3px;gap:2px;border:1px solid var(--line);border-radius:8px;background:var(--bg);}
+.group button {background:transparent;border:0;color:var(--muted);border-radius:5px;padding:5px 10px;font-size:12px;white-space:nowrap;}
+.group [aria-pressed=true] {background:var(--soft);color:var(--text);font-weight:650;}
+main {max-width:940px;margin:auto;padding:28px clamp(16px,4vw,44px) 36px;}
+.choices {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
+.choices .layouts [aria-pressed=true] {background:var(--accent);color:var(--accent-ink);}
+.caption {font-size:12px;color:var(--minor);margin:9px 0 23px;}
+.examples {max-width:790px;margin:auto;container:examples / inline-size;} .examples.narrow {max-width:470px;}
+section + section {margin-top:26px;} .section-head {display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 9px;} h2 {font-size:16px;margin:0;font-weight:650;} .status {color:var(--minor);font-size:12px;}
+.composer {display:grid;min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 3px 12px var(--shadow);}
+.composer:focus-within {border-color:color-mix(in srgb,var(--accent) 55%,var(--line));}
+.writing {grid-area:write;min-width:0;padding:15px 16px 8px;display:flex;flex-direction:column;}
+textarea {display:block;width:100%;min-height:70px;background:none;border:0;padding:0;line-height:1.65;resize:vertical;outline:none;font-size:14px;}
+.draft textarea {min-height:90px;} textarea::placeholder {color:var(--minor);opacity:1;} .extras {font-size:12px;color:var(--muted);overflow-wrap:anywhere;} .extras:empty{display:none;}
+.settings {grid-area:settings;min-width:0;padding:7px 12px;}.quick {display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+.field {display:inline-flex;align-items:center;gap:5px;min-width:0;padding:3px 5px;border-radius:5px;color:var(--muted);font-size:12px;}
+.field svg {width:14px;height:14px;}.field select {background:var(--panel);color:var(--text);font-size:12px;font-weight:550;border:0;max-width:155px;}
+.field.access:has(option[value="完全访问"]:checked) {background:var(--risk-wash);color:var(--risk);} .field.access select {background:transparent;color:inherit;}
+.field option {color:var(--text);background:var(--panel);}
+.field-label {display:none;} .model-mark {border-radius:4px;background:var(--accent-wash);color:light-dark(#47682c,#c8ed96);font-size:10px;font-weight:750;width:17px;height:17px;display:grid;place-items:center;}
+.more,.pill,.ghost,.send,.stop,.go,.icon {display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;border-radius:6px;font-size:12px;}
+.more,.pill,.ghost,.icon,.stop {background:none;color:var(--muted);border:1px solid transparent;padding:5px 8px;}
+.more:hover,.pill:hover,.ghost:hover,.icon:hover,.stop:hover,.field:hover {background:var(--soft);color:var(--text);}
+.more {margin-left:auto;} .pill[aria-pressed=true],.more[aria-expanded=true] {background:var(--accent-wash);color:light-dark(#365424,#c8ed96);}
+.advanced {display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:6px;border-top:1px solid var(--rule);padding-top:6px;} [hidden]{display:none!important}
+.favs {display:none;}.prefs .favs {display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
+.fav-label {width:100%;font-size:12px;color:var(--muted);}
+.favs button {border:1px solid var(--line);padding:3px 6px;background:transparent;color:var(--muted);border-radius:4px;font-size:11px;}
+.favs [aria-pressed=true] {background:var(--accent-wash);color:var(--text);border-color:var(--minor);}
+.actions {grid-area:action;min-width:0;display:flex;align-items:center;gap:6px 4px;padding:8px 12px;flex-wrap:wrap;}.spacer {flex:1;}
+.icon {width:28px;height:28px;padding:0;}.ghost {border-color:var(--line);} .status-note {font-size:11px;color:var(--muted);}
+.entry-tools {display:inline-flex;align-items:center;gap:2px;flex:none;}
+.entry-tools .icon[aria-pressed=true] {color:light-dark(#365424,#c8ed96);background:var(--accent-wash);}
+#branch-options label {display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0;}
+#branch-options select {padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);}
+#branch-options input {accent-color:var(--accent);}
+#branch-options footer {display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
+.send,.go {background:var(--accent);color:var(--accent-ink);border:1px solid transparent;font-weight:650;padding:6px 10px;}
+.send,.stop {width:30px;height:30px;padding:0;border-radius:50%;}.stop {background:var(--soft);color:var(--text);}
+.send:disabled,.go:disabled,.ghost:disabled {background:var(--soft);color:var(--minor);border-color:transparent;opacity:.68;}
+kbd {font:10px/1.6 Consolas,monospace;border:1px solid currentColor;border-radius:3px;padding:0 3px;}
+.strip .composer {grid-template-columns:minmax(0,1fr);grid-template-areas:"write" "settings" "action";}
+.strip .chat {grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"write write" "settings action";}
+.strip .chat .settings {align-self:end;padding-right:0;}.strip .chat .more {margin-left:0;}.strip .chat .actions {align-self:end;padding-left:4px;}
+.strip .draft .actions {border-top:1px solid var(--rule);}
+.prefs .composer {grid-template-columns:minmax(0,1fr) 234px;grid-template-rows:minmax(85px,1fr) auto;grid-template-areas:"write settings" "action settings";}
+.prefs .settings {border-left:1px solid var(--rule);background:var(--field);border-radius:0 12px 12px 0;padding:11px;}
+.prefs .quick {display:grid;gap:2px;}.prefs .field {display:flex;justify-content:space-between;}.prefs .field-label {display:inline;}.prefs .field svg,.prefs .model-mark,.prefs .more {display:none;}
+.prefs .advanced {gap:2px;}.prefs .pill{padding:4px 6px}.prefs .draft .model-field {display:none;}.prefs .actions {border-top:1px solid var(--rule);}.prefs .writing textarea {flex:1;}
+.note {display:block;min-height:1.5em;color:var(--muted);font-size:12px;margin:5px 3px 0;}
+@container examples (max-width:610px) {
+ .strip .chat {grid-template-columns:minmax(0,1fr);grid-template-areas:"write" "settings" "action";}.strip .chat .settings {padding-right:10px;}.strip .chat .actions {padding-left:10px;border-top:1px solid var(--rule);}
+ .prefs .composer {grid-template-columns:minmax(0,1fr);grid-template-rows:auto;grid-template-areas:"write" "settings" "action";}.prefs .settings {border-left:0;border-top:1px solid var(--rule);border-radius:0;}.prefs .quick {grid-template-columns:repeat(2,minmax(0,1fr));}.prefs .field {gap:3px;}.prefs .writing textarea {min-height:88px;}.draft .actions kbd {display:none;}
+}
+@container examples (max-width:360px) {.prefs .quick {grid-template-columns:1fr}.actions {row-gap:7px;}}
+@media(max-width:540px) {header {gap:10px;} main {padding-top:18px;} .page-name{display:none;} .choices{gap:6px;}}
+@media(prefers-reduced-motion:no-preference){.composer {transition:border-color 140ms ease-out;}.pill,.more,.icon,.group button {transition:background-color 120ms ease-out,color 120ms ease-out;}.advanced.showing {animation:unfold 160ms ease-out;}@keyframes unfold {from {opacity:.55;transform:translateY(-2px)}}}
+.extras {display:flex;align-items:center;gap:7px;flex-wrap:wrap;} .extras span{max-width:100%;overflow-wrap:anywhere;}.extras:empty{display:none;}
+dialog {color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px;width:min(330px,90vw);} dialog::backdrop {background:#0006;}
+.dialog-head {display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}.template-item{display:block;width:100%;text-align:left;padding:10px;background:transparent;border:0;color:var(--text);border-radius:5px;}.template-item:hover{background:var(--soft);}
+</style></head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="display:none"><defs>
+<symbol id="studio" viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5"/><rect x="8" y="9" width="8" height="7" rx="2"/><path d="M10.5 12h.01m3 0h.01"/></symbol>
+<symbol id="clip" viewBox="0 0 24 24"><path d="m8 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l9-9m-5 12 7-7a1.4 1.4 0 0 1 2 2l-7 7a2.8 2.8 0 0 1-4-4"/></symbol>
+<symbol id="branch" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="5" r="1.7"/><path d="M4.5 5.2v5.6M11.5 6.7c0 2.8-3.4 2.9-6.2 4.3"/></symbol>
+<symbol id="effort" viewBox="0 0 24 24"><path d="M3 19v-4m6 4v-8m6 8V7m6 12V3" stroke-width="3"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6z"/><path d="m9 12 2 2 4-5"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24"><path d="M3 7h6m4 0h8M3 17h10m4 0h4"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
+<symbol id="arrow" viewBox="0 0 24 24"><path d="M12 20V4m-7 7 7-7 7 7"/></symbol>
+<symbol id="stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+</defs></svg>
+<header><span class="brand"><span class="mark"><svg aria-hidden="true"><use href="#studio"></use></svg></span>AMO Studio</span><span class="page-name">输入区布局预览</span><div class="group theme" role="group" aria-label="配色"><button data-theme="dark" aria-pressed="true">深色</button><button data-theme="light" aria-pressed="false">浅色</button></div></header>
+<main><div class="choices"><div class="group layouts" role="group" aria-label="布局"><button data-layout="strip" aria-pressed="true">A · 底部工具栏</button><button data-layout="prefs" aria-pressed="false">B · 侧边配置栏</button></div><div class="group" role="group" aria-label="演示宽度"><button data-width="wide" aria-pressed="true">常规</button><button data-width="narrow" aria-pressed="false">窄栏</button></div></div>
+<p class="caption">本地演示 · 输入、选项切换和快捷键仅在此页生效。</p>
+<div class="examples strip"><section aria-label="继续对话">
+  <div class="section-head"><h2>继续对话</h2><span class="status">会话运行中</span></div>
+  <div class="composer chat" data-kind="chat">
+    <div class="writing"><textarea aria-label="会话消息" rows="2" placeholder="继续推进这个会话，Ctrl+Enter 发送，Enter 换行，输入 / 看命令"></textarea><div class="extras"></div></div>
+    <div class="settings">
+      <div class="quick">
+        <span class="entry-tools"><input type="file" multiple hidden data-files><button class="icon" type="button" data-act="attach" aria-label="添加附件" title="添加附件"><svg aria-hidden="true"><use href="#clip"></use></svg></button></span>
+        <label class="field model-field" title="模型"><span class="model-mark">G</span><span class="field-label">模型</span><select data-opt="model" aria-label="模型"><option value="GPT-6.2-Sol" selected>GPT-6.2-Sol</option><option value="GPT-6.2-Astra">GPT-6.2-Astra</option><option value="GPT-6.1 Terra">GPT-6.1 Terra</option></select></label>
+        <label class="field " title="思考强度"><svg aria-hidden="true"><use href="#effort"></use></svg><span class="field-label">思考强度</span><select data-opt="effort" aria-label="思考强度"><option value="低">低</option><option value="中">中</option><option value="高">高</option><option value="超高" selected>超高</option></select></label>
+        <label class="field access" title="权限"><svg aria-hidden="true"><use href="#shield"></use></svg><span class="field-label">权限</span><select data-opt="access" aria-label="权限"><option value="逐条询问">逐条询问</option><option value="帮我审批">帮我审批</option><option value="工作区可写">工作区可写</option><option value="完全访问" selected>完全访问</option></select></label>
+        <button class="more" type="button" data-act="more" aria-expanded="false" aria-controls="chat-options"><svg aria-hidden="true"><use href="#settings"></use></svg>更多选项</button>
+      </div>
+      
+      <div class="advanced" id="chat-options" hidden>
+        <button class="pill" type="button" aria-pressed="false" data-flag="fast">Fast</button><button class="pill" type="button" aria-pressed="false" data-flag="goal">Goal 关闭</button>
+        <label class="field"><span>MCP</span><select aria-label="MCP 示例服务" data-opt="mcp"><option>0 个服务</option><option>1 个服务</option><option>2 个服务</option></select></label>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="spacer"></span><span class="status-note">本轮结束后发出</span><button class="stop" type="button" data-act="stop" aria-label="停止本轮" title="停止本轮"><svg aria-hidden="true"><use href="#stop"></use></svg></button><button class="send" type="button" data-act="submit" aria-label="发送消息" title="Ctrl+Enter 发送" disabled><svg aria-hidden="true"><use href="#arrow"></use></svg></button>
+    </div>
+  </div>
+  <output class="note" aria-live="polite"></output>
+</section><section aria-label="新建任务">
+  <div class="section-head"><h2>新建任务</h2><span class="status">本机任务</span></div>
+  <div class="composer draft" data-kind="draft">
+    <div class="writing"><textarea aria-label="第一句话" rows="2" placeholder="比如：导入器遇到网络错误时，给 fetch 加上失败重试，最多 3 次。打 @ 引用项目、任务或文件。"></textarea><div class="extras"></div></div>
+    <div class="settings">
+      <div class="favs" role="group" aria-label="常用型号"><span class="fav-label">常用型号</span><button type="button" data-model="GPT-6.2-Sol" aria-pressed="true">GPT-6.2-Sol</button><button type="button" data-model="GPT-6.2-Astra" aria-pressed="false">GPT-6.2-Astra</button><button type="button" data-model="Opus" aria-pressed="false">Opus</button><button type="button" data-model="GPT-6.1 Terra" aria-pressed="false">GPT-6.1 Terra</button></div>
+      <div class="quick">
+        <span class="entry-tools"><input type="file" multiple hidden data-files><button class="icon" type="button" data-act="attach" aria-label="添加附件" title="添加附件"><svg aria-hidden="true"><use href="#clip"></use></svg></button><button class="icon" type="button" data-act="branch" aria-label="分支与工作树" title="分支与工作树" aria-haspopup="dialog" aria-controls="branch-options" aria-pressed="false"><svg aria-hidden="true"><use href="#branch"></use></svg></button></span>
+        <label class="field model-field" title="模型"><span class="model-mark">G</span><span class="field-label">模型</span><select data-opt="model" aria-label="模型"><option value="GPT-6.2-Sol" selected>GPT-6.2-Sol</option><option value="GPT-6.2-Astra">GPT-6.2-Astra</option><option value="Opus">Opus</option><option value="GPT-6.1 Terra">GPT-6.1 Terra</option></select></label>
+        <label class="field " title="思考强度"><svg aria-hidden="true"><use href="#effort"></use></svg><span class="field-label">思考强度</span><select data-opt="effort" aria-label="思考强度"><option value="低">低</option><option value="中">中</option><option value="高" selected>高</option><option value="超高">超高</option></select></label>
+        <label class="field access" title="权限"><svg aria-hidden="true"><use href="#shield"></use></svg><span class="field-label">权限</span><select data-opt="access" aria-label="权限"><option value="逐条询问">逐条询问</option><option value="帮我审批">帮我审批</option><option value="工作区可写">工作区可写</option><option value="完全访问" selected>完全访问</option></select></label>
+        <button class="more" type="button" data-act="more" aria-expanded="false" aria-controls="draft-options"><svg aria-hidden="true"><use href="#settings"></use></svg>更多选项</button>
+      </div>
+      <div class="advanced" id="draft-options" hidden>
+        <button class="pill" type="button" aria-pressed="false" data-flag="fast">Fast</button><button class="pill" type="button" aria-pressed="false" data-flag="goal">Goal 关闭</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="go" type="button" data-act="submit" disabled>开始 <kbd>Ctrl+Enter</kbd></button><span class="spacer"></span><button class="ghost" type="button" data-act="template">提示词模板</button><button class="ghost" type="button" data-act="todo" disabled>放进待办 <kbd>Ctrl+Shift+Enter</kbd></button>
+    </div>
+  </div>
+  <output class="note" aria-live="polite"></output>
+</section></div></main>
+<dialog id="templates" aria-label="提示词模板"><div class="dialog-head"><strong>提示词模板</strong><button class="ghost" data-close>关闭</button></div><button class="template-item" data-text="检查最近的改动，列出需要关注的问题。">检查最近改动</button><button class="template-item" data-text="整理复现步骤、预期行为和实际结果。">整理复现步骤</button></dialog>
+<dialog id="branch-options" aria-labelledby="branch-title">
+  <form method="dialog">
+    <div class="dialog-head"><strong id="branch-title">分支与工作树</strong></div>
+    <label>新建独立工作树<input type="checkbox" name="isolate" role="switch"></label>
+    <label>起始分支<select name="branch"><option>Lin/BaseBranch</option><option>master</option></select></label>
+    <footer><button class="ghost" value="cancel">取消</button><button class="go" value="apply">应用</button></footer>
+  </form>
+</dialog>
+<script>
+const examples = document.querySelector('.examples');
+const templates = document.getElementById('templates');
+const branchOptions = document.getElementById('branch-options');
+const branchForm = branchOptions.querySelector('form');
+const currentBranch = branchForm.elements.branch.value;
+let worktree = { separate:false, branch:currentBranch };
+const states = new Map();
+for (const box of document.querySelectorAll('.composer')) {
+  states.set(box, { expanded:false, running:box.dataset.kind==='chat', files:[], goal:false });
+}
+function groupChoice(key, value) {
+  document.querySelectorAll('button[data-'+key+']').forEach(b => b.setAttribute('aria-pressed', String(b.dataset[key]===value)));
+}
+function updateOptions(box) {
+  const state=states.get(box);
+  box.querySelector('.advanced').hidden=!(examples.classList.contains('prefs')||state.expanded);
+  box.querySelector('.more').setAttribute('aria-expanded', String(state.expanded));
+}
+function message(box,text) { box.closest('section').querySelector('output').textContent=text; }
+function refresh(box) {
+  const s=states.get(box), text=box.querySelector('textarea').value.trim();
+  box.querySelector('[data-act="submit"]').disabled=!text&&!s.files.length;
+  const todo=box.querySelector('[data-act="todo"]');
+  if(todo) {
+    const blocked=s.goal||s.files.length||worktree.separate;
+    todo.disabled=!text||!!blocked;
+    todo.title=blocked?'关闭 Goal、移除附件并使用当前工作树后可放进待办':'仅将任务放进待办';
+  }
+}
+for(const b of document.querySelectorAll('[data-layout]')) b.onclick=()=>{
+  groupChoice('layout',b.dataset.layout);
+  examples.classList.remove('strip','prefs');examples.classList.add(b.dataset.layout);
+  states.forEach((_,box)=>{
+    const toolbar=box.querySelector(b.dataset.layout==='strip'?'.quick':'.actions');
+    toolbar.prepend(box.querySelector('.entry-tools'));
+    updateOptions(box);
+  });
+};
+for(const b of document.querySelectorAll('button[data-theme]')) b.onclick=()=>{
+  groupChoice('theme',b.dataset.theme);document.documentElement.dataset.theme=b.dataset.theme;
+};
+for(const b of document.querySelectorAll('[data-width]')) b.onclick=()=>{
+  groupChoice('width',b.dataset.width);examples.classList.toggle('narrow',b.dataset.width==='narrow');
+};
+function syncModel(box) {
+  const m=box.querySelector('[data-opt="model"]').value;
+  box.querySelector('.model-mark').textContent=m==='Opus'?'C':'G';
+  box.querySelectorAll('[data-model]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.model===m)));
+}
+states.forEach((s,box)=>{
+  const field=box.querySelector('textarea'), files=box.querySelector('[data-files]');
+  field.addEventListener('input',()=>refresh(box));
+  field.addEventListener('keydown',e=>{
+    if(e.isComposing||e.key!=='Enter'||!e.ctrlKey)return;
+    const target=box.querySelector(e.shiftKey?'[data-act="todo"]':'[data-act="submit"]');
+    if(target){e.preventDefault();target.click();}
+  });
+  box.addEventListener('change',e=>{
+    if(e.target===files) {
+      s.files=Array.from(files.files);
+      const extras=box.querySelector('.extras');
+      extras.replaceChildren();
+      for(const f of s.files){const chip=document.createElement('span');chip.textContent=f.name;extras.append(chip);}
+      if(s.files.length){const clear=document.createElement('button');clear.className='ghost';clear.textContent='移除附件';clear.onclick=()=>{files.value='';files.dispatchEvent(new Event('change',{bubbles:true}));};extras.append(clear);}
+    }
+    if(e.target.matches('[data-opt="model"]'))syncModel(box);
+    refresh(box);
+  });
+  box.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.model){box.querySelector('[data-opt="model"]').value=b.dataset.model;syncModel(box);return;}
+    if(b.dataset.flag){
+      const on=b.getAttribute('aria-pressed')!=='true';
+      b.setAttribute('aria-pressed',String(on));
+      if(b.dataset.flag==='goal'){s.goal=on;b.textContent=on?'Goal 已开启':'Goal 关闭';}
+      refresh(box);return;
+    }
+    switch(b.dataset.act){
+      case 'more':s.expanded=!s.expanded;updateOptions(box);box.querySelector('.advanced').classList.toggle('showing',s.expanded);break;
+      case 'attach':files.click();break;
+      case 'branch':
+        branchForm.elements.isolate.checked=worktree.separate;
+        branchForm.elements.branch.value=worktree.branch;
+        branchOptions.returnValue='';
+        branchOptions.showModal();
+        break;
+      case 'template':templates.showModal();break;
+      case 'stop':s.running=false;b.hidden=true;box.querySelector('.status-note').textContent='Ctrl+Enter 发送';box.closest('section').querySelector('.status').textContent='会话空闲';message(box,'已停止本轮演示。');break;
+      case 'submit':message(box,box.dataset.kind==='draft'?'演示：已开始任务。':s.running?'演示：这条消息已排队。':'演示：消息已发送。');break;
+      case 'todo':message(box,'演示：任务已放进待办。');break;
+    }
+  });
+});
+branchForm.elements.branch.onchange=()=>{
+  if(branchForm.elements.branch.value!==currentBranch)branchForm.elements.isolate.checked=true;
+};
+branchForm.elements.isolate.onchange=()=>{
+  if(!branchForm.elements.isolate.checked)branchForm.elements.branch.value=currentBranch;
+};
+branchOptions.addEventListener('close',()=>{
+  if(branchOptions.returnValue!=='apply')return;
+  worktree={separate:branchForm.elements.isolate.checked,branch:branchForm.elements.branch.value};
+  const box=document.querySelector('.draft'),button=box.querySelector('[data-act="branch"]');
+  button.setAttribute('aria-pressed',String(worktree.separate));
+  button.title=worktree.separate?'独立工作树 · '+worktree.branch:'分支与工作树';
+  message(box,worktree.separate?'演示：从 '+worktree.branch+' 新建独立工作树。':'演示：使用项目当前工作树。');
+  refresh(box);
+});
+templates.querySelector('[data-close]').onclick=()=>templates.close();
+templates.querySelectorAll('[data-text]').forEach(b=>b.onclick=()=>{
+  const box=document.querySelector('.draft'),field=box.querySelector('textarea');
+  field.setRangeText(b.dataset.text,field.selectionStart,field.selectionEnd,'end');
+  templates.close();field.focus();refresh(box);
+});</script>
+</body></html>
