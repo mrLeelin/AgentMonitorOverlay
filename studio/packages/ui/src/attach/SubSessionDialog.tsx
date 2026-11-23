@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { SUBSESSION_EXTRA_MAX, type ModelProfile, type SubsessionNote, type SubsessionPermission } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { activeModel, useProfileChoices } from "../lib/choices.js";
-import { normalPick, type ModelPick } from "../lib/recents.js";
+import { isHiddenPick, normalPick, type ModelPick } from "../lib/recents.js";
 import { EffortBars, pickLabel } from "../chat/pickers.js";
 import { ModelRow } from "../newtask/ModelRow.js";
 import { subSessionTag, type SubSessionSpec } from "./mentions.js";
@@ -57,8 +57,9 @@ export function SubSessionDialog({
   onDone(spec: SubSessionSpec | null): void;
 }) {
   const last = readRemembered();
-  const lastOk = !!last && profiles.some((p) => p.id === last.profileId && !p.hidden);
-  const [pick, setPick] = useState<ModelPick>(() => normalPick(lastOk ? last! : defaultPick));
+  const lastOk = !!last && !isHiddenPick(last.profileId, last.model) && profiles.some((p) => p.id === last.profileId && !p.hidden);
+  const [chosen, setPick] = useState<ModelPick>(() => normalPick(lastOk ? last! : defaultPick));
+  const pick = isHiddenPick(chosen.profileId, chosen.model) ? { profileId: chosen.profileId, model: null } : chosen;
   // undefined: the model's default from 设置 → 子会话; null (effort, permission): the usual default, set by hand.
   const [effort, setEffort] = useState<string | null | undefined>(undefined);
   const [fast, setFast] = useState<boolean | undefined>(undefined);

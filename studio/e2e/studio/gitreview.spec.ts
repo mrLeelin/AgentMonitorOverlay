@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { Session, Task, Workspace } from "@amo-studio/protocol";
+import type { GitReviewComment, Session, Task, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, windowState, type Studio, confirmBookmarkNote } from "../support/studio.js";
 
 // S11-D acceptance: a project under git → Review from the task page → file list and both diff views → a comment on
@@ -36,6 +36,67 @@ function makeRepo(dir: string): void {
   git(dir, "rm", "-q", "old.txt");
   writeFileSync(join(dir, "notes.md"), "# 调整说明\n\n概率提高\n");
 }
+
+test("Review follows the active session's worktree", async () => {
+  studio = await launchStudio();
+  const { app, page } = studio;
+  const repo = studio.workspace("review-repo");
+  const dir = join(repo, "Game");
+  mkdirSync(dir);
+  git(repo, "init", "-q", "-b", "main");
+  writeFileSync(join(dir, "tracked.txt"), "base\n");
+  git(dir, "add", ".");
+  git(dir, "commit", "-qm", "base");
+  writeFileSync(join(dir, "main-only.txt"), "main checkout\n");
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
+  const { session } = await studio.api<{ session: Session }>("POST", "/api/tasks", {
+    title: "工作树 Review", workspaceId: ws.id, worktree: {},
+    firstSession: { profileId: "codex-mock", text: "开始" },
+  });
+  expect(session.cwd).toBeTruthy();
+  const cwd = session.cwd!;
+  writeFileSync(join(cwd, "history.txt"), "committed in worktree\n");
+  git(cwd, "add", "history.txt");
+  git(cwd, "commit", "-qm", "worktree history");
+  writeFileSync(join(cwd, "worktree-only.txt"), "worktree checkout\n");
+  await studio.api("POST", `/api/workspaces/${ws.id}/review-comments`, {
+    range: "working", path: "main-only.txt", side: "new", line: 1, note: "主工作区批注",
+  });
+  await page.getByTestId("task-card").filter({ hasText: "工作树 Review" }).click();
+  await expect(page.getByTestId("session-worktree")).toBeVisible();
+  const opened = app.waitForEvent("window");
+  await page.getByTestId("task-review").click();
+  const review = await opened;
+  await expect(review.getByRole("button", { name: "工作树改动" })).toHaveAttribute("aria-pressed", "true");
+  await expect(review.getByTestId("review-file")).toHaveText([/worktree-only\.txt/]);
+  await expect(review.locator(".gr-line.add")).toContainText("worktree checkout");
+  await expect(review.getByTestId("review-draft-count")).toHaveText("草稿批注 0 条");
+  await screenshot(app, "studio", "review-session-worktree", review, "review");
+
+  await review.locator('[data-line="new:1"]').getByTestId("add-comment").click();
+  await review.getByTestId("comment-draft").getByLabel("批注内容").fill("工作树批注");
+  await review.getByTestId("comment-draft").getByRole("button", { name: "保存" }).click();
+  await expect(review.getByTestId("review-draft-count")).toHaveText("草稿批注 1 条");
+  await review.getByTestId("review-copy").click();
+  await expect.poll(copied).toContain("工作树批注");
+  expect(await copied()).not.toContain("主工作区批注");
+  const projectComments = await studio.api<GitReviewComment[]>("GET", `/api/workspaces/${ws.id}/review-comments`);
+  expect(projectComments).toMatchObject([{ note: "主工作区批注", state: "draft" }]);
+
+  const viewerOpened = app.waitForEvent("window");
+  await review.getByTestId("review-open-viewer").click();
+  const viewer = await viewerOpened;
+  await expect(viewer.getByTestId("viewer-code")).toContainText("worktree checkout");
+
+  await review.getByTestId("review-history").click();
+  const top = review.getByTestId("commit-row").first();
+  await expect(top).toContainText("worktree history");
+  const commitOpened = app.waitForEvent("window");
+  await top.click();
+  const commit = await commitOpened;
+  await expect(commit.getByTestId("review-file")).toHaveText([/history\.txt/]);
+  await expect(commit.locator(".gr-line.add")).toContainText("committed in worktree");
+});
 
 test("review a project's changes, comment a line and send it to the session", async () => {
   studio = await launchStudio();

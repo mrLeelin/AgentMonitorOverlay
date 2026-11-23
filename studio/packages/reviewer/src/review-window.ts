@@ -1,8 +1,8 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { sendMaximized } from "./window-controls.js";
 
-// The Git Review windows (S11-D): one ordinary window per project, loaded with #review?workspace=…&session=…. Opening
-// a project's review again brings its window forward (and points it at the new session) instead of opening another.
+// The Git Review windows (S11-D): one ordinary window per project or session worktree. Opening the same review again
+// brings its window forward.
 // A commit from the history (S13-B) opens in a window of its own, one per commit: #review?workspace=…&commit=….
 // 2026-10-16: a commit's window can switch to another commit (picked in its 历史); it then counts as that commit's
 // window, so opening that commit again brings it forward.
@@ -30,7 +30,7 @@ let opened = 0;
  * again still reaches the page.
  */
 export function reviewHash(target: unknown): { key: string; hash: string } | null {
-  const t = target as { workspaceId?: unknown; sessionId?: unknown; turnItemId?: unknown; commit?: unknown; file?: unknown; base?: unknown; baseLabel?: unknown; remote?: unknown } | null;
+  const t = target as { workspaceId?: unknown; sessionId?: unknown; worktreeSessionId?: unknown; turnItemId?: unknown; commit?: unknown; file?: unknown; base?: unknown; baseLabel?: unknown; remote?: unknown } | null;
   if (typeof t?.workspaceId !== "string" || !ID.test(t.workspaceId)) return null;
   if (t.turnItemId !== undefined && (t.commit !== undefined || t.base !== undefined)) return null;
   if (t.commit !== undefined && (typeof t.commit !== "string" || !COMMIT.test(t.commit))) return null;
@@ -42,7 +42,9 @@ export function reviewHash(target: unknown): { key: string; hash: string } | nul
   const file = typeof t.file === "string" && t.file && t.file.length <= 1000 && !/[\0\r\n]/.test(t.file) ? t.file : null;
   // 远程 Reviewer (2026-11-02): a remote task's project (the task's id), read from the computer it runs on — a window of its own.
   const remote = typeof t.remote === "string" && ID.test(t.remote) ? t.remote : null;
-  const own = remote ? `${remote}:` : "";
+  const worktree = t.worktreeSessionId;
+  if (worktree !== undefined && (typeof worktree !== "string" || !ID.test(worktree) || remote || t.turnItemId !== undefined)) return null;
+  const scope = `${remote ? `${remote}:` : ""}${t.workspaceId}${worktree ? `:worktree:${worktree}` : ""}`;
   if (commit) {
     const q = new URLSearchParams({ workspace: t.workspaceId, commit });
     if (base) q.set("base", base);
@@ -51,7 +53,8 @@ export function reviewHash(target: unknown): { key: string; hash: string } | nul
       q.set("n", String(++opened));
     }
     if (remote) q.set("remote", remote);
-    return { key: `${own}${t.workspaceId}@${base ? `${base}..` : ""}${commit}`, hash: `#review?${q.toString()}` };
+    if (worktree) q.set("worktree", worktree);
+    return { key: `${scope}@${base ? `${base}..` : ""}${commit}`, hash: `#review?${q.toString()}` };
   }
   const session = typeof t.sessionId === "string" && ID.test(t.sessionId) ? t.sessionId : null;
   const turn = typeof t.turnItemId === "string" && t.turnItemId.length > 0 && t.turnItemId.length <= 500 && !/[\0\r\n]/.test(t.turnItemId) ? t.turnItemId : null;
@@ -66,7 +69,8 @@ export function reviewHash(target: unknown): { key: string; hash: string } | nul
     q.set("file", file);
   }
   if (remote) q.set("remote", remote);
-  return { key: `${own}${t.workspaceId}${turn ? `:turn:${session}:${turn}` : ""}`, hash: `#review?${q.toString()}` };
+  if (worktree) q.set("worktree", worktree);
+  return { key: `${scope}${turn ? `:turn:${session}:${turn}` : ""}`, hash: `#review?${q.toString()}` };
 }
 
 /** Handles `amo:open-review` from the pages; returns what the main window needs to close the reviews with it. */

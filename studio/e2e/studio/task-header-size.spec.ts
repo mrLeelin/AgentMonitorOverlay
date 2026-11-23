@@ -77,7 +77,7 @@ test("progress sidebar folds locally and stays synchronized with the top toggle"
   const { page, app } = studio;
   const { task } = await studio.api<{ task: Task }>("POST", "/api/tasks", { title: "右侧栏折叠" });
   await page.locator(`[data-task-id="${task.id}"]`).click();
-  const panel = page.locator(".anno-panel");
+  const panel = page.getByRole("complementary", { name: "任务侧栏" });
   const thread = page.locator(".thread-col");
   await expect(panel).toBeVisible();
   const width = (await thread.boundingBox())!.width;

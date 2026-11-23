@@ -64,6 +64,8 @@ test("annotate replies, edit, locate, and refer to them from the next message (�
   await expect(page.getByTestId("annotation-bubble")).toHaveCount(0);
   await annotate(page, "先修正概率", "先确认策划的意图");
   await annotate(page, "Boss_Lv20", "这条删掉");
+  await expect(page.getByTestId("sidebar-activity")).toHaveAttribute("aria-description", "3 项待处理");
+  await page.getByTestId("sidebar-activity").click();
   const cards = page.getByTestId("annotation");
   await expect(cards).toHaveCount(3);
   await expect(page.getByTestId("annotation-count")).toHaveText("3");
@@ -183,6 +185,7 @@ test("定位到原文 brings a quote late in a long paragraph into the middle of
     await expect(page.getByTestId("msg-agent").last()).toContainText(t, { timeout: 30_000 });
   }
   await annotate(page, "目标短语就在这里", "看这里");
+  await page.getByTestId("sidebar-activity").click();
   await page.getByTestId("thread").evaluate((el) => (el.scrollTop = el.scrollHeight));
 
   // The paragraph is taller than the view: the quote itself, not the paragraph, goes to the middle.

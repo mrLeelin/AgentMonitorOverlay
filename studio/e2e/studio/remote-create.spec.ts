@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import type { ModelProfile, RemoteState, Session, SessionItem, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
+import { selectSettingsPage } from "../support/settings.js";
 import { launchStudio, screenshot, studioRoot, type Studio } from "../support/studio.js";
 
 // 远程创建 (plans/done/remote-page-and-new-task.md 4.1, 2026-10-29): two Studios on this machine (each its own AMO_HOME and
@@ -178,9 +179,18 @@ test("A ticks a project and a model; B creates a task on A from its new-task pag
   await screenshot(b.app, "studio", "remote-create-templates", b.page);
   await templates.getByTestId("prompt-ok").click();
   await expect(text).toHaveText("在 A 上看一遍");
+  await b.page.getByRole("button", { name: "设置", exact: true }).click();
+  const settings = b.page.getByRole("dialog", { name: "设置", exact: true });
+  await selectSettingsPage(settings, "界面");
+  await settings.getByLabel("发送与开始快捷键").selectOption("newline-shift");
+  await b.page.keyboard.press("Escape");
   await text.fill("在台式机上整理掉落表");
-  await screenshot(b.app, "studio", "remote-create-page", b.page);
+  await text.press("End");
+  await expect(b.page.getByTestId("remote-draft-start").locator("kbd")).toHaveText("Ctrl+Enter");
   await text.press("Enter");
+  await expect(text).toHaveJSProperty("textContent", "在台式机上整理掉落表\n");
+  await screenshot(b.app, "studio", "remote-start-shortcut", b.page);
+  await text.press("Control+Enter");
 
   // B: the copy's task page, the session running on A.
   await expect(b.page.locator(".page-head")).toContainText("在台式机上整理掉落表", { timeout: 60_000 });

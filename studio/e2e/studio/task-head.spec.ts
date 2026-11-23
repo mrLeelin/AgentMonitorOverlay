@@ -104,10 +104,12 @@ test("status, topic and project from the line under the title; the right column 
   // 侧栏 shows the right column, and is remembered.
   await page.getByTestId("sidebar-toggle").click();
   await expect(page.getByTestId("sidebar-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("sidebar-activity").click();
   await expect(page.getByTestId("note-count")).toBeVisible();
   // What is being written in the session's box survives a reload (2026-10-15: a restart emptied it).
   await page.getByLabel("输入消息").fill("写到一半的话");
   await page.reload();
+  await expect(page.getByTestId("sidebar-activity")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("note-count")).toBeVisible();
   await expect(page.getByLabel("输入消息")).toHaveText("写到一半的话");
 

@@ -384,4 +384,8 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   ALTER TABLE sessions ADD COLUMN goal TEXT;
   `,
+  // 30: A fork can continue in its own Git worktree while keeping its original project.
+  `
+  ALTER TABLE sessions ADD COLUMN cwd TEXT;
+  `,
 ];

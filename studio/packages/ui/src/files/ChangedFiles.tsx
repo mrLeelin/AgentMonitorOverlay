@@ -46,7 +46,7 @@ function ChangesCard({ workspaceId, sessionId, files, turnItemId }: { workspaceI
 function ChangeRow({ file, turnItemId }: { file: ChangedFile; turnItemId: string }) {
   const ctx = useFileLinks()!;
   // The absolute path once known (a deleted file keeps its name relative to the project).
-  const found = useExistingPath(ctx.link, { workspaceId: ctx.workspaceId }, file.path);
+  const found = useExistingPath(ctx.link, { workspaceId: ctx.cwd ? null : ctx.workspaceId, cwd: ctx.cwd }, file.path);
   const target: PreviewTarget = { file: found ? { path: found.path } : { path: file.path, ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}) }, diff: file, turnItemId };
   return (
     <button

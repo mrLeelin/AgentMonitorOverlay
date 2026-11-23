@@ -272,8 +272,10 @@ export const REMOTE_KINDS = {
   items: "rt.items",
   /** B → A: a message to a session; `now`: 立即发送 (2026-11-02; an older A ignores it and queues). {sessionId, text, now?} → {mode} */
   send: "rt.send",
+  /** An older host must reject this command rather than ignore the queue request and insert the message. */
+  sendAfterTurn: "rt.send-after-turn",
   /** B → A (立即发送, 2026-11-02): a waiting message of the session goes to the model now. {sessionId, itemId} → {ok} */
-  sendNow: "rt.sendNow",
+  sendNow: "rt.send-now",
   /** B → A (2026-11-02): a message the session's process never read goes again. {sessionId, itemId} → {mode} */
   resend: "rt.resend",
   /** B → A: an approval answered; the first answer (here or on A) counts. {sessionId, approvalId, decision} → {ok} */
@@ -375,6 +377,7 @@ export interface RemoteCommandBodies {
   "rt.task": { taskId: Id };
   "rt.items": { sessionId: Id; since: number };
   "rt.send": { sessionId: Id; text: string; uploads?: RemoteUpload[] };
+  "rt.send-after-turn": RemoteCommandBodies["rt.send"];
   "rt.approve": { sessionId: Id; approvalId: string; decision: ApprovalDecision };
   "rt.answer": { sessionId: Id; itemId: Id; reply: QuestionReply };
   "rt.interrupt": { sessionId: Id };

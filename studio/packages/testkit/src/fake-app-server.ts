@@ -526,8 +526,10 @@ export async function startFakeAppServer(options: FakeAppServerOptions = {}): Pr
     },
     "thread/fork": (client, params) => {
       const parent = requireThread(params);
-      const t = newThread({ ...params, cwd: parent.cwd }, { forkedFromId: parent.id });
-      t.turns = parent.turns.map((turn) => ({ ...turn, items: [...turn.items] }));
+      const last = params.lastTurnId === undefined ? parent.turns.length - 1 : parent.turns.findIndex((turn) => turn.id === params.lastTurnId && turn.status !== "inProgress");
+      if (params.lastTurnId !== undefined && last < 0) throw rpcError(-32602, "fork turn not found or still in progress");
+      const t = newThread({ cwd: parent.cwd, ...params }, { forkedFromId: parent.id });
+      t.turns = parent.turns.slice(0, last + 1).map((turn) => ({ ...turn, items: [...turn.items] }));
       client.subscriptions.add(t.id);
       notify(parent.id, "thread/started", { thread: threadView(t) }, [client]);
       return threadResponse(t);

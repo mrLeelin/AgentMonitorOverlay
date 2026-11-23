@@ -62,12 +62,17 @@ export function ReviewApp() {
         const ws = remote ? remoteWorkspace(target.workspaceId, remote.device) : host.state.workspaces.find((w) => w.id === target.workspaceId);
         if (!ws) return <WindowPlaceholder title="Git Review">项目不存在或已移除。</WindowPlaceholder>;
         if (target.turnItemId && target.sessionId) return <TurnReview key={`${ws.id}:${target.sessionId}:${target.turnItemId}`} link={link} workspace={ws} sessionId={target.sessionId} turnItemId={target.turnItemId} file={target.file ?? null} nonce={target.nonce ?? ""} />;
+        const worktree = target.worktreeSessionId
+          ? host.state.sessions.find((s) => s.id === target.worktreeSessionId && s.workspaceId === ws.id)?.cwd
+          : undefined;
+        if (target.worktreeSessionId && !worktree) return <WindowPlaceholder title="Git Review">找不到这个项目的会话工作树。</WindowPlaceholder>;
         return (
           <ReviewPage
-            key={`${ws.id}@${target.commit ?? ""}@${target.base ?? ""}`}
+            key={`${ws.id}@${target.worktreeSessionId ?? ""}@${target.commit ?? ""}@${target.base ?? ""}`}
             link={link}
             state={host.state}
-            workspace={ws}
+            workspace={worktree ? { ...ws, path: worktree } : ws}
+            worktreeSessionId={target.worktreeSessionId}
             sessionId={target.sessionId ?? null}
             commit={target.commit ?? null}
             base={target.base ? { sha: target.base, label: target.baseLabel ?? null } : null}
@@ -102,6 +107,7 @@ export function ReviewPage({
   state,
   workspace,
   sessionId,
+  worktreeSessionId,
   commit = null,
   base: given = null,
   select = null,
@@ -116,6 +122,7 @@ export function ReviewPage({
   state: StateSnapshot;
   workspace: Workspace;
   sessionId: string | null;
+  worktreeSessionId?: string;
   /** A commit's window (S13-B, from 历史): that commit's changes, read-only. */
   commit?: string | null;
   /**
@@ -145,7 +152,12 @@ export function ReviewPage({
 }) {
   // 远程 Reviewer (2026-11-02): a remote task's project — its history's commits open in remote windows too.
   const remote = useRemoteReview();
-  const own = remote ? { remote: remote.taskId } : {};
+  const own = remote ? { remote: remote.taskId } : worktreeSessionId ? { worktreeSessionId } : {};
+  const gitScope = useMemo((): Record<string, string> => {
+    if (worktreeSessionId) return { worktree: worktreeSessionId };
+    return {};
+  }, [worktreeSessionId]);
+  const draftScope = worktreeSessionId ? `${workspace.id}:${workspace.path}` : workspace.id;
   // The files a 查看包 asked for, by lower-cased path (a rename counts by either name).
   const onlyKeys = useMemo(() => (only?.length ? new Set(only.map((p) => p.toLowerCase())) : null), [only]);
   const isFocus = useCallback((f: GitChangedFile) => !!onlyKeys && (onlyKeys.has(f.path.toLowerCase()) || (!!f.oldPath && onlyKeys.has(f.oldPath.toLowerCase()))), [onlyKeys]);
@@ -193,7 +205,7 @@ export function ReviewPage({
   const [shownCommit, setShownCommit] = useState<GitCommitChanges | null>(null);
   // 历史: from its button (typing into the search box) or from h (j / k pick, typing starts a search).
   const [picking, setPicking] = useState<null | "search" | "keys">(null);
-  const [commitError, setCommitError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<GitFileDiff | null>(null);
   const [showSent, setShowSent] = useState(false);
@@ -210,8 +222,9 @@ export function ReviewPage({
       new DiffCache(
         ({ range: r, base, file: f, commit: sha }) =>
           sha
-            ? call(link, "GET /api/workspaces/:id/git/commit-diff", { id: workspace.id }, undefined, { sha, base, path: f.path, ...(f.oldPath ? { oldPath: f.oldPath } : {}) })
+            ? call(link, "GET /api/workspaces/:id/git/commit-diff", { id: workspace.id }, undefined, { ...gitScope, sha, base, path: f.path, ...(f.oldPath ? { oldPath: f.oldPath } : {}) })
             : call(link, "GET /api/workspaces/:id/git/diff", { id: workspace.id }, undefined, {
+                ...gitScope,
                 range: r,
                 path: f.path,
                 ...(f.oldPath ? { oldPath: f.oldPath } : {}),
@@ -220,7 +233,7 @@ export function ReviewPage({
               }),
         (d) => void diffTokensFor(d),
       ),
-    [link, workspace.id],
+    [link, workspace.id, gitScope],
   );
 
   useEffect(() => {
@@ -241,15 +254,17 @@ export function ReviewPage({
       live = false;
     };
   }, [link]);
+  const absolutePath = (path: string) => {
+    const sep = workspace.path.includes("\\") ? "\\" : "/";
+    return `${workspace.path.replace(/[\\/]+$/, "")}${sep}${path.replace(/\//g, sep)}`;
+  };
+  const fileRef = (f: GitChangedFile) => worktreeSessionId ? { path: absolutePath(f.path) } : { path: f.path, workspaceId: workspace.id };
   const openFile = (f: GitChangedFile, app: FileMenuAction, line?: number) => {
-    const ref = { path: f.path, workspaceId: workspace.id };
+    const ref = fileRef(f);
     // 远程 Reviewer (2026-11-02): a remote task's file opens in the remote viewer, fetched from its computer.
     if (app === "viewer" && remote) return openViewer({ path: remoteProjectPath(f.path), remote: remote.taskId, ...(line ? { line } : {}) });
-    if (app === "viewer") return openViewer({ path: f.path, workspaceId: workspace.id, ...(line ? { line } : {}) });
-    if (app === "copy") {
-      const sep = workspace.path.includes("\\") ? "\\" : "/";
-      return void copyText(`${workspace.path.replace(/[\\/]+$/, "")}${sep}${f.path.replace(/\//g, sep)}`).then(() => setToast({ text: "已复制路径" }));
-    }
+    if (app === "viewer") return openViewer({ ...ref, ...(line ? { line } : {}) });
+    if (app === "copy") return void copyText(absolutePath(f.path)).then(() => setToast({ text: "已复制路径" }));
     if (app === "browser") return void openInDefault(link, ref).catch((err: unknown) => fail(err, "浏览器打开失败："));
     (app === "vscode" ? openInEditor(link, ref, line) : revealInExplorer(link, ref)).catch((err: unknown) => fail(err, app === "vscode" ? "VS Code 打开失败：" : "在资源管理器中显示失败："));
   };
@@ -273,39 +288,44 @@ export function ReviewPage({
   useEffect(() => {
     if (commit) return;
     let live = true;
-    call(link, "GET /api/workspaces/:id/git/changes", { id: workspace.id }, undefined, { range, ...(range === "branch" && given ? { base: given.sha, ...(given.label ? { label: given.label } : {}) } : {}) })
+    setLoadError(null);
+    call(link, "GET /api/workspaces/:id/git/changes", { id: workspace.id }, undefined, { ...gitScope, range, ...(range === "branch" && given ? { base: given.sha, ...(given.label ? { label: given.label } : {}) } : {}) })
       .then((c) => {
         if (!live) return;
         setChanges(c);
         setSelected((cur) => (cur && c.files.some((f) => f.path === cur) ? cur : (orderOf(c.files, prefsRef.current.layout)[0]?.path ?? null)));
       })
-      .catch((err: unknown) => live && fail(err));
+      .catch((err: unknown) => {
+        if (!live) return;
+        setChanges(null);
+        setLoadError(err instanceof HostApiError ? err.message : String(err));
+      });
     return () => {
       live = false;
     };
-  }, [link, workspace.id, range, reload, commit, given?.sha, given?.label]); // eslint-disable-line react-hooks/exhaustive-deps -- the base by value
+  }, [link, workspace.id, gitScope, range, reload, commit, given?.sha, given?.label]); // eslint-disable-line react-hooks/exhaustive-deps -- the base by value
   // 历史 read ahead, once the window's own files are in (and again on 刷新): h opens it at once.
   const hasHistory = !!commit || !!changes?.status.repo;
   useEffect(() => {
     if (!hasHistory) return;
-    const t = setTimeout(() => readHistory(link, workspace.id).catch(() => undefined), 300);
+    const t = setTimeout(() => readHistory(link, workspace.id, worktreeSessionId).catch(() => undefined), 300);
     return () => clearTimeout(t);
-  }, [link, workspace.id, hasHistory, reload]);
+  }, [link, workspace.id, worktreeSessionId, hasHistory, reload]);
   // A commit's files, once: a commit does not change.
   useEffect(() => {
     if (!commit) return;
     let live = true;
-    call(link, "GET /api/workspaces/:id/git/commit", { id: workspace.id }, undefined, { sha: commit, ...(given ? { base: given.sha } : {}) })
+    call(link, "GET /api/workspaces/:id/git/commit", { id: workspace.id }, undefined, { ...gitScope, sha: commit, ...(given ? { base: given.sha } : {}) })
       .then((c) => {
         if (!live) return;
         setShownCommit(c);
         setSelected(orderOf(c.files, prefsRef.current.layout)[0]?.path ?? null);
       })
-      .catch((err: unknown) => live && setCommitError(err instanceof HostApiError ? err.message : String(err)));
+      .catch((err: unknown) => live && setLoadError(err instanceof HostApiError ? err.message : String(err)));
     return () => {
       live = false;
     };
-  }, [link, workspace.id, commit, given?.sha]); // eslint-disable-line react-hooks/exhaustive-deps -- the base by value
+  }, [link, workspace.id, gitScope, commit, given?.sha]); // eslint-disable-line react-hooks/exhaustive-deps -- the base by value
 
   // Asked for a file (用 git diff 看): the uncommitted changes (or, opened with a base, the working tree against it), read
   // again, then that file, or a word that it has none.
@@ -397,7 +417,7 @@ export function ReviewPage({
   }, [cache, request, fileKey, reload]);
 
   // A commit's window is read-only: no comments there. Shared with the window's other views of them (the viewer).
-  const comments = useReviewComments(link, workspace.id, !commit);
+  const comments = useReviewComments(link, workspace.id, !commit, worktreeSessionId);
   const loadComments = () => commentsChanged(workspace.id);
 
   async function run(fn: () => Promise<unknown>) {
@@ -573,6 +593,7 @@ export function ReviewPage({
     <div className="gr-app">
       <ReviewHead
         workspaceName={workspace.name}
+        worktreePath={worktreeSessionId ? workspace.path : undefined}
         commit={commit}
         shownCommit={shownCommit}
         status={status}
@@ -597,7 +618,7 @@ export function ReviewPage({
         <div className="gr-body">
           <nav className="gr-files" aria-label="改动的文件" style={{ width: prefs.listWidth }}>
             <div className="gr-files-head">
-              <span>{listed ? `${listed.files.length} 个文件` : commitError ? "" : "正在读取…"}</span>
+              <span>{listed ? `${listed.files.length} 个文件` : loadError ? "" : "正在读取…"}</span>
               <span className="spacer" />
               <div className="gr-seg small" role="group" aria-label="列表方式">
                 {LIST_LAYOUTS.map((l) => (
@@ -608,9 +629,9 @@ export function ReviewPage({
               </div>
             </div>
             <div className="gr-files-hint gr-dim" data-testid="review-keys">{fileKeys === "ctrl" ? "Ctrl+J / K" : "J / K"} 切换文件，L / ;（或 N / P）跳到改动，Tab 跳到批注，W / S 上下翻页，A 只看改动，D 完整文件，E 单栏 / 左右对照，Q 切换范围，R 刷新，H 历史，Ctrl+A 全选这个文件的改动</div>
-            {commitError && (
+            {loadError && (
               <div className="gr-empty" data-testid="review-commit-error">
-                读不到这个提交：{commitError}
+                {commit ? "读不到这个提交：" : "无法读取改动："}{loadError}
               </div>
             )}
             {unchanged.length > 0 && (
@@ -647,7 +668,7 @@ export function ReviewPage({
           <Splitter width={prefs.listWidth} onChange={(w) => pref("listWidth", w)} />
 
           <section className="gr-diff" aria-label="文件改动">
-            {file && <FileHead link={link} workspaceId={workspace.id} file={file} vscode={vscode} openLine={openLine} lineChosen={active !== null} onOpen={(app, line) => openFile(file, app, line)} />}
+            {file && <FileHead link={link} fileRef={fileRef(file)} file={file} vscode={vscode} openLine={openLine} lineChosen={active !== null} onOpen={(app, line) => openFile(file, app, line)} />}
             <div className="gr-scroll-wrap">
               {file && shown && (
                 <FindBar
@@ -681,13 +702,13 @@ export function ReviewPage({
                     busy={busy}
                     readOnly={!!commit}
                     {...(fileMarks ? { highlights: fileMarks } : {})}
-                    draftKey={(rowKey) => newDraftKey(workspace.id, file.path, rowKey)}
+                    draftKey={(rowKey) => newDraftKey(draftScope, file.path, rowKey)}
                     onDraft={setDraftAt}
                     onActivate={setActive}
                     onAdd={(row, note) =>
                       run(async () => {
-                        await call(link, "POST /api/workspaces/:id/review-comments", { id: workspace.id }, { range, path: file.path, side: row.side, line: row.number, lineText: row.line.text, note });
-                        dropDraft(newDraftKey(workspace.id, file.path, row.key));
+                        await call(link, "POST /api/workspaces/:id/review-comments", { id: workspace.id }, { range, path: file.path, side: row.side, line: row.number, lineText: row.line.text, note }, worktreeSessionId ? gitScope : undefined);
+                        dropDraft(newDraftKey(draftScope, file.path, row.key));
                         setDraftAt(null);
                         loadComments();
                       })
@@ -726,7 +747,7 @@ export function ReviewPage({
           只读：{given ? `对比 ${short(given.sha)} 的改动` : `这个提交的改动，对比它的${shownCommit?.commit.parents.length ? "第一个父提交" : "空仓库"}`}。批注请在工作区改动里写。
         </footer>
       ) : (
-        <SendBar link={link} workspace={workspace} comments={comments} busy={busy} run={run} sessionId={sessionId ?? null}>
+        <SendBar link={link} workspace={workspace} comments={comments} busy={busy} run={run} sessionId={sessionId ?? null} worktree={worktreeSessionId}>
           {sentCount > 0 && (
             <label className="gr-check">
               <input type="checkbox" checked={showSent} onChange={(e) => setShowSent(e.target.checked)} />
@@ -742,6 +763,7 @@ export function ReviewPage({
         <CommitPicker
           link={link}
           workspaceId={workspace.id}
+          worktree={worktreeSessionId}
           current={sha ?? commit}
           onPick={(c) => (commit ? switchReview({ workspaceId: workspace.id, commit: c, ...own }) : openReview({ workspaceId: workspace.id, commit: c, ...own }))}
           {...(commit ? { onPickNew: (c: string) => openReview({ workspaceId: workspace.id, commit: c, ...own }) } : {})}

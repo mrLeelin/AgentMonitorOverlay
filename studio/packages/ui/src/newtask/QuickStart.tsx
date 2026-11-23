@@ -5,6 +5,7 @@ import { activeModel, useProfileChoices } from "../lib/choices.js";
 import { samePick } from "../lib/recents.js";
 import { EffortBars, FastToggle } from "../chat/pickers.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
+import { ResourceInput, type ResourceInputHandle } from "../attach/ResourceInput.js";
 import { submitDraft, useTaskDraft } from "./draft.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
 import { ChoicePicker } from "./ChoiceRow.js";
@@ -12,9 +13,10 @@ import { GROUP_HEADINGS } from "./choices.js";
 import { resourceSpans, resourceText } from "../attach/inlineResources.js";
 import { useDraftChoices } from "./useDraftChoices.js";
 import { readPendingGoalStart } from "./goalStart.js";
+import { PRIMARY_ENTER_LABELS, TODO_SHORTCUTS, useTaskEnter } from "../chat/inputPrefs.js";
 
 /**
- * 快速启动条 (Ctrl N, design/ui-directions/new-task.html): one line from anywhere — the sentence, the topic and the
+ * 快速启动条 (Ctrl N, design/ui-directions/new-task.html): start from anywhere — the prompt, the topic and the
  * project — with the model and effort below. It writes the same draft as the draft task page (Ctrl+Shift+N opens that
  * page). 2026-10-29: the topic and the project are two small pickers (the topic's preferred project picked with it);
  * @ refers to projects, tasks and sessions as on the page, and # is plain text.
@@ -42,11 +44,13 @@ export function QuickStart({
   onCreated(task: Task, session: Session | null): void;
 }) {
   const { draft, update, reset } = useTaskDraft(profiles);
+  const taskEnter = useTaskEnter(draft.text);
+  const { todoShortcut } = taskEnter;
   const rows = useDraftChoices({ draft, update, workspaces, topics, tasks });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [picking, setPicking] = useState<"topic" | "project" | null>(null);
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<ResourceInputHandle>(null);
   const { choices } = useProfileChoices(link, draft.pick.profileId);
   const model = choices ? activeModel(choices, draft.pick.model ? { model: draft.pick.model } : {}) : undefined;
   // No files here (the bar has no place for them): projects, tasks and their sessions.
@@ -63,7 +67,7 @@ export function QuickStart({
     picks: { value: new Map(Object.entries(draft.refs ?? {})), set: (next) => update({ refs: Object.fromEntries(next) }) },
     onFile: () => {},
     onFind: () => {},
-    // One line: no room for a template's paragraphs (the new-task page has them).
+    // Template selection is available on the full page.
     templates: false,
   });
   useEffect(() => input.current?.focus(), []);
@@ -102,16 +106,14 @@ export function QuickStart({
           <span className="quick-spark" aria-hidden="true">
             ✳
           </span>
-          <input
+          <ResourceInput
             ref={input}
             value={hasResources ? resourceText(draft.text) : draft.text}
+            resources={[]}
             aria-label="快速新任务"
             placeholder="一句话开始新任务，@ 引用项目或任务"
-            onChange={(e) => {
-              update({ text: e.target.value });
-              mentions.track(e.target);
-            }}
-            onSelect={(e) => mentions.track(e.currentTarget)}
+            onChange={(text) => update({ text })}
+            onSelect={mentions.track}
             onKeyDown={(e) => {
               if (mentions.onKeyDown(e)) return;
               if (e.key === "Escape") {
@@ -127,9 +129,11 @@ export function QuickStart({
                 const i = tiles.findIndex((t) => samePick(t, draft.pick));
                 const next = tiles[(i + (e.shiftKey ? tiles.length - 1 : 1)) % tiles.length];
                 if (next) update({ pick: next });
-              } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              } else {
+                const action = taskEnter.action(e);
+                if (!action) return;
                 e.preventDefault();
-                void submit(e.ctrlKey || e.metaKey);
+                if (!e.repeat) void submit(action === "todo");
               }
             }}
           />
@@ -160,12 +164,12 @@ export function QuickStart({
           )}
           <FastToggle fast={model?.fast} value={draft.options.fast} onChange={(fast) => update({ options: { ...draft.options, fast } })} small />
           <span className="quick-hints">
-            <span>
-              <kbd>↵</kbd>开始
-            </span>
-            <span>
-              <kbd>Ctrl ↵</kbd>放进待办
-            </span>
+            <button type="button" className="link-btn" onClick={() => void submit(false)} disabled={busy}>
+              <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>开始
+            </button>
+            <button type="button" className="link-btn" onClick={() => void submit(true)} disabled={busy}>
+              {todoShortcut !== "off" && <kbd>{TODO_SHORTCUTS[todoShortcut]}</kbd>}放进待办
+            </button>
             <span>
               <kbd>Tab</kbd>换模型
             </span>

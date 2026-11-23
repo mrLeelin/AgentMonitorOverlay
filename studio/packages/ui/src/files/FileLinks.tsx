@@ -34,6 +34,7 @@ interface FileLinksValue {
   link: HostLink;
   workspaceId: string | null;
   sessionId: string | null;
+  cwd?: string | undefined;
   vscode: boolean;
   /** A click: the viewer window, or the quick look for a change of this turn. */
   open(target: PreviewTarget): void;
@@ -106,6 +107,7 @@ export function FileLinks({
   link,
   workspaceId,
   sessionId = null,
+  cwd,
   onPreview,
   onError,
   remoteTask,
@@ -116,6 +118,8 @@ export function FileLinks({
   workspaceId: string | null;
   /** The conversation's session (Review opened from a turn's changes sends comments back to it). */
   sessionId?: string | null;
+  /** An isolated checkout: even fuzzy path matches stay in this checkout. */
+  cwd?: string | undefined;
   onPreview(target: PreviewTarget): void;
   onError?(text: string): void;
   /**
@@ -151,8 +155,8 @@ export function FileLinks({
   // A web page too opens in the viewer (2026-10-28): rendered there, its passages take comments; the browser is on the menu.
   const open = useCallback((t: PreviewTarget) => (t.diff ? onPreview(t) : viewFile(t, workspaceId, sessionId)), [onPreview, workspaceId, sessionId]);
   const value = useMemo<FileLinksValue>(
-    () => ({ link, workspaceId, sessionId, vscode, open, preview: onPreview, editor, menu: (e, target) => setMenu({ x: e.clientX, y: e.clientY, target }) }),
-    [link, workspaceId, sessionId, vscode, open, onPreview, editor],
+    () => ({ link, workspaceId, sessionId, cwd, vscode, open, preview: onPreview, editor, menu: (e, target) => setMenu({ x: e.clientX, y: e.clientY, target }) }),
+    [link, workspaceId, sessionId, cwd, vscode, open, onPreview, editor],
   );
 
   const t = menu?.target;
@@ -208,7 +212,12 @@ export function FileLinks({
                 key: "D",
                 disabled: !reviewIn,
                 title: reviewIn ? "在这个项目的 Git Review 里看这个文件还没提交的改动" : "这段对话不属于任何项目",
-                run: () => reviewIn && openReview({ workspaceId: reviewIn, ...(sessionId ? { sessionId } : {}), file: t.file.path }),
+                run: () => reviewIn && openReview({
+                  workspaceId: reviewIn,
+                  ...(sessionId ? { sessionId } : {}),
+                  ...(cwd && sessionId && reviewIn === workspaceId && !remoteTask ? { worktreeSessionId: sessionId } : {}),
+                  file: t.file.path,
+                }),
               },
               vscode && { label: "用 VS Code 打开", key: "V", title: "Ctrl+单击文件名也是这样打开", run: () => void openInEditor(link, t.file, t.line, t.column).catch(fail) },
               isWebPage(t.file.path) && { label: "用浏览器打开", key: "W", title: "在系统默认浏览器里打开", run: () => browse(t) },
@@ -255,7 +264,7 @@ export function FileLink({
   children: ReactNode;
 }) {
   const ctx = useFileLinks();
-  const checked = useExistingPath(ctx?.link ?? null, { workspaceId: ctx?.workspaceId ?? null, cwd }, ctx && !ctx.remote ? path : null);
+  const checked = useExistingPath(ctx?.link ?? null, { workspaceId: ctx?.cwd ? null : ctx?.workspaceId ?? null, cwd: cwd ?? ctx?.cwd }, ctx && !ctx.remote ? path : null);
   // A remote session's files are on its own computer: this one cannot tell whether they exist (a click fetches it).
   const found = ctx?.remote ? { path, dir: false } : checked;
   if (!ctx || !found || found.dir) return <>{fallback ?? children}</>;

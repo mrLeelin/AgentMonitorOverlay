@@ -34,6 +34,8 @@ export interface TaskResult {
   review?: string;
   /** Explicit reviewer of this result; absent on historical records. A root's final review belongs to the user. */
   reviewedBy?: "user" | "manager";
+  /** Original human decision, retained if subsequent work invalidates this result. Never inferred from board moves. */
+  userReview?: { state: "accepted" | "returned"; review: string; reviewedAt: Timestamp };
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

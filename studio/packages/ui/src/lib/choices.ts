@@ -99,12 +99,18 @@ export function modelName(m: Pick<ModelOption, "id" | "label"> | undefined): str
 /** "Opus 5.5": the model a session runs (chosen, else the profile's default); null while the list is unknown. */
 export function sessionModelName(choices: ProfileChoices | null, options: SessionOptions): string | null {
   if (!choices) return options.model ?? null;
-  return modelName(activeModel(choices, options)) ?? options.model ?? null;
+  return modelName(sessionModel(choices, options)) ?? options.model ?? null;
 }
 
-/** The model a session runs: the chosen one, else the profile's default. */
+/** The model for a new choice: the chosen one, else the profile's visible default. */
 export function activeModel(choices: ProfileChoices, options: SessionOptions): ModelOption | undefined {
-  return options.model ? choices.models.find((m) => m.id === options.model) : defaultModel(choices);
+  if (!options.model) return defaultModel(choices);
+  return choices.models.find((m) => m.id === options.model) ?? choices.hiddenModels?.find((m) => m.id === options.model);
+}
+
+/** An older session with implicit options still runs the CLI's default if that model is now hidden. */
+export function sessionModel(choices: ProfileChoices, options: SessionOptions): ModelOption | undefined {
+  return (!options.model && choices.hiddenModels?.find((m) => m.isDefault)) || activeModel(choices, options);
 }
 
 /** "GPT-6.1 Sol · 高 · 逐条询问" — what a session runs with, defaults filled in. */

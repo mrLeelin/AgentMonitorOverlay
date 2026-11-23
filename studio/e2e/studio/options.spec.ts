@@ -1,6 +1,6 @@
 import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
-import type { Workspace } from "@amo-studio/protocol";
+import type { ProfileChoices, StudioSettings, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 // 型号 / 思考强度 / 权限: chosen for a new task, switched inside a session (panel or a 常用预设 chip), and each choice
@@ -183,4 +183,81 @@ test("设置 → 模型: models in the person's order, their default model, effo
   await expect(summary).toContainText("只做计划");
   const body = mock.requests.filter((r) => r.lastUserText === "defaults please" && r.tools.length).at(-1)!.body as Record<string, unknown>;
   expect(body).toMatchObject({ model: "mock-claude-b", output_config: { effort: "high" } });
+});
+
+test("设置 → 模型: hide a model from pickers, keep existing sessions and restore it", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  const profileId = "claude-mock";
+  const original = "mock-claude";
+  const replacement = "mock-claude-b";
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  await studio.api("POST", "/api/tasks", { title: "已有会话", workspaceId: ws.id, firstSession: { profileId, text: "before hiding" } });
+  await page.getByTestId("task-card").filter({ hasText: "已有会话" }).click();
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: before hiding", { timeout: 60_000 });
+  await studio.api("PUT", "/api/settings", {
+    quickModels: [{ profileId, model: original }],
+    presets: [{ name: "原型号预设", profileId, options: { model: original } }],
+  });
+  const openModels = async () => {
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+    await selectSettingsPage(dialog, "模型与渠道");
+    await dialog.locator('[data-testid="channel-nav"][data-id="claude-mock"]').click();
+    return dialog.getByRole("region", { name: "型号顺序和默认" });
+  };
+  const section = await openModels();
+  const rows = section.getByTestId("model-order-row");
+  const show = section.getByRole("button", { name: `显示 ${original}`, exact: true });
+  const hide = () => section.getByRole("button", { name: `隐藏 ${original}`, exact: true });
+  await expect(rows.locator(".model-order-name")).toHaveText([original, replacement]);
+  await hide().click();
+  await expect(show).toBeVisible();
+  await expect(rows.locator(".model-order-name")).toHaveText([replacement]);
+  await expect(rows.getByRole("button", { name: "默认", exact: true })).toBeVisible();
+  await expect(rows.getByRole("button", { name: `隐藏 ${replacement}`, exact: true })).toBeDisabled();
+  const saved = await studio.api<StudioSettings>("GET", "/api/settings");
+  expect(saved.modelPrefs[profileId]?.hidden).toEqual([original]);
+  expect(saved.quickModels).toContainEqual({ profileId, model: original });
+  expect(saved.presets.some((p) => p.name === "原型号预设")).toBe(true);
+  await show.scrollIntoViewIfNeeded();
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await screenshot(app, "studio", "model-visibility-dark", page);
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await screenshot(app, "studio", "model-visibility-light", page);
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByTestId("switch-model").locator("span").last()).toHaveText(original);
+  await page.getByTestId("switch-model").click();
+  await expect(page.getByRole("group", { name: "型号", exact: true }).locator(".mtile-main")).toHaveText([replacement]);
+  await expect(page.getByTestId("preset-chip").filter({ hasText: "原型号预设" })).toHaveCount(0);
+  const composer = page.getByLabel("输入消息");
+  await composer.fill("continue after hiding");
+  await composer.press("Enter");
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: continue after hiding", { timeout: 60_000 });
+  const lastModel = (message: string) => studio!.claudeMock!.requests.filter((r) => r.lastUserText === message && r.tools.length).at(-1)?.body.model;
+  expect(lastModel("continue after hiding")).toBe(original);
+
+  await page.getByRole("button", { name: "+ 新任务", exact: true }).click();
+  const tiles = page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").locator(".mtile-main");
+  await expect(tiles.filter({ hasText: /^mock-claude$/ })).toHaveCount(0);
+  await expect(page.getByTestId("preset-chip").filter({ hasText: "原型号预设" })).toHaveCount(0);
+  await page.getByTestId("all-models").click();
+  const account = page.getByTestId("model-drawer").getByRole("group", { name: "Mock Claude", exact: true });
+  await expect(account.getByRole("button")).toHaveText([replacement]);
+  await account.getByRole("button", { name: replacement, exact: true }).click();
+  await page.getByLabel("第一句话").fill("after hiding");
+  await page.getByTestId("draft-start").click();
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: after hiding", { timeout: 60_000 });
+  expect(lastModel("after hiding")).toBe(replacement);
+
+  await page.reload();
+  await openModels();
+  await expect(show).toBeVisible();
+  await show.click();
+  await expect(hide()).toBeEnabled();
+  const choices = await studio.api<ProfileChoices>("GET", `/api/profiles/${profileId}/choices`);
+  expect(choices.models.map((m) => m.id)).toEqual([original, replacement]);
+  expect(choices.models.find((m) => m.isDefault)?.id).toBe(original);
+  expect(choices.hiddenModels).toBeUndefined();
 });

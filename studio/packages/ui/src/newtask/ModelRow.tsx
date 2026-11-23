@@ -2,14 +2,14 @@ import { useState } from "react";
 import type { ModelProfile } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { useChoicesFor } from "../lib/choices.js";
-import { commonPicks, normalPick, samePick, tileCount, type ModelPick } from "../lib/recents.js";
+import { commonPicks, isHiddenPick, normalPick, samePick, tileCount, type ModelPick } from "../lib/recents.js";
 import { pickable } from "../lib/profiles.js";
 import { Mark, ModelMenu, ModelTile, pickLabel } from "../chat/pickers.js";
 
-/** The 常用 tiles: recent picks first; the current pick always among them. */
+/** The 常用 tiles: recent picks first; include the current pick if it is visible. */
 export function tilePicks(profiles: readonly ModelProfile[], current: ModelPick, count = tileCount()): ModelPick[] {
   const picks = commonPicks(pickable(profiles, current.profileId), count);
-  if (current.profileId && !picks.some((p) => samePick(p, normalPick(current)))) picks.splice(Math.max(picks.length - 1, 0), 1, current);
+  if (current.profileId && !isHiddenPick(current.profileId, current.model) && !picks.some((p) => samePick(p, normalPick(current)))) picks.splice(Math.max(picks.length - 1, 0), 1, current);
   return picks;
 }
 

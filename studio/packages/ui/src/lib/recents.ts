@@ -1,4 +1,4 @@
-import type { ModelProfile } from "@amo-studio/protocol";
+import type { ModelPrefs, ModelProfile, StudioSettings } from "@amo-studio/protocol";
 import { storedChoices } from "./choices.js";
 import { readStoredJson, writeStoredJson } from "./stored.js";
 
@@ -42,16 +42,20 @@ export function rememberPick(pick: ModelPick): void {
  * main window sets them from its settings on every render). Empty: recent picks, then each profile's default.
  */
 let quick: readonly ModelPick[] = [];
-export function setQuickModels(list: readonly ModelPick[] | undefined): void {
-  quick = list ?? [];
+let prefs: Readonly<Record<string, ModelPrefs>> = {};
+export function setModelPickerSettings(settings: StudioSettings | null): void {
+  quick = settings?.quickModels ?? [];
+  prefs = settings?.modelPrefs ?? {};
 }
+
+export const isHiddenPick = (profileId: string, model: string | null | undefined) => !!model && (prefs[profileId]?.hidden?.includes(model) ?? false);
 /** How many tiles the row shows: the chosen ones, else four. */
 export const tileCount = () => (quick.length ? quick.length : 4);
 
 /** Up to `count` tiles: the chosen 快速选择 if any, else the automatic ones (autoPicks). */
 export function commonPicks(profiles: readonly ModelProfile[], count = tileCount()): ModelPick[] {
   const known = new Set(profiles.map((p) => p.id));
-  const chosen = uniquePicks(quick.filter((p) => known.has(p.profileId)));
+  const chosen = uniquePicks(quick.filter((p) => known.has(p.profileId) && !isHiddenPick(p.profileId, p.model)));
   if (chosen.length) return chosen.slice(0, count);
   return autoPicks(profiles, count);
 }
@@ -61,6 +65,7 @@ export function autoPicks(profiles: readonly ModelProfile[], count = 4): ModelPi
   const known = new Set(profiles.map((p) => p.id));
   const out: ModelPick[] = [];
   for (const p of [...read(), ...profiles.map((x) => ({ profileId: x.id, model: null }))]) {
+    if (isHiddenPick(p.profileId, p.model)) continue;
     const n = normalPick(p);
     if (out.length < count && known.has(n.profileId) && !out.some((x) => samePick(x, n))) out.push(n);
   }

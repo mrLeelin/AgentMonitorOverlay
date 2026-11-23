@@ -69,8 +69,8 @@ interface View {
 type Drag =
   | { kind: "pan"; button: number; sx: number; sy: number; vx: number; vy: number }
   | { kind: "marquee"; sx: number; sy: number; start: Point; base: ReadonlySet<Id>; lineBase: ReadonlySet<string>; lines: ReturnType<typeof canvasLinePolylines> }
-  | { kind: "node"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean }
-  | { kind: "group-move"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean }
+  | { kind: "node"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean; selectOnClick: boolean }
+  | { kind: "group-move"; id: Id; ids: readonly Id[]; sx: number; sy: number; base: CanvasDoc; moved: boolean; selectOnClick: boolean }
   | { kind: "group-resize"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean }
   /** A card's bottom-right corner (2026-10-29), from the size it had when the drag began. */
   | { kind: "node-resize"; id: Id; sx: number; sy: number; base: CanvasDoc; moved: boolean; w: number; h: number }
@@ -430,7 +430,14 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       }
       const dx = Math.round((e.clientX - drag.sx) / view.k);
       const dy = Math.round((e.clientY - drag.sy) / view.k);
-      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      // Judge the gesture in screen pixels so zoom does not turn a click's small jitter into a drag.
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) return;
+      if (!drag.moved) {
+        // Moving cards keeps only their selection outline; details belong to a completed click.
+        setSelectionState(null);
+        setSelectedIds(new Set(drag.kind === "node" || drag.kind === "group-move" ? drag.ids : [drag.id]));
+        setSelectedLines(new Set());
+      }
       drag.moved = true;
       if (drag.kind === "node" || drag.kind === "group-move") {
         let next = drag.base;
@@ -470,7 +477,14 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         setDrag(null);
         return;
       }
-      if (drag.kind !== "pan" && drag.moved && previewRef.current) persist(previewRef.current);
+      if (drag.kind !== "pan") {
+        // A fast gesture may release before its last mousemove reaches the window listener.
+        onMove(e);
+        if (drag.moved && previewRef.current) persist(previewRef.current);
+        else if ((drag.kind === "node" || drag.kind === "group-move") && drag.selectOnClick) {
+          setSelection({ kind: drag.kind === "node" ? "node" : "group", id: drag.id });
+        }
+      }
       setPreview(null);
       setDrag(null);
     };
@@ -604,7 +618,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     (document.activeElement as HTMLElement | null)?.blur?.(); // commit any open field (e.g. the group name)
     if (kind === "node" || kind === "group-move") {
       let ids = selectedIds.has(id) ? [...selectedIds] : [id];
-      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      const append = e.ctrlKey || e.metaKey || e.shiftKey;
+      const selectOnClick = !append && (selectedIds.size <= 1 || !selectedIds.has(id));
+      if (append) {
         const next = new Set([...selectedIds, ...(selection ? [selection.id] : [])]);
         const removing = next.has(id);
         if (removing) next.delete(id); else next.add(id);
@@ -612,8 +628,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         setSelectedIds(next);
         if (removing) return;
         ids = [...next];
-      } else if (!selectedIds.has(id)) setSelection({ kind: kind === "node" ? "node" : "group", id });
-      setDrag({ kind, id, ids, sx: e.clientX, sy: e.clientY, base: doc, moved: false });
+      }
+      // Do not open details on mousedown: the same press must be able to start an unselected card's drag.
+      setDrag({ kind, id, ids, sx: e.clientX, sy: e.clientY, base: doc, moved: false, selectOnClick });
     } else {
       setSelection({ kind: "group", id });
       setDrag({ kind, id, sx: e.clientX, sy: e.clientY, base: doc, moved: false });

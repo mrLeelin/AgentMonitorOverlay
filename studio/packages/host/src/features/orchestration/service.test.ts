@@ -12,6 +12,7 @@ import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
 import { roleCard } from "../guide/role.js";
 import { guideText, WORKFLOW_READING_GUIDE } from "../guide/guide.js";
+import { queueMessagePurpose } from "../../runtime/message-purpose.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, workspaceId: string, topicId: string;
@@ -431,8 +432,11 @@ describe("managed delivery workflow", () => {
     expect(accepted).toMatchObject({ state: "accepted", reviewedBy: "user" });
     expect(service.orchestration.results(top.id).at(-1)?.state).toBe("accepted");
     expect(store.getTask(top.id)?.column).toBe("done");
-    // A genuinely new turn still reopens completed work and invalidates the old acceptance.
+    // A root's conversation alone is not new work. Explicit reopening still invalidates acceptance, even mid-turn.
     service.publish({ type: "session.upserted", session: store.updateSession(manager.id, { status: "running" }) });
+    expect(store.getTask(top.id)?.column).toBe("done");
+    queueMessagePurpose(store, manager.id, "reopen", false);
+    service.publish({ type: "session.upserted", session: store.getSession(manager.id)! });
     expect(store.getTask(top.id)?.column).toBe("doing");
     expect(service.orchestration.results(top.id).at(-1)?.state).toBe("returned");
   });

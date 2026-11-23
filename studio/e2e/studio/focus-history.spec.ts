@@ -100,5 +100,6 @@ test("the annotation bubble moves by its head and keeps what is written", async 
   await expect(bubble.getByLabel("批注内容")).toHaveValue("说明是哪三张");
   await bubble.getByRole("button", { name: "保存" }).click();
   await expect(bubble).toHaveCount(0);
+  await page.getByTestId("sidebar-activity").click();
   await expect(page.getByTestId("annotation-count")).toHaveText("1");
 });

@@ -254,10 +254,10 @@ export class Store extends DocumentStore {
     const s: Session = { ...input, options: input.options ?? {}, id: input.id ?? newId("s"), createdAt: at, updatedAt: at, archivedAt: null, endedAt: null };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, title, status, writer, runtime_ref, options, goal, created_at, updated_at, archived_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        `INSERT INTO sessions (id, task_id, topic_id, parent_id, kind, runtime, profile_id, workspace_id, cwd, title, status, writer, runtime_ref, options, goal, created_at, updated_at, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
-      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options), s.goal === undefined ? null : JSON.stringify(s.goal), at, at);
+      .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.cwd ?? null, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options), s.goal === undefined ? null : JSON.stringify(s.goal), at, at);
     return s;
   }
 

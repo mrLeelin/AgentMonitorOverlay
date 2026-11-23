@@ -10,6 +10,7 @@ import { FindBar } from "../gitreview/FindBar.js";
 import { Transcript, type DeliveryAction } from "../chat/Transcript.js";
 import { SubagentStatusContext } from "../chat/ProcessRows.js";
 import { useScrollOnSend, useTranscriptView } from "../chat/prefs.js";
+import { chatEnterAction, NEWLINE_SHORTCUTS, PRIMARY_ENTER_LABELS, primaryEnterKey, sendChord, useEnterMode, useFollowupMode, useNewlineShortcut } from "../chat/inputPrefs.js";
 import { IconArrowDown, IconArrowUp, IconStop } from "../chat/icons.js";
 import { sessionStats, type ApprovalItem } from "../chat/turns.js";
 import { useAttachments } from "../attach/useAttachments.js";
@@ -84,9 +85,8 @@ interface ThreadProps {
   busy: boolean;
   onApprove(item: ApprovalItem, decision: ApprovalDecision): void;
   onJump(sessionId: string): void;
-  /** `attachments`: ids of uploaded images sent along; `now`: 立即发送 (Ctrl+Enter while it works, 2026-11-02). */
   /** `subsessions`: the 子会话设定 the message names (2026-11-05). */
-  onSend(text: string, attachments: string[], now?: boolean, subsessions?: SubsessionSetup[]): Promise<boolean>;
+  onSend(text: string, attachments: string[], delivery: { now: boolean; afterTurn: boolean }, subsessions: SubsessionSetup[]): Promise<boolean>;
   onInterrupt(): void;
   /** 立即发送 a waiting message / 重新发送 one never read (the buttons under it). */
   onDelivery?(itemId: string, action: DeliveryAction): void;
@@ -340,18 +340,28 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
   const turnStart = useTurnStartHint(scroller, sessionId, generating, arrival.current.id === sessionId && arrival.current.awaits, loaded);
   // Focus lists replies that ended while the person was elsewhere; looking at the session here clears them there.
   useMarkSessionSeen(session);
-  // Codex steers the running turn at once; Claude reads it after the next tool call, or as the next turn; DSH only
-  // after the turn (stage 17: one prompt at a time).
-  const queues = session?.runtime === "claude" || session?.runtime === "dsh" || session?.runtime === "pi";
+  const [enterMode] = useEnterMode();
+  const [newline] = useNewlineShortcut();
+  const [followupMode] = useFollowupMode();
+  const canInsert = session?.runtime !== "dsh" && session?.runtime !== "pi";
+  const queueAfterTurn = followupMode === "queue";
+  const alternate = NEWLINE_SHORTCUTS[sendChord(newline)];
+  const multiline = draft.includes("\n");
+  const sendKey = primaryEnterKey(enterMode, newline, multiline);
+  const sendKeys = `${PRIMARY_ENTER_LABELS[sendKey]} 发送${enterMode === "multiline" ? (multiline ? "多行消息" : "单行消息") : ""}`;
+  const newlineKeys = sendKey === "plain" ? NEWLINE_SHORTCUTS[newline] : `Enter 或 ${NEWLINE_SHORTCUTS[newline]}`;
+  const followupHint = queueAfterTurn || !canInsert ? "本轮结束后发出" : session?.runtime === "claude" ? "工具调用后或本轮结束后读到" : "插入当前回合";
   const placeholder = remoteSub
     ? "子 agent 不能单独接收消息，请在父会话里继续。"
     : blocked
       ? `${blocked}${readOnly ? "" : "（可以先写好）"}`
-      : composerPlaceholder({ readOnly, claudeSub, isRevising, planReview: !!planReview, generating, queues, waitsForTurn: session?.runtime === "dsh" || session?.runtime === "pi" });
+      : composerPlaceholder({ readOnly, claudeSub, isRevising, planReview: !!planReview, sendKeys, newlineKey: newlineKeys });
   const stats = useMemo(() => sessionStats(items), [items]);
-  const sendLabel = generating ? (queues ? "排队" : "插话") : "发送";
+  const sendLabel = generating ? (queueAfterTurn || !canInsert ? "排队" : "插话") : "发送";
   // 立即发送 (2026-11-02): Claude and Codex (a remote copy's computer says what it can); DSH waits for the turn's end.
   const sendsNow = generating && !readOnly && !planReview && !isRevising;
+  const oppositeHint = sendsNow && canInsert ? ` · Ctrl+Shift+Enter ${queueAfterTurn ? "插话" : "排队"}` : "";
+  const immediateHint = sendsNow && enterMode === "send" ? ` · ${alternate} 立即发送` : "";
   // 问题 #16 (2026-11-03): 停止 and 立即发送 ask the model to stop, and it can take a few seconds to (a command or a reply
   // in flight); until the turn ends the composer and the waiting message say so, so it does not read as failed.
   const [haltAsked, setHaltAsked] = useState<{ sessionId: string; kind: "stop" | "now" } | null>(null);
@@ -400,7 +410,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
   async function runCommand(command: SlashCommand, args: string): Promise<boolean> {
     if (!session) return false;
     if (command.local === "open-review") {
-      openReview({ workspaceId: session.workspaceId, sessionId: session.id });
+      openReview({ workspaceId: session.workspaceId, sessionId: session.id, ...(session.cwd ? { worktreeSessionId: session.id } : {}) });
       return true;
     }
     jumpToEnd();
@@ -413,7 +423,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     }
   }
 
-  async function send(now = false) {
+  async function send(action: "send" | "opposite" | "now" = "send") {
     const text = draft.trim();
     if (!canSend) return;
     if (isRevising) {
@@ -438,7 +448,8 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
     setDraft("");
     const sent = attach.take();
     jumpToEnd();
-    const givesWay = now && sendsNow;
+    const givesWay = action === "now" && sendsNow;
+    const afterTurn = !givesWay && !planReview && (action === "opposite" ? !queueAfterTurn : queueAfterTurn);
     if (givesWay) askHalt("now");
     // 2026-11-05: a message sent right after 停止 never came back — no row, no error, the composer already empty. Slow:
     // the hint says it is on its way; given up on: its text comes back into the composer, saying why.
@@ -452,7 +463,7 @@ export function Thread({ link, presets, session, firstMessage, profile, profiles
       setDraft(restoreDraft);
       onError?.(`发出去 ${SEND_GIVE_UP_MS / 1000} 秒了，Host 还没回应：文字放回了输入框。先看一眼对话里有没有这条，没有再发。`);
     }, SEND_GIVE_UP_MS);
-    const ok = await onSend(message, ids, givesWay, setups);
+    const ok = await onSend(message, ids, { now: givesWay, afterTurn }, setups);
     settled = true;
     clearTimeout(slow);
     clearTimeout(giveUp);
@@ -738,10 +749,10 @@ ${d}` : restored));
                     setRevising(null);
                     return;
                   }
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  const action = chatEnterAction(e, enterMode, newline, multiline);
+                  if (action && (action !== "opposite" || (sendsNow && canInsert))) {
                     e.preventDefault();
-                    // Ctrl+Enter while it works: 立即发送, as Claude Code's Send now (otherwise the same as Enter).
-                    void send(e.ctrlKey || e.metaKey);
+                    if (!e.repeat) void send(action);
                   }
                 }}
               />
@@ -774,8 +785,8 @@ ${d}` : restored));
               <span
                 className="composer-hint"
                 {...(blocked ? { "data-testid": "remote-blocked" } : {})}
-                {...(sending && sending === session?.id && !blocked && !attachHold ? { title: `Host 还没回应这条消息；${SEND_GIVE_UP_MS / 1000} 秒内还没有，文字会放回输入框` } : halting && !blocked && !attachHold ? { title: "模型手上的命令或回复收住可能要几秒，这一轮结束前会一直显示" } : {})}
-              >{blocked || attachHold || (sending && sending === session?.id ? "正在发送…" : "") || (halting === "stop" ? "正在停止…" : halting === "now" ? "正在打断，停下后马上发出…" : "") || (generating && !readOnly && !planReview ? (session?.runtime === "dsh" || session?.runtime === "pi" ? "本轮结束后发出 · Ctrl+Enter 立即发送" : `${sendsNow ? "" : "生成中："}${queues ? "工具调用后或本轮结束后读到" : "发送会插入到当前回合"}${sendsNow ? " · Ctrl+Enter 立即发送" : ""}`) : "")}</span>
+                title={blocked || attachHold || (sending && sending === session?.id ? `Host 还没回应这条消息，${SEND_GIVE_UP_MS / 1000} 秒内还没有，文字会放回输入框` : halting ? "模型手上的命令或回复收住可能要几秒，这一轮结束前会一直显示" : sendsNow ? `${followupHint}${oppositeHint}${immediateHint}` : undefined)}
+              >{blocked || attachHold || (sending && sending === session?.id ? "正在发送…" : "") || (halting === "stop" ? "正在停止…" : halting === "now" ? "正在打断，停下后马上发出…" : "") || (generating && !readOnly && !planReview ? followupHint : "")}</span>
               <span className="spacer" />
               {generating && !readOnly && !blocked && (
                 <button
@@ -795,7 +806,7 @@ ${d}` : restored));
                 onClick={() => void send()}
                 disabled={!canSend}
                 aria-label={isRevising ? "发送修改意见" : sendLabel}
-                title={isRevising ? "把修改意见发给 Claude" : generating ? `${queues ? "排队发送" : "插话发送"}${sendsNow ? "（Ctrl+Enter 立即发送：打断当前这一步）" : ""}` : "发送消息"}
+                title={isRevising ? "把修改意见发给 Claude" : generating ? `${followupHint}${oppositeHint}${immediateHint}` : sendKeys}
               >
                 <IconArrowUp />
               </button>

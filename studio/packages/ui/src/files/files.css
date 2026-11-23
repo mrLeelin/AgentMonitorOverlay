@@ -22,7 +22,7 @@ a.file-link.file-chip:hover .file-chip-name { text-decoration: underline; text-u
 /* ---- the quick look ---- */
 .file-preview { position: relative; flex: 0 0 auto; min-width: 320px; max-width: calc(100vw - 420px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--panel-raised); }
 /* It takes the task page's right column while open. */
-.file-preview ~ .anno-panel { display: none; }
+.file-preview ~ .task-sidebar { display: none; }
 .fp-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
 .fp-resize:hover, .fp-resize:active { background: var(--resize); }
 .fp-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 10px 2px 14px; }

@@ -44,23 +44,21 @@ test("a Claude session: approve a command, queue a message, branch, follow a sub
   await composer.fill("[[slow]]");
   await composer.press("Enter");
   await expect(page.getByRole("button", { name: "排队" })).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator(".composer-hint")).toHaveText("工具调用后或本轮结束后读到 · Ctrl+Enter 立即发送");
+  await expect(page.locator(".composer-hint")).toContainText("本轮结束后发出");
   await composer.fill("after the slow one");
   await page.getByRole("button", { name: "排队" }).click();
   // 立即发送 (2026-11-02): the queued message says it waits, and its button makes the turn give way to it.
   const waiting = page.getByTestId("msg-delivery");
-  await expect(waiting).toHaveAttribute("data-delivery", "waiting", { timeout: 10_000 });
-  await expect(waiting).toContainText("等待送达");
+  await expect(waiting).toHaveAttribute("data-delivery", "held", { timeout: 10_000 });
+  await expect(waiting).toContainText("等这一轮结束后送进去");
   await screenshot(studio.app, "send-now", "send-now-01-waiting", page);
-  // 问题 #16 (2026-11-03): until the turn gives way the row says it is being interrupted (held here, as a real one can
-  // take seconds), and the 立即发送 button is gone.
+  // The row shows the request was made and disables 立即发送 until the held message goes out.
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
   await page.route("**/send-now", async (route) => (await held, route.continue()));
   await waiting.getByTestId("send-now").click();
-  await expect(waiting).toHaveAttribute("data-delivery", "interrupting");
-  await expect(waiting).toContainText("正在打断当前这一步");
-  await expect(waiting.getByTestId("send-now")).toHaveCount(0);
+  await expect(waiting).toContainText("正在送进去");
+  await expect(waiting.getByTestId("send-now")).toBeDisabled();
   await screenshot(studio.app, "send-now", "send-now-01b-interrupting", page);
   release();
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: after the slow one", { timeout: 30_000 });

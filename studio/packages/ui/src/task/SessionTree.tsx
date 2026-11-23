@@ -4,7 +4,7 @@ import { defaultProfile, rememberProfile, repick, shortModel } from "../lib/prof
 import { sessionModelName, storedChoices } from "../lib/choices.js";
 import type { HostLink } from "../host/client.js";
 import { activeModel, useProfileChoices } from "../lib/choices.js";
-import { rememberPick, type ModelPick } from "../lib/recents.js";
+import { isHiddenPick, rememberPick, type ModelPick } from "../lib/recents.js";
 import { EffortBars, FastToggle } from "../chat/pickers.js";
 import { ModelRow } from "../newtask/ModelRow.js";
 import { useDragWidth } from "../lib/dragWidth.js";
@@ -95,14 +95,15 @@ export function SessionTree({ link, task, sessions, workspaces, profiles, select
   const [effort, setEffort] = useState<string | null>(null);
   const [fast, setFast] = useState<boolean | undefined>(undefined);
   // A model hidden in 设置 → 模型 meanwhile gives way to the default (问题 #14).
+  const modelHidden = isHiddenPick(pick.profileId, pick.model);
   useEffect(() => {
-    const next = repick(profiles, pick.profileId);
+    const next = repick(profiles, pick.profileId) ?? (modelHidden ? pick.profileId : null);
     if (next !== null) {
       setPick({ profileId: next, model: null });
       setEffort(null);
       setFast(undefined);
     }
-  }, [profiles, pick.profileId]);
+  }, [profiles, pick.profileId, modelHidden]);
   const [drawer, setDrawer] = useState(false);
   const { choices } = useProfileChoices(link, pick.profileId);
   const model = choices ? activeModel(choices, pick.model ? { model: pick.model } : {}) : undefined;

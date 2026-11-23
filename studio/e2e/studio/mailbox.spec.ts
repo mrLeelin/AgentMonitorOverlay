@@ -30,6 +30,7 @@ test("mail between sessions, forwarded or dismissed by the person", async () => 
 
   // The recipient's task page: two messages, the session row counts the one for it.
   await page.getByTestId("task-card").filter({ hasText: "收件任务" }).click();
+  await page.getByTestId("sidebar-activity").click();
   await expect(page.getByTestId("mail-count")).toHaveText("2");
   await expect(page.getByTestId("session-row").first().getByTestId("session-mail")).toHaveAttribute("aria-label", "1 条留言");
   const cards = page.getByTestId("mail-card");

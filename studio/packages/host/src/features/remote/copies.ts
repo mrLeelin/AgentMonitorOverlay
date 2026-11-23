@@ -441,14 +441,14 @@ export class RemoteCopies {
   }
 
   /** A message, its pictures and files sent first (2026-10-29 evening: they were refused before). */
-  async send(sessionId: Id, text: string, images: readonly Attachment[], options: { now?: boolean; purpose?: import("@amo-studio/protocol").MessagePurpose } = {}): Promise<{ mode: SendMode }> {
+  async send(sessionId: Id, text: string, images: readonly Attachment[], options: { now?: boolean; afterTurn?: boolean; purpose?: import("@amo-studio/protocol").MessagePurpose } = {}): Promise<{ mode: SendMode }> {
     const { peer } = this.target(sessionId);
     if (options.purpose && options.purpose !== "work") throw new HostError("bad_request", "远程端尚未协商消息用途能力，不能保证只读询问或重新开始的回合边界；请在任务所在电脑操作。普通工作消息保持原行为。");
     const along = await sendAlong((p, k, b, ms, off) => this.ask(p, k, b, ms, off), peer, this.ctx.peer(peer)?.name ?? peer.account, text, images);
     // A's copy of the message names its own attachments: this computer's go in their place (copy-images.ts).
     this.images.sent(sessionId, images.map((a) => a.id));
     try {
-      return await this.ask<{ mode: SendMode }>(peer, REMOTE_KINDS.send, { sessionId, text: along.text, ...(along.uploads.length ? { uploads: along.uploads } : {}), ...(options.now ? { now: true } : {}) });
+      return await this.ask<{ mode: SendMode }>(peer, options.afterTurn ? REMOTE_KINDS.sendAfterTurn : REMOTE_KINDS.send, { sessionId, text: along.text, ...(along.uploads.length ? { uploads: along.uploads } : {}), ...(options.now ? { now: true } : {}) });
     } catch (err) {
       this.images.failed(sessionId);
       throw err;

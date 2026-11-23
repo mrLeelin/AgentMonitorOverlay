@@ -46,6 +46,7 @@ interface Stored {
 }
 interface Active {
   id: string;
+  cwd: string;
   mcp: McpServer[];
   prompting: boolean;
   cancel: (() => void) | null;
@@ -212,6 +213,7 @@ async function prompt(params: { sessionId: string; prompt: Array<{ type: string;
     const context = /\[\[context: (\d+)\]\]/.exec(text);
     update(a.id, { sessionUpdate: "usage_update", used: context ? Number(context[1]) : 1000 * s.turns, size: 1_000_000 });
     let reply = `MOCK-DSH: ${text}${images.length ? ` [${images.length} 张图 ${images.map((i) => i.mimeType).join(",")}]` : ""}`;
+    if (text.includes("[[worktree-marker]]")) reply = `${readFileSync("marker.txt", "utf8")} / ${readFileSync(join(a.cwd, "marker.txt"), "utf8")}`;
     const ran = /\[\[(ask|run): ([^\]]+)\]\]/.exec(text);
     if (ran) {
       const callId = `call-${randomUUID()}`;
@@ -341,7 +343,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
       const all = load();
       all[id] = { cwd: String(params.cwd), model: DEFAULT_MODEL.value, effort: "high", turns: 0 };
       save(all);
-      active.set(id, { id, mcp: (params.mcpServers as McpServer[]) ?? [], prompting: false, cancel: null });
+      active.set(id, { id, cwd: String(params.cwd), mcp: (params.mcpServers as McpServer[]) ?? [], prompting: false, cancel: null });
       return { sessionId: id, configOptions: configOptions(all[id]!) };
     }
     case "session/resume": {
@@ -349,7 +351,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
       const all = load();
       if (!all[id]) throw new RpcError(-32602, `Invalid params: session is not resumable: ${id}`);
       if (active.has(id)) throw new RpcError(-32602, `Invalid params: session is already active: ${id}`);
-      active.set(id, { id, mcp: (params.mcpServers as McpServer[]) ?? [], prompting: false, cancel: null });
+      active.set(id, { id, cwd: String(params.cwd), mcp: (params.mcpServers as McpServer[]) ?? [], prompting: false, cancel: null });
       return { configOptions: configOptions(all[id]!) };
     }
     case "session/list":

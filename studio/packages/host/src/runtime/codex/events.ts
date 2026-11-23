@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import { asyncPrompts, type Id, type Session, type TurnRetry, type TurnState } from "@amo-studio/protocol";
 import { messageImage, withDelivery } from "../items.js";
 import { currentMessagePurpose } from "../message-purpose.js";
@@ -15,6 +16,18 @@ import { turnKey, type CodexCore, type ThreadLike } from "./state.js";
 export class CodexEvents {
   /** Notices a server sent for no thread (config warnings, deprecations, MCP start-up): shown in the next turn. */
   private readonly serverNotices = new Map<Id, Array<{ level: "info" | "warning"; message: string; key: string }>>();
+  private readonly heldForks = new Map<string, Array<{ handle: CodexServerHandle; thread: ThreadLike }>>();
+
+  /** Studio validates the native fork before it appears in the session tree. Still adopt other clients' forks. */
+  holdForks(threadId: string): (handledId: string | undefined) => void {
+    if (this.heldForks.has(threadId)) throw Object.assign(new Error("这个会话正在创建分支，请稍后再试。"), { code: "conflict" });
+    const held: Array<{ handle: CodexServerHandle; thread: ThreadLike }> = [];
+    this.heldForks.set(threadId, held);
+    return (handledId) => {
+      this.heldForks.delete(threadId);
+      for (const { handle, thread } of held) if (thread.id !== handledId) this.onThreadStarted(handle, thread);
+    };
+  }
 
   constructor(
     private readonly core: CodexCore,
@@ -313,6 +326,11 @@ export class CodexEvents {
   private onThreadStarted(handle: CodexServerHandle, thread: ThreadLike): void {
     if (this.core.findByThread(thread.id)) return;
     if (thread.forkedFromId) {
+      const held = this.heldForks.get(thread.forkedFromId);
+      if (held) {
+        held.push({ handle, thread });
+        return;
+      }
       const parent = this.core.findByThread(thread.forkedFromId);
       if (parent) this.adoptThread(thread, parent, "fork", handle.profileId);
     } else if (thread.parentThreadId) {
@@ -325,6 +343,8 @@ export class CodexEvents {
   adoptThread(thread: ThreadLike, parent: Session, kind: "fork" | "sub", profileId: Id, title?: string): Session {
     const existing = this.core.findByThread(thread.id);
     if (existing) return existing;
+    const projectDir = this.core.store.getWorkspace(parent.workspaceId)?.path;
+    const cwd = kind === "fork" && thread.cwd && projectDir ? (relative(thread.cwd, projectDir) ? thread.cwd : undefined) : parent.cwd;
     const session = this.core.createSession({
       taskId: parent.taskId,
       topicId: parent.topicId,
@@ -332,6 +352,7 @@ export class CodexEvents {
       kind,
       profileId,
       workspaceId: parent.workspaceId,
+      ...(cwd ? { cwd } : {}),
       title: title ?? (kind === "sub" ? "子 agent" : `${parent.title || "会话"} · 分支`),
       runtimeRef: thread.id,
       // Forks and subagents start with the parent's model, effort and permissions.

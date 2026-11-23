@@ -4,9 +4,15 @@ import type { CanvasDoc, Id, Task, Workspace } from "@amo-studio/protocol";
 import { isCommon } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
+import { forkGitOptions } from "../sessions/fork-worktree.js";
 
 /** Projects (workspaces): registering, archiving and removing them. */
 export class ProjectsFeature extends Feature<"tasks"> {
+  async gitOptions(id: Id) {
+    const workspace = this.requireLiveWorkspace(id);
+    return { git: isCommon(workspace) ? null : await forkGitOptions(workspace.path) };
+  }
+
   addWorkspace(input: { path: string; name?: string }): Workspace {
     if (!input.path?.trim()) throw new HostError("bad_request", "path is required");
     const path = resolve(input.path.trim());

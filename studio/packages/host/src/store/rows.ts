@@ -84,6 +84,7 @@ export function toSession(r: Row): Session {
     runtime: str(r.runtime) as Session["runtime"],
     profileId: str(r.profile_id),
     workspaceId: str(r.workspace_id),
+    ...(r.cwd ? { cwd: str(r.cwd) } : {}),
     title: str(r.title),
     status: str(r.status) as Session["status"],
     writer: str(r.writer) as Session["writer"],

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "studio.skills",
+      "label": "技能展览（全局、项目与发现入口）",
+      "aliases": ["技能展览", "本机技能", "技能目录", "SkillCatalog", "ClawHub", "skills.sh"],
+      "category": "ui",
+      "purpose": "设置 → 工具与自动化的技能展览，按来源浏览本机全局或项目技能，支持搜索、诊断筛选、刷新、查看真实 SKILL.md 和打开目录。发现页提供外部技能目录入口。只读目录扫描不代表模型的实际启用状态。",
+      "steps": [
+        "增加来源或调整扫描边界：改 skill-catalog.ts，更新扫描器测试；运行时技能加载仍走原来的命令接口。",
+        "调整浏览交互：改 SkillsPage.tsx / skills.css，并运行 skills.spec.ts 检查截图。"
+      ],
+      "anchors": [
+        { "label": "技能展览", "path": "studio/packages/ui/src/settings/SkillsPage.tsx", "anchor": "export function SkillsPage" },
+        { "label": "只读扫描", "path": "studio/packages/host/src/features/cli/skill-catalog.ts", "anchor": "export async function readSkillCatalog" },
+        { "label": "扫描接口", "path": "studio/packages/host/src/features/cli/routes.ts", "anchor": "GET /api/skills" },
+        { "label": "协议", "path": "studio/packages/protocol/src/skills.ts", "anchor": "export interface SkillCatalog" }
+      ],
+      "related": ["studio.cli", "studio.config", "studio.files"],
+      "next": ["studio/plans/done/skills-exhibition.md", "studio/e2e/studio/skills.spec.ts"]
+    }
+  ]
+}

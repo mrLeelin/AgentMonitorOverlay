@@ -5,6 +5,8 @@
 .settings-row .field { flex: 1; min-width: 0; }
 .settings-label { font-size: 13px; color: var(--text-dim); min-width: 48px; }
 .settings-hint { font-size: 12.5px; color: var(--text-dim); }
+.input-settings-row > .settings-label { min-width: 112px; }
+.input-settings-row > .field { max-width: 340px; }
 
 /* 设置 → 模型凭据 */
 .credential { display: flex; flex-direction: column; gap: 6px; }
@@ -79,10 +81,13 @@
 .model-order-row[data-over="before"]::before { top: -4px; }
 .model-order-row[data-over="after"]::after { bottom: -4px; }
 .model-grip { flex: none; color: var(--text-faint); letter-spacing: -2px; }
-.model-order-name { flex: none; font-size: var(--fs-sm); font-weight: 600; }
+.model-order-name { min-width: 0; font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .model-order-desc { flex: 1; min-width: 0; font-size: var(--fs-cap); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .model-default { flex: none; margin-left: auto; height: var(--ctl-s); padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--r-btn); background: transparent; color: var(--text-dim); font: inherit; font-size: var(--fs-cap); cursor: pointer; }
 .model-default:hover { color: var(--text); }
+.model-default:disabled { opacity: 0.45; cursor: default; color: var(--text-dim); }
+.model-default + .model-default { margin-left: 0; }
+.model-order-hidden { color: var(--text-dim); cursor: default; }
 .model-default[aria-pressed="true"] { border-color: var(--primary); background: var(--tint); color: var(--primary); font-weight: 600; cursor: default; }
 
 /* 设置 → 数据管理: archived things, restored or deleted for good. */

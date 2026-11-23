@@ -73,6 +73,8 @@ export function parseSlashCommand(text: string): { name: string; args: string } 
 
 /** CLI features in the conversation (stage 12, S12-E): / commands, compaction, background commands. */
 export interface CliRoutes {
+  /** Read local Agent Skills sources; workspaceId (query) selects a registered project, otherwise user sources. */
+  "GET /api/skills": { req: void; res: import("./skills.js").SkillCatalog };
   /** Commands and skills for a first message, without creating a session or making a model request. */
   "POST /api/commands": { req: { profileId: string; workspaceId?: string | null }; res: SlashCommandList };
   /** The `/` menu for a session: Studio's commands, the runtime's (Claude Code's list, Codex review), its skills. */

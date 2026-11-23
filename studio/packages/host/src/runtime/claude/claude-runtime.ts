@@ -192,7 +192,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- operations -------------------------------------------------------------------------------------------------
 
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session> {
+  async startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]): Promise<Session> {
     const profile = this.profile(input.profileId);
     if (input.resumeFrom) return this.resumeOutside(input, profile, input.resumeFrom);
     // Fail early (missing provider, key or login) rather than on the first message.
@@ -206,6 +206,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       kind: "main",
       profileId: profile.id,
       workspaceId: input.workspace.id,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
       title: input.title ?? "",
       runtimeRef: randomUUID(),
       options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
@@ -464,7 +465,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     // The copy stays in the parent's config dir, so the branch runs the way the parent did.
     if (home.login === "local" && !this.isSubscription(profile)) throw Object.assign(new Error("这个会话用本机 Claude Code 的登录，分支只能继续用 Claude 订阅"), { code: "bad_request" });
     const title = `${parent.title || "会话"} · 分支`;
-    const forked = await withConfigDir(home, () => forkSession(parent.runtimeRef!, { dir: workspace.path, title }));
+    const forked = await withConfigDir(home, () => forkSession(parent.runtimeRef!, { dir: parent.cwd ?? workspace.path, title }));
     const child = this.createSession({
       taskId: parent.taskId,
       topicId: parent.topicId,
@@ -472,6 +473,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       kind: "fork",
       profileId: profile.id,
       workspaceId: parent.workspaceId,
+      ...(parent.cwd ? { cwd: parent.cwd } : {}),
       title,
       runtimeRef: forked.sessionId,
       options: parent.options,
@@ -619,29 +621,30 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const exe = requireClaudeCode();
     const workspace = this.store.getWorkspace(session.workspaceId);
     if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
+    const cwd = session.cwd ?? workspace.path;
     const home = this.homeOf(sessionId);
     const env = agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(this.profile(session.profileId), this.options.providers, this.options.credentials, home, this.options.baseEnv), ...claudeAutoCompactEnv(this.store, session.profileId) });
     await this.close(sessionId);
     const ref = session.runtimeRef!;
-    const seen = hasTranscript(ref, home) ? (await readTranscript(ref, workspace.path, home)).length : 0;
+    const seen = hasTranscript(ref, home) ? (await readTranscript(ref, cwd, home)).length : 0;
     this.store.setKv(handoffKey(sessionId), String(seen));
     this.updateSession(sessionId, { writer: "terminal-handoff" });
     // The Claude Code the sessions run on, so the transcript format matches; never the "auto" permission mode.
     const resume = hasTranscript(ref, home) ? `--resume ${ref}` : `--session-id ${ref}`;
-    return { command: `& '${exe.replace(/'/g, "''")}' ${resume} --permission-mode default`, cwd: workspace.path, env };
+    return { command: `& '${exe.replace(/'/g, "''")}' ${resume} --permission-mode default`, cwd, env };
   }
 
   /** Takes a handed-off session back and imports what the terminal added to the transcript. */
   async reclaim(sessionId: Id): Promise<Session> {
     const session = this.requireSession(sessionId);
     if (session.writer !== "terminal-handoff") return session;
-    const workspace = this.store.getWorkspace(session.workspaceId);
+    const cwd = this.cwdOf(sessionId);
     const seen = Number(this.store.getKv(handoffKey(sessionId))?.value ?? "0") || 0;
     let added = 0;
     const home = this.homeOf(sessionId);
-    if (workspace && session.runtimeRef && hasTranscript(session.runtimeRef, home)) {
-      const messages = await readTranscript(session.runtimeRef, workspace.path, home);
-      added = importTranscript(this.core, sessionId, this.cwdOf(sessionId), messages.slice(seen));
+    if (cwd && session.runtimeRef && hasTranscript(session.runtimeRef, home)) {
+      const messages = await readTranscript(session.runtimeRef, cwd, home);
+      added = importTranscript(this.core, sessionId, cwd, messages.slice(seen));
     }
     this.store.setKv(handoffKey(sessionId), "");
     this.appendItem(sessionId, { type: "notice", level: "info", message: added ? `已从终端收回，导入了终端里新增的 ${added} 条内容。` : "已从终端收回。" });
@@ -685,12 +688,12 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const live = this.live.get(sessionId);
     try {
       if (!live) {
-        const workspace = this.store.getWorkspace(session.workspaceId);
-        if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
-        return this.commandsIn(profile, workspace, this.homeOf(sessionId));
+        const cwd = this.cwdOf(sessionId);
+        if (!cwd) throw new Error(`workspace ${session.workspaceId} not found`);
+        return this.commandsIn(profile, cwd, this.homeOf(sessionId));
       }
       const list = live.commands ?? await withTimeout(live.q.supportedCommands(), 15_000);
-      return { commands: await claudeSkillPaths(claudeCommands(list, this.skillNames.get(profile.id)), this.store.getWorkspace(session.workspaceId)?.path ?? "", this.homeOf(sessionId).dir) };
+      return { commands: await claudeSkillPaths(claudeCommands(list, this.skillNames.get(profile.id)), this.cwdOf(sessionId) ?? "", this.homeOf(sessionId).dir) };
     } catch (err) {
       this.emit("log", `could not ask Claude Code for its commands (${sessionId}): ${firstLine(err)}`);
       return { commands: [], note: `读不到 Claude Code 的命令列表：${firstLine(err)}` };
@@ -699,16 +702,16 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
     const profile = this.profile(profileId);
-    return this.commandsIn(profile, workspace, this.newHome(profile));
+    return this.commandsIn(profile, workspace.path, this.newHome(profile));
   }
 
-  private async commandsIn(profile: ModelProfile, workspace: Workspace, home: ClaudeHome): Promise<SlashCommandList> {
-    const key = `${profile.id}|${home.login}|${home.dir}|${workspace.path}`;
+  private async commandsIn(profile: ModelProfile, cwd: string, home: ClaudeHome): Promise<SlashCommandList> {
+    const key = `${profile.id}|${home.login}|${home.dir}|${cwd}`;
     const cached = this.draftCommandCache.get(key);
     if (cached && Date.now() - cached.at < 60_000) return cached.list;
     try {
       const env = claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv);
-      const list = await askCommandList(env, workspace.path);
+      const list = await askCommandList(env, cwd);
       this.draftCommandCache.set(key, { at: Date.now(), list });
       return list;
     } catch (error) {
@@ -754,9 +757,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const profile = this.profile(session.profileId);
     const workspace = this.store.getWorkspace(session.workspaceId);
     if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
+    const cwd = session.cwd ?? workspace.path;
     const ref = session.runtimeRef!;
     const home = this.homeOf(session.id);
-    const agentsMd = agentsMdInstructions(workspace.path);
+    const agentsMd = agentsMdInstructions(cwd);
     // Before anything is set up: without a Claude Code the person is told so, not a spawn error.
     const exe = requireClaudeCode();
 
@@ -789,7 +793,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     live.q = query({
       prompt: input(),
       options: {
-        cwd: workspace.path,
+        cwd,
         // 自动压缩点 (设置 → 模型) over the provider's own window; 命令行适配 (agent-env.ts) under everything.
         env: agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv), ...claudeAutoCompactEnv(this.store, profile.id) }),
         // As in a terminal: CLAUDE.md, settings, hooks, commands and skills of the project and of the config dir (Studio's
@@ -1141,7 +1145,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   private cwdOf(sessionId: Id): string | undefined {
     const s = this.store.getSession(sessionId);
-    return s ? this.store.getWorkspace(s.workspaceId)?.path : undefined;
+    return s?.cwd ?? (s ? this.store.getWorkspace(s.workspaceId)?.path : undefined);
   }
 
   private profile(id: Id): ModelProfile {

@@ -130,7 +130,7 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await page.getByTestId("lightbox").click();
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
   // Filing in 待办 does not take images.
-  await first.press("Control+Enter");
+  await page.getByTestId("draft-file").click();
   await expect(page.getByRole("alert")).toContainText("放进待办不带图片");
   await screenshot(studio.app, "stage-18", "S18-newtask-image", page);
   await first.press("Enter");

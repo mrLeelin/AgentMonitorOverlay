@@ -178,6 +178,10 @@ export function attachedPaths(items: Iterable<SessionItem>): string[] {
  * file requests resolve them here, and only inside the task's folder).
  */
 export function itemForPeer<T extends SessionItem>(item: T, root: string | null): T {
+  if (item.type === "user" && (item.queuedFromDevice || item.queuedSkillText)) {
+    const { queuedFromDevice, queuedSkillText, ...visible } = item;
+    return visible as T;
+  }
   if (item.type !== "tool" || !root || !item.cwd) return item;
   const c = normalize(item.cwd);
   const r = normalize(root);

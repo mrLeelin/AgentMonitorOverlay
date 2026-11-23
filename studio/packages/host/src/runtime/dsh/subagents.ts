@@ -90,6 +90,7 @@ export class DshSubagents {
       kind: "sub",
       profileId: parent.profileId,
       workspaceId: parent.workspaceId,
+      ...(parent.cwd ? { cwd: parent.cwd } : {}),
       title: label,
       // DSH's id of the agent once the call returns it.
       runtimeRef: `${parent.runtimeRef}/subagent/${callId}`,
@@ -188,7 +189,7 @@ export class DshSubagents {
       rootId: this.rootOf(child.id),
       rowId,
       label: child.title || "子 agent",
-      cwd: this.core.store.getWorkspace(child.workspaceId)?.path,
+      cwd: child.cwd ?? this.core.store.getWorkspace(child.workspaceId)?.path,
       file: null,
       offset: from ?? 0,
       size: -1,

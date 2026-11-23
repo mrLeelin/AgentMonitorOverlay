@@ -37,6 +37,7 @@ test("a Codex session hands work to a Claude session through AMO mail", async ()
 
   // Nothing reaches B until the person forwards it.
   await page.getByTestId("task-card").filter({ hasText: "补测试" }).click();
+  await page.getByTestId("sidebar-activity").click();
   await expect(page.getByTestId("msg-agent")).toHaveCount(1);
   await expect(page.getByTestId("mail-card")).toContainText("请接手补测试");
   await page.getByTestId("mail-card").getByRole("button", { name: "转进对话" }).click();

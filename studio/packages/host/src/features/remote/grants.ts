@@ -345,17 +345,21 @@ export class RemoteGrants {
           const s = this.sessionFor(from, id(b.sessionId, "sessionId"), false);
           return ok(this.items(s.id, typeof b.since === "number" && b.since > 0 ? Math.floor(b.since) : 0));
         }
+        case REMOTE_KINDS.sendAfterTurn:
         case REMOTE_KINDS.send: {
           const s = this.sessionFor(from, id(b.sessionId, "sessionId"), true);
           // Pictures and files B sent first (rt.upload): this computer's attachments now; a DSH session takes no pictures.
           const claimed = this.ctx.inbox().claim(from, b.uploads, { noImages: s.runtime === "dsh" });
           const plain = claimed.images.length || claimed.files.length ? (typeof b.text === "string" ? b.text.slice(0, 100_000) : "") : boundedText(b.text, "text", 100_000);
           // Its user item (appended as it goes in) marks the turn as this device's (onHostEvent).
-          this.sending.set(s.id, { account: from.account, device: from.device });
+          const afterTurn = kind === REMOTE_KINDS.sendAfterTurn;
+          if (!afterTurn) this.sending.set(s.id, { account: from.account, device: from.device });
           try {
-            return ok(await sessions.sendMessage(s.id, claimedText(plain, claimed), claimed.images.map((a) => a.id), [], { now: b.now === true }));
+            return ok(await sessions.sendMessage(s.id, claimedText(plain, claimed), claimed.images.map((a) => a.id), [], afterTurn
+              ? { afterTurn: true, queuedFromDevice: { account: from.account, device: from.device } }
+              : { now: b.now === true }));
           } catch (err) {
-            this.sending.delete(s.id);
+            if (!afterTurn) this.sending.delete(s.id);
             this.ctx.inbox().drop(claimed);
             throw err;
           }
@@ -385,8 +389,10 @@ export class RemoteGrants {
         }
         case REMOTE_KINDS.resend: {
           const s = this.sessionFor(from, id(b.sessionId, "sessionId"), true);
-          const sent = await sessions.resend(s.id, id(b.itemId, "itemId"));
-          this.markTurn(s.id, from);
+          const itemId = id(b.itemId, "itemId");
+          const sent = await sessions.resend(s.id, itemId);
+          const item = this.store.getItem(itemId);
+          if (sent.mode !== "queue" || item?.type !== "user" || !item.afterTurn) this.markTurn(s.id, from);
           return ok(sent);
         }
         case REMOTE_KINDS.interrupt: {
@@ -520,7 +526,12 @@ ${taskId}`, ask, () => answerView({ host: this.ctx.host, task, root }, ask)));
       case "item.appended":
       case "item.updated": {
         // A message going in starts a turn: whose it is (a device's through rt.send, else this computer's).
-        if (e.type === "item.appended" && e.item.type === "user") this.noteUser(e.item.sessionId);
+        if (e.item.type === "user") {
+          if (e.item.afterTurn) {
+            // A held row does not change who owns the turn already in progress.
+            if (e.type === "item.updated" && !e.item.delivery) this.turnBy.set(e.item.sessionId, e.item.queuedFromDevice ?? null);
+          } else if (e.type === "item.appended") this.noteUser(e.item.sessionId);
+        }
         const taskId = this.taskIdOf(e.item.sessionId);
         const gs = to(taskId);
         if (!gs.length) return;

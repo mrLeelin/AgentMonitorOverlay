@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { projectWorkspaces, remoteHeldTasks, type Annotation, type ApprovalDecision, type ChecklistItem, type ModelProfile, type Session, type SessionOptions, type SubsessionSetup, type Task, type TaskColumn, type TodoView, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink, type Passage } from "../host/client.js";
 import { useSessionItems } from "../host/useSessionItems.js";
@@ -14,6 +14,7 @@ import { Thread } from "./Thread.js";
 import { flash } from "./ReplyNav.js";
 import { annotationRange, flashAnnotation, flashRange, highlightsSupported, scrollToBox } from "../review/highlights.js";
 import { REVEAL_ITEM_EVENT, type DeliveryAction } from "../chat/Transcript.js";
+import { buildTranscript, segmentMembers } from "../chat/turns.js";
 import { useSettings } from "../settings/useSettings.js";
 import { showToast } from "../lib/toast.js";
 import { AnnotationPanel } from "../review/AnnotationPanel.js";
@@ -30,6 +31,8 @@ import { bookmarkPassage, openMarks } from "../marks/open.js";
 import { BookmarkCancelled } from "../marks/NotePrompt.js";
 import { MarkButton } from "../marks/MarkButton.js";
 import { FileLinks, type PreviewTarget } from "../files/FileLinks.js";
+import { turnChanges } from "../files/changes.js";
+import { IconFile } from "../attach/icons.js";
 import { FilePreview } from "../files/FilePreview.js";
 import { ArchiveIcon, formatDay, TaskArchivedDialog } from "./Archived.js";
 import { BackButton } from "../shell/BackButton.js";
@@ -56,8 +59,10 @@ import { decisionNeedsPerson } from "../focus/managedAttention.js";
 import { useMarkReviewSeen } from "../board/reviewSeen.js";
 import { TaskHeader } from "./TaskHeader.js";
 
-/** Whether the right column (进度、批注、留言…) shows; off by default, remembered per window. */
+/** The right column starts open on 环境 and remembers the person's choices. */
 const SIDEBAR_KEY = "amo.taskSidebar";
+const SIDEBAR_VIEW_KEY = "amo.taskSidebarView";
+type SidebarView = "environment" | "activity";
 /** Whether the session list is hidden (会话 in the head; the key is from when it folded to a strip). */
 const SESSIONS_KEY = "amo.sessionsFolded";
 const readFlag = (key: string): boolean => readStored(key) === "1";
@@ -128,6 +133,19 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   // terminal, files or changes to the task here), or a task of this computer granted to other devices.
   const remote = useRemote(link);
   const copy = copyStatus(task, remote);
+  const localSessionId = copy ? null : session?.id ?? null;
+  const sessionRunning = session?.status === "running" || session?.status === "awaiting-approval" || session?.status === "awaiting-answer";
+  const recentChanges = useMemo(() => {
+    // The previous session's items can still be present on the first render after switching.
+    if (!localSessionId || items[0]?.sessionId !== localSessionId) return null;
+    for (const segment of buildTranscript(items, sessionRunning).toReversed()) {
+      if (segment.running) continue;
+      const members = segmentMembers(segment);
+      const [file] = turnChanges(members);
+      if (file) return { turnItemId: members[0]!.id, file: file.path };
+    }
+    return null;
+  }, [items, localSessionId, sessionRunning]);
   const granted = grantsOf(remote, task.id);
   const remoteHeld = remoteHeldTasks(remote).has(task.id);
   const prerequisites = usePrerequisites(link);
@@ -164,6 +182,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const setSidebar = (on: boolean) => {
     setSidebarState(on);
     writeFlag(SIDEBAR_KEY, on);
+  };
+  const [sidebarView, setSidebarViewState] = useState<SidebarView>(() => readStored(SIDEBAR_VIEW_KEY) === "activity" ? "activity" : "environment");
+  const setSidebarView = (view: SidebarView) => {
+    setSidebarViewState(view);
+    writeStored(SIDEBAR_VIEW_KEY, view);
   };
   // A task just made opens with its list hidden (it has one session: nothing to choose between); otherwise the list is
   // as the person last left it. The page is keyed by task, so this is read once per task opened.
@@ -284,7 +307,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const dismissMail = (m: { id: string }) => run(() => call(link, "PATCH /api/mail/:id", { id: m.id }, { state: "dismissed" }));
 
   const readOnly = !session || session.writer === "archived" || session.writer === "terminal-handoff";
-  // What waits in the hidden right column: shown as a count on 侧栏.
+  // Show what's waiting even when the activity view or the whole sidebar is hidden.
   const sideCount =
     decisions.filter((d) => d.taskId === task.id).length + mail.filter((m) => m.state === "unread").length + annotations.filter((a) => !a.sentAt).length;
   // Shown on 会话 while the list is hidden, when there is more than the one in front to choose from.
@@ -352,11 +375,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const approve = (approvalId: string, decision: ApprovalDecision) =>
     session ? run(() => call(link, "POST /api/approvals/:approvalId", { approvalId }, { sessionId: session.id, decision })) : Promise.resolve();
   const interrupt = (id: string) => run(() => call(link, "POST /api/sessions/:id/interrupt", { id }));
-  async function send(text: string, attachments: string[], now = false, subsessions: SubsessionSetup[] = []): Promise<boolean> {
+  async function send(text: string, attachments: string[], { now, afterTurn }: { now: boolean; afterTurn: boolean }, subsessions: SubsessionSetup[]): Promise<boolean> {
     if (!session) return false;
     try {
       const referred = annotationRefs.list.map((a) => a.id);
-      await call(link, "POST /api/sessions/:id/messages", { id: session.id }, { text, ...(attachments.length ? { attachments } : {}), ...(referred.length ? { annotations: referred } : {}), ...(now ? { now: true } : {}), ...(subsessions.length ? { subsessions } : {}) });
+      await call(link, "POST /api/sessions/:id/messages", { id: session.id }, { text, ...(attachments.length ? { attachments } : {}), ...(referred.length ? { annotations: referred } : {}), ...(now ? { now: true } : {}), ...(afterTurn ? { afterTurn: true } : {}), ...(subsessions.length ? { subsessions } : {}) });
       annotationRefs.sent();
       return true;
     } catch (err) {
@@ -373,7 +396,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       else await call(link, "POST /api/sessions/:id/items/:itemId/resend", { id, itemId });
     });
   };
-  const workdir = session ? workspaces.find((w) => w.id === session.workspaceId)?.path : undefined;
+  const workdir = session ? session.cwd ?? workspaces.find((w) => w.id === session.workspaceId)?.path : undefined;
+  const reviewSession = session && !session.archivedAt ? session : latestMainSession(sessions, task.id);
   const showError = (text: string) => setToast({ text, error: true });
 
   return (
@@ -392,8 +416,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               onSave={(title) => void run(() => call(link, "PATCH /api/tasks/:id", { id: task.id }, { title }))}
             />
             {task.lead && (
-              <span className="lead-badge" title="主控：管理明确归属的下辖任务。在 ⋯ 里可以取消" data-testid="task-lead">
-                主控
+              <span className={`lead-badge${!task.managerTaskId ? " root-lead-badge" : ""}`} title={`${!task.managerTaskId ? "总主控：管理树的最顶层主控，汇总下辖任务的交付" : "主控：管理明确归属的下辖任务"}。在 ⋯ 里可以取消`} data-testid="task-lead">
+                {task.managerTaskId ? "主控" : "总主控"}
               </span>
             )}
           </h1>
@@ -435,14 +459,17 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               新会话
             </button>
           )}
-          {gitRepo && (
+          {(gitRepo || (!copy && reviewSession?.cwd)) && (
             <button
               type="button"
               className="btn-ghost small with-icon"
-              title="Git Review：查看项目的改动并逐行批注，批注发回当前会话"
+              title={reviewSession?.cwd ? "Git Review：查看当前会话工作树的未提交改动" : "Git Review：查看项目工作区的未提交改动"}
               onClick={() => {
-                const target = session && !session.archivedAt ? session : latestMainSession(sessions, task.id);
-                openReview({ workspaceId: task.workspaceId, ...(target ? { sessionId: target.id } : {}) });
+                openReview({
+                  workspaceId: reviewSession?.workspaceId ?? task.workspaceId,
+                  ...(reviewSession ? { sessionId: reviewSession.id } : {}),
+                  ...(reviewSession?.cwd ? { worktreeSessionId: reviewSession.id } : {}),
+                });
               }}
               data-testid="task-review"
             >
@@ -451,6 +478,21 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
                 <path d="M6 7.5h4M8 5.5v4M6 11.5h4" />
               </svg>
               Review
+            </button>
+          )}
+          {!copy && (
+            <button
+              type="button"
+              className="btn-ghost small with-icon"
+              title={recentChanges ? "查看当前会话最近一轮记录的文件改动" : "当前会话没有已记录的文件改动"}
+              disabled={!recentChanges}
+              onClick={() => {
+                if (session && recentChanges) openReview({ workspaceId: session.workspaceId, sessionId: session.id, ...recentChanges });
+              }}
+              data-testid="task-recent-changes"
+            >
+              <IconFile />
+              最近改动
             </button>
           )}
           {!copy && (
@@ -491,7 +533,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             type="button"
             className="btn-ghost small sidebar-toggle"
             aria-pressed={sidebar}
-            title={sidebar ? "收起侧栏" : "显示侧栏：进度、批注、留言、清单"}
+            title={sidebar ? "收起侧栏" : "显示侧栏：环境、进度和批注"}
             onClick={() => setSidebar(!sidebar)}
             data-testid="sidebar-toggle"
           >
@@ -703,7 +745,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             />
           )}
           {session && <SessionBanners session={session} taskArchived={!!task.archivedAt} busy={busy} onRestore={() => void restore(session.id)} onReclaim={() => void reclaim(session.id)} />}
-          <FileLinks link={link} workspaceId={session?.workspaceId ?? task.workspaceId} sessionId={session?.id ?? null} onPreview={setPreview} onError={showError} {...(copy ? { remoteTask: task.id } : {})}>
+          <FileLinks link={link} workspaceId={session?.workspaceId ?? task.workspaceId} sessionId={session?.id ?? null} cwd={session?.cwd} onPreview={setPreview} onError={showError} {...(copy ? { remoteTask: task.id } : {})}>
             <Thread
               link={link}
               {...(copy ? { remote: { blocked: copy.blocked, revoked: copy.state === "revoked" } } : {})}
@@ -739,7 +781,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           </FileLinks>
           {starting && <StartingCover label={starting} />}
         </div>
-        {/* While open, the quick look takes the right column (files.css hides the annotation panel beside it). */}
+        {/* While open, the quick look takes the right column (files.css hides the sidebar beside it). */}
         {preview && (
           <FilePreview
             link={link}
@@ -753,36 +795,48 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           />
         )}
         {sidebar && (
-        <AnnotationPanel
-          onCollapse={() => setSidebar(false)}
-          header={
-            <>
-            <EnvPanel link={link} session={session ?? null} items={items} workspace={workspaces.find((w) => w.id === (session?.workspaceId ?? task.workspaceId))} branch={git.repo ? git.branch : null} machine={remote?.device?.name ?? null} />
-            <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />
-            <MailPanel
-              mail={mail}
-              sessions={sessions}
-              tasks={tasks}
-              current={session ?? null}
-              busy={busy}
-              onForward={(m, sessionId) => void forwardMail(m, sessionId)}
-              onDismiss={(m) => void dismissMail(m)}
-            />
-            <ChecklistPanel link={link} items={checklist} sessions={sessions} />
-            <NotesPanel link={link} taskId={task.id} notes={notes} sessions={sessions} />
-            </>
-          }
-          annotations={annotations}
-          busy={busy}
-          canSend={!readOnly}
-          onEdit={(id, note) => void run(() => call(link, "PATCH /api/annotations/:id", { id }, { note }))}
-          onDelete={(id) => void run(() => call(link, "DELETE /api/annotations/:id", { id }))}
-          onPin={(id, pinned) => void run(() => call(link, "PATCH /api/annotations/:id", { id }, { pinned }))}
-          onLocate={locate}
-          refs={annotationRefs}
-        />
+          <aside className="task-sidebar" aria-label="任务侧栏">
+            <div className="task-sidebar-head">
+              <div className="task-sidebar-views" role="group" aria-label="侧栏内容">
+                <button type="button" className="btn-ghost small" aria-pressed={sidebarView === "environment"} aria-controls="task-sidebar-environment" onClick={() => setSidebarView("environment")} data-testid="sidebar-environment">环境</button>
+                <button type="button" className="btn-ghost small" aria-pressed={sidebarView === "activity"} aria-controls="task-sidebar-activity" aria-description={sidebarView === "environment" && sideCount > 0 ? `${sideCount} 项待处理` : undefined} onClick={() => setSidebarView("activity")} data-testid="sidebar-activity">
+                  进度和批注
+                  {sidebarView === "environment" && sideCount > 0 && <span className="sidebar-count" aria-hidden="true">{sideCount}</span>}
+                </button>
+              </div>
+              <button type="button" className="session-list-fold" aria-label="折叠侧栏" aria-expanded={true} title="折叠侧栏" onClick={() => setSidebar(false)} data-testid="sidebar-collapse">›</button>
+            </div>
+            {/* Keep both views mounted so switching preserves edits and the environment's refresh state. */}
+            <div id="task-sidebar-environment" className="task-sidebar-body" hidden={sidebarView !== "environment"}>
+              <EnvPanel link={link} session={session} items={items} workspace={workspaces.find((w) => w.id === (session?.workspaceId ?? task.workspaceId))} branch={git.repo ? git.branch : null} machine={remote?.device?.name ?? null} />
+            </div>
+            <div id="task-sidebar-activity" className="task-sidebar-body" hidden={sidebarView !== "activity"}>
+              <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />
+              <MailPanel
+                mail={mail}
+                sessions={sessions}
+                tasks={tasks}
+                current={session}
+                busy={busy}
+                onForward={(m, sessionId) => void forwardMail(m, sessionId)}
+                onDismiss={(m) => void dismissMail(m)}
+              />
+              <ChecklistPanel link={link} items={checklist} sessions={sessions} />
+              <NotesPanel link={link} taskId={task.id} notes={notes} sessions={sessions} />
+              <AnnotationPanel
+                annotations={annotations}
+                busy={busy}
+                canSend={!readOnly}
+                onEdit={(id, note) => void run(() => call(link, "PATCH /api/annotations/:id", { id }, { note }))}
+                onDelete={(id) => void run(() => call(link, "DELETE /api/annotations/:id", { id }))}
+                onPin={(id, pinned) => void run(() => call(link, "PATCH /api/annotations/:id", { id }, { pinned }))}
+                onLocate={locate}
+                refs={annotationRefs}
+              />
+            </div>
+          </aside>
         )}
-        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：环境与上下文、进度、批注、留言、清单" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
+        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：环境、进度和批注" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
       </div>
       {early && (
         <ConfirmDialog

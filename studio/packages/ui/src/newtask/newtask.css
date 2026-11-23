@@ -74,10 +74,15 @@
 .choice-current { flex: none; color: var(--primary); font-size: 11px; }
 .choice-hint { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-family: var(--font-code); font-size: 11.5px; }
 .cbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-top: 1px solid var(--border); }
+.draft-composer .draft-worktree-btn { margin-left: -6px; }
+.draft-composer .draft-worktree-btn[aria-pressed="true"] { background: var(--tint); color: var(--primary); }
 .cbar.presets { padding-top: 6px; padding-bottom: 8px; }
 .draft-actions { flex-wrap: nowrap; }
 .draft-actions > button { flex: none; }
 .draft-templates { margin-left: auto; }
+.remote-draft-actions { flex-wrap: nowrap; }
+.remote-draft-actions .drawer-note { flex: 1; min-width: 0; }
+.remote-draft-actions .btn-primary { flex: none; }
 .foot-hints { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: var(--fs-cap); color: var(--text-faint); }
 .foot-hints > span { display: inline-flex; align-items: center; gap: 5px; }
 .foot-where { margin-left: auto; color: var(--text-dim); }
@@ -107,10 +112,9 @@
 .quick-scrim { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding-top: 96px; background: rgba(239, 237, 232, 0.66); }
 :root[data-theme="dark"] .quick-scrim { background: rgba(0, 0, 0, 0.45); }
 .quick { width: min(720px, calc(100vw - 40px)); border: 1px solid var(--border-strong); border-radius: var(--r-l); background: var(--panel); box-shadow: 0 14px 36px var(--shadow); overflow: hidden; }
-.quick-in { display: flex; align-items: center; gap: 10px; height: 58px; padding: 0 16px; border-bottom: 1px solid var(--border); }
-.quick-spark { color: var(--text-faint); font-size: 16px; }
-.quick-in input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 17px; }
-.quick-in input::placeholder { color: var(--text-faint); }
+.quick-in { display: flex; align-items: flex-start; gap: 10px; min-height: 58px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.quick-spark { padding-top: 17px; color: var(--text-faint); font-size: 16px; }
+.quick-in .resource-input { min-height: 57px; max-height: 146px; padding: 16px 0; font-size: 17px; line-height: 24px; }
 /* 2026-10-29: the topic and the project as two small pickers under the line. */
 .quick-picks { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px 0; }
 .quick-pick {
@@ -124,7 +128,7 @@
 .quick-pick .chip-tag { margin-left: 0; }
 .quick-error { display: block; padding: 8px 16px 0; }
 .quick-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel-raised); }
-.quick-hints { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-faint); }
+.quick-hints { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 11px; color: var(--text-faint); }
 .quick-hints > span, .quick-hints .link-btn { display: inline-flex; align-items: center; gap: 4px; }
 
 /* ---- 接续已有会话 (2026-11-05, plans/done/resume-cli-sessions.md) ----------------------------------------------------- */

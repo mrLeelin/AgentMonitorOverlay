@@ -122,6 +122,27 @@ async function taskOnA(a: Pair["a"], title = "远程任务") {
 }
 
 describe("remote tasks between two Hosts (step 2)", () => {
+  it("queues a follow-up on the owning Host without changing who started its current turn", async () => {
+    const { a, b, toB } = await paired();
+    const { task, session } = await taskOnA(a);
+    a.remote.grant(task.id, toB);
+    await until(() => b.store.getSession(session.id), Boolean, "B received the session");
+
+    await a.service.sessions.sendMessage(session.id, "[[shell: cmd /c echo first]]");
+    const approval = await until(() => items(a, session.id).find((i) => i.type === "approval" && i.state === "pending"), Boolean, "A's approval");
+    if (approval?.type !== "approval") throw new Error("approval disappeared");
+    expect(await b.service.sessions.sendMessage(session.id, "下一轮由 B 发出", [], [], { afterTurn: true })).toEqual({ mode: "queue" });
+    const queued = await until(() => items(b, session.id).find((i) => i.type === "user" && i.text === "下一轮由 B 发出"), Boolean, "held message on B");
+    expect(queued).toMatchObject({ delivery: "held", afterTurn: true });
+    expect(queued).not.toHaveProperty("queuedFromDevice");
+    expect(a.remote.grants.turnOf(session.id)).toBeNull();
+
+    await a.service.sessions.respondApproval(session.id, approval.approvalId, "accept");
+    await until(() => agentTexts(b, session.id), (texts) => texts.includes("FAKE: 下一轮由 B 发出"), "next turn replied");
+    expect(items(a, session.id).filter((i) => i.type === "turn")).toHaveLength(3);
+    expect(a.remote.grants.turnOf(session.id)).toEqual(toB);
+  });
+
   it("A grants a task: B's copy follows, B's messages, approvals (first come) and new sessions run on A; revoked, it stays readable", async () => {
     const { a, b, toB, aDevice } = await paired();
     const { task, session } = await taskOnA(a);

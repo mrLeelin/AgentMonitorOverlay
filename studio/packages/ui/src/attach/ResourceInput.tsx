@@ -2,6 +2,7 @@ import { useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type
 import "./resourceInput.css";
 import { replaceResources } from "./inlineResources.js";
 import { skillTokens } from "./skillTokens.js";
+import { enterKey, useNewlineShortcut } from "../chat/inputPrefs.js";
 
 export const RESOURCE_CLIPBOARD_MIME = "application/x-amo-composer-text";
 
@@ -117,6 +118,7 @@ function setSelection(root: HTMLElement, start: number, end: number) {
 
 /** Plain text offsets remain compatible with @, slash commands and template insertion. */
 export function ResourceInput(props: ResourceInputProps) {
+  const [newline] = useNewlineShortcut();
   const root = useRef<HTMLDivElement>(null);
   const latest = useRef(props);
   latest.current = props;
@@ -263,15 +265,33 @@ export function ResourceInput(props: ResourceInputProps) {
     latest.current.onSelect?.({ selectionStart: next.start });
   }
 
-  function insert(text: string) {
+  function insert(text: string, before?: Snapshot, replaceFrom?: number) {
     if (latest.current.disabled || !root.current) return;
-    const before = track();
-    history.current[historyAt.current] = { ...before };
-    const nextText = before.text.slice(0, before.start) + text + before.text.slice(before.end);
-    const next = { text: nextText, start: before.start + text.length, end: before.start + text.length };
+    const selection = before ?? track();
+    const from = replaceFrom ?? selection.start;
+    history.current[historyAt.current] = { ...selection };
+    const nextText = selection.text.slice(0, from) + text + selection.text.slice(selection.end);
+    const next = { text: nextText, start: from + text.length, end: from + text.length };
     root.current.focus();
     draw(nextText, next, true);
     change(next);
+  }
+
+  function insertLineBreak() {
+    const before = track();
+    const { text, start, end } = before;
+    if (start === 0 || start !== end || (end < text.length && text[end] !== "\n")) {
+      insert("\n", before);
+      return;
+    }
+    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+    const item = /^([ \t]*)(\d{1,9})\.[ \t]+(.*)$/.exec(text.slice(lineStart, start));
+    if (!item) insert("\n", before);
+    else if (!item[3]!.trim()) insert("", before, lineStart);
+    else {
+      const number = item[2]!;
+      insert(`\n${item[1]}${String(Number(number) + 1).padStart(number.length, "0")}. `, before);
+    }
   }
 
   function undo(direction: number) {
@@ -337,7 +357,8 @@ export function ResourceInput(props: ResourceInputProps) {
   function keyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (composing.current || event.nativeEvent.isComposing) return;
     const skill = event.target instanceof HTMLElement && event.target !== root.current ? event.target.dataset.inputSkill : undefined;
-    if (skill && (event.key === "Enter" || event.key === " ")) {
+    const chord = enterKey(event);
+    if (skill && (chord === "plain" || event.key === " ")) {
       event.preventDefault();
       props.onOpenSkill?.(skill);
       return;
@@ -351,7 +372,11 @@ export function ResourceInput(props: ResourceInputProps) {
     }
     props.onKeyDown?.(event);
     if (event.defaultPrevented || props.disabled) return;
-    if (event.key === "Enter") { event.preventDefault(); insert("\n"); return; }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (chord === "plain" || chord === newline) insertLineBreak();
+      return;
+    }
     if (event.key !== "Backspace" && event.key !== "Delete") return;
     const selected = track();
     if (selected.start !== selected.end) {

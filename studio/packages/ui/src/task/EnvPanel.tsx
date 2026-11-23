@@ -100,12 +100,14 @@ export function EnvPanel({ link, session, items, workspace, branch, machine }: E
 }
 
 function EnvFacts({ session, workspace, branch, machine }: { session: Session | null; workspace: Workspace | undefined; branch: string | null; machine: string | null }) {
+  const cwd = session?.cwd && session.cwd !== workspace?.path ? session.cwd : null;
   return (
     <div className="env-block" data-testid="env-facts">
       <div className="env-sub">环境</div>
       {machine && <EnvRow icon="▭" label="电脑" value={machine} />}
       {workspace && <EnvRow icon="▤" label="项目" value={workspace.name} hint={workspace.path} sub={workspace.path} />}
       {branch && <EnvRow icon="⑂" label="分支" value={branch} />}
+      {cwd && <EnvRow icon="↳" label="会话目录" value={baseName(cwd)} hint={cwd} sub={cwd} />}
       {session?.runtime === "remote" && <div className="env-note">这个会话在另一台电脑上运行。</div>}
     </div>
   );

@@ -15,19 +15,20 @@ const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeS
 const FIRST_ROWS = 100;
 
 /** The project's history, read again; the same object when nothing changed (the list keeps its place). */
-export function readHistory(link: HostLink, workspaceId: string): Promise<GitLog> {
-  const pending = reading.get(workspaceId);
+export function readHistory(link: HostLink, workspaceId: string, worktree?: string): Promise<GitLog> {
+  const key = worktree ?? workspaceId;
+  const pending = reading.get(key);
   if (pending) return pending;
-  const read = call(link, "GET /api/workspaces/:id/git/log", { id: workspaceId })
+  const read = call(link, "GET /api/workspaces/:id/git/log", { id: workspaceId }, undefined, worktree ? { worktree } : undefined)
     .then((l) => {
-      const had = logs.get(workspaceId);
+      const had = logs.get(key);
       const same = had && had.head === l.head && had.branch === l.branch && had.commits.length === l.commits.length;
       const kept = same ? had : l;
-      logs.set(workspaceId, kept);
+      logs.set(key, kept);
       return kept;
     })
-    .finally(() => reading.delete(workspaceId));
-  reading.set(workspaceId, read);
+    .finally(() => reading.delete(key));
+  reading.set(key, read);
   return read;
 }
 
@@ -42,6 +43,7 @@ export function readHistory(link: HostLink, workspaceId: string): Promise<GitLog
 export function CommitPicker({
   link,
   workspaceId,
+  worktree,
   current,
   onPick,
   onPickNew,
@@ -50,6 +52,7 @@ export function CommitPicker({
 }: {
   link: HostLink;
   workspaceId: string;
+  worktree?: string;
   current?: string | null;
   onPick(sha: string): void;
   /** Right click: in a new window. */
@@ -58,7 +61,8 @@ export function CommitPicker({
   keys?: boolean;
   onClose(): void;
 }) {
-  const [log, setLog] = useState<GitLog | null>(() => logs.get(workspaceId) ?? null);
+  const key = worktree ?? workspaceId;
+  const [log, setLog] = useState<GitLog | null>(() => logs.get(key) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
@@ -69,18 +73,18 @@ export function CommitPicker({
 
   useEffect(() => {
     let live = true;
-    readHistory(link, workspaceId)
+    readHistory(link, workspaceId, worktree)
       .then((l) => live && setLog(l))
       .catch((err: unknown) => {
         if (!live) return;
-        logs.delete(workspaceId);
+        logs.delete(key);
         setLog(null);
         setError(err instanceof HostApiError ? err.message : String(err));
       });
     return () => {
       live = false;
     };
-  }, [link, workspaceId]);
+  }, [link, workspaceId, worktree, key]);
 
   const words = useMemo(() => queryWords(query), [query]);
   const commits = useMemo(() => filterCommits(log?.commits ?? [], query), [log, query]);

@@ -9,7 +9,8 @@ import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { SessionInbox } from "./inbox.js";
 import { readSetups, rememberSetups } from "./setups.js";
 import { newId } from "../../store/store.js";
-import type { ContextBreakdown, SessionContextUsage, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import type { ContextBreakdown, SessionContextUsage, SessionForkOptions, SessionForkRequest, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
+import { createForkWorktree, forkGitOptions } from "./fork-worktree.js";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -47,7 +48,6 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const seen = this.contextSeen.get(sessionId) ?? null;
     return { sessionId, breakdown: seen, live: false, ...(seen ? {} : { unavailable: "会话进程没开着，发一条消息后再看分项。" }) };
   }
-
   getGoal(sessionId: Id): Promise<SessionGoalState> {
     this.requireSession(sessionId);
     return this.wrap(() => this.runtime.getGoal?.(sessionId) ?? Promise.resolve({ goal: null, unavailable: "这个 Agent 尚未接入原生 Goal。" }));
@@ -130,7 +130,9 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    * canvas, became a 主控…), a short note of what changed goes last (composeRoleUpdate).
    */
   async sendMessage(sessionId: Id, text: string, attachments: readonly Id[] = [], annotations: readonly Id[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
-    this.f.tasks.leadPromotion.assertAvailable(this.requireSession(sessionId).taskId);
+    const session = this.requireSession(sessionId);
+    this.f.tasks.leadPromotion.assertAvailable(session.taskId);
+    if (options.afterTurn && session.writer === "terminal-handoff") throw new HostError("read_only", "会话已交给终端，工作台暂时只读。");
     const referenced = annotations.length ? this.f.review.referencedAnnotations(sessionId, annotations) : null;
     if (referenced) {
       const result = await this.sendMessage(sessionId, composeAnnotationRefs(text ?? "", referenced.refs), attachments, [], options);
@@ -148,7 +150,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     slow.unref?.();
     let result: { mode: SendMode };
     try {
-      result = await this.wrap(() => this.runtime.sendMessage(sessionId, composeRoleUpdate(text ?? "", update.lines), images, options));
+      result = await this.wrap(() => this.runtime.sendMessage(sessionId, composeRoleUpdate(text ?? "", update.lines), images, { ...options, skillText: options.skillText ?? text }));
     } catch (err) {
       this.log(`${sessionId} (${runtime}): a message from the person failed after ${Date.now() - started} ms: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
@@ -172,7 +174,14 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       if (row.delivery === "unsent") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "held" }) });
     }
     // A new one comes through sendMessage, the person's: marked so (2026-11-17), it counts as theirs, not an agent's.
-    await this.inbox.put(sessionId, text, undefined, itemId, { purpose: options.purpose ?? "work", images: images.map((image) => ({ id: image.id, path: image.path })), ...(options.deferredItemId ? {} : { fromPerson: true }) });
+    await this.inbox.put(sessionId, text, undefined, itemId, {
+      purpose: options.purpose ?? "work",
+      images: images.map((image) => ({ id: image.id, path: image.path })),
+      ...(options.deferredItemId ? {} : {
+        fromPerson: true, afterTurn: options.afterTurn, queuedFromDevice: options.queuedFromDevice,
+        queuedSkillText: options.skillText?.includes("$") || options.skillText?.startsWith("/") ? options.skillText : undefined,
+      }),
+    });
     if (options.now) {
       if (!this.runtime.resend) throw new HostError("bad_request", "此运行时不支持立即发送。");
       await this.wrap(() => this.runtime.resend!(sessionId, itemId, images, { now: true }));
@@ -276,11 +285,48 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     return this.wrap(() => this.runtime.setWakeChoice!(sessionId, choice));
   }
 
-  async fork(sessionId: Id, profileId?: Id): Promise<Session> {
+  async forkOptions(sessionId: Id): Promise<SessionForkOptions> {
+    const s = this.requireTurnForkSession(sessionId);
+    const cwd = s.cwd ?? this.store.getWorkspace(s.workspaceId)?.path;
+    return { git: cwd && !this.isLeadSession(s) ? await this.wrap(() => forkGitOptions(cwd)) : null };
+  }
+
+  async fork(sessionId: Id, profileId?: Id, target?: Pick<SessionForkRequest, "newWorktree" | "branch"> & { turnItemId: Id }): Promise<Session> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be forked");
     if (profileId) this.requireProfile(profileId);
-    return this.f.tasks.trackSessionStart(s.taskId, () => this.wrap(() => this.runtime.fork(sessionId, profileId)));
+    if (!target) return this.f.tasks.trackSessionStart(s.taskId, () => this.wrap(() => this.runtime.fork(sessionId, profileId)));
+    this.requireTurnForkSession(sessionId);
+    const turn = this.store.getItem(target.turnItemId);
+    if (turn?.sessionId !== sessionId || turn.type !== "turn" || turn.state !== "completed") {
+      throw new HostError("conflict", "找不到这轮已完成的回复，请刷新后重试。");
+    }
+    if (target.newWorktree && this.isLeadSession(s)) throw new HostError("read_only", "主控会话只能在当前目录创建会话分支。");
+    return this.f.tasks.trackSessionStart(s.taskId, () => this.wrap(async () => {
+      const projectDir = this.store.getWorkspace(s.workspaceId)?.path;
+      if (!target.newWorktree) return this.runtime.fork(sessionId, profileId, { lastTurnId: turn.turnId });
+      if (!projectDir) throw new HostError("conflict", "找不到会话的项目目录。");
+      const worktree = await createForkWorktree(s.cwd ?? projectDir, projectDir, target.branch);
+      try {
+        this.requireTurnForkSession(sessionId);
+        return await this.runtime.fork(sessionId, profileId, { lastTurnId: turn.turnId, cwd: worktree.cwd });
+      } catch (err) {
+        await worktree.remove().catch((cleanupError: unknown) => this.host.log(`could not remove failed fork worktree ${worktree.cwd}: ${String(cleanupError)}`));
+        throw err;
+      }
+    }));
+  }
+
+  private requireTurnForkSession(sessionId: Id): Session {
+    const s = this.requireSession(sessionId);
+    if (s.runtime !== "codex" || s.kind === "sub" || !s.runtimeRef || s.archivedAt || s.writer === "terminal-handoff") {
+      throw new HostError("read_only", "这个会话无法从指定回复创建分支。");
+    }
+    return s;
+  }
+
+  private isLeadSession(s: Session): boolean {
+    return !!s.taskId && this.store.getTask(s.taskId)?.lead === true;
   }
 
   async archive(sessionId: Id): Promise<Session[]> {
@@ -339,7 +385,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       const ws = this.store.getWorkspace(s.workspaceId);
       this.options.launcher.launch({
         command,
-        cwd: ws?.path ?? process.cwd(),
+        cwd: s.cwd ?? ws?.path ?? process.cwd(),
         env: { [TERMINAL_TOKEN_ENV]: info.token },
         title: `AMO Studio · ${s.title || "会话"}`,
       });
@@ -614,7 +660,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     const choices = await this.f.config.choices(profileId).catch(() => null);
     if (!choices?.models.length) return undefined;
     const model = chosen ?? fillDefaults({}, choices, readModelPrefs(this.store)[profileId]).model;
-    return choices.models.find((m) => m.id === model) ?? choices.models.find((m) => m.isDefault) ?? choices.models[0];
+    return choices.models.find((m) => m.id === model) ?? choices.hiddenModels?.find((m) => m.id === model) ?? choices.models.find((m) => m.isDefault) ?? choices.models[0];
   }
 
   /** Keeps 子会话设定 sent with a message to this session (POST /api/sessions/:id/messages, a task's first session). */
@@ -625,10 +671,8 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   }
 
   async effortFor(profileId: Id, chosen: string | undefined, want: string): Promise<string> {
-    const choices = await this.f.config.choices(profileId).catch(() => null);
-    if (!choices?.models.length) return want;
-    const model = chosen ?? fillDefaults({}, choices, readModelPrefs(this.store)[profileId]).model;
-    const runs = choices.models.find((m) => m.id === model) ?? choices.models.find((m) => m.isDefault) ?? choices.models[0]!;
+    const runs = await this.modelOption(profileId, chosen);
+    if (!runs) return want;
     const name = `${this.requireProfile(profileId).label}（${runs.label}）`;
     if (!runs.efforts.length) throw new HostError("bad_request", `${name} 没有思考强度可选，去掉 effort 再开`);
     const hit = runs.efforts.find((e) => e.toLowerCase() === want.toLowerCase());

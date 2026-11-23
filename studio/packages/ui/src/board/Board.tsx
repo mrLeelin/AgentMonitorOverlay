@@ -326,8 +326,8 @@ function TaskCard({
       )}
       <span className="card-title">
         {task.lead && (
-          <span className="lead-badge" title="主控：协调这个专题（或项目）的任务" data-testid="lead-badge">
-            主控
+          <span className={`lead-badge${!task.managerTaskId ? " root-lead-badge" : ""}`} title={!task.managerTaskId ? "总主控：管理树的最顶层主控，汇总下辖任务的交付" : "主控：管理明确归属的下辖任务"} data-testid="lead-badge">
+            {task.managerTaskId ? "主控" : "总主控"}
           </span>
         )}
         {duty.length > 0 && (

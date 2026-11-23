@@ -19,6 +19,7 @@ export function OptionsPicker({
 }) {
   if (!choices) return <span className="options-loading">正在读取可选模型…</span>;
   const model = activeModel(choices, value);
+  const hidden = choices.hiddenModels?.find((m) => m.id === value.model);
   const fallback = defaultModel(choices);
   const efforts = model?.efforts ?? [];
   const permissionDefault = choices.permissions.find((p) => p.id === choices.defaultPermission);
@@ -42,6 +43,7 @@ export function OptionsPicker({
         型号
         <select value={value.model ?? ""} disabled={disabled} onChange={(e) => set({ model: e.target.value })}>
           <option value="">默认{fallback ? `（${fallback.label}）` : ""}</option>
+          {hidden && <option value={hidden.id} disabled>{hidden.label}（已隐藏）</option>}
           {choices.models.map((m) => (
             <option key={m.id} value={m.id} title={m.description}>
               {m.label}

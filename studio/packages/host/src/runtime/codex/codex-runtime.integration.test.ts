@@ -217,6 +217,26 @@ describe("Codex runtime against the real app-server", () => {
     expect(items(fork.id).some((i) => i.type === "notice")).toBe(false);
   }, 60_000);
 
+  it("forks through a historical reply and persists the new working directory", async () => {
+    const task = host.store.createTask({ title: "historical fork", workspaceId: workspace.id });
+    const source = await host.runtime.startSession({ taskId: task.id, topicId: null, profileId: "codex-mock", workspace, text: "before fork" });
+    await until(() => lastAgent(source.id)?.markdown === "MOCK: before fork" && settled(source.id)(), "first reply");
+    const turn = items(source.id).find((i) => i.type === "turn");
+    if (!turn) throw new Error("missing source turn");
+    await host.runtime.sendMessage(source.id, "after fork point");
+    await until(() => lastAgent(source.id)?.markdown === "MOCK: after fork point" && settled(source.id)(), "second reply");
+    const cwd = join(root, "isolated checkout");
+    mkdirSync(cwd);
+    const fork = await host.runtime.fork(source.id, undefined, { lastTurnId: turn.turnId, cwd });
+    expect(host.store.getSession(fork.id)).toMatchObject({ parentId: source.id, cwd, workspaceId: workspace.id });
+    const { client } = await host.manager.ensure(source.profileId);
+    const history = await client.request("thread/turns/list", { threadId: fork.runtimeRef!, sortDirection: "desc", limit: 10 });
+    expect(history.data.map((t) => t.id)).toEqual([turn.turnId]);
+    await host.runtime.sendMessage(fork.id, "continue in the checkout");
+    await until(() => lastAgent(fork.id)?.markdown === "MOCK: continue in the checkout" && settled(fork.id)(), "fork reply");
+    expect(lastAgent(source.id)?.markdown).toBe("MOCK: after fork point");
+  }, 60_000);
+
   it("recovers after the app-server crashes", async () => {
     const ready = new Promise((r) => host.manager.once("ready", r));
     host.manager.killForTest("codex-mock");

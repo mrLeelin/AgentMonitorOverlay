@@ -4,6 +4,7 @@ import { call, type HostLink } from "../host/client.js";
 import { mentionAt, withoutMention } from "../newtask/draft.js";
 import { pinnedFirst, usePins } from "../lib/pins.js";
 import { useFileMarks } from "../marks/useFileMarks.js";
+import { enterKey } from "../chat/inputPrefs.js";
 import type { FileRefItem } from "./refs.js";
 import { fileToken } from "./inlineResources.js";
 import { mentionGroups, mentionSpans, QUICK_COMMIT, subSessionName, subSessionSetups, withMentionRefs, type MentionGroup, type MentionOption, type MentionPick, type SubSessionSpec } from "./mentions.js";
@@ -234,7 +235,7 @@ export function useComposerMentions(input: {
         setHighlight((h) => (Math.min(h, flat.length - 1) + (e.key === "ArrowDown" ? 1 : flat.length - 1)) % flat.length);
         return true;
       }
-      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+      if (enterKey(e) === "plain" || e.key === "Tab") {
         e.preventDefault();
         choose(flat[hl]!);
         return true;

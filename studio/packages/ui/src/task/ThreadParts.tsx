@@ -6,22 +6,16 @@ import { annotationNumber, type AnnotationRefs } from "../review/annotationRefs.
 // Pieces of the conversation and its composer (stage 16 split out of Thread.tsx).
 
 /** What the composer says in its empty box: why it is read-only, or how a message goes now. */
-export function composerPlaceholder(s: { readOnly: boolean; claudeSub: boolean; isRevising: boolean; planReview: boolean; generating: boolean; queues: boolean; waitsForTurn?: boolean }): string {
+export function composerPlaceholder(s: { readOnly: boolean; claudeSub: boolean; isRevising: boolean; planReview: boolean; sendKeys: string; newlineKey: string }): string {
   return s.readOnly
     ? s.claudeSub
       ? "子 agent 不能单独接收消息，请在父会话里继续。"
       : "会话已交给终端，工作台暂时只读。"
     : s.isRevising
-      ? "写下要修改的地方，回车发给 Claude（计划会按你的意见重写）"
+      ? `写下要修改的地方，${s.sendKeys}`
       : s.planReview
         ? "计划在等你审阅：可以先在这里写下意见，再点上面的「要修改」"
-        : s.generating
-          ? s.waitsForTurn
-            ? "回复生成中，发出的内容会在这一轮结束后发给它"
-            : s.queues
-              ? "回复生成中，发出的内容会在下一次工具调用后或本轮结束后被读到"
-              : "回复生成中，输入的内容会作为插话发出"
-          : "继续推进这个会话，回车发送，Shift+回车换行，输入 / 看命令";
+        : `继续推进这个会话，${s.sendKeys}，${s.newlineKey} 换行，输入 / 看命令`;
 }
 
 /** The 批注N tags of the annotations the next message refers to. */

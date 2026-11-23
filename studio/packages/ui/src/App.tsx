@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { OPEN_SETTINGS_EVENT } from "./mcp/shared.js";
 import type { Scope } from "./board/Board.js";
 import { ScopeNav } from "./board/ScopeNav.js";
+import { canvasTopicFor } from "./canvas/topic.js";
 import { useHostState } from "./host/useHostState.js";
 import { QuickStart } from "./newtask/QuickStart.js";
 import { needsPerson, taskSessions, taskStatus } from "./lib/status.js";
@@ -14,7 +15,7 @@ import { useTodos } from "./planning/TodoTab.js";
 import { SettingsDialog, type SettingsPage } from "./settings/SettingsDialog.js";
 import { useSettings } from "./settings/useSettings.js";
 import { DevUiBar } from "./settings/DevUi.js";
-import { setQuickModels } from "./lib/recents.js";
+import { setModelPickerSettings } from "./lib/recents.js";
 import { TopBar, useFocusToggle, ViewBar } from "./shell/TopBar.js";
 import { withOrigin, type View, type ViewContext, type ViewDef } from "./shell/views.js";
 import { readPlace, savePlace } from "./shell/lastPlace.js";
@@ -255,8 +256,8 @@ export function App() {
 
   const { state, link, live } = host;
   const disabled = settings?.disabledFeatures ?? [];
-  // 设置 → 模型 → 快速选择, for every model row of this window.
-  setQuickModels(settings?.quickModels);
+  // 设置 → 模型, for the model rows and their keyboard shortcuts.
+  setModelPickerSettings(settings);
   // 测试功能 (2026-11-01): their tabs and pages are there only while turned on; until the settings arrive, none are.
   const experimental = settings?.experimentalFeatures ?? [];
   const views = VIEWS.filter((d) => featureOn(disabled, d.feature) && experimentalOn(experimental, d.experimental));
@@ -283,8 +284,7 @@ export function App() {
   const shown: View = views.some((d) => d.kind === view.kind) ? view : { kind: "board" };
   const def = views.find((d) => d.kind === shown.kind) as ViewDef<typeof shown.kind> | undefined;
   // "+ 新任务" over a canvas works as the canvas's own: the task goes into that topic and "←" returns to the canvas.
-  const liveTopics = state.topics.filter((t) => !t.archivedAt);
-  const canvasTopic = shown.kind === "canvas" ? ((scope.kind === "topic" ? liveTopics.find((t) => t.id === scope.id) : undefined) ?? liveTopics[0]) : undefined;
+  const canvasTopic = shown.kind === "canvas" ? canvasTopicFor(scope, state) : undefined;
   // 搜索: a task, a task's session, or a topic's own session (on that topic's canvas).
   const openHit = (hit: SearchHit) => {
     if (hit.kind === "task") setView({ kind: "task", taskId: hit.id, nav: Date.now() });

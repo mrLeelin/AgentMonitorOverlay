@@ -88,6 +88,7 @@ export function SessionHead({
         {model}
       </span>
       <CopyId id={session.id} label="会话" className="thread-id" testId="session-id" />
+      {session.cwd && !remote && <span className="thread-model" title={session.cwd} data-testid="session-worktree">独立工作目录</span>}
       {/* 仅工作台 is the usual case and says nothing; the other writers matter. */}
       {writer && !session.archivedAt && session.writer !== "workbench" && (
         <span className="writer" style={{ color: writer.color }} data-testid="writer">

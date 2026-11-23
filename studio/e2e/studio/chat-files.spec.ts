@@ -115,7 +115,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   await expect(viewer.locator(".gr-line.marked")).toHaveAttribute("data-line", "new:4");
   await expect(viewer.locator(".gr-line.marked")).toContainText("def fetch(url):");
   await expect(page.getByTestId("file-preview")).toHaveCount(0);
-  await expect(page.getByRole("complementary", { name: "批注" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "任务侧栏" })).toBeVisible();
   await screenshot(app, "stage-13", "S13-A-viewer-code", viewer, "viewer");
 
   // VS Code at the line (when this machine has it), Explorer with the file selected; 标记 marks it.
@@ -186,7 +186,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   const preview = page.getByTestId("file-preview");
   await expect(preview.getByTestId("file-preview-name")).toHaveText("README.md:2");
   await expect(preview.locator(".fp-row.marked")).toHaveAttribute("data-line", "2");
-  await expect(page.getByRole("complementary", { name: "批注" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "任务侧栏" })).toHaveCount(0);
   await preview.getByRole("button", { name: "渲染" }).click();
   await expect(preview.locator(".fp-md strong")).toHaveText("失败时重试");
   // 标记 from the quick look: marks the file at the line; then "已标记" (accent).
@@ -198,7 +198,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   // Esc closes it; the right column comes back.
   await page.keyboard.press("Escape");
   await expect(preview).toHaveCount(0);
-  await expect(page.getByRole("complementary", { name: "批注" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "任务侧栏" })).toBeVisible();
 
   // The session bar's ⋯ (2026-11-03, 问题 #15: out of the bar): the working directory in Explorer (and VS Code).
   await page.getByTestId("session-more").click();
@@ -220,7 +220,7 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   git(dir, "commit", "-q", "-m", "base");
   writeFileSync(join(dir, "aaa-other.txt"), "after\n");
   const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
-  await studio.api("POST", "/api/tasks", {
+  const { task, session } = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", {
     title: "导入重试",
     workspaceId: ws.id,
     firstSession: { profileId: "codex-mock", text: `[[demo]] 给导入器加上重试\n\n引用文件：\n- ${join(dir, "notes.md")}` },
@@ -237,6 +237,10 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await expect(row).toContainText(DEMO_FILE);
   await expect(row).toContainText("+12");
   await expect(changes.getByTestId("turn-changes-review")).toHaveText("在 Review 里看");
+  const recent = page.getByTestId("task-recent-changes");
+  await expect(recent).toBeEnabled();
+  await expect(page.getByTestId("task-review").locator("xpath=following-sibling::button[1]")).toHaveText("最近改动");
+  await screenshot(app, "studio", "task-recent-changes-light", page);
 
   // The turn's diff in the quick look; a click on 打开文件 shows the file as it is now (patched).
   await row.click();
@@ -300,7 +304,8 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
   await review.getByRole("button", { name: "单栏", exact: true }).click();
   await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
-  // The card header and R both reopen the same turn window.
+  // The task header, card header and R all reopen the same recorded turn window.
+  await recent.click();
   await changes.getByTestId("turn-changes-review").click();
   await row.click({ button: "right" });
   await page.keyboard.press("r");
@@ -314,11 +319,28 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await expect(review.getByTestId("turn-review")).toBeVisible();
 
   // The dark theme, with the turn's diff open again.
-  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("dialog", { name: "设置" }).getByRole("radio", { name: "深色" }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
+  await screenshot(app, "studio", "task-recent-changes-dark", page);
   await row.click();
   await expect(diff).toBeVisible();
   await screenshot(app, "stage-12", "S12-C-turn-changes-dark", page);
+
+  // A later reply without edits leaves the recorded turn available from the header alone.
+  await studio.api("POST", `/api/sessions/${session.id}/messages`, { text: "只解释，不改文件" });
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: 只解释，不改文件");
+  await expect(page.getByTestId("turn").last().getByTestId("turn-changes")).toHaveCount(0);
+  const previousReviewUrl = review.url();
+  await recent.click();
+  await expect.poll(() => review.url()).not.toBe(previousReviewUrl);
+  await expect(review.getByTestId("diff-lines")).toContainText("retries=3");
+  expect(app.windows().filter((w) => w.url().includes("turnItem="))).toHaveLength(1);
+
+  await studio.api("POST", `/api/tasks/${task.id}/sessions`, { profileId: "codex-mock", text: "另一个会话" });
+  await page.getByTestId("session-row").filter({ hasText: "另一个会话" }).click();
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: 另一个会话");
+  await expect(recent).toBeVisible();
+  await expect(recent).toBeDisabled();
 });

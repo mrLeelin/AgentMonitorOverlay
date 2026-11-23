@@ -82,8 +82,8 @@ export function TaskCard({ node, task, sessions, profiles, choices, workspaces, 
           </span>
         )}
         {task.lead && !archived && (
-          <span className="lead-badge" title="主控：管理明确归属的下辖任务" data-testid="lead-badge">
-            主控
+          <span className={`lead-badge${!task.managerTaskId ? " root-lead-badge" : ""}`} title={!task.managerTaskId ? "总主控：管理树的最顶层主控，汇总下辖任务的交付" : "主控：管理明确归属的下辖任务"} data-testid="lead-badge">
+            {task.managerTaskId ? "主控" : "总主控"}
           </span>
         )}
         {task.title || "未命名任务"}

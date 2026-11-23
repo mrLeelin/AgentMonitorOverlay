@@ -235,6 +235,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* 主控 (stage 16): on the task's board card, canvas card and task page. */
 .lead-badge { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: var(--r-btn); background: var(--primary); color: var(--on-primary); font-family: var(--font-ui, inherit); font-weight: 600; font-size: 11px; line-height: 17px; vertical-align: 2px; letter-spacing: 0.05em; }
+.root-lead-badge { background: #32a5ff; color: #071a2b; }
 h1 .lead-badge { margin: 0 0 0 10px; font-size: 12px; line-height: 20px; vertical-align: 4px; }
 
 /* 正在启动 (lib/StartingCover.tsx): over the part of the page a session starts in; clear at first, dimmed with a spinner

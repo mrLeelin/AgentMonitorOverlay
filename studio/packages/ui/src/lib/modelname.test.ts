@@ -18,4 +18,13 @@ describe("model names", () => {
     expect(sessionModelName(choices, { model: "retired-model" })).toBe("retired-model");
     expect(activeModel(choices, { model: "retired-model" })).toBeUndefined();
   });
+
+  it("keeps an existing session's model name when its model is hidden from new choices", () => {
+    const old = { id: "a", label: "Sol 6.1", efforts: ["high"], isDefault: true };
+    const replacement = { id: "b", label: "Luna", efforts: [], isDefault: true };
+    const choices = { profileId: "p", permissions: [], defaultPermission: "ask", source: "cli" as const, models: [replacement], hiddenModels: [old] };
+    expect(sessionModelName(choices, { model: "a" })).toBe("Sol 6.1");
+    expect(sessionModelName(choices, {})).toBe("Sol 6.1");
+    expect(activeModel(choices, {})).toBe(replacement);
+  });
 });

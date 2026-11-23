@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ModelProfile, Session, SessionOptions, SubsessionSetup, Task } from "@amo-studio/protocol";
+import type { HostRoutes, ModelProfile, Session, SessionOptions, SubsessionSetup, Task } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { defaultProfile, rememberProfile, rememberWorkspace, repick } from "../lib/profiles.js";
-import { rememberPick, type ModelPick } from "../lib/recents.js";
+import { isHiddenPick, rememberPick, type ModelPick } from "../lib/recents.js";
 import { subSessionSetups, withMentionRefs, type MentionPick, type SubSessionSpec } from "../attach/mentions.js";
 import { readStoredJson, writeStoredJson } from "../lib/stored.js";
 import { activateDraftGoal, draftGoalInput, readPendingGoalStart, savePendingGoalStart, type DraftGoal } from "./goalStart.js";
@@ -32,6 +32,8 @@ export interface TaskDraft {
 }
 
 const KEY = "amo.taskDraft";
+
+export type WorktreeChoice = NonNullable<HostRoutes["POST /api/tasks"]["req"]["worktree"]>;
 
 export function emptyDraft(profiles: readonly ModelProfile[]): TaskDraft {
   return { title: "", text: "", projectId: null, topicId: null, pick: { profileId: defaultProfile(profiles)?.id ?? "", model: null }, options: {} };
@@ -103,15 +105,16 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
   }, [profiles]);
   // A model hidden in 设置 → 模型 after the draft took it gives way to the default (问题 #14); so does an empty pick
   // once the profiles have loaded.
+  const modelHidden = isHiddenPick(draft.pick.profileId, draft.pick.model);
   useEffect(() => {
-    const next = repick(profiles, draft.pick.profileId);
+    const next = repick(profiles, draft.pick.profileId) ?? (modelHidden ? draft.pick.profileId : null);
     if (next === null) return;
     setDraft((cur) => {
       const fixed = { ...cur, pick: { profileId: next, model: null }, options: {} };
       save(fixed);
       return fixed;
     });
-  }, [profiles, draft.pick.profileId]);
+  }, [profiles, draft.pick.profileId, modelHidden]);
   const update = useCallback((patch: Partial<TaskDraft>) => {
     setDraft((cur) => {
       const next = { ...cur, ...patch };
@@ -137,7 +140,7 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
  * with the first message (not when only filing).
  */
 /** `resumeFrom` (接续已有会话, 2026-11-05): the outside Claude session the first session goes on from; the text may be empty then. */
-export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[], goalRuntime?: ModelProfile["runtime"]): Promise<{ task: Task; session: Session | null }> {
+export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[], goalRuntime?: ModelProfile["runtime"], worktree?: WorktreeChoice): Promise<{ task: Task; session: Session | null }> {
   if (readPendingGoalStart()) throw new Error("已有一次 Goal 开启尚未完成，请回到新建任务页重试或进入已建会话。");
   if (draft.lead && resumeFrom) throw new Error("接续已有会话不能作为主控带队，请新建主控会话。");
   const text = draftText(draft);
@@ -155,6 +158,7 @@ export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolea
     // The native setter may fail after the task exists. Keep the objective visible on that task too.
     ...(goal ? { description: text } : {}),
     ...(draft.lead ? { lead: true } : {}),
+    ...(worktree ? { worktree } : {}),
     // 放进待办 (2026-11-05): the sentence is kept on the task for its first session; it used to be cut to the title.
     ...(file
       ? { firstMessage: text }

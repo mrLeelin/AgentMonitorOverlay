@@ -244,7 +244,7 @@ test("the 详情框: beside the selected card, follows a pan, closed by Esc, × 
   await page.keyboard.press("Escape");
   await expect(detail).toHaveCount(0);
 
-  // Dragging a card hides its box until it is let go.
+  // Dragging moves an unselected card without opening details; only a later click opens its box.
   const s = (await card(page, "n-split").boundingBox())!;
   await page.mouse.move(s.x + 40, s.y + 20);
   await page.mouse.down();
@@ -252,6 +252,8 @@ test("the 详情框: beside the selected card, follows a pan, closed by Esc, × 
   await expect(detail).toBeHidden();
   await page.mouse.move(s.x + 120, s.y + 100, { steps: 4 });
   await page.mouse.up();
+  await expect(detail).toHaveCount(0);
+  await card(page, "n-split").click();
   await besideCard(page, card(page, "n-split"));
 
   // 从画布上拿掉: only the card goes; the task stays.

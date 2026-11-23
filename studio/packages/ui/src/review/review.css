@@ -1,5 +1,5 @@
 /* Annotation panel (S2-03) */
-.anno-panel { flex: 0 0 300px; max-width: 320px; border-left: 1px solid var(--border); padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; background: var(--panel-raised); }
+.anno-list { display: flex; flex-direction: column; gap: 14px; }
 .anno-head { display: flex; align-items: baseline; gap: 8px; }
 .anno-title { font-weight: 600; font-size: var(--fs-sm); }
 .anno-draft { padding: 10px 12px; border-radius: 8px; background: var(--tint); border: 1px solid var(--selection); display: flex; flex-direction: column; gap: 8px; }

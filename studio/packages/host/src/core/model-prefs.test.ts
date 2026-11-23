@@ -42,4 +42,27 @@ describe("model prefs", () => {
     expect(fillDefaults({ model: "new" }, choices, { effort: "high" })).toEqual({ model: "new" });
     expect(fillDefaults({}, choices, undefined)).toEqual({});
   });
+
+  it("hides models independently of ordering and picks a visible default for new sessions", () => {
+    const prefs = { order: ["luna", "sol"], model: "sol", hidden: ["sol", "unlisted"], effort: "medium" };
+    const out = applyModelPrefs(choices, prefs);
+    expect(out.models.map((m) => m.id)).toEqual(["luna", "new"]);
+    expect(out.hiddenModels?.map((m) => m.id)).toEqual(["sol"]);
+    expect(out.models.find((m) => m.isDefault)?.id).toBe("luna");
+    expect(fillDefaults({}, out, prefs)).toMatchObject({ model: "luna", effort: "medium" });
+    expect(fillDefaults({ model: "sol" }, out, { ...prefs, effort: "high" })).toMatchObject({ model: "sol", effort: "high" });
+
+    const restored = applyModelPrefs(choices, { ...prefs, hidden: ["unlisted"] });
+    expect(restored.models.map((m) => m.id)).toEqual(["luna", "sol", "new"]);
+    expect(restored.models.find((m) => m.isDefault)?.id).toBe("sol");
+    expect(restored.hiddenModels).toBeUndefined();
+  });
+
+  it("keeps the native default available when the catalog only returns models marked hidden", () => {
+    const prefs = { order: ["luna", "sol"], hidden: ["sol", "luna", "new"] };
+    const out = applyModelPrefs(choices, prefs);
+    expect(out.models.map((m) => m.id)).toEqual(["sol"]);
+    expect(out.hiddenModels?.map((m) => m.id)).toEqual(["luna", "new"]);
+    expect(fillDefaults({}, out, prefs)).toMatchObject({ model: "sol" });
+  });
 });

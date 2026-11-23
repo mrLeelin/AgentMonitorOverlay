@@ -25,6 +25,18 @@ const PEER_QUEUE_KEY = "sessions.peer-queue";
 /** How long the next held message waits for the turn the first one started to show (see deliver). */
 const TURN_SEEN_MS = 3000;
 
+interface InboxMessageOptions {
+  purpose?: MessagePurpose;
+  replacesItemId?: Id;
+  rebaseOnContextUpgrade?: boolean;
+  images?: MessageImage[];
+  answersDecisionId?: Id;
+  fromPerson?: boolean;
+  afterTurn?: boolean;
+  queuedSkillText?: string;
+  queuedFromDevice?: { account: string; device: string };
+}
+
 export class SessionInbox extends Feature<"sharedContext"> {
   /** Durable producers recheck ownership/state immediately before dispatch or manual retry. */
   validateProducerMessage: (item: SessionItem) => void = () => undefined;
@@ -84,7 +96,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
     const s = this.store.getSession(sessionId);
     if (!s || this.told.has(sessionId)) return;
     this.told.add(sessionId);
-    const message = "你停下了这个会话：别的会话、中转、值守发来的消息先不送进去，等你发下一条消息时一起送；想现在送就点它旁边的「立即发送」。";
+    const message = "你停下了这个会话：排队的消息会等你恢复会话后再送。想现在送某一条，可以点它旁边的「立即发送」。";
     this.publish({ type: "item.appended", item: this.store.appendItem(this.row(s, { type: "notice", level: "info", message }, "inbox/paused")) });
   }
 
@@ -92,11 +104,11 @@ export class SessionInbox extends Feature<"sharedContext"> {
    * A message from an agent or from Studio into `sessionId`: shown at once, sent now when the session is free, else
    * when it is. `delivered`: it went in now; `waiting`: how many of the session's are still held.
    */
-  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[]; answersDecisionId?: Id; fromPerson?: boolean } = {}): Promise<{ delivered: boolean; waiting: number }> {
+  async put(sessionId: Id, text: string, relayFromSessionId?: Id, messageId?: Id, options: InboxMessageOptions = {}): Promise<{ delivered: boolean; waiting: number }> {
     const s = this.requireSession(sessionId);
     if (s.archivedAt || s.writer === "archived") throw new HostError("read_only", "这个会话已归档，不能再往里发消息");
     if (s.kind === "sub") throw new HostError("read_only", "子 agent 不能单独接收消息");
-    if (!text.trim()) throw new HostError("bad_request", "text is required");
+    if (!text.trim() && !options.images?.length) throw new HostError("bad_request", "text is required");
     if (isRemoteCopy(s)) {
       await this.sessions.sendMessage(sessionId, text);
       return { delivered: true, waiting: 0 };
@@ -104,10 +116,11 @@ export class SessionInbox extends Feature<"sharedContext"> {
     // Durable producers may retry after a Host restart: the same inbox row must not start another turn.
     const existing = messageId ? this.store.getItem(messageId) : undefined;
     if (existing && (existing.sessionId !== sessionId || existing.type !== "user")) throw new HostError("conflict", "inbox message id belongs to another message");
-    const role = this.sessions.roleUpdate(sessionId);
+    // The person's message already passed through SessionsFeature.sendMessage with the current role appended.
+    const role = options.fromPerson ? undefined : this.sessions.roleUpdate(sessionId);
     // A durable id freezes its text, purpose and requirement. A replacement always has a new id and source link.
-    const item = existing ?? this.append(s, this.sessions.withContext(sessionId, this.sessions.withRole(text, role.lines)), relayFromSessionId, messageId, options);
-    if (!existing) role.told();
+    const item = existing ?? this.append(s, this.sessions.withContext(sessionId, role ? this.sessions.withRole(text, role.lines) : text), relayFromSessionId, messageId, options);
+    if (!existing) role?.told();
     this.remember(sessionId);
     if (this.pauses().has(sessionId)) this.tellPaused(sessionId);
     await this.flush(sessionId);
@@ -225,6 +238,9 @@ export class SessionInbox extends Feature<"sharedContext"> {
       if (before !== null) await this.turnSeen(sessionId, before);
       const current = this.store.getItem(it.id);
       if (!goes(current)) continue;
+      const latest = this.store.getSession(sessionId) ?? s;
+      // A queued follow-up waits for each native turn, including the turn started by the previous inbox row.
+      if (current.afterTurn && (this.pauses().has(sessionId) || (inTurn(latest.status) && !this.runtime.betweenTurns?.(sessionId)))) continue;
       // Joining: rechecked for each, as the person may have stopped the session, or its turn ended, meanwhile.
       if (joining && !this.joinsRunningTurn(this.store.getSession(sessionId) ?? s)) break;
       // A native Goal can start its next work turn by itself. Keep read-only questions/notifications held until
@@ -353,8 +369,9 @@ export class SessionInbox extends Feature<"sharedContext"> {
     }
   }
 
-  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: { purpose?: MessagePurpose; replacesItemId?: Id; rebaseOnContextUpgrade?: boolean; images?: MessageImage[]; answersDecisionId?: Id; fromPerson?: boolean } = {}): SessionItem {
-    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", ...(options.images?.length ? { images: options.images } : {}), ...(options.replacesItemId ? { replacesItemId: options.replacesItemId } : {}), ...(options.rebaseOnContextUpgrade ? { rebaseOnContextUpgrade: true } : {}), ...(relayFromSessionId ? { relayFromSessionId } : {}), ...(options.answersDecisionId ? { answersDecisionId: options.answersDecisionId } : {}), ...(options.fromPerson ? { fromPerson: true } : {}) }, "user/inbox");
+  private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: InboxMessageOptions = {}): SessionItem {
+    const { images, replacesItemId, rebaseOnContextUpgrade, answersDecisionId, fromPerson, afterTurn, queuedSkillText, queuedFromDevice } = options;
+    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", images: images?.length ? images : undefined, replacesItemId, rebaseOnContextUpgrade, relayFromSessionId, answersDecisionId, fromPerson, afterTurn, queuedSkillText, queuedFromDevice }, "user/inbox");
     const item = this.store.appendItem({ ...row, ...(messageId ? { id: messageId } : {}) });
     this.publish({ type: "item.appended", item });
     return item;

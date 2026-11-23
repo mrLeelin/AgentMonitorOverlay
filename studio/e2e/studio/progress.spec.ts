@@ -47,6 +47,7 @@ test("progress on the task page and collaboration hints on the board", async () 
 
   // Task page: the latest handoff on top, notes below, and the person can add one.
   await card.click();
+  await page.getByTestId("sidebar-activity").click();
   await expect(page.getByTestId("handoff-note")).toContainText("交接：importer.ts 已改");
   await expect(page.getByTestId("task-note")).toHaveText(/重试逻辑已加/);
   await page.getByLabel("记一笔进度").fill("和策划确认过：上限 3 次");

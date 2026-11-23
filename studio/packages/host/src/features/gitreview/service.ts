@@ -40,20 +40,32 @@ const LINE_TEXT_MAX = 2_000;
  * diff), comments on their lines, and sending the comments to a session as one message grouped by file.
  */
 export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"> {
-  async status(workspaceId: Id): Promise<GitStatus> {
-    return this.git(() => readStatus(this.requireWorkspace(workspaceId).path));
+  private worktree(workspaceId: Id, sessionId?: string | null): string | undefined {
+    if (sessionId == null) return undefined;
+    const session = this.store.getSession(sessionId);
+    if (!session?.cwd || session.workspaceId !== workspaceId) throw new HostError("not_found", "找不到这个项目的会话工作树");
+    return session.cwd;
+  }
+
+  private directory(workspaceId: Id, sessionId?: string | null): string {
+    const workspace = this.requireWorkspace(workspaceId);
+    return this.worktree(workspaceId, sessionId) ?? workspace.path;
+  }
+
+  async status(workspaceId: Id, worktree?: string | null): Promise<GitStatus> {
+    return this.git(() => readStatus(this.directory(workspaceId, worktree)));
   }
 
   /**
    * The changed files of a range. `base` (a full id, with the branch range; 外部打开 Review) replaces the merge base, and
    * `label` names it where the default branch's name would show.
    */
-  async changes(workspaceId: Id, range: unknown, base?: unknown, label?: unknown): Promise<GitChanges> {
+  async changes(workspaceId: Id, range: unknown, base?: unknown, label?: unknown, worktree?: string | null): Promise<GitChanges> {
     const r = this.range(range);
     const own = base === undefined || base === null || base === "" ? null : base;
     if (own !== null && !isObjectId(own)) throw new HostError("bad_request", "base must be a full commit id");
     if (own !== null && r !== "branch") throw new HostError("bad_request", "base goes with the branch range");
-    const dir = this.requireWorkspace(workspaceId).path;
+    const dir = this.directory(workspaceId, worktree);
     const name = typeof label === "string" && label.trim() ? label.trim().slice(0, 80) : own?.slice(0, 7);
     const status = own ? readStatus(dir).then((s): GitStatus => (s.repo ? { ...s, mergeBase: own, base: name ?? own } : s)) : readStatus(dir);
     // The status and the listing's untracked scan run side by side (readChanges starts the scan before waiting).
@@ -64,12 +76,12 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
    * One file's diff. With the list's `base` (and whether the file is untracked) it is a single git call; without
    * them the status is read first (several calls).
    */
-  async diff(workspaceId: Id, range: unknown, path: unknown, oldPath?: unknown, known: { base?: unknown; untracked?: unknown } = {}): Promise<GitFileDiff> {
+  async diff(workspaceId: Id, range: unknown, path: unknown, oldPath?: unknown, known: { base?: unknown; untracked?: unknown } = {}, worktree?: string | null): Promise<GitFileDiff> {
     const r = this.range(range);
     if (typeof path !== "string" || !path) throw new HostError("bad_request", "path is required");
     if (known.base != null && known.base !== "" && !isObjectId(known.base)) throw new HostError("bad_request", "base must be a full commit id");
     const untracked = known.untracked === "1" ? true : known.untracked === "0" ? false : undefined;
-    const dir = this.requireWorkspace(workspaceId).path;
+    const dir = this.directory(workspaceId, worktree);
     return this.git(async () => {
       const given = known.base;
       let base = isObjectId(given) ? given : null;
@@ -83,10 +95,10 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
   }
 
   /** HEAD's history, newest first (S13-B). */
-  async log(workspaceId: Id, limit?: unknown): Promise<GitLog> {
+  async log(workspaceId: Id, limit?: unknown, worktree?: string | null): Promise<GitLog> {
     const n = limit === undefined || limit === null || limit === "" ? GIT_LOG_MAX : Number(limit);
     if (!Number.isInteger(n) || n < 1) throw new HostError("bad_request", "limit must be a positive whole number");
-    const dir = this.requireWorkspace(workspaceId).path;
+    const dir = this.directory(workspaceId, worktree);
     return this.git(async () => {
       try {
         return await readLog(dir, n);
@@ -100,10 +112,10 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
   }
 
   /** One commit's changed files against its first parent (S13-B). */
-  async commit(workspaceId: Id, sha: unknown, base?: unknown): Promise<GitCommitChanges> {
+  async commit(workspaceId: Id, sha: unknown, base?: unknown, worktree?: string | null): Promise<GitCommitChanges> {
     if (!isCommitRef(sha)) throw new HostError("bad_request", "sha must be 7 to 64 hex digits");
     if (base !== undefined && base !== null && base !== "" && !isObjectId(base)) throw new HostError("bad_request", "base must be a full commit id");
-    const dir = this.requireWorkspace(workspaceId).path;
+    const dir = this.directory(workspaceId, worktree);
     return this.git(() => readCommit(dir, sha, typeof base === "string" && base ? base : undefined));
   }
   /**
@@ -205,21 +217,24 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
 
 
   /** One file of a commit, against the base its listing gave (S13-B). */
-  async commitDiff(workspaceId: Id, sha: unknown, base: unknown, path: unknown, oldPath?: unknown): Promise<GitFileDiff> {
+  async commitDiff(workspaceId: Id, sha: unknown, base: unknown, path: unknown, oldPath?: unknown, worktree?: string | null): Promise<GitFileDiff> {
     if (!isObjectId(sha) || !isObjectId(base)) throw new HostError("bad_request", "sha and base must be full commit ids");
     if (typeof path !== "string" || !path) throw new HostError("bad_request", "path is required");
-    const dir = this.requireWorkspace(workspaceId).path;
+    const dir = this.directory(workspaceId, worktree);
     return this.git(() => readCommitFileDiff(dir, base, sha, path, typeof oldPath === "string" && oldPath ? oldPath : undefined));
   }
 
-  comments(workspaceId: Id): GitReviewComment[] {
+  comments(workspaceId: Id, worktree?: string | null): GitReviewComment[] {
     this.requireWorkspace(workspaceId);
-    return this.store.listReviewComments(workspaceId);
+    const cwd = this.worktree(workspaceId, worktree);
+    return this.store.listReviewComments(workspaceId).filter((c) => c.worktree === cwd);
   }
 
-  addComment(workspaceId: Id, input: NewGitReviewComment): GitReviewComment {
+  addComment(workspaceId: Id, input: NewGitReviewComment, worktree?: string | null): GitReviewComment {
     this.requireWorkspace(workspaceId);
+    const cwd = this.worktree(workspaceId, worktree);
     const comment = this.draftComment(workspaceId, input);
+    if (cwd) comment.worktree = cwd;
     this.store.putReviewComment(comment);
     return comment;
   }
@@ -282,11 +297,11 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
    * 复制注释 (2026-10-23): the drafts as the text a session got before, for the person to copy; they leave the drafts
    * (marked sent, to no session). Picking a session to send them to added nothing.
    */
-  copy(workspaceId: Id, ids?: unknown): { text: string; sent: GitReviewComment[] } {
+  copy(workspaceId: Id, ids?: unknown, worktree?: string | null): { text: string; sent: GitReviewComment[] } {
     const ws = this.requireWorkspace(workspaceId);
     if (ids !== undefined && !(Array.isArray(ids) && ids.every((x) => typeof x === "string"))) throw new HostError("bad_request", "ids must be a list of comment ids");
     const wanted = ids ? new Set(ids as string[]) : null;
-    const drafts = sortComments(this.store.listReviewComments(workspaceId).filter((c) => c.state === "draft" && (!wanted || wanted.has(c.id))));
+    const drafts = sortComments(this.comments(workspaceId, worktree).filter((c) => c.state === "draft" && (!wanted || wanted.has(c.id))));
     if (!drafts.length) throw new HostError("bad_request", "no comments to copy");
     const text = composeGitReviewMessage(drafts, ws.name);
     const at = new Date().toISOString();
@@ -305,7 +320,7 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
     if (session.archivedAt) throw new HostError("read_only", "the session is archived");
     if (ids !== undefined && !(Array.isArray(ids) && ids.every((x) => typeof x === "string"))) throw new HostError("bad_request", "ids must be a list of comment ids");
     const wanted = ids ? new Set(ids as string[]) : null;
-    const drafts = sortComments(this.store.listReviewComments(workspaceId).filter((c) => c.state === "draft" && (!wanted || wanted.has(c.id))));
+    const drafts = sortComments(this.comments(workspaceId).filter((c) => c.state === "draft" && (!wanted || wanted.has(c.id))));
     if (!drafts.length) throw new HostError("bad_request", "no comments to send");
     const result = await this.f.sessions.sendMessage(session.id, composeGitReviewMessage(drafts, ws.name));
     const at = new Date().toISOString();

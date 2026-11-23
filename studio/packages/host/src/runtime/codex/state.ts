@@ -64,7 +64,7 @@ export interface PendingQuestion {
   questions: QuestionPrompt[];
 }
 
-export type ThreadLike = { id: string; forkedFromId?: string | null; parentThreadId?: string | null; modelProvider?: string };
+export type ThreadLike = { id: string; forkedFromId?: string | null; parentThreadId?: string | null; modelProvider?: string; cwd?: string };
 
 export const ELICITATION = "mcpServer/elicitation/request";
 export const USER_INPUT = "item/tool/requestUserInput";

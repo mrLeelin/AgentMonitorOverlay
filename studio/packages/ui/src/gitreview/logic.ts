@@ -10,6 +10,8 @@ import { isCommitRef, isObjectId, type GitChangedFile, type GitCommentRange, typ
 export interface ReviewTarget {
   workspaceId: string;
   sessionId?: string;
+  /** Take Git and file paths from this local session's worktree. */
+  worktreeSessionId?: string;
   /** Review the recorded changes of the turn containing this session item. */
   turnItemId?: string;
   /** A commit's window: read-only. */
@@ -30,14 +32,16 @@ export interface ReviewTarget {
 
 /** The window's address: `#review?workspace=…&session=…&file=…&n=…`, or `#review?workspace=…&commit=…`. */
 export function reviewHash(t: ReviewTarget): string {
-  if (t.commit) return `#review?${new URLSearchParams({ workspace: t.workspaceId, commit: t.commit, ...(t.base ? { base: t.base } : {}), ...(t.file ? { file: t.file, ...(t.nonce ? { n: t.nonce } : {}) } : {}), ...(t.remote ? { remote: t.remote } : {}) }).toString()}`;
-  const q = new URLSearchParams({ workspace: t.workspaceId, ...(t.sessionId ? { session: t.sessionId } : {}) });
+  const q = new URLSearchParams({ workspace: t.workspaceId });
+  if (t.commit) q.set("commit", t.commit);
+  if (!t.commit && t.sessionId) q.set("session", t.sessionId);
   if (t.turnItemId) q.set("turnItem", t.turnItemId);
   if (t.remote) q.set("remote", t.remote);
+  if (t.worktreeSessionId) q.set("worktree", t.worktreeSessionId);
   if (t.base) q.set("base", t.base);
-  if (t.base && t.baseLabel) q.set("label", t.baseLabel);
+  if (!t.commit && t.base && t.baseLabel) q.set("label", t.baseLabel);
   if (t.file) q.set("file", t.file);
-  if (t.nonce) q.set("n", t.nonce);
+  if (t.nonce && (!t.commit || t.file)) q.set("n", t.nonce);
   return `#review?${q.toString()}`;
 }
 
@@ -56,9 +60,12 @@ export function parseReviewHash(hash: string): ReviewTarget | null {
   const nonce = q.get("n");
   const remote = q.get("remote");
   const r = remote && /^[\w-]{1,80}$/.test(remote) ? { remote } : {};
-  if (commit !== null) return isCommitRef(commit) ? { workspaceId, commit, ...(base ? { base } : {}), ...(file ? { file, ...(nonce ? { nonce } : {}) } : {}), ...r } : null;
+  const worktreeSessionId = q.get("worktree");
+  if (worktreeSessionId !== null && (remote || turnItemId || !/^[\w-]{1,80}$/.test(worktreeSessionId))) return null;
+  const worktree = worktreeSessionId ? { worktreeSessionId } : {};
+  if (commit !== null) return isCommitRef(commit) ? { workspaceId, commit, ...(base ? { base } : {}), ...(file ? { file, ...(nonce ? { nonce } : {}) } : {}), ...r, ...worktree } : null;
   const label = q.get("label");
-  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(turnItemId ? { turnItemId } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r };
+  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(turnItemId ? { turnItemId } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r, ...worktree };
 }
 
 /** The list's status icons, as in Fork: + added, M modified, − deleted, R renamed. */

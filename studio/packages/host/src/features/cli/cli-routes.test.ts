@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { BackgroundOutput, ChatSettings, ModelProfile, Session, SlashCommandList, Task, Workspace } from "@amo-studio/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BackgroundOutput, ChatSettings, ModelProfile, Session, SkillCatalog, SlashCommandList, Task, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
@@ -31,11 +31,12 @@ beforeEach(async () => {
   store = new Store(join(root, "studio.db"));
   servers = new FakeServers(PROFILES);
   const runtime = new RuntimeRouter(store, PROFILES, { codex: new CodexRuntime({ store, servers, profiles: PROFILES }) });
-  const service = new HostService(store, runtime, PROFILES);
+  const service = new HostService(store, runtime, PROFILES, { codexHome: join(root, "external-codex-home"), localClaudeHome: join(root, "external-claude-home") });
   http = await startHostServer({ service, token: TOKEN, allowedOrigins: [] });
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await http.close();
   await servers.close();
   store.close();
@@ -57,6 +58,52 @@ async function session(folder: string): Promise<Session> {
 }
 
 describe("/ commands over HTTP", () => {
+  it("isolates global skill discovery in hidden test Hosts", async () => {
+    vi.stubEnv("AMO_STUDIO_TEST", "1");
+    vi.stubEnv("AMO_STUDIO_TEST_CODEX_HOME", "");
+    const dir = join(root, "test-skill-home", ".agents", "skills", "fixture");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: fixture\ndescription: 隔离目录\n---\n");
+    // Host options may point at the person's real homes even when the runtime itself is mocked.
+    for (const name of ["external-codex-home", "external-claude-home"]) {
+      const external = join(root, name, "skills", "must-not-be-read");
+      mkdirSync(external, { recursive: true });
+      writeFileSync(join(external, "SKILL.md"), "---\nname: must-not-be-read\ndescription: 外部目录\n---\n");
+    }
+    const result = await api<SkillCatalog>("GET", "/api/skills");
+    expect(result.status).toBe(200);
+    expect(result.data.sources.every((source) => source.root.startsWith(join(root, "test-skill-home")))).toBe(true);
+    expect(result.data.sources.flatMap((source) => source.skills).map((item) => item.name)).toEqual(["fixture"]);
+    expect(servers.fakes.size).toBe(0);
+  });
+
+  it("uses only the explicitly isolated Codex test home when one is supplied", async () => {
+    vi.stubEnv("AMO_STUDIO_TEST", "1");
+    const codexHome = join(root, "isolated-codex-home");
+    vi.stubEnv("AMO_STUDIO_TEST_CODEX_HOME", codexHome);
+    const dir = join(codexHome, "skills", "test-codex");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: test-codex\ndescription: Codex 测试目录\n---\n");
+    const result = await api<SkillCatalog>("GET", "/api/skills");
+    expect(result.data.sources.find((source) => source.id === "codex")?.root).toBe(join(codexHome, "skills"));
+    expect(result.data.sources.find((source) => source.id === "claude")?.root).toBe(join(root, "test-skill-home", ".claude", "skills"));
+    expect(result.data.sources.flatMap((source) => source.skills).map((item) => item.name)).toEqual(["test-codex"]);
+  });
+
+  it("lists project skills without starting a runtime and rejects unknown project ids", async () => {
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: join(root, "plain") })).data;
+    const dir = join(ws.path, ".agents", "skills", "local");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: local\ndescription: 项目技能\n---\n");
+    const result = await api<SkillCatalog>("GET", `/api/skills?workspaceId=${ws.id}`);
+    expect(result.status).toBe(200);
+    expect(result.data).toMatchObject({ scope: "project", workspaceId: ws.id });
+    expect(result.data.sources.find((source) => source.id === "agents")?.skills).toEqual([{ name: "local", description: "项目技能", path: expect.stringContaining("SKILL.md"), diagnostics: [] }]);
+    expect(store.listSessions()).toHaveLength(0);
+    expect(servers.fakes.size).toBe(0);
+    expect((await api("GET", "/api/skills?workspaceId=missing")).status).toBe(400);
+  });
+
   it("discovers first-message skills for the selected profile and project without creating a session", async () => {
     const ws = (await api<Workspace>("POST", "/api/workspaces", { path: join(root, "plain") })).data;
     const result = await api<SlashCommandList>("POST", "/api/commands", { profileId: "p-other", workspaceId: ws.id });

@@ -4,14 +4,16 @@ import type { ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/
 import type { Scope } from "../board/Board.js";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { activeModel, sameOptions, useProfileChoices } from "../lib/choices.js";
-import { samePick } from "../lib/recents.js";
+import { isHiddenPick, samePick } from "../lib/recents.js";
 import { pickFolder, shortModel } from "../lib/profiles.js";
 import { StartingCover } from "../lib/StartingCover.js";
 import { useSettings } from "../settings/useSettings.js";
+import { PRIMARY_ENTER_LABELS, TODO_SHORTCUTS, useTaskEnter } from "../chat/inputPrefs.js";
 import { EffortBars, FastToggle, nextEffort, PermissionSegments } from "../chat/pickers.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
-import { draftText, submitDraft, useTaskDraft } from "./draft.js";
+import { draftText, submitDraft, useTaskDraft, type WorktreeChoice } from "./draft.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
+import { WorktreeDialog } from "./WorktreeDialog.js";
 import { ChoiceRow } from "./ChoiceRow.js";
 import { useDraftChoices } from "./useDraftChoices.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
@@ -25,6 +27,7 @@ import { SlashMenu, useSlashCommands } from "../chat/cli/SlashMenu.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
 import { IconPaperclip } from "../attach/icons.js";
+import { IconBranch } from "../chat/icons.js";
 import { useRemote } from "../remote/remote.js";
 import { RemoteDraft } from "./RemoteDraft.js";
 import { remoteModeShown } from "./remoteTargets.js";
@@ -66,10 +69,12 @@ interface NewTaskPageProps {
 /**
  * 草稿任务页 (design/ui-directions/new-task.html): no dialog, the main area becomes an empty task. Projects and topics are
  * rows of chips (both may stay unpicked: no project runs in the common folder), the model is a tile, the effort a set
- * of bars, the permissions a segmented control. Enter starts, Ctrl+Enter files the task in 待办. The draft is kept.
+ * of bars, the permissions a segmented control. The draft follows the shared composer shortcuts.
  */
 export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, remoteDevice, onOpenRemote }: NewTaskPageProps) {
   const { draft, update, reset } = useTaskDraft(profiles);
+  const taskEnter = useTaskEnter(draft.text);
+  const { todoShortcut } = taskEnter;
   // 「在这台电脑上 | 在别的设备上」 (4.1): shown with remote on, logged in, and a device that allowed this computer.
   const remote = useRemote(link);
   const [side, setSide] = useState<"here" | "remote">(remoteDevice ? "remote" : "here");
@@ -101,6 +106,15 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const [resume, setResume] = useState<OutsideSession | null>(null);
   const [pickingResume, setPickingResume] = useState(false);
   const subscription = profiles.find((p) => p.id === CLAUDE_SUBSCRIPTION && !p.hidden && !p.unavailable);
+  const [worktreeSelection, setWorktreeSelection] = useState<{ workspaceId: string; choice: WorktreeChoice }>();
+  const [worktreeDialog, setWorktreeDialog] = useState<string>();
+  const worktreeWorkspace = !remoteMode && !resume ? projects.find((p) => p.id === draft.projectId)?.id : undefined;
+  const worktree = worktreeWorkspace && worktreeSelection?.workspaceId === worktreeWorkspace ? worktreeSelection.choice : undefined;
+
+  useEffect(() => {
+    if (worktreeWorkspace !== worktreeSelection?.workspaceId) setWorktreeSelection(undefined);
+    if (worktreeWorkspace !== worktreeDialog) setWorktreeDialog(undefined);
+  }, [worktreeWorkspace, worktreeSelection, worktreeDialog]);
 
   // A fresh draft starts where the page was opened from (in a topic, with its one preferred project); a draft with text
   // keeps its own choices.
@@ -146,6 +160,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   async function submit(file: boolean) {
     if (busy) return;
     if (draft.goal && file) return setError("Goal 需要直接开始，不能放进待办；关闭 Goal 后可以存为待办。");
+    if (worktree && file) return setError("新建工作树需要直接开始。取消新建工作树后可以放进待办。");
     if (resume && draft.lead) return setError("接续已有会话不能作为主控带队：请取消接续，再新建主控会话。");
     if (resume && file) return setError("接续的会话不能放进待办：直接点「接续」，第一句话可以不写。");
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
@@ -164,7 +179,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
       const setups = draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : [];
       const { refs: _refs, ...rest } = draft;
       const title = rest.title.trim() || (resume ? resume.title : resourceTitle(draft.text)) || "";
-      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups, runtime);
+      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups, runtime, worktree);
       setResume(null);
       attach.reset();
       reset({ projectId: draft.projectId, topicId: draft.topicId });
@@ -402,9 +417,10 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               onKeyDown={(e) => {
                 if (slash.onKeyDown(e)) return;
                 if (mentions.onKeyDown(e)) return;
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                const action = taskEnter.action(e);
+                if (action) {
                   e.preventDefault();
-                  void submit(e.ctrlKey || e.metaKey);
+                  if (!e.repeat) void submit(action === "todo");
                 }
               }}
             />
@@ -425,6 +441,20 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                   e.currentTarget.value = "";
                 }}
               />
+              <button
+                type="button"
+                className="round-btn attach draft-worktree-btn"
+                aria-label="分支与工作树"
+                aria-haspopup="dialog"
+                aria-expanded={!!worktreeWorkspace && worktreeDialog === worktreeWorkspace}
+                aria-pressed={!!worktree}
+                title={worktree ? `新建工作树 · ${worktree.branch ?? "当前提交"}` : worktreeWorkspace ? "分支与工作树" : resume ? "接续已有会话时无法设置分支与工作树" : "选择项目后可设置分支与工作树"}
+                disabled={busy || !worktreeWorkspace}
+                onClick={() => setWorktreeDialog(worktreeWorkspace)}
+                data-testid="draft-worktree-open"
+              >
+                <IconBranch />
+              </button>
               <ModelRow link={link} profiles={profiles} pick={draft.pick} onPick={(pick) => update({ pick })} drawer={drawer} onToggleDrawer={() => setDrawer((v) => !v)} />
             </div>
             <div className="cbar">
@@ -463,7 +493,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               <div className="cbar presets" role="group" aria-label="常用预设">
                 <span className="pick-lab">预设</span>
                 {presets
-                  .filter((p) => profiles.some((x) => x.id === p.profileId && !x.hidden && !x.unavailable))
+                  .filter((p) => !isHiddenPick(p.profileId, p.options.model) && profiles.some((x) => x.id === p.profileId && !x.hidden && !x.unavailable))
                   .map((p) => {
                     const pick = { profileId: p.profileId, model: p.options.model ?? null };
                     const { model: _model, ...rest } = p.options;
@@ -478,13 +508,13 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
             )}
             <div className="cbar draft-actions">
               <button type="button" className="btn-primary" onClick={() => void submit(false)} disabled={busy || !draft.pick.profileId} data-testid="draft-start">
-                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : draft.goal ? "开始 Goal" : "开始"} <kbd>↵</kbd>
+                {busy ? (resume ? "正在接续…" : "正在开始…") : resume ? "接续" : draft.goal ? "开始 Goal" : "开始"} <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>
               </button>
               <button type="button" className="btn-ghost draft-templates" onClick={() => mentions.askTemplate(input.current?.selectionStart ?? draft.text.length)} disabled={busy} title="打开提示词模板，选择后插入第一句话" data-testid="draft-templates">
                 提示词模板
               </button>
-              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume} title={resume ? "接续的会话不能放进待办" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
-                放进待办 <kbd>Ctrl ↵</kbd>
+              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume || !!worktree} title={resume ? "接续的会话不能放进待办" : worktree ? "新建工作树需要直接开始" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
+                放进待办 {todoShortcut !== "off" && <kbd>{TODO_SHORTCUTS[todoShortcut]}</kbd>}
               </button>
             </div>
           </div>
@@ -512,6 +542,19 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
           )}
         </div>
       </div>
+      {worktreeWorkspace && worktreeDialog === worktreeWorkspace && (
+        <WorktreeDialog
+          link={link}
+          workspaceId={worktreeWorkspace}
+          choice={worktree}
+          onClose={() => setWorktreeDialog(undefined)}
+          onApply={(choice) => {
+            setWorktreeSelection(choice ? { workspaceId: worktreeWorkspace, choice } : undefined);
+            setWorktreeDialog(undefined);
+            setError("");
+          }}
+        />
+      )}
       {finding && draft.projectId && (
         <FileSelector
           link={link}

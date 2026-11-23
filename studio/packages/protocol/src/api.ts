@@ -137,6 +137,8 @@ export interface PermissionOption {
 export interface ProfileChoices {
   profileId: Id;
   models: ModelOption[];
+  /** Hidden from pickers, still available for settings and existing sessions. */
+  hiddenModels?: ModelOption[];
   permissions: PermissionOption[];
   defaultPermission: string;
   /** Where the model list came from ("cli", or "builtin" when the CLI could not be asked). */
@@ -144,11 +146,11 @@ export interface ProfileChoices {
 }
 
 /**
- * 设置 → 模型: the person's order of a profile's models (every picker lists them so) and what a new session gets when
- * nothing is chosen. Ids the CLI no longer offers are ignored.
+ * 设置 → 模型: a profile's model order, visibility and new-session defaults. Ids the CLI no longer offers are ignored.
  */
 export interface ModelPrefs {
   order?: string[];
+  hidden?: string[];
   model?: string;
   effort?: string;
   permission?: string;
@@ -572,6 +574,19 @@ export interface CredentialStatus {
   writable: boolean;
 }
 
+export interface SessionForkRequest {
+  profileId?: Id;
+  /** Studio's item id of the completed turn to fork through. */
+  turnItemId?: Id;
+  newWorktree?: boolean;
+  /** Local branch to check out in the new worktree. Omit to use the source checkout's HEAD. */
+  branch?: string;
+}
+
+export interface SessionForkOptions {
+  git: { branch: string | null; head: string | null; branches: string[] } | null;
+}
+
 /**
  * Every REST route as `"METHOD /path"` with its request body and response. `:id` segments are path params. The routes
  * of a topic with a protocol file of its own are declared there (8b, 2026-11-06: remote.ts's RemoteRoutes and the
@@ -611,6 +626,8 @@ export interface HostRoutes
   "POST /api/shutdown": { req: { interrupt?: boolean }; res: { ok: true; running: number } };
   "POST /api/workspaces": { req: { path: string; name?: string }; res: Workspace };
   "DELETE /api/workspaces/:id": { req: void; res: { ok: true } };
+  /** Local Git branches available for a new task's checkout. */
+  "GET /api/workspaces/:id/git-options": { req: void; res: SessionForkOptions };
   /** 编辑项目: its name in Studio (the folder keeps its own) and its note; an empty note clears it. */
   "PATCH /api/workspaces/:id": { req: { name?: string; description?: string }; res: Workspace };
   /** Archives the project with all its tasks (and their sessions); the common space cannot be archived. */
@@ -697,7 +714,7 @@ export interface HostRoutes
    */
   "POST /api/tasks": {
     /** `firstMessage`: filed without a session (放进待办), the sentence its first session will start from. */
-    req: { title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null; column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string };
+    req: { title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null; column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string } };
     res: { task: Task; session: Session | null };
   };
   /**
@@ -763,7 +780,7 @@ export interface HostRoutes
    * `now` (立即发送, 2026-11-02; Claude and Codex): while a turn runs, the model reads the message at once — the turn's
    * current step gives way (Ctrl+Enter); `mode` stays what the message would have been without it.
    */
-  "POST /api/sessions/:id/messages": { req: { text: string; attachments?: Id[]; annotations?: Id[]; now?: boolean; purpose?: "inquiry" | "work" | "reopen"; subsessions?: SubsessionSetup[] }; res: { mode: "start" | "steer" | "queue" } };
+  "POST /api/sessions/:id/messages": { req: { text: string; attachments?: Id[]; annotations?: Id[]; now?: boolean; afterTurn?: boolean; purpose?: "inquiry" | "work" | "reopen"; subsessions?: SubsessionSetup[] }; res: { mode: "start" | "steer" | "queue" } };
   "POST /api/sessions/:id/interrupt": { req: void; res: { ok: true } };
   /** 立即发送 on a message still waiting (delivery `waiting`): the running turn gives way and the model reads it now. Nothing when it is not waiting any more. */
   "POST /api/sessions/:id/items/:itemId/send-now": { req: void; res: { ok: true } };
@@ -776,7 +793,8 @@ export interface HostRoutes
   "DELETE /api/sessions/:id/goal": { req: void; res: SessionGoalState };
   /** 任务页侧栏「环境与上下文」(2026-11-18)：上下文分项；只有 Claude 给得出，其他运行时只有 unavailable。 */
   "GET /api/sessions/:id/context-usage": { req: void; res: import("./context-usage.js").SessionContextUsage };
-  "POST /api/sessions/:id/fork": { req: { profileId?: Id }; res: Session };
+  "GET /api/sessions/:id/fork-options": { req: void; res: SessionForkOptions };
+  "POST /api/sessions/:id/fork": { req: SessionForkRequest; res: Session };
   /** Renames the session in its runtime too (Codex thread name, Claude session title). */
   "PATCH /api/sessions/:id": { req: { title: string }; res: Session };
   /** Switches the session's model, effort or permissions (null clears back to the default). Codex: from the next turn. */

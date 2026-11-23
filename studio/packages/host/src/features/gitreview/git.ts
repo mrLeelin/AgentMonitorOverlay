@@ -52,13 +52,13 @@ export class GitError extends Error {
 }
 
 /** Runs git in `cwd` and returns its stdout. Pathspecs are literal; paths are printed unquoted. */
-export function git(cwd: string, args: readonly string[], maxBytes = LIST_MAX_BYTES): Promise<string> {
+export function git(cwd: string, args: readonly string[], maxBytes = LIST_MAX_BYTES, timeoutMs = TIMEOUT_MS): Promise<string> {
   return new Promise((done, fail) => {
     execFile(
       "git",
       ["--literal-pathspecs", "-c", "core.quotepath=off", "-c", "color.ui=never", ...args],
       // Optional locks off: reading must never block (or be blocked by) the agent's own git commands.
-      { cwd, maxBuffer: maxBytes, timeout: TIMEOUT_MS, windowsHide: true, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } },
+      { cwd, maxBuffer: maxBytes, timeout: timeoutMs, windowsHide: true, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } },
       (err, stdout, stderr) => {
         if (!err) return done(stdout);
         const e = err as NodeJS.ErrnoException & { killed?: boolean };

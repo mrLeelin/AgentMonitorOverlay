@@ -154,6 +154,8 @@ export type GitLineSide = "new" | "old";
 export interface GitReviewComment {
   id: Id;
   workspaceId: Id;
+  /** The session's checkout directory, when the comment belongs to a separate worktree. */
+  worktree?: string;
   /** The range it was written in (old-side line numbers depend on it); `file` in the viewer (always new side). */
   range: GitCommentRange;
   path: string;
@@ -358,6 +360,7 @@ export interface GitCommitChanges {
  * Git Review (S11-D). Paths are relative to the project folder; `?range=` is a GitRange (`working` by default). A
  * folder that is not a git repository answers with `repo: false`, not an error.
  */
+/** Local Git reads and comment list/add/copy accept `?worktree=<session id>` to use that session's checkout. */
 export interface GitReviewRoutes {
   "GET /api/workspaces/:id/git/status": { req: void; res: GitStatus };
   /** Changed files of a range, sorted by path. */

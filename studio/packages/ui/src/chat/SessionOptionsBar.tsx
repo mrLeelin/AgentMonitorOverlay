@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ModelProfile, Session, SessionOptions, SessionPreset, Task, Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
-import { activeModel, optionsSummary, sameOptions, useProfileChoices } from "../lib/choices.js";
-import { rememberPick } from "../lib/recents.js";
+import { optionsSummary, sameOptions, sessionModel, useProfileChoices } from "../lib/choices.js";
+import { isHiddenPick, rememberPick } from "../lib/recents.js";
 import { EffortBars, FastToggle, Mark, nextEffort, PermissionTiles, pickLabel } from "./pickers.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { SessionMcpTray, useSessionMcp } from "../mcp/SessionMcp.js";
@@ -42,8 +42,8 @@ export function SessionOptionsBar({
   const mcp = useSessionMcp(link, session);
   const goal = useSessionGoal(link, session);
   const mcpOn = mcp.state?.entries.filter((e) => e.on).length ?? 0;
-  const mine = presets.filter((p) => p.profileId === session.profileId);
-  const model = choices ? activeModel(choices, session.options) : undefined;
+  const mine = presets.filter((p) => p.profileId === session.profileId && !isHiddenPick(p.profileId, p.options.model));
+  const model = choices ? sessionModel(choices, session.options) : undefined;
   const when = session.runtime === "claude" ? "立即生效" : "下一轮生效";
 
   useEffect(() => {
@@ -118,7 +118,7 @@ export function SessionOptionsBar({
   });
 
   // The model by name also when it is the profile's default ("Opus 5.5", not just "Claude").
-  const label = pickLabel(profile, model?.id ?? session.options.model ?? null, choices?.models);
+  const label = pickLabel(profile, model?.id ?? session.options.model ?? null, model ? [model] : choices?.models);
   const permission = choices?.permissions.find((p) => p.id === (session.options.permission ?? choices.defaultPermission));
 
   return (
@@ -165,7 +165,7 @@ export function SessionOptionsBar({
           )}
         </div>
       )}
-      <div className="status-line" data-testid="session-options" title={optionsSummary(choices, session.options)}>
+      <div className="status-line" data-testid="session-options" title={optionsSummary(choices, { ...session.options, model: model?.id ?? session.options.model })}>
         <button
           type="button"
           className="seg-btn"

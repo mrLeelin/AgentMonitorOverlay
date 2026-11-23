@@ -4,6 +4,7 @@ import { call, type HostLink } from "../../host/client.js";
 import { commandAt, matchSlash, slashGroups } from "./slash.js";
 import { viewFile, viewRemoteFile } from "../../files/FileLinks.js";
 import { showToast } from "../../lib/toast.js";
+import { enterKey } from "../inputPrefs.js";
 
 // `/` lists commands and skills; `$` inserts a skill mention within a request. Both use the session's actual list.
 
@@ -129,7 +130,7 @@ export function useSlashCommands(input: {
         setHighlight((h) => (Math.min(h, flat.length - 1) + (e.key === "ArrowDown" ? 1 : flat.length - 1)) % flat.length);
         return true;
       }
-      if ((e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) || e.key === "Tab") {
+      if ((enterKey(e) === "plain" && !e.nativeEvent.isComposing) || e.key === "Tab") {
         e.preventDefault();
         choose(flat[hl]!, e.key === "Tab" ? "tab" : "enter");
         return true;

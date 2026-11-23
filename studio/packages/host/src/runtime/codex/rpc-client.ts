@@ -25,6 +25,7 @@ export interface ResponseMap {
   "thread/fork": codex.v2.ThreadForkResponse;
   "thread/archive": codex.v2.ThreadArchiveResponse;
   "thread/read": codex.v2.ThreadReadResponse;
+  "thread/turns/list": codex.v2.ThreadTurnsListResponse;
   "thread/list": codex.v2.ThreadListResponse;
   "thread/loaded/list": codex.v2.ThreadLoadedListResponse;
   "thread/name/set": codex.v2.ThreadSetNameResponse;

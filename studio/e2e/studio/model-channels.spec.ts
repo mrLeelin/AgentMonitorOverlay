@@ -70,7 +70,7 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
   await expect(page.getByTestId("thread-head")).toContainText("中转 GPT");
 
   // Hidden: gone from the new-task tiles and the drawer, still the label of its session.
-  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await selectSettingsPage(dialog, "模型与渠道");
   await nav.click();
   await card.getByTestId("channel-hidden").check();
@@ -258,7 +258,7 @@ test("a third-party DeepSeek channel run by DSH: its address, its own key and th
 
   // A session on it: DSH starts with the channel's address, key and model.
   await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "走中转 DeepSeek", workspaceId: ws.id, firstSession: { profileId: channel.id, text: "[[endpoint]]" } });
-  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
   await page.getByTestId("task-card").filter({ hasText: "走中转 DeepSeek" }).click();
   await expect(page.getByTestId("msg-agent").last()).toHaveText(`ENDPOINT base=${relayUrl} key=sk-relay-ds model=["deepseek-official","deepseek/deepseek-v4-pro"]`, { timeout: 60_000 });
   await expect(page.getByTestId("thread-head")).toContainText("中转 DeepSeek");
@@ -272,7 +272,7 @@ test("a third-party DeepSeek channel run by DSH: its address, its own key and th
   await page.getByTestId("switch-model").click();
   await expect(tray).toHaveText(["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-ocr"]);
   await page.getByTestId("switch-model").click();
-  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await selectSettingsPage(dialog, "模型与渠道");
   await dialog.locator(`[data-testid="channel-nav"][data-id="${channel.id}"]`).click();
   const rows = dialog.getByRole("region", { name: "型号顺序和默认" }).getByTestId("model-order-row");

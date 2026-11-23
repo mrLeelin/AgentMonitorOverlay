@@ -15,14 +15,14 @@ export function commentsChanged(workspaceId: string): void {
   bus.dispatchEvent(new CustomEvent("changed", { detail: workspaceId }));
 }
 
-export function useReviewComments(link: HostLink, workspaceId: string, enabled = true) {
+export function useReviewComments(link: HostLink, workspaceId: string, enabled = true, worktree?: string) {
   const [comments, setComments] = useState<readonly GitReviewComment[]>([]);
   const load = useCallback(() => {
     if (!enabled) return Promise.resolve();
-    return call(link, "GET /api/workspaces/:id/review-comments", { id: workspaceId })
+    return call(link, "GET /api/workspaces/:id/review-comments", { id: workspaceId }, undefined, worktree ? { worktree } : undefined)
       .then(setComments)
       .catch((err: unknown) => showToast({ text: err instanceof HostApiError ? err.message : String(err), error: true }));
-  }, [link, workspaceId, enabled]);
+  }, [link, workspaceId, enabled, worktree]);
   useEffect(() => {
     void load();
     const onChanged = (e: Event) => (e as CustomEvent<string>).detail === workspaceId && void load();
@@ -53,6 +53,7 @@ export function SendBar({
   busy,
   run,
   sessionId = null,
+  worktree,
   children,
 }: {
   link: HostLink;
@@ -63,6 +64,7 @@ export function SendBar({
   run(fn: () => Promise<unknown>): Promise<void>;
   /** A remote task's: the conversation 发到对话 sends to. */
   sessionId?: string | null;
+  worktree?: string;
   /** More, after the count (显示已发送). */
   children?: ReactNode;
 }) {
@@ -70,7 +72,7 @@ export function SendBar({
   const drafts = comments.filter((c) => c.state === "draft");
   const copy = (close: boolean) =>
     run(async () => {
-      const r = await call(link, "POST /api/workspaces/:id/review-comments/copy", { id: workspace.id }, {});
+      const r = await call(link, "POST /api/workspaces/:id/review-comments/copy", { id: workspace.id }, {}, worktree ? { worktree } : undefined);
       await copyText(r.text);
       showToast({ text: `已复制 ${r.sent.length} 条批注，可以粘贴给需要的对话或工具。` });
       commentsChanged(workspace.id);

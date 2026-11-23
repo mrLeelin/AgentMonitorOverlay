@@ -1,8 +1,10 @@
 import { open, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { BACKGROUND_OUTPUT_LIMIT, type BackgroundOutput, type ChatSettings, type Id, type SlashCommand, type SlashCommandList, type SlashCommandResult } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { readChatSettings, writeChatSettings } from "../../runtime/chat-settings.js";
+import { readSkillCatalog } from "./skill-catalog.js";
 
 /** Studio's own `/` commands, offered for every session (before the runtime's). */
 const STUDIO_COMMANDS: readonly SlashCommand[] = [
@@ -15,6 +17,21 @@ const REVIEW_COMMAND: SlashCommand = { name: "review", description: "打开这�
  * command, background commands (stop, output) and the conversation settings.
  */
 export class CliFeature extends Feature<"gitReview"> {
+  async skillCatalog(workspaceId: string | null) {
+    const id = this.optionalWorkspace(workspaceId);
+    const testHome = process.env.AMO_STUDIO_TEST === "1" ? join(dirname(this.store.path), "test-skill-home") : null;
+    return readSkillCatalog({
+      ...(id ? { workspace: this.requireLiveWorkspace(id) } : {}),
+      // Hidden test Hosts must never enumerate the user's real skills or inherited tool configuration.
+      ...(testHome ? {
+        home: testHome,
+        env: {},
+        codexHome: process.env.AMO_STUDIO_TEST_CODEX_HOME?.trim() || join(testHome, ".codex"),
+        claudeHome: join(testHome, ".claude"),
+      } : { codexHome: this.options.codexHome, claudeHome: this.options.localClaudeHome }),
+    });
+  }
+
   async listProfileCommands(body: unknown): Promise<SlashCommandList> {
     const b = body && typeof body === "object" ? body as Record<string, unknown> : {};
     if (typeof b.profileId !== "string" || !b.profileId.trim()) throw new HostError("bad_request", "profileId must be a model profile id");

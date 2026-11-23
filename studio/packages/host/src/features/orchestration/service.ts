@@ -82,7 +82,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   private acceptedCurrent(task: Task, result: TaskResult): boolean {
-    return task.column === "done" && result.state === "accepted" && this.results(task.id).at(-1)?.id === result.id && result.managerTaskId === (task.managerTaskId ?? null) && this.f.sharedContext.isResultCurrent(task.id, result);
+    const filedForReview = task.column === "review" && !!task.lead && !task.managerTaskId && result.reviewedBy === "user";
+    return (task.column === "done" || filedForReview) && result.state === "accepted" && this.results(task.id).at(-1)?.id === result.id && result.managerTaskId === (task.managerTaskId ?? null) && this.f.sharedContext.isResultCurrent(task.id, result);
   }
 
   readReply(sessionId: Id, itemId: Id, offset = 0): { text: string; nextOffset: number | null; length: number } {
@@ -188,7 +189,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     const basis = this.f.sharedContext.captureBasis(sessionId, input);
     const results = this.results(task.id);
     const previous = results.at(-1);
-    if (previous && (previous.state === "submitted" || (previous.state === "accepted" && task.column === "done")) && previous.summary === summary && previous.verification === verification && previous.managerTaskId === (task.managerTaskId ?? null) && JSON.stringify(previous.contextBasis) === JSON.stringify(basis.contextBasis) && JSON.stringify(previous.prerequisiteResultIds) === JSON.stringify(basis.prerequisiteResultIds)) return previous;
+    if (previous && (previous.state === "submitted" || this.acceptedCurrent(task, previous)) && previous.summary === summary && previous.verification === verification && previous.managerTaskId === (task.managerTaskId ?? null) && JSON.stringify(previous.contextBasis) === JSON.stringify(basis.contextBasis) && JSON.stringify(previous.prerequisiteResultIds) === JSON.stringify(basis.prerequisiteResultIds)) return previous;
     if (previous?.state === "submitted") throw new HostError("conflict", task.managerTaskId ? "交付已提交，等待直属主控验收；需修改时由主控先退回。" : "最终交付已提交，等待用户在 Studio 验收或退回；AI 不能自行验收。");
     const at = new Date().toISOString();
     const result: TaskResult = { id: newId("result"), taskId: task.id, sessionId, managerTaskId: task.managerTaskId ?? null, summary, verification, ...basis, state: "submitted", createdAt: at, updatedAt: at };
@@ -236,7 +237,8 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (current.archivedAt || (current.managerTaskId ?? null) !== expectedManager || !currentManager.lead || !managementRoot(this.store.listTasks(), current.id) || currentLatest?.id !== resultId || currentLatest.state !== "submitted" || currentLatest.managerTaskId !== expectedManager) throw new HostError("conflict", "交付或任务归属已变化，请重新读取后验收。");
       if (accept) { this.assertReviewSettled(current.id); this.ready(current); }
       const contextResolution = accept ? this.f.sharedContext.assertAcceptable(current.id, currentLatest, contextExplanation) : undefined;
-      const next: TaskResult = { ...currentLatest, state, review, reviewedBy: expectedManager ? "manager" : "user", ...(contextResolution ? { contextResolution } : {}), updatedAt: new Date().toISOString() };
+      const updatedAt = new Date().toISOString();
+      const next: TaskResult = { ...currentLatest, state, review, reviewedBy: expectedManager ? "manager" : "user", ...(!expectedManager ? { userReview: { state, review, reviewedAt: updatedAt } } : {}), ...(contextResolution ? { contextResolution } : {}), updatedAt };
       this.saveResults(child.id, [...currentResults.slice(0, -1), next]);
       // Done again: tasks that started on its earlier delivery go on from this one (2026-11-17, plans/done/task-dependencies.md).
       if (accept) this.f.sharedContext.refreshPrerequisites(child.id, next.id);
@@ -269,9 +271,12 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       if (event.type === "task.upserted") {
         this.reconcileDecisions();
         const results = this.results(event.task.id), latest = results.at(-1);
+        // Filing a human-accepted root in 待审阅 is not a new assignment. Doing/todo, ownership changes and
+        // real managed work still invalidate it; this never turns an unreviewed/returned result into acceptance.
+        const filedForReview = event.task.lead && !event.task.managerTaskId && latest?.reviewedBy === "user" && event.task.column === "review";
         if (latest && latest.managerTaskId !== (event.task.managerTaskId ?? null) && latest.state !== "returned") {
           this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "直属主控已变更，请按当前归属重新提交交付。", updatedAt: new Date().toISOString() }]);
-        } else if ((latest?.state === "accepted" && event.task.column !== "done" || latest?.state === "submitted" && event.task.column !== "review") && !event.task.archivedAt) {
+        } else if ((latest?.state === "accepted" && event.task.column !== "done" && !filedForReview || latest?.state === "submitted" && event.task.column !== "review") && !event.task.archivedAt) {
           this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "交付后任务重新开始，须重新提交验证和验收。", updatedAt: new Date().toISOString() }]);
           if (event.task.managerTaskId) {
             // Not when the manager's own 传话 restarted it (2026-11-17: the Free 主控 was woken only to say 已知悉).
@@ -476,8 +481,8 @@ function requiredText(value: unknown, label: string): string {
 }
 
 function resultHeader(result: TaskResult) {
-  const { summary, verification, review, contextMismatch, contextResolution, ...metadata } = result;
-  return { ...metadata, hasContextMismatch: !!contextMismatch, hasContextResolution: !!contextResolution, textLengths: { summary: summary.length, verification: verification.length, review: review?.length ?? 0 } };
+  const { summary, verification, review, userReview, contextMismatch, contextResolution, ...metadata } = result;
+  return { ...metadata, ...(userReview ? { userReview: { state: userReview.state, reviewedAt: userReview.reviewedAt } } : {}), hasContextMismatch: !!contextMismatch, hasContextResolution: !!contextResolution, textLengths: { summary: summary.length, verification: verification.length, review: review?.length ?? 0, userReview: userReview?.review.length ?? 0 } };
 }
 
 /** A routed question's evidence (2026-11-17): the manager decides on it, so it travels with the question. */

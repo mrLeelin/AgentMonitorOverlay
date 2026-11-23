@@ -20,7 +20,7 @@ function settle(aborted = false) {
 function finish(text) {
   count++;
   if (file) { mkdirSync(dir, { recursive: true }); writeFileSync(file, JSON.stringify({ count })); }
-  const answer = `MOCK-PI ${count}: ${text}`;
+  const answer = `MOCK-PI ${count}: ${text.includes("[[worktree-marker]]") ? readFileSync("marker.txt", "utf8") : text}`;
   send({ type: "message_start", message: message("assistant", "") });
   send({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: answer } });
   send({ type: "message_end", message: message("assistant", answer, { stopReason: "stop", usage: { input: 100, output: 20, cacheRead: 5, cacheWrite: 2 } }) });

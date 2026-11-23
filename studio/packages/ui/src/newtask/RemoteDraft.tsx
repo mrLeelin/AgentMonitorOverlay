@@ -15,6 +15,7 @@ import { ChoiceRow } from "./ChoiceRow.js";
 import type { TaskDraft } from "./draft.js";
 import { catalogProblem, catalogProjectChoices, catalogTopicChoices, defaultProject, keptPicks, PRESENCE_TAG, remoteTargets, targetKey } from "./remoteTargets.js";
 import { readStored, writeStored } from "../lib/stored.js";
+import { PRIMARY_ENTER_LABELS, useTaskEnter } from "../chat/inputPrefs.js";
 
 // 新任务页的「在别的设备上」 (plans/done/remote-page-and-new-task.md 4.1, 2026-10-29): 设备 first (paired devices that allowed
 // this computer; offline ones greyed), then 专题 / 项目 / 第一句话 / 模型 as on this computer, but from what that device
@@ -57,6 +58,7 @@ export function RemoteDraft({
   onDone(): void;
   onOpenTask(taskId: string, sessionId: string | null): void;
 }) {
+  const taskEnter = useTaskEnter(draft.text, false);
   const targets = remoteTargets(remote);
   const [deviceKey, setDeviceKey] = useState<string | null>(() => {
     const keys = targets.map((t) => t.key);
@@ -319,9 +321,9 @@ export function RemoteDraft({
           mentions={mentions.names}
           onKeyDown={(e) => {
             if (mentions.onKeyDown(e)) return;
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (taskEnter.action(e) === "start") {
               e.preventDefault();
-              void submit();
+              if (!e.repeat) void submit();
             }
           }}
           data-testid="remote-draft-text"
@@ -351,13 +353,12 @@ export function RemoteDraft({
             {catalog && !problem && <span className="drawer-note">只列 {catalog.name} 远端允许的模型</span>}
           </div>
         </div>
-        <div className="cbar">
+        <div className="cbar remote-draft-actions">
           <span className="drawer-note" data-testid="remote-draft-attach-note">
             图片和文件开始时一起传到那台电脑（每个最多 20 MB，文件夹先打包）；权限照那台电脑「远端允许的模型」里定的。
           </span>
-          <span className="spacer" />
           <button type="button" className="btn-primary" onClick={() => void submit()} disabled={busy || !online || !catalog || !!problem} data-testid="remote-draft-start">
-            {busy ? (catalog?.confirm ? "正在发送…" : "正在开始…") : catalog?.confirm ? "发给那边确认" : "开始"} <kbd>↵</kbd>
+            {busy ? (catalog?.confirm ? "正在发送…" : "正在开始…") : catalog?.confirm ? "发给那边确认" : "开始"} <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>
           </button>
         </div>
       </div>

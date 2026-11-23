@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type { Annotation } from "@amo-studio/protocol";
 import { annotationNumber, type AnnotationRefs } from "./annotationRefs.js";
 
@@ -14,17 +14,14 @@ interface AnnotationPanelProps {
   onPin(id: string, pinned: boolean): void;
   /** Which ones the next message refers to (2026-10-15: no separate send; they go with the next message). */
   refs: AnnotationRefs;
-  /** Shown above the annotations (the task's mail). */
-  header?: ReactNode;
-  onCollapse?(): void;
 }
 
 /**
- * Right column of the task page: the pinned annotations first (sent or not), then the unsent ones (written in the
+ * Annotations in the task sidebar: the pinned ones first (sent or not), then the unsent ones (written in the
  * bubble by the selection), each referred to by the next message unless taken off, and the other sent ones folded
  * away, each of which can be referred to again. Newest first in each (2026-10-26).
  */
-export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, onLocate, onPin, refs, header, onCollapse }: AnnotationPanelProps) {
+export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, onLocate, onPin, refs }: AnnotationPanelProps) {
   const [showSent, setShowSent] = useState(false);
 
   const newest = [...annotations].reverse();
@@ -40,9 +37,7 @@ export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, 
     );
 
   return (
-    <aside className="anno-panel" aria-label="批注">
-      {onCollapse && <button type="button" className="session-list-fold sidebar-collapse" aria-label="折叠侧栏" aria-expanded={true} title="折叠侧栏" onClick={onCollapse} data-testid="sidebar-collapse">›</button>}
-      {header}
+    <section className="anno-list" aria-label="批注">
       <div className="anno-head">
         <span className="anno-title">批注</span>
         <span className="anno-count" data-testid="annotation-count">
@@ -67,7 +62,7 @@ export function AnnotationPanel({ annotations, busy, canSend, onEdit, onDelete, 
         </div>
       )}
 
-    </aside>
+    </section>
   );
 }
 

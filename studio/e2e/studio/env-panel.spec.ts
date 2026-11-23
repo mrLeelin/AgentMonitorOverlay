@@ -29,6 +29,12 @@ test("the task sidebar shows the environment, the context by category and the se
   await page.getByTestId("task-card").filter({ hasText: "环境面板" }).click();
 
   const panel = page.getByTestId("env-panel");
+  const environment = page.getByTestId("sidebar-environment");
+  const activity = page.getByTestId("sidebar-activity");
+  const note = page.getByLabel("记一笔进度");
+  const sidebar = page.getByRole("complementary", { name: "任务侧栏" });
+  await expect(environment).toHaveAttribute("aria-pressed", "true");
+  await expect(note).toBeHidden();
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("env-facts")).toContainText("alpha");
   await expect(panel.getByTestId("env-context-total")).toContainText("已用", { timeout: 30_000 });
@@ -39,7 +45,29 @@ test("the task sidebar shows the environment, the context by category and the se
   await files.locator("summary").click();
   await expect(files).toContainText("CLAUDE.md");
   await expect(panel.getByTestId("env-mcp")).toBeVisible();
+  expect((await sidebar.boundingBox())?.width).toBe(300);
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await screenshot(studio.app, "studio", "task-env-panel", page);
+
+  await activity.click();
+  await expect(activity).toHaveAttribute("aria-pressed", "true");
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("region", { name: "批注", exact: true })).toBeVisible();
+  expect((await sidebar.boundingBox())?.width).toBe(300);
+  await note.fill("已核对上下文");
+  await environment.click();
+  await expect(files.locator("summary")).toBeVisible();
+  await expect(files).toHaveAttribute("open", "");
+  await activity.click();
+  await expect(note).toHaveValue("已核对上下文");
+  await note.press("Enter");
+  await expect(page.getByTestId("task-note")).toContainText("已核对上下文");
+  await note.blur();
+  await screenshot(studio.app, "studio", "task-sidebar-activity-dark", page);
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await screenshot(studio.app, "studio", "task-sidebar-activity-light", page);
+  await environment.click();
+  await screenshot(studio.app, "studio", "task-sidebar-environment-light", page);
 
   // 折叠后记住。
   await panel.getByTestId("env-fold").click();

@@ -87,6 +87,97 @@ it("blocks dragging pending/returned final delivery to done while preserving hum
   expect(submit().id).not.toBe(result.id);
 });
 
+it("keeps the recorded human acceptance when the person files the root in review and drags it back to done", async () => {
+  const result = submit();
+  const accepted = service.orchestration.reviewByUser(root.id, result.id, true, "人工验收通过");
+  service.tasks.patchTask(root.id, { column: "review" });
+  expect(service.orchestration.results(root.id).at(-1)).toEqual(accepted);
+  expect(service.orchestration.workflowSummary(root.id, {}).tasks[0]?.acceptedCurrent).toBe(true);
+  expect(service.orchestration.readResult(root.id, result.id).acceptedCurrent).toBe(true);
+  expect(submit()).toEqual(accepted);
+  expect(service.orchestration.results(root.id)).toHaveLength(1);
+  expect((await service.tasks.patchTask(root.id, { column: "done" })).column).toBe("done");
+  expect(service.orchestration.results(root.id).at(-1)).toEqual(accepted);
+});
+
+it.each(["submitted", "accepted"])("preserves %s root delivery through ordinary HTTP follow-up and turn settlement", async (state) => {
+  service.tasks.reviewSettleMs = 40;
+  const result = submit();
+  if (state === "accepted") service.orchestration.reviewByUser(root.id, result.id, true, "人工验收通过");
+  const before = service.orchestration.results(root.id).at(-1);
+  const column = state === "accepted" ? "done" : "review";
+  http = await startHostServer({ service, token: "test-person-token", port: 0 });
+  const response = await fetch(`${http.url}/api/sessions/${session.id}/messages`, { method: "POST", headers: { authorization: "Bearer test-person-token", "content-type": "application/json" }, body: JSON.stringify({ text: "[[slow]] 那这个任务状态应该是啥？" }) });
+  expect(response.status).toBe(200);
+  await vi.waitFor(() => expect(store.getSession(session.id)?.status).toBe("running"));
+  expect(store.getTask(root.id)?.column).toBe(column);
+  expect(service.orchestration.results(root.id).at(-1)).toEqual(before);
+  await service.sessions.interrupt(session.id);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(store.getTask(root.id)?.column).toBe(column);
+  expect(service.orchestration.results(root.id).at(-1)).toEqual(before);
+});
+
+it("invalidates human acceptance for explicit reopen and newly assigned unfinished work", async () => {
+  const first = submit();
+  service.orchestration.reviewByUser(root.id, first.id, true, "人工验收通过");
+  await service.sessions.sendMessage(session.id, "[[slow]] 重新工作", [], [], { purpose: "reopen", now: true });
+  await vi.waitFor(() => expect(store.getSession(session.id)?.status).toBe("running"));
+  expect(store.getTask(root.id)?.column).toBe("doing");
+  expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");
+  await service.sessions.interrupt(session.id);
+  await vi.waitFor(() => expect(store.getSession(session.id)?.status).toMatch(/idle|interrupted|completed/));
+  const second = service.orchestration.submit(session.id, "重新交付", "补充证据");
+  service.orchestration.reviewByUser(root.id, second.id, true, "再次人工验收");
+  await service.tasks.createTask({ title: "新增待办", workspaceId: root.workspaceId, managerTaskId: root.id });
+  expect(store.getTask(root.id)?.column).toBe("doing");
+  expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");
+  expect(service.orchestration.results(root.id).at(-1)?.userReview).toMatchObject({ state: "accepted", review: "再次人工验收", reviewedAt: expect.any(String) });
+  expect(() => service.tasks.patchTask(root.id, { column: "done" })).toThrow(/交付与验收/);
+  expect((await tool("task_update").run({ column: "done" })).isError).toBe(true);
+  expect((await tool("task_review_result").run({ resultId: second.id, accept: true, review: "自行通过" })).isError).toBe(true);
+});
+
+it.each(["submitted", "accepted"])("invalidates %s review when explicit reopen joins a running ordinary conversation", async (state) => {
+  const result = submit();
+  if (state === "accepted") {
+    service.orchestration.reviewByUser(root.id, result.id, true, "人工验收通过");
+    service.tasks.patchTask(root.id, { column: "review" });
+  }
+  await service.sessions.sendMessage(session.id, "[[slow]] 状态追问", [], [], { now: true });
+  await vi.waitFor(() => expect(store.getSession(session.id)?.status).toBe("running"));
+  expect(store.getTask(root.id)?.column).toBe("review");
+  await service.sessions.sendMessage(session.id, "[[slow]] 明确重开", [], [], { now: true, purpose: "reopen" });
+  await vi.waitFor(() => expect(store.getTask(root.id)?.column).toBe("doing"));
+  expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");
+  await service.sessions.interrupt(session.id);
+});
+
+it("still invalidates an accepted root when its accepted worker actually starts more work", async () => {
+  const { task: child } = await service.tasks.createTask({ title: "已验收执行任务", workspaceId: root.workspaceId, managerTaskId: root.id });
+  const worker = await service.tasks.addSession(child.id, { profileId: "test" });
+  service.sessions.inbox.pause(worker.id);
+  const input = service.orchestration.submit(worker.id, "实现完成", "验证通过");
+  service.orchestration.review(session.id, input.id, true, "直属主控通过");
+  const final = submit();
+  service.orchestration.reviewByUser(root.id, final.id, true, "人工验收通过");
+  await service.sessions.sendMessage(worker.id, "[[slow]] 继续实现", [], [], { now: true });
+  await vi.waitFor(() => expect(store.getSession(worker.id)?.status).toBe("running"));
+  expect(store.getTask(child.id)?.column).toBe("doing");
+  expect(store.getTask(root.id)?.column).toBe("doing");
+  expect(service.orchestration.results(child.id).at(-1)?.state).toBe("returned");
+  expect(service.orchestration.results(root.id).at(-1)).toMatchObject({ id: final.id, state: "returned", userReview: { state: "accepted", review: "人工验收通过" } });
+  await service.sessions.interrupt(worker.id);
+});
+
+it("does not treat an old accepted result without a human source as permission to drag done", () => {
+  const result = submit();
+  // Pre-human-review legacy record: never backfill reviewedBy=user or infer acceptance from the column.
+  store.setKv(`task-results:${root.id}`, JSON.stringify([{ ...result, state: "accepted" }]));
+  expect(() => service.tasks.patchTask(root.id, { column: "done" })).toThrow(/交付与验收/);
+  expect(service.orchestration.results(root.id).at(-1)?.reviewedBy).toBeUndefined();
+});
+
 it("invalidates pending final delivery on transfer and keeps a managed lead under direct-manager review", async () => {
   const previous = submit();
   const parent = store.createTask({ title: "新总主控", workspaceId: root.workspaceId, lead: true });
@@ -114,7 +205,7 @@ it.each(["submitted", "accepted"])("preserves %s final delivery through a real n
   expect(service.orchestration.results(root.id).at(-1)).toMatchObject({ id: result.id, state });
   await service.sessions.interrupt(session.id);
   expect(service.orchestration.results(root.id).at(-1)?.state).toBe(state);
-  await service.sessions.sendMessage(session.id, "[[slow]] 明确继续工作", [], [], { now: true });
+  await service.sessions.sendMessage(session.id, "[[slow]] 明确继续工作", [], [], { now: true, purpose: "reopen" });
   await vi.waitFor(() => expect(store.getSession(session.id)?.status).toBe("running"));
   expect(store.getTask(root.id)?.column).toBe("doing");
   expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");

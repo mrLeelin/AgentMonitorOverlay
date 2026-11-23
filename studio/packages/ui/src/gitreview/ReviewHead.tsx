@@ -2,6 +2,7 @@ import { GIT_RANGES, type GitChangedFile, type GitCommitChanges, type GitRange, 
 import type { HostLink } from "../host/client.js";
 import { formatWhen } from "../attach/refs.js";
 import { MarkButton } from "../marks/MarkButton.js";
+import type { FileRef } from "../lib/openin.js";
 import { openViewer } from "../viewer/open.js";
 import { remoteProjectPath, useRemoteReview } from "../remote/reviewer.js";
 import { useEffect, useRef, useState } from "react";
@@ -49,6 +50,7 @@ function ThemeButton() {
 /** The window's head: the commit or the branch, 历史, the range, 只看改动 / 完整文件, 单栏 / 左右对照, 刷新. */
 export function ReviewHead({
   workspaceName,
+  worktreePath,
   commit,
   shownCommit,
   status,
@@ -66,6 +68,7 @@ export function ReviewHead({
    * inside the viewer, whose own head is. */
   titleBar?: boolean;
   workspaceName: string;
+  worktreePath?: string;
   /** A commit's window. */
   commit: string | null;
   shownCommit: GitCommitChanges | null;
@@ -86,7 +89,7 @@ export function ReviewHead({
     <header className={titleBar ? "gr-head titlebar" : "gr-head"} ref={bar}>
       {titleBar && <TitleMark />}
       <span className="gr-title">{commit ? "提交" : "Git Review"}</span>
-      <span className="gr-project">{workspaceName}</span>
+      <span className="gr-project" title={worktreePath}>{workspaceName}</span>
       {commit && (
         <span className="gr-commit" data-testid="review-commit" title={shownCommit ? `${shownCommit.commit.sha}\n${shownCommit.commit.author} <${shownCommit.commit.email}>` : commit}>
           <code>{short(shownCommit?.commit.sha ?? commit)}</code>
@@ -118,7 +121,7 @@ export function ReviewHead({
         <div className="gr-seg" role="group" aria-label="对比范围" title="Q：在这三种范围之间切换">
           {GIT_RANGES.map((r) => (
             <button key={r.id} type="button" aria-pressed={range === r.id} title={`${r.hint}（Q 切换）`} onClick={() => onRange(r.id)}>
-              {r.label}
+              {worktreePath && r.id === "working" ? "工作树改动" : r.label}
             </button>
           ))}
           <kbd className="gr-key gr-seg-key">Q</kbd>
@@ -160,7 +163,7 @@ export function ReviewHead({
 /** The file in front: its path and state, and where else to open it. */
 export function FileHead({
   link,
-  workspaceId,
+  fileRef,
   file,
   vscode,
   openLine,
@@ -168,7 +171,7 @@ export function FileHead({
   onOpen,
 }: {
   link: HostLink;
-  workspaceId: string;
+  fileRef: FileRef;
   file: GitChangedFile;
   /** VS Code is on this machine. */
   vscode: boolean;
@@ -192,7 +195,7 @@ export function FileHead({
           type="button"
           className="btn-ghost small"
           title={`在查看器里看这个文件现在的样子（第 ${openLine} 行）`}
-          onClick={() => openViewer(remote ? { path: remoteProjectPath(file.path), remote: remote.taskId, line: openLine } : { path: file.path, workspaceId, line: openLine })}
+          onClick={() => openViewer(remote ? { path: remoteProjectPath(file.path), remote: remote.taskId, line: openLine } : { ...fileRef, line: openLine })}
           data-testid="review-open-viewer"
         >
           查看文件
@@ -222,7 +225,7 @@ export function FileHead({
           在资源管理器中显示
         </button>
       )}
-      {!remote && file.status !== "deleted" && <MarkButton link={link} file={{ path: file.path, workspaceId }} line={lineChosen ? openLine : null} />}
+      {!remote && file.status !== "deleted" && <MarkButton link={link} file={fileRef} line={lineChosen ? openLine : null} />}
     </div>
   );
 }

@@ -41,7 +41,7 @@ const MARGIN = { side: 10, top: 52, bottom: 56 };
  * 详情框 (2026-10-29, the user: the details in the sidebar were uncomfortable; a box beside the selected card, like a
  * design tool's properties): floats beside the selected card, group or review item and follows it as the canvas pans and
  * zooms. Not modal — no backdrop, the canvas stays live around it. `anchor` is the selection's box in the viewport's
- * pixels, `avoid` the other cards' (of the sides with room, it takes the one covering least of them); `hidden` while a card is being dragged (it comes back when let go). Closed by its ×, Esc or a click on the
+ * pixels, `avoid` the other cards' (of the sides with room, it takes the one covering least of them); `hidden` while resizing or multi-selecting. Moving a card clears its details until the next click. Closed by its ×, Esc or a click on the
  * canvas's empty space (CanvasPage).
  */
 export function CanvasDetail({ anchor, avoid, area, hidden, onClose, ...props }: DetailProps & { anchor: Rect | null; avoid: readonly Rect[]; area: { w: number; h: number }; hidden: boolean; onClose(): void }) {

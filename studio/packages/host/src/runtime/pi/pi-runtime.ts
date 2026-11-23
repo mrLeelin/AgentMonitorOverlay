@@ -84,7 +84,7 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     const options: SessionOptions = { ...(profile.model ? { model: profile.model } : {}), ...(input.options ?? {}), permission: input.options?.permission ?? "full-access" };
     this.checkAccess(input.taskId, options);
     if (input.resumeFrom) throw unsupported("Pi 暂不支持接续 Studio 外的会话。");
-    const session = this.createSession({ taskId: input.taskId, topicId: input.topicId, parentId: null, kind: "main", profileId: profile.id, workspaceId: input.workspace.id, title: input.title ?? "", runtimeRef: randomUUID(), options });
+    const session = this.createSession({ taskId: input.taskId, topicId: input.topicId, parentId: null, kind: "main", profileId: profile.id, workspaceId: input.workspace.id, ...(input.cwd ? { cwd: input.cwd } : {}), title: input.title ?? "", runtimeRef: randomUUID(), options });
     const stopVersion = this.stopVersions.get(session.id) ?? 0;
     try {
       await this.ensureLive(session);
@@ -344,14 +344,15 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
       if (known) await this.release(session.id);
       const workspace = this.store.getWorkspace(session.workspaceId);
       if (!workspace) throw unsupported("Pi 会话的工作目录已不存在。");
+      const cwd = session.cwd ?? workspace.path;
       if (!session.runtimeRef || !/^[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]$/.test(session.runtimeRef)) throw unsupported("Pi 会话的恢复标识无效。");
       const dir = join(this.options.dir, "sessions", session.runtimeRef);
       mkdirSync(dir, { recursive: true });
       const extra = this.mcp(session);
       const args = ["--mode", "rpc", "--session-id", session.runtimeRef, "--session-dir", dir];
       if (Object.keys(extra).length) args.push("--extension", piMcpExtension(join(this.options.dir, "extensions")));
-      const conn = this.spawn(workspace.path, args, Object.keys(extra).length ? { [PI_MCP_SERVERS_ENV]: JSON.stringify(extra) } : {});
-      const live: Live = { conn, transcript: new PiTranscript(this.makeCore(), session.id, workspace.path), queue: [], dialogs: new Map(), inflight: false, seenStart: false, stopping: null, restart: false };
+      const conn = this.spawn(cwd, args, Object.keys(extra).length ? { [PI_MCP_SERVERS_ENV]: JSON.stringify(extra) } : {});
+      const live: Live = { conn, transcript: new PiTranscript(this.makeCore(), session.id, cwd), queue: [], dialogs: new Map(), inflight: false, seenStart: false, stopping: null, restart: false };
       this.live.set(session.id, live);
       conn.on("event", (event) => this.event(session.id, live, event));
       conn.on("log", (line) => this.emit("log", `${session.id}: ${line}`));

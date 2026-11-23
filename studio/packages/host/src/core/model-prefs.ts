@@ -1,4 +1,4 @@
-import type { ModelPrefs, ProfileChoices, SessionOptions } from "@amo-studio/protocol";
+import type { ModelOption, ModelPrefs, ProfileChoices, SessionOptions } from "@amo-studio/protocol";
 import type { Store } from "../store/store.js";
 import { HostError } from "./shared.js";
 
@@ -35,8 +35,10 @@ export function writeModelPrefs(store: Store, profileIds: readonly string[], inp
     if (typeof raw !== "object" || Array.isArray(raw)) throw new HostError("bad_request", `modelPrefs.${profileId} must be an object`);
     const o = raw as Record<string, unknown>;
     if (o.order !== undefined && (!Array.isArray(o.order) || o.order.length > 200 || o.order.some((x) => typeof x !== "string"))) throw new HostError("bad_request", "order must list model ids");
+    if (o.hidden !== undefined && (!Array.isArray(o.hidden) || o.hidden.length > 1000 || o.hidden.some((id) => typeof id !== "string" || !id))) throw new HostError("bad_request", "hidden must list model ids");
     const prefs: ModelPrefs = {
       ...(Array.isArray(o.order) && o.order.length ? { order: [...new Set(o.order as string[])] } : {}),
+      ...(Array.isArray(o.hidden) && o.hidden.length ? { hidden: [...new Set(o.hidden as string[])] } : {}),
       ...(text(o.model, "model") ? { model: text(o.model, "model")! } : {}),
       ...(text(o.effort, "effort") ? { effort: text(o.effort, "effort")! } : {}),
       ...(text(o.permission, "permission") ? { permission: text(o.permission, "permission")! } : {}),
@@ -50,37 +52,49 @@ export function writeModelPrefs(store: Store, profileIds: readonly string[], inp
 
 /**
  * The CLI's choices with the person's prefs on top: models in their order (new ones after, as the CLI lists them),
- * their default model, effort (on the models that take it) and permissions. Prefs naming something the CLI no longer
+ * their visible and hidden models, default model, effort (on the models that take it) and permissions. Prefs naming something the CLI no longer
  * offers are skipped.
  */
 export function applyModelPrefs(choices: ProfileChoices, prefs: ModelPrefs | undefined): ProfileChoices {
   if (!prefs) return choices;
   const rank = new Map((prefs.order ?? []).map((id, i) => [id, i]));
-  const models = choices.models
+  const ordered = choices.models
     .map((m, i) => ({ m, i }))
     .sort((a, b) => (rank.get(a.m.id) ?? rank.size + a.i) - (rank.get(b.m.id) ?? rank.size + b.i))
     .map(({ m }) => m);
-  const pinned = prefs.model && models.some((m) => m.id === prefs.model) ? prefs.model : null;
+  const hidden = new Set(prefs.hidden);
+  const visible = ordered.filter((m) => !hidden.has(m.id));
+  // Discovery can temporarily return a smaller catalog. Always leave a model to start a session with.
+  const retained = visible.length ? undefined : ordered.find((m) => m.isDefault) ?? ordered[0];
+  if (retained) visible.push(retained);
+  const hiddenModels = ordered.filter((m) => hidden.has(m.id) && m !== retained);
+  const defaultId = visible.find((m) => m.id === prefs.model)?.id ?? visible.find((m) => m.isDefault)?.id ?? (hiddenModels.length ? visible[0]?.id : undefined);
+  const withEffort = (m: ModelOption) => {
+    const effort = prefs.effort && m.efforts.includes(prefs.effort) ? prefs.effort : m.defaultEffort;
+    return { ...m, ...(effort ? { defaultEffort: effort } : {}) };
+  };
   return {
     ...choices,
-    models: models.map((m) => {
+    models: visible.map((m) => {
       const { isDefault: _was, ...rest } = m;
-      const isDefault = pinned ? m.id === pinned : m.isDefault;
-      const effort = prefs.effort && m.efforts.includes(prefs.effort) ? prefs.effort : m.defaultEffort;
-      return { ...rest, ...(effort ? { defaultEffort: effort } : {}), ...(isDefault ? { isDefault: true } : {}) };
+      return { ...withEffort(rest), ...(m.id === defaultId ? { isDefault: true } : {}) };
     }),
+    ...(hiddenModels.length ? { hiddenModels: hiddenModels.map(withEffort) } : {}),
     defaultPermission: prefs.permission && choices.permissions.some((p) => p.id === prefs.permission && !p.unavailable) ? prefs.permission : choices.defaultPermission,
   };
 }
 
 /**
  * A new session's options with the defaults filled in where nothing was chosen: the default model, its default effort,
- * the default permissions, all as the choices (prefs applied) say. The CLI's own defaults are left implicit.
+ * the default permissions, all as the choices (prefs applied) say. With hidden models we pin the visible default
+ * so the CLI cannot independently choose a hidden one.
  */
 export function fillDefaults(options: SessionOptions, choices: ProfileChoices, prefs: ModelPrefs | undefined): SessionOptions {
   if (!prefs) return options;
-  const model = options.model ?? (prefs.model && choices.models.some((m) => m.id === prefs.model) ? prefs.model : undefined);
-  const runs = choices.models.find((m) => m.id === model) ?? choices.models.find((m) => m.isDefault);
+  const fallback = choices.models.find((m) => m.isDefault);
+  const preferred = choices.models.find((m) => m.id === prefs.model);
+  const model = options.model ?? preferred?.id ?? (choices.hiddenModels?.length ? fallback?.id : undefined);
+  const runs = choices.models.find((m) => m.id === model) ?? choices.hiddenModels?.find((m) => m.id === model) ?? fallback;
   const effort = options.effort ?? (prefs.effort && runs?.efforts.includes(prefs.effort) ? prefs.effort : undefined);
   const permission = options.permission ?? (prefs.permission && choices.permissions.some((p) => p.id === prefs.permission && !p.unavailable) ? prefs.permission : undefined);
   return { ...options, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(permission ? { permission } : {}) };

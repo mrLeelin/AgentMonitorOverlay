@@ -30,6 +30,7 @@ export class ClaudeSubagents {
       kind: "sub",
       profileId: parent.profileId,
       workspaceId: parent.workspaceId,
+      ...(parent.cwd ? { cwd: parent.cwd } : {}),
       title: name,
       runtimeRef: `${parent.runtimeRef}/agent/${toolUseId}`,
       options: parent.options,

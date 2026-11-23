@@ -19,12 +19,14 @@ import { McpPage } from "./McpPage.js";
 import { FolderAccessSection } from "./FolderAccessSection.js";
 import { setScrollOnSend, setTranscriptView, TRANSCRIPT_VIEW_HINTS, TRANSCRIPT_VIEW_LABELS, useScrollOnSend, useTranscriptView, type TranscriptView } from "../chat/prefs.js";
 import { useChatSettings } from "../chat/cli/chatSettings.js";
+import { CHAT_SHORTCUTS, FOLLOWUP_MODES, TODO_SHORTCUTS, setChatShortcuts, todoCtrlConflict, useEnterMode, useFollowupMode, useNewlineShortcut, useTodoShortcut } from "../chat/inputPrefs.js";
 import { defaultFolder, setDefaultFolder } from "../lib/profiles.js";
 import { BotArt, MascotArt, ReaderArt } from "../focus/PixelBot.js";
 import { PET_SKINS, usePetSkin, writePetSkin, type PetSkin } from "../focus/petSkin.js";
 import { pickDirectory } from "../folders/FolderPicker.js";
 import { GitEditorPage } from "./GitEditorPage.js";
 import { PromptTemplateManager } from "../attach/PromptTemplateDialog.js";
+import { SkillsPage } from "./SkillsPage.js";
 
 const GROUPS = [
   { id: "general", label: "通用" },
@@ -37,15 +39,16 @@ type SettingsGroup = (typeof GROUPS)[number]["id"];
 
 /** Stable page ids keep links from the rest of Studio opening the right group. */
 const PAGES = [
-  { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 工作步骤 发送 跳到最新 建议 远程" },
+  { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 工作步骤 发送 跳到最新 建议 远程 Enter 回车 换行 快捷键 排队 插话 后续消息 放进待办" },
   { id: "common", group: "general", label: "项目与目录", keywords: "默认 公共 工作 文件夹 访问 权限" },
   { id: "scratchpad", group: "general", label: "便签", keywords: "随手记 快捷键" },
-  { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 压缩" },
+  { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 隐藏 压缩" },
   { id: "subsession", group: "models", label: "子会话", keywords: "型号 渠道 Fast 启动选项 权限 默认" },
   { id: "prompt-templates", group: "models", label: "提示词模板", keywords: "提示词 模板 prompt template 常用 新建 编辑 全局 项目" },
   { id: "quota", group: "models", label: "额度", keywords: "用量 余额 订阅 GPT Claude DeepSeek 左下角" },
   { id: "stats", group: "models", label: "用量统计", keywords: "用量 token 费用 花费 消耗" },
   { id: "mcp", group: "tools", label: "MCP", keywords: "服务 工具 stdio HTTP" },
+  { id: "skills", group: "tools", label: "技能展览", keywords: "技能 Skills Agent 全局 项目 发现 来源 目录 Codex Claude ClawHub skills.sh" },
   { id: "git-editor", group: "tools", label: "Git 编辑器", keywords: "程序 路径 自动 检测 打开方式" },
   { id: "duty", group: "tools", label: "值守", keywords: "调度 定时 任务 自动" },
   { id: "network", group: "advanced", label: "网络", keywords: "连接 代理 proxy HTTP SOCKS 连通性" },
@@ -262,6 +265,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                   </div>
                 </div>
                 <span className="settings-hint">{TRANSCRIPT_VIEW_HINTS[view]}。</span>
+                <InputSettings />
                 <div className="settings-row">
                   <span className="settings-label">发送后跳到最新</span>
                   <div role="radiogroup" aria-label="发送后跳到最新" className="chips">
@@ -363,12 +367,49 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
             {page === "data" && <DataPage link={link} />}
             {page === "duty" && <DutyPage link={link} state={state} />}
             {page === "mcp" && <McpPage link={link} />}
+            {page === "skills" && <SkillsPage link={link} projects={state.workspaces.filter((w) => !isCommon(w) && !w.archivedAt)} />}
             {page === "maintenance" && <MaintenancePage link={link} />}
           </div>
         </div>
         <span className="settings-grip" role="separator" aria-label="拖动改变设置窗口大小，双击恢复默认" title="拖动改变大小，双击恢复默认" data-testid="settings-grip" {...size.grip} />
       </div>
     </div>
+  );
+}
+
+function InputSettings() {
+  const [enter] = useEnterMode();
+  const [newline] = useNewlineShortcut();
+  const [followup, setFollowup] = useFollowupMode();
+  const [todo, setTodo] = useTodoShortcut(enter, newline);
+  const todoConflict = todoCtrlConflict(enter, newline);
+  return (
+    <>
+      <label className="settings-row input-settings-row">
+        <span className="settings-label">发送与开始快捷键</span>
+        <select className="field" value={`${enter}-${newline}`} onChange={(e) => {
+          const shortcut = CHAT_SHORTCUTS.find((option) => option.id === e.target.value);
+          if (shortcut && !(todo === "ctrl" && todoCtrlConflict(shortcut.mode, shortcut.newline))) setChatShortcuts(shortcut.mode, shortcut.newline);
+        }}>
+          {CHAT_SHORTCUTS.map(({ id, label, mode, newline }) => <option key={id} value={id} disabled={todo === "ctrl" && !!todoCtrlConflict(mode, newline)}>{label}</option>)}
+        </select>
+      </label>
+      <span className="settings-hint">{todo === "ctrl" ? "Ctrl+Enter 已用于放进待办。先更改待办快捷键，即可将它用于开始或换行。" : "会话里的发送键也是新建任务的开始键。换行方式相同。"}</span>
+      <label className="settings-row input-settings-row">
+        <span className="settings-label">后续消息处理方式</span>
+        <select className="field" value={followup} onChange={(e) => setFollowup(e.target.value as typeof followup)}>
+          {Object.entries(FOLLOWUP_MODES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      <span className="settings-hint">会话运行时，Ctrl+Shift+Enter 可让这一条消息采用另一种方式。部分模型只支持等本轮结束。</span>
+      <label className="settings-row input-settings-row">
+        <span className="settings-label">放进待办快捷键</span>
+        <select className="field" value={todo} onChange={(e) => setTodo(e.target.value as typeof todo)}>
+          {Object.entries(TODO_SHORTCUTS).map(([value, label]) => <option key={value} value={value} disabled={value === "ctrl" && !!todoConflict}>{label}</option>)}
+        </select>
+      </label>
+      <span className="settings-hint">{todoConflict ? `Ctrl+Enter 已用于${todoConflict}。可以选择其他组合键，或点击「放进待办」。` : "适用于快速新任务和新建任务。关闭快捷键后仍可点击「放进待办」。"}</span>
+    </>
   );
 }
 

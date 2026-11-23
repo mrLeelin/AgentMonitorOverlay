@@ -8,6 +8,7 @@ import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
+import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
@@ -32,7 +33,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
    * session of a 待审阅 or 完成 task starts moving again (the person talks to it), the task goes back to 进行中. Only a
    * session starting or stopping counts for workers, so a card the person moved stays where it is until then. Leads
    * also wait for all managed descendants to deliver or finish (2026-11-16); their child changes are reevaluated.
-   * 待办 is never touched, nor the scheduler's task. Completed work reopens when another turn starts (2026-11-06).
+   * 待办 is never touched, nor the scheduler's task. A root lead's own conversation preserves its final delivery;
+   * explicit reopen or actual managed work restarts it (2026-11-17). Workers still reopen on a work turn.
    */
   watchColumns(): void {
     for (const s of this.store.listSessions()) this.movingBefore.set(s.id, sessionMoving(s));
@@ -54,7 +56,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       const moving = sessionMoving(s);
       const before = this.movingBefore.get(s.id) ?? false;
       this.movingBefore.set(s.id, moving);
-      const preserves = keepsAcceptance(currentMessagePurpose(this.store, s.id));
+      const purpose = currentMessagePurpose(this.store, s.id);
+      const task = s.taskId ? this.store.getTask(s.taskId) : undefined;
+      // Root leads only coordinate: a normal question arrives as work too. Starting that conversation is not
+      // evidence of new work. Child/ownership/dependency changes still reopen the tree through their own events.
+      const final = task?.lead && !task.managerTaskId ? this.latestDelivery(task.id) : undefined;
+      const preserves = keepsAcceptance(purpose) || (purpose !== "reopen" && !!final && ["submitted", "accepted"].includes(final.state));
       const preservedBefore = this.purposeBefore.get(s.id) ?? false;
       this.purposeBefore.set(s.id, preserves);
       if (!s.taskId) return;
@@ -65,7 +72,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
         return;
       }
       if (moving === before) {
-        if (moving && preservedBefore && this.followsSessions(s.taskId, "done")) this.sessionStarted(s.taskId);
+        if (moving && preservedBefore && (this.followsSessions(s.taskId, "done") || this.followsSessions(s.taskId, "review"))) this.sessionStarted(s.taskId);
         return;
       }
       if (moving) this.sessionStarted(s.taskId);
@@ -219,6 +226,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     managerTaskId?: Id | null;
     description?: string;
     firstSession?: NewSessionInput;
+    worktree?: { branch?: string };
     /** Filed without a session: the sentence its first session will take (2026-11-05). */
     firstMessage?: string;
   }): Promise<{ task: Task; session: Session | null }> {
@@ -236,11 +244,29 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const setups = checkSetups(input.firstSession?.subsessions);
     for (const s of setups) this.requireProfile(s.profileId);
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
-    const task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column });
-    const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
-    const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first) : null;
-    if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
-    return { task: this.store.getTask(task.id)!, session };
+    let worktree: Awaited<ReturnType<typeof createForkWorktree>> | undefined;
+    if (input.worktree !== undefined) {
+      if (!input.worktree || typeof input.worktree !== "object" || Array.isArray(input.worktree) || (input.worktree.branch !== undefined && typeof input.worktree.branch !== "string")) {
+        throw new HostError("bad_request", "工作树设置无效。");
+      }
+      if (isCommon(workspace) || !input.firstSession || input.firstSession.resumeFrom) {
+        throw new HostError("bad_request", "新建工作树需要选择 Git 项目，并直接开始新的会话。");
+      }
+      worktree = await createForkWorktree(workspace.path, workspace.path, input.worktree.branch);
+    }
+    let task: Task | undefined;
+    try {
+      task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column });
+      const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
+      const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first, worktree?.cwd) : null;
+      if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
+      return { task: this.store.getTask(task.id)!, session };
+    } catch (err) {
+      if (worktree && (!task || !this.store.listSessions({ taskId: task.id }).some((s) => s.cwd === worktree?.cwd))) {
+        await worktree.remove().catch((cleanupError: unknown) => this.host.log(`could not remove failed task worktree ${worktree?.cwd}: ${String(cleanupError)}`));
+      }
+      throw err;
+    }
   }
 
   /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
@@ -269,7 +295,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const current = this.requireTask(id);
     // Moving the card is a management action, not a recorded human acceptance of the final delivery.
     const final = current.lead && !current.managerTaskId ? this.latestDelivery(id) : undefined;
-    if (patch.column === "done" && final && final.state !== "accepted") throw new HostError("conflict", "最终交付尚未通过用户验收，请在「交付与验收」中明确验收或退回。");
+    if (patch.column === "done" && final && (final.state !== "accepted" || final.reviewedBy !== "user")) throw new HostError("conflict", "最终交付尚未通过用户验收，请在「交付与验收」中明确验收或退回。");
     const onlyTitle = patch.title !== undefined && Object.entries(patch).every(([k, v]) => k === "title" || v === undefined);
     if (current.remote && onlyTitle) {
       const title = String(patch.title).trim();
@@ -471,8 +497,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     for (const s of sessions.filter((x) => !x.parentId && x.archivedAt && x.archivedAt >= since)) await this.wrap(() => this.runtime.unarchive(s.id));
   }
 
-  async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
-    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input), publicMessagePurpose(input.purpose) === "inquiry");
+  async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
+    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
   }
 
   /** Includes forks: an in-flight runtime request may not have saved its session yet. */
@@ -534,7 +560,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     return pending;
   }
 
-  private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput): Promise<Session> {
+  private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
     const purpose = publicMessagePurpose(input.purpose);
     this.leadPromotion.assertAvailable(owner.taskId);
     const options = await this.withDefaults(input.profileId, sessionOptions(input.options));
@@ -548,7 +574,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const resumeFrom = this.resumeFrom(input);
     this.leadPromotion.assertAvailable(owner.taskId);
     const deferredFirst = purpose === "inquiry" || purpose === "reopen" || images.length > 0;
-    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(input.text && !deferredFirst ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
+    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(cwd ? { cwd } : {}), ...(input.text && !deferredFirst ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
     if (deferredFirst && (input.text?.trim() || images.length)) await this.f.sessions.sendMessage(session.id, input.text ?? "", images, [], purpose ? { purpose } : {});
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });

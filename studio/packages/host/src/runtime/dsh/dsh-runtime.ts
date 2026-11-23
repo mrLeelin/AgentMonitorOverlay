@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { inTurn, type AccountUsage, type ApprovalDecision, type Attachment, type DshCheck, type FolderAccessStatus, type Id, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionReply, type Session, type SessionOptions, type UserDelivery, type Workspace, type McpApply } from "@amo-studio/protocol";
+import { inTurn, type AccountUsage, type ApprovalDecision, type Attachment, type DshCheck, type FolderAccessStatus, type Id, type ModelOption, type ModelProfile, type ProfileChoices, type QuestionReply, type Session, type SessionOptions, type UserDelivery, type McpApply } from "@amo-studio/protocol";
 import type { Store } from "../../store/store.js";
 import { newId } from "../../store/store.js";
 import { MCP_SESSION_HEADER, type McpIdentities } from "../../mcp/identity.js";
@@ -381,21 +381,22 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     await this.readGoal(sessionId, live, true);
   }
 
-  async startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }): Promise<Session> {
+  async startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]): Promise<Session> {
     const profile = this.profile(input.profileId);
     // A channel's own model when none was picked (DSH's catalog id, `deepseek-official/<model>`).
     const options = { ...(profile.model && !input.options?.model ? { model: profile.model } : {}), ...(input.options ?? {}) };
     const lead = !!input.taskId && !!this.store.getTask(input.taskId)?.lead;
     if (lead) options.permission = "read-only";
     const permission = dshPermissionMode(options.permission);
-    const extra = lead ? { list: [], key: "" } : this.extraMcp({ workspaceId: input.workspace.id, ...(options.mcp ? { mcp: options.mcp } : {}) });
+    const cwd = input.cwd ?? input.workspace.path;
+    const extra = lead ? { list: [], key: "" } : this.extraMcp({ workspaceId: input.workspace.id, cwd, ...(options.mcp ? { mcp: options.mcp } : {}) });
     const token = this.options.identities?.issue();
-    const conn = this.spawn(input.workspace.path, profile, permission, `new-${Date.now()}`, options.model);
+    const conn = this.spawn(cwd, profile, permission, `new-${Date.now()}`, options.model);
     let session: Session;
     let image = false;
     try {
       image = (await this.initialize(conn)).image;
-      const created = await conn.request<{ sessionId: string; configOptions?: ConfigOption[] }>("session/new", { cwd: input.workspace.path, mcpServers: [...this.mcpServers(token), ...extra.list] });
+      const created = await conn.request<{ sessionId: string; configOptions?: ConfigOption[] }>("session/new", { cwd, mcpServers: [...this.mcpServers(token), ...extra.list] });
       this.remember(created.configOptions, profile);
       session = this.createSession({
         taskId: input.taskId,
@@ -404,6 +405,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
         kind: "main",
         profileId: profile.id,
         workspaceId: input.workspace.id,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
         title: input.title ?? "",
         runtimeRef: created.sessionId,
         options,
@@ -776,14 +778,15 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       if (!session.runtimeRef) throw new Error(`session ${session.id} has no DSH session`);
       const workspace = this.store.getWorkspace(session.workspaceId);
       if (!workspace) throw new Error(`workspace ${session.workspaceId} not found`);
+      const cwd = session.cwd ?? workspace.path;
       const permission = this.isLead(session) ? "read-only" : dshPermissionMode(session.options.permission);
       const extra = this.extraMcp(session.id);
-      const conn = this.spawn(workspace.path, this.profile(session.profileId), permission, session.id, session.options.model);
+      const conn = this.spawn(cwd, this.profile(session.profileId), permission, session.id, session.options.model);
       let image = false;
       try {
         image = (await this.initialize(conn)).image;
         const token = this.options.identities?.tokenFor(session.id);
-        const resumed = await conn.request<{ configOptions?: ConfigOption[] }>("session/resume", { sessionId: session.runtimeRef, cwd: workspace.path, mcpServers: [...this.mcpServers(token), ...extra.list] });
+        const resumed = await conn.request<{ configOptions?: ConfigOption[] }>("session/resume", { sessionId: session.runtimeRef, cwd, mcpServers: [...this.mcpServers(token), ...extra.list] });
         this.remember(resumed.configOptions, this.profile(session.profileId));
       } catch (err) {
         conn.kill();
@@ -799,7 +802,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   private adopt(session: Session, conn: AcpConnection, applied: Live["applied"], permission: DshPermissionMode, images: boolean, model: string | undefined): Live {
-    const live: Live = { conn, acpId: session.runtimeRef!, permission, applied, inflight: false, queue: [], images, model, transcript: new DshTranscript(this.makeCore(), session.id, this.store.getWorkspace(session.workspaceId)?.path, this.subagents), waiting: new Map(), idleTimer: null, measuredAt: 0, auto: null, mcpKey: "" };
+    const live: Live = { conn, acpId: session.runtimeRef!, permission, applied, inflight: false, queue: [], images, model, transcript: new DshTranscript(this.makeCore(), session.id, this.folderOf(session.id), this.subagents), waiting: new Map(), idleTimer: null, measuredAt: 0, auto: null, mcpKey: "" };
     this.live.set(session.id, live);
     this.goalBridges.get(conn)?.bind(live.acpId, conn.pid);
     this.pollGoal(session.id, live);
@@ -840,7 +843,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   private folderOf(sessionId: Id): string | undefined {
     const session = this.store.getSession(sessionId);
-    return session ? this.store.getWorkspace(session.workspaceId)?.path : undefined;
+    return session?.cwd ?? (session ? this.store.getWorkspace(session.workspaceId)?.path : undefined);
   }
 
   private async checkFolder(sessionId: Id): Promise<void> {
@@ -1308,7 +1311,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   /** The session's other MCP servers in ACP's shape, and a key to tell a change. */
-  private extraMcp(target: Id | { workspaceId: Id; mcp?: Record<string, boolean> }, forLaunch = true): { list: unknown[]; key: string } {
+  private extraMcp(target: Id | { workspaceId: Id; cwd: string; mcp?: Record<string, boolean> }, forLaunch = true): { list: unknown[]; key: string } {
     if (typeof target === "string") {
       const session = this.store.getSession(target);
       if (session && this.isLead(session)) return { list: [], key: "" };
@@ -1321,8 +1324,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       return { list: [], key: "" };
     }
     if (!plan) return { list: [], key: "" };
-    const workspaceId = typeof target === "string" ? this.store.getSession(target)?.workspaceId : target.workspaceId;
-    const cwd = workspaceId ? this.store.getWorkspace(workspaceId)?.path : undefined;
+    const cwd = typeof target === "string" ? this.folderOf(target) : target.cwd;
     const names = Object.keys(plan.explicit).sort();
     return { list: forLaunch ? names.map((n) => acpServer(n, plan.explicit[n]!, this.options.env ?? process.env, cwd)) : [], key: JSON.stringify(names.map((n) => [n, plan.explicit[n]])) };
   }

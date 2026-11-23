@@ -1,0 +1,31 @@
+.draft-worktree-btn { anchor-name: --draft-worktree; }
+.modal-backdrop.worktree-backdrop { display: block; padding: 0; }
+.modal.worktree-dialog {
+  --worktree-width: min(394px, calc(100vw - 16px));
+  /* The dialog is portaled into the backdrop, so use the viewport to reach the anchor in the scrollable draft. */
+  position: fixed;
+  position-anchor: --draft-worktree;
+  left: clamp(8px, anchor(left), calc(100% - var(--worktree-width) - 8px));
+  bottom: calc(anchor(top) + 6px);
+  position-try-fallbacks: flip-block, --worktree-fit-window;
+  width: var(--worktree-width);
+  max-width: none;
+  max-height: calc(100% - 16px);
+  padding: 17px 18px 16px;
+  gap: 12px;
+}
+@position-try --worktree-fit-window { inset-block: 8px; align-self: center; }
+.worktree-settings { display: grid; gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-l); background: var(--panel-raised); }
+.worktree-row { display: grid; grid-template-columns: 16px auto minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-radius: 6px; }
+.worktree-row > svg { color: var(--text-dim); }
+.worktree-row select { min-width: 0; max-width: 100%; justify-self: end; padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--panel); color: var(--text); font: inherit; text-overflow: ellipsis; }
+.worktree-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text-dim); }
+.worktree-switch { appearance: none; display: flex; align-items: center; justify-self: end; width: 32px; height: 18px; padding: 2px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--chip); cursor: pointer; }
+.worktree-switch::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--text-dim); }
+.worktree-switch:checked { justify-content: end; background: var(--primary); border-color: var(--primary); }
+.worktree-switch:checked::before { background: var(--on-primary); }
+.worktree-switch:disabled { opacity: .5; cursor: default; }
+.worktree-hint, .worktree-error { font-size: var(--fs-cap); line-height: 1.5; overflow-wrap: anywhere; }
+.worktree-hint { color: var(--text-dim); }
+.worktree-error { color: var(--danger-text); }
+.worktree-actions { display: flex; justify-content: flex-end; gap: 8px; }

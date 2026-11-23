@@ -62,11 +62,12 @@
     {
       "id": "studio.sessions",
       "label": "会话：发消息、收件箱、子会话",
-      "aliases": ["session", "SessionsFeature", "会话收件箱", "SessionInbox", "立即发送", "子会话", "session_start", "session_send", "消息投递", "@子会话", "subsession"],
+      "aliases": ["session", "SessionsFeature", "会话收件箱", "SessionInbox", "排队", "插话", "立即发送", "子会话", "session_start", "session_send", "消息投递", "@子会话", "subsession"],
       "category": "host",
       "purpose": "会话的生命周期和消息：新建、发送、排队（一轮在跑时）、立即发送、停止；agent 和 Studio 自己往会话里送的东西（中转回复、值守、传话）统一走会话收件箱；session_start 开的子会话和 @ 子会话的设定（setup）。具体怎么跑交给 runtime。",
       "steps": [
         "新的「往会话里送一句话」的来源：走 SessionInbox，不要直接调 runtime 发送（人停下的会话要先压着，见 message-delivery 方案）。",
+        "用户选择等本轮结束时，发消息传 afterTurn。RuntimeRouter 把忙碌会话的消息交给 SessionInbox 持久排队，每一条单独开一轮；立即发送可以提前送某一条。",
         "子会话的默认设定：sessions/setups.ts（kv subsession-setup:），界面在 设置 → 子会话。"
       ],
       "anchors": [
@@ -159,6 +160,7 @@
         { "label": "画布审阅", "path": "studio/packages/host/src/features/canvasreview/service.ts", "anchor": "export class CanvasReviewFeature" },
         { "label": "数据结构", "path": "studio/packages/protocol/src/canvas.ts" },
         { "label": "画布页", "path": "studio/packages/ui/src/canvas/CanvasPage.tsx" },
+        { "label": "项目进入画布的专题选择与新任务归属", "path": "studio/packages/ui/src/canvas/topic.ts", "anchor": "export function canvasTopicFor" },
         { "label": "任务流转状态与方向", "path": "studio/packages/ui/src/canvas/task-flow.ts", "anchor": "export function managementFlow" },
         { "label": "箭头流动高亮与状态标签", "path": "studio/packages/ui/src/canvas/FlowOverlay.tsx", "anchor": "export function FlowOverlay" },
           { "label": "画布状态", "path": "studio/packages/ui/src/canvas/useCanvas.ts" },
@@ -286,7 +288,7 @@
       "label": "模型渠道、账号和额度",
       "aliases": ["渠道", "channel", "额度", "quota", "余额", "balance", "Claude 多账号", "ClaudeAccounts", "profile", "UsageFooter"],
       "category": "host",
-      "purpose": "会话能选的模型（profile）：内置的、用户加的第三方渠道（设置 → 模型）、Claude 多账号；订阅额度和渠道余额的读取与缓存，左下角额度、额度页显示。Claude 只用本机 Claude Code 登录。",
+      "purpose": "会话能选的模型（profile）：内置的、用户加的第三方渠道（设置 → 模型）、Claude 多账号。每个渠道可排序、隐藏或恢复单个型号，并设定新会话默认型号。订阅额度和渠道余额显示在左下角和额度页。Claude 只用本机 Claude Code 登录。",
       "anchors": [
         { "label": "渠道注册表", "path": "studio/packages/host/src/runtime/channels.ts", "anchor": "export class ChannelRegistry" },
         { "label": "ChannelsFeature（余额）", "path": "studio/packages/host/src/features/channels/service.ts", "anchor": "cachedBalance" },
@@ -302,7 +304,7 @@
     {
       "id": "studio.config",
       "label": "设置、常用预设、功能开关",
-      "aliases": ["设置", "搜索设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY"],
+      "aliases": ["设置", "搜索设置", "settings", "ConfigFeature", "预设", "功能开关", "测试功能", "命令行适配", "SettingsDialog", "主题", "浅色", "深色", "网络", "代理", "proxy", "HTTP_PROXY", "快捷键", "Enter", "放进待办"],
       "category": "host",
       "purpose": "Studio 设置的读写（模型凭据、模型选择、常用预设、功能和测试功能的开关、命令行适配等）和设置窗口各页。左侧采用五类二级折叠菜单，GROUPS/PAGES 定义归类；搜索跨分类名称、页面名称和 keywords 筛选，清空恢复原页和展开状态，新增设置项时同步补充分组和关键词。",
       "anchors": [
@@ -312,6 +314,7 @@
         { "label": "模型代理与连通性测试", "path": "studio/packages/host/src/runtime/network.ts", "anchor": "export function networkEnv" },
         { "label": "网络设置页", "path": "studio/packages/ui/src/settings/NetworkPage.tsx", "anchor": "export function NetworkPage" },
         { "label": "设置窗口", "path": "studio/packages/ui/src/settings/SettingsDialog.tsx", "anchor": "export function SettingsDialog" },
+        { "label": "本机输入设置与快捷键", "path": "studio/packages/ui/src/chat/inputPrefs.ts", "anchor": "export const ENTER_MODES" },
         { "label": "本机主题、保存和窗口同步", "path": "studio/packages/ui/src/lib/theme.ts", "anchor": "export function toggleTheme" },
         { "label": "读设置", "path": "studio/packages/ui/src/settings/useSettings.ts" }
       ],
@@ -516,12 +519,13 @@
     {
       "id": "ui.chat",
       "label": "对话区",
-      "aliases": ["对话", "Transcript", "chat", "详细", "完全展开", "思考", "审批", "提问", "questions"],
+      "aliases": ["对话", "Transcript", "chat", "详细", "完全展开", "思考", "审批", "提问", "questions", "会话工具栏", "有序列表", "自动续号"],
       "category": "ui",
       "purpose": "会话的对话区：轮次和折叠（详细 / 完全展开）、思考、工具行、审批和提问、会话选项栏、输入框。",
       "anchors": [
         { "label": "对话区", "path": "studio/packages/ui/src/chat/Transcript.tsx", "anchor": "export const Transcript" },
         { "label": "轮次折叠", "path": "studio/packages/ui/src/chat/turns.ts" },
+        { "label": "输入框换行和列表续号", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "function insertLineBreak" },
         { "label": "会话选项栏", "path": "studio/packages/ui/src/chat/SessionOptionsBar.tsx" },
         { "label": "会话行数据", "path": "studio/packages/ui/src/host/useSessionItems.ts" }
       ],
@@ -530,11 +534,12 @@
     },
     {
       "id": "ui.envPanel",
-      "label": "任务页侧栏：环境与上下文",
-      "aliases": ["环境与上下文", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
+      "label": "任务页侧栏：环境、进度和批注",
+      "aliases": ["环境与上下文", "进度和批注", "侧栏切换", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
       "category": "ui",
-      "purpose": "任务页侧栏最上面（2026-11-18 用户定，默认展开）：电脑、项目和分支；上下文按分项占多少（只有 Claude 的 getContextUsage 给得出，进程退出后显示上一次的，其他模型只显示每轮记下的总量并写明）；读进来的 CLAUDE.md；会话的 MCP 和状态，Claude 会话连不上的可「重连」（reconnectMcpServer，实测不写 ~/.claude.json）。打开、每轮结束、点刷新时读，不轮询。",
+      "purpose": "任务页右侧栏顶部切换「环境」和「进度和批注」，默认显示环境并记住选择。环境保留电脑、项目和分支、上下文占用、CLAUDE.md，以及会话的 MCP 状态和 Claude 重连；打开侧栏、每轮结束、点刷新时读取。进度和批注还包含其他会话的待决策、留言与清单。",
       "anchors": [
+        { "label": "侧栏切换", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "sidebar-activity" },
         { "label": "面板", "path": "studio/packages/ui/src/task/EnvPanel.tsx", "anchor": "export function EnvPanel" },
         { "label": "接口类型", "path": "studio/packages/protocol/src/context-usage.ts", "anchor": "export interface SessionContextUsage" },
         { "label": "读分项和缓存", "path": "studio/packages/host/src/features/sessions/service.ts", "anchor": "async contextUsage(sessionId: Id)" },
@@ -565,11 +570,14 @@
     {
       "id": "ui.newTask",
       "label": "新建任务页",
-      "aliases": ["新建任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建"],
+      "aliases": ["新建任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建", "分支与工作树", "worktree"],
       "category": "ui",
-        "purpose": "新建任务：选项目、模型、强度，第一句话；可直接勾选 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
+        "purpose": "新建任务：选项目、模型、强度，第一句话；本机新开会话时，附件按钮旁可为 Codex、Claude、DSH 或 Pi 设置启动分支和独立工作树；可直接勾选 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
       "anchors": [
         { "label": "新建任务页", "path": "studio/packages/ui/src/newtask/NewTaskPage.tsx", "anchor": "export function NewTaskPage" },
+        { "label": "新建任务与对话共用的发送和换行按键", "path": "studio/packages/ui/src/chat/inputPrefs.ts", "anchor": "export function useTaskEnter" },
+        { "label": "分支和工作树设置", "path": "studio/packages/ui/src/newtask/WorktreeDialog.tsx", "anchor": "export function WorktreeDialog" },
+        { "label": "Git 工作树创建", "path": "studio/packages/host/src/features/sessions/fork-worktree.ts", "anchor": "export async function createForkWorktree" },
           { "label": "新建 Goal 校验与恢复", "path": "studio/packages/ui/src/newtask/goalStart.ts", "anchor": "export function draftGoalInput" },
         { "label": "接续已有会话", "path": "studio/packages/ui/src/newtask/ResumePicker.tsx" },
         { "label": "远程新建", "path": "studio/packages/ui/src/newtask/RemoteDraft.tsx" }

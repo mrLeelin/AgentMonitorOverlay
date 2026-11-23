@@ -18,6 +18,72 @@ async function registerWorkspaces(s: Studio, names: string[]): Promise<Workspace
   return out;
 }
 
+test("the configured to-do shortcut works in both new-task inputs", async () => {
+  studio = await launchStudio();
+  const { page } = studio;
+  await registerWorkspaces(studio, ["alpha"]);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "设置", exact: true });
+  await selectSettingsPage(settings, "界面");
+  const shortcut = settings.getByLabel("放进待办快捷键");
+  await expect(shortcut).toHaveValue("off");
+  await shortcut.selectOption("alt");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
+  const full = page.getByLabel("第一句话");
+  await full.fill("完整新任务待办");
+  await expect(page.getByTestId("draft-file")).toContainText("Alt+Enter");
+  await full.press("Alt+Enter");
+  await expect(full).toHaveCount(0);
+
+  await page.keyboard.press("Control+N");
+  const quick = page.getByRole("dialog", { name: "快速新任务" });
+  const input = quick.getByLabel("快速新任务");
+  await input.fill("快速新任务待办");
+  await expect(quick.getByRole("button", { name: "放进待办" })).toContainText("Alt+Enter");
+  await input.press("Alt+Enter");
+  await expect(quick).toHaveCount(0);
+
+  const state = await studio.api<StateSnapshot>("GET", "/api/state");
+  const filed = state.tasks.filter((task) => task.title.endsWith("待办"));
+  expect(filed).toHaveLength(2);
+  expect(filed.every((task) => task.column === "todo" && !state.sessions.some((session) => session.taskId === task.id))).toBe(true);
+});
+
+test("quick new task shows the shortcut for the current number of lines", async () => {
+  studio = await launchStudio();
+  const { app, page } = studio;
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "设置", exact: true });
+  await selectSettingsPage(settings, "界面");
+  await settings.getByLabel("发送与开始快捷键").selectOption("multiline-shift");
+  await expect(settings.getByLabel("放进待办快捷键").locator('option[value="ctrl"]')).toHaveJSProperty("disabled", true);
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+N");
+  const quick = page.getByRole("dialog", { name: "快速新任务" });
+  const input = quick.getByLabel("快速新任务");
+  const shortcut = quick.getByRole("button", { name: "开始", exact: true }).locator("kbd");
+  await input.fill("快速新建多行任务");
+  await input.press("End");
+  await expect(shortcut).toHaveText("Enter");
+  await input.press("Shift+Enter");
+  await input.press("Backspace");
+  await expect(shortcut).toHaveText("Enter");
+  await input.press("Shift+Enter");
+  await expect(shortcut).toHaveText("Ctrl+Enter");
+  await input.pressSequentially("Second line");
+  await input.press("Enter");
+  await input.pressSequentially("Third line");
+  await expect(input).toHaveJSProperty("textContent", "快速新建多行任务\nSecond line\nThird line");
+  await screenshot(app, "studio", "quick-start-shortcut", page);
+  await input.press("Control+Enter");
+  await expect(quick).toHaveCount(0);
+  await expect(page.getByTestId("msg-user").last()).toContainText("Third line");
+});
+
 test("creates a task from the blank task page and streams the first reply", async () => {
   studio = await launchStudio();
   const { page } = studio;
@@ -162,7 +228,7 @@ test("the topic comes first and picks its one preferred project; Ctrl N opens th
   await page.getByRole("button", { name: "返回看板" }).click();
   await page.keyboard.press("Control+N");
   const quick = page.getByRole("dialog", { name: "快速新任务" });
-  await expect(quick.getByLabel("快速新任务")).toHaveValue("校验掉落表 #1");
+  await expect(quick.getByLabel("快速新任务")).toHaveText("校验掉落表 #1");
   await expect(quick.getByTestId("quick-topic")).toHaveAccessibleName("专题：掉落表重构");
   await expect(quick.getByTestId("quick-project")).toHaveAccessibleName("项目：beta");
   await expect(quick.getByTestId("quick-project")).toContainText("专题常用");
@@ -188,6 +254,8 @@ test("the topic comes first and picks its one preferred project; Ctrl N opens th
   await expect(quick).toBeVisible();
   await screenshot(studio.app, "stage-10", "S10-quick-bar", page);
   await quick.getByLabel("快速新任务").press("Control+Enter");
+  await expect(quick).toBeVisible();
+  await quick.getByRole("button", { name: "放进待办" }).click();
   await expect(quick).toHaveCount(0);
   const state = await studio.api<StateSnapshot>("GET", "/api/state");
   expect(state.tasks.find((t) => t.title === "校验掉落表 #1")).toMatchObject({ workspaceId: beta!.id, topicId: battle.id, column: "todo" });
@@ -323,7 +391,7 @@ test("@ 开子会话… on the new-task page: the setup goes with the first sent
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await expect(text).toHaveText(`先查原因 @${tag} `);
   // A filed task has no session to keep it for: refused, saying so.
-  await text.press("Control+Enter");
+  await page.getByTestId("draft-file").click();
   await expect(page.getByRole("alert")).toContainText("放进待办不带子会话设定");
   await text.press("End");
   const posted = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/api/tasks"));

@@ -12,11 +12,19 @@ import type { SessionGoalState, SessionGoalUpdate, ContextBreakdown } from "@amo
 
 export type SendMode = "start" | "steer" | "queue";
 
+/** Native fork boundary and an optional Host-created checkout. */
+export interface ForkTarget {
+  lastTurnId: string;
+  cwd?: string;
+}
+
 /** `now` (立即发送, 2026-11-02): while a turn runs, the model reads the message at once (the turn's step gives way). */
 export interface SendOptions {
   /** Host-only original composer text, before role/shared context is appended. */
   skillText?: string;
   now?: boolean;
+  afterTurn?: boolean;
+  queuedFromDevice?: { account: string; device: string };
   purpose?: MessagePurpose;
   /** Host-only frozen-input guard, not accepted from HTTP. */
   beforeDispatch?: () => void;
@@ -48,7 +56,7 @@ export interface SessionRuntimeApi {
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
-  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session>;
+  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session>;
   /** Claude only (接续已有会话, 2026-11-05): sessions started outside Studio that a new task can go on from. */
   outsideSessions?(): Promise<OutsideSessionList>;
   /** Claude only: the end of one of those, to recognise it; null when it has no conversation. */
@@ -90,7 +98,7 @@ export interface SessionRuntimeApi {
    * item goes again, with its `images`; `now` as for sendMessage.
    */
   resend?(sessionId: Id, itemId: Id, images: readonly Attachment[], options?: SendOptions): Promise<{ mode: SendMode }>;
-  fork(sessionId: Id, profileId?: Id): Promise<Session>;
+  fork(sessionId: Id, profileId?: Id, target?: ForkTarget): Promise<Session>;
   archive(sessionId: Id): Promise<Session[]>;
   unarchive(sessionId: Id): Promise<Session[]>;
   respondApproval(sessionId: Id, approvalId: string, decision: ApprovalDecision): Promise<void>;
@@ -276,7 +284,8 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     options = { ...options, skillText: options.skillText ?? text };
     const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
     const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";
-    if (session?.runtime !== "remote" && (this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || (session && this.inNativeTurn(session) && !joinsPurpose(purpose, currentMessagePurpose(this.store, sessionId))))) {
+    const waitsForTurn = session && this.inNativeTurn(session) && (options.afterTurn || !joinsPurpose(purpose, currentMessagePurpose(this.store, sessionId)));
+    if (session?.runtime !== "remote" && (waitsForTurn || this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || options.queuedFromDevice)) {
       if (!this.context?.defer) throw Object.assign(new Error("当前回合用途不同，请等这一轮结束后再发送。"), { code: "conflict" });
       return this.context.defer(sessionId, input, images, { ...options, purpose });
     }
@@ -371,16 +380,19 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       return Promise.resolve({ mode: "queue" });
     }
     if (session?.runtime !== "remote" && !options.boundaryDispatch && this.purposeBoundaries.has(sessionId)) return Promise.resolve({ mode: "queue" });
-    if (session?.runtime !== "remote" && session && this.inNativeTurn(session) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") && !joinsPurpose(item.messagePurpose ?? "work", currentMessagePurpose(this.store, sessionId))) {
-      if (options.now) return this.crossPurposeBoundary(sessionId, itemId, images, options);
-      if (item.delivery === "unsent" && this.context?.defer) return this.context.defer(sessionId, item.text, images, { ...options, purpose: item.messagePurpose ?? "work", deferredItemId: itemId });
-      return Promise.resolve({ mode: "queue" });
+    if (session?.runtime !== "remote" && session && this.inNativeTurn(session) && item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent")) {
+      const samePurpose = joinsPurpose(item.messagePurpose ?? "work", currentMessagePurpose(this.store, sessionId));
+      if (options.now && !samePurpose) return this.crossPurposeBoundary(sessionId, itemId, images, options);
+      if (!options.now && (item.afterTurn || !samePurpose)) {
+        if (item.delivery === "unsent" && this.context?.defer) return this.context.defer(sessionId, item.text, images, { ...options, purpose: item.messagePurpose ?? "work", deferredItemId: itemId });
+        return Promise.resolve({ mode: "queue" });
+      }
     }
     if (item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent")) {
       const text = item.text.includes("[AMO_SHARED_CONTEXT:") ? item.text : this.withContext(item.text, this.context?.session(sessionId) ?? "");
       if (text !== item.text) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...item, text }) }));
     }
-    const send = () => r.resend!(sessionId, itemId, images, { ...options, purpose: item?.type === "user" ? item.messagePurpose ?? "work" : options.purpose ?? "work" });
+    const send = () => r.resend!(sessionId, itemId, images, { ...options, skillText: item?.type === "user" ? item.queuedSkillText : undefined, purpose: item?.type === "user" ? item.messagePurpose ?? "work" : options.purpose ?? "work" });
     return (item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") ? this.dispatchMessage(sessionId, item.messagePurpose ?? "work", send) : send()).catch((error: unknown) => {
       const latest = this.store.getItem(itemId);
       if (latest?.type === "user" && (latest.delivery === "held" || latest.delivery === "unsent")) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...latest, delivery: "unsent", deliveryReason: error instanceof Error ? error.message : String(error) }) }));
@@ -429,8 +441,8 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     this.cancelGoalPreparation(sessionId);
     return this.forSession(sessionId).interrupt(sessionId, options);
   }
-  fork(sessionId: Id, profileId?: Id) {
-    return this.forSession(sessionId).fork(sessionId, profileId);
+  fork(sessionId: Id, profileId?: Id, target?: ForkTarget) {
+    return this.forSession(sessionId).fork(sessionId, profileId, target);
   }
   archive(sessionId: Id) {
     const descendants = new Set([sessionId]);
@@ -635,6 +647,7 @@ export interface NewSessionInput {
   kind: Session["kind"];
   profileId: Id;
   workspaceId: Id;
+  cwd?: string;
   title: string;
   runtimeRef: string;
   options?: SessionOptions;

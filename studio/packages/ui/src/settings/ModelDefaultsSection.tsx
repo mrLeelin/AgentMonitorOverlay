@@ -33,8 +33,17 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
     try {
       await call(link, "PUT /api/settings", {}, { modelPrefs: { [profileId]: Object.keys(next).length ? next : null } });
     } catch (err) {
+      if (latest.current.prefs === next) latest.current = { profileId, prefs: base };
       setError(err instanceof HostApiError ? err.message : String(err));
     }
+  }
+
+  function setHidden(id: string, hidden: boolean) {
+    const ids = new Set(latest.current.prefs.hidden);
+    if (hidden && !choices?.models.some((m) => m.id !== id && !ids.has(m.id))) return;
+    if (hidden) ids.add(id);
+    else ids.delete(id);
+    void save({ hidden: ids.size ? [...ids] : undefined });
   }
 
   function move(id: string, to: string, after: boolean) {
@@ -47,6 +56,8 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
   }
 
   const models = order.flatMap((id) => choices?.models.find((m) => m.id === id) ?? []);
+  const hiddenModels = choices?.hiddenModels ?? [];
+  const lastVisible = choices?.models.length === 1;
   const defaultId = choices?.models.find((m) => m.isDefault)?.id ?? null;
   const efforts = [...new Set(choices?.models.flatMap((m) => m.efforts) ?? [])];
 
@@ -70,6 +81,7 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
     <section className="settings-section" aria-label="型号顺序和默认">
       <span className="settings-heading">型号顺序和默认</span>
       <span className="settings-hint">拖动调整各处列出的顺序（也可以选中一行按 Alt ↑ / Alt ↓）；点「默认」决定新会话没选型号时用哪个。思考强度和权限的默认同样只影响之后新开的会话。</span>
+      <span className="settings-hint">隐藏的型号会从选择列表中移除，可在下方恢复。</span>
       {loadError && <span className="form-error">{loadError}</span>}
       {!choices && !loadError && <span className="settings-hint">正在读取可选型号…</span>}
       {choices && (
@@ -117,9 +129,35 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
                 >
                   {m.id === defaultId ? "默认" : "设为默认"}
                 </button>
+                <button
+                  type="button"
+                  className="model-default"
+                  aria-label={`隐藏 ${modelName(m)}`}
+                  disabled={lastVisible}
+                  title={lastVisible ? "每个渠道至少保留一个可选型号" : "从型号选择中隐藏"}
+                  onClick={() => setHidden(m.id, true)}
+                >
+                  隐藏
+                </button>
               </div>
             ))}
           </div>
+          {hiddenModels.length > 0 && (
+            <>
+              <span className="settings-heading">已隐藏的型号</span>
+              <div className="model-order" role="list" aria-label="已隐藏的型号">
+                {hiddenModels.map((m) => (
+                  <div key={m.id} role="listitem" className="model-order-row model-order-hidden">
+                    <span className="model-order-name">{modelName(m)}</span>
+                    {m.description && <span className="model-order-desc">{m.description}</span>}
+                    <button type="button" className="model-default" aria-label={`显示 ${modelName(m)}`} onClick={() => setHidden(m.id, false)}>
+                      显示
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           {efforts.length > 0 && (
             <div className="settings-row">
               <span className="settings-label">默认思考强度</span>
@@ -146,7 +184,7 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
           </div>
           {(prefs.order || prefs.model || prefs.effort || prefs.permission) && (
             <div className="settings-row end">
-              <button type="button" className="btn-ghost small" onClick={() => void call(link, "PUT /api/settings", {}, { modelPrefs: { [profileId]: null } }).catch((err: unknown) => setError(String(err)))}>
+              <button type="button" className="btn-ghost small" onClick={() => void save({ order: undefined, model: undefined, effort: undefined, permission: undefined })}>
                 恢复 CLI 的顺序和默认
               </button>
             </div>

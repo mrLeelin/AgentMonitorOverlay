@@ -5,7 +5,8 @@ import { reviewHash, type ReviewTarget } from "./logic.js";
 
 // Opening the Git Review window, and whether a project can be reviewed at all.
 
-type ReviewBridge = { openReview?(target: ReviewTarget): Promise<void>; switchReview?(target: { workspaceId: string; commit: string; remote?: string }): Promise<void> };
+type CommitTarget = Pick<ReviewTarget, "workspaceId" | "remote" | "worktreeSessionId"> & { commit: string };
+type ReviewBridge = { openReview?(target: ReviewTarget): Promise<void>; switchReview?(target: CommitTarget): Promise<void> };
 
 /** Opens (or brings forward) the project's review window; outside Electron, the same page in a new tab. */
 export function openReview(target: ReviewTarget): void {
@@ -15,7 +16,7 @@ export function openReview(target: ReviewTarget): void {
 }
 
 /** A commit's window: shows another commit of the same project in this window (2026-10-16). */
-export function switchReview(target: { workspaceId: string; commit: string; remote?: string }): void {
+export function switchReview(target: CommitTarget): void {
   const bridge = window.amo as ReviewBridge | undefined;
   if (bridge?.switchReview) void bridge.switchReview(target);
   else location.hash = reviewHash(target);
