@@ -14,6 +14,8 @@ export interface ReviewTarget {
   worktreeSessionId?: string;
   /** Review the recorded changes of the turn containing this session item. */
   turnItemId?: string;
+  /** Review all edits recorded in this session. */
+  sessionChanges?: true;
   /** A commit's window: read-only. */
   commit?: string;
   /** Stage 13 (用 git diff 看): the file to select, absolute or relative to the project. */
@@ -36,6 +38,7 @@ export function reviewHash(t: ReviewTarget): string {
   if (t.commit) q.set("commit", t.commit);
   if (!t.commit && t.sessionId) q.set("session", t.sessionId);
   if (t.turnItemId) q.set("turnItem", t.turnItemId);
+  if (t.sessionChanges) q.set("sessionChanges", "1");
   if (t.remote) q.set("remote", t.remote);
   if (t.worktreeSessionId) q.set("worktree", t.worktreeSessionId);
   if (t.base) q.set("base", t.base);
@@ -55,6 +58,8 @@ export function parseReviewHash(hash: string): ReviewTarget | null {
   if (base !== null && !isObjectId(base)) return null;
   const sessionId = q.get("session");
   const turnItemId = q.get("turnItem");
+  const sessionChanges = q.get("sessionChanges");
+  if (sessionChanges !== null && (sessionChanges !== "1" || !sessionId || q.has("turnItem") || q.has("commit") || base || q.has("remote") || q.has("worktree"))) return null;
   if (turnItemId && (!sessionId || commit || base)) return null;
   const file = q.get("file");
   const nonce = q.get("n");
@@ -65,7 +70,7 @@ export function parseReviewHash(hash: string): ReviewTarget | null {
   const worktree = worktreeSessionId ? { worktreeSessionId } : {};
   if (commit !== null) return isCommitRef(commit) ? { workspaceId, commit, ...(base ? { base } : {}), ...(file ? { file, ...(nonce ? { nonce } : {}) } : {}), ...r, ...worktree } : null;
   const label = q.get("label");
-  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(turnItemId ? { turnItemId } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r, ...worktree };
+  return { workspaceId, ...(sessionId ? { sessionId } : {}), ...(turnItemId ? { turnItemId } : {}), ...(sessionChanges ? { sessionChanges: true } : {}), ...(file ? { file } : {}), ...(nonce ? { nonce } : {}), ...(base ? { base, ...(label ? { baseLabel: label } : {}) } : {}), ...r, ...worktree };
 }
 
 /** The list's status icons, as in Fork: + added, M modified, − deleted, R renamed. */

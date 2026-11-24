@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { turnDiff } from "./turnDiff.js";
+import { recordedDiffRows, turnDiff } from "./turnDiff.js";
 import { parseReviewHash, reviewHash } from "./logic.js";
 
 describe("recorded turn review", () => {
@@ -30,5 +30,28 @@ describe("recorded turn review", () => {
     expect(parseReviewHash(reviewHash(target))).toEqual(target);
     expect(parseReviewHash("#review?workspace=ws&turnItem=i")).toBeNull();
     expect(parseReviewHash("#review?workspace=ws&session=s&turnItem=i&commit=abc1234")).toBeNull();
+  });
+
+  it("keeps separate records for a new file, a later patch, and an edit without diff content", () => {
+    const rows = recordedDiffRows([
+      { path: "a.txt", change: "add", added: 1, removed: 0, diff: "first version" },
+      { path: "a.txt", change: "update", added: 1, removed: 1, diff: "-first version\n+second version" },
+      { path: "a.txt", change: "delete", added: 0, removed: 1 },
+    ]);
+    expect(rows.filter((row) => row.kind === "hunk").map((row) => row.header)).toEqual([
+      "第 1 次改动 · @@ -1,0 +1,1 @@", "第 2 次改动 · @@ -1,1 +1,1 @@", "第 3 次改动 · 没有保存差异内容",
+    ]);
+    const lines = rows.filter((row) => row.kind === "line");
+    expect(lines.map(({ line }) => [line.kind, line.text])).toEqual([["add", "first version"], ["del", "first version"], ["add", "second version"]]);
+    expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
+  });
+
+  it("addresses a session's recorded changes separately from single-turn and Git reviews", () => {
+    const target = { workspaceId: "ws", sessionId: "s", sessionChanges: true as const };
+    expect(parseReviewHash(reviewHash(target))).toEqual(target);
+    expect(parseReviewHash("#review?workspace=ws&sessionChanges=1")).toBeNull();
+    for (const scope of ["turnItem=i", "worktree=s", "remote=t", "commit=abc1234"]) {
+      expect(parseReviewHash(`${reviewHash(target)}&${scope}`)).toBeNull();
+    }
   });
 });

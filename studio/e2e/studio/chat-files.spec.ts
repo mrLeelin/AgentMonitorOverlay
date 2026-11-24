@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import type { OpenInApps, OpenInResult, Session, Task, Workspace } from "@amo-studio/protocol";
-import { DEMO_FILE, DEMO_FILE_TEXT } from "@amo-studio/testkit";
+import { defaultScript, DEMO_FILE, DEMO_FILE_TEXT } from "@amo-studio/testkit";
 import { launchStudio, screenshot, settlePaint, type Studio, confirmBookmarkNote } from "../support/studio.js";
 
 // S12-C: files in the conversation. Names in a reply, tool rows and file chips become links when the file exists. Stage
@@ -220,7 +220,7 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   git(dir, "commit", "-q", "-m", "base");
   writeFileSync(join(dir, "aaa-other.txt"), "after\n");
   const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
-  const { task, session } = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", {
+  await studio.api("POST", "/api/tasks", {
     title: "导入重试",
     workspaceId: ws.id,
     firstSession: { profileId: "codex-mock", text: `[[demo]] 给导入器加上重试\n\n引用文件：\n- ${join(dir, "notes.md")}` },
@@ -237,10 +237,6 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await expect(row).toContainText(DEMO_FILE);
   await expect(row).toContainText("+12");
   await expect(changes.getByTestId("turn-changes-review")).toHaveText("在 Review 里看");
-  const recent = page.getByTestId("task-recent-changes");
-  await expect(recent).toBeEnabled();
-  await expect(page.getByTestId("task-review").locator("xpath=following-sibling::button[1]")).toHaveText("最近改动");
-  await screenshot(app, "studio", "task-recent-changes-light", page);
 
   // The turn's diff in the quick look; a click on 打开文件 shows the file as it is now (patched).
   await row.click();
@@ -304,8 +300,7 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
   await review.getByRole("button", { name: "单栏", exact: true }).click();
   await expect(review.getByTestId("review-comment")).toContainText("检查这一轮的重试次数");
-  // The task header, card header and R all reopen the same recorded turn window.
-  await recent.click();
+  // The card header and R both reopen the same recorded turn window.
   await changes.getByTestId("turn-changes-review").click();
   await row.click({ button: "right" });
   await page.keyboard.press("r");
@@ -323,24 +318,80 @@ test("a finished turn lists the files it changed; each opens its diff, then the 
   await page.getByRole("dialog", { name: "设置" }).getByRole("radio", { name: "深色" }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
-  await screenshot(app, "studio", "task-recent-changes-dark", page);
   await row.click();
   await expect(diff).toBeVisible();
   await screenshot(app, "stage-12", "S12-C-turn-changes-dark", page);
+});
 
-  // A later reply without edits leaves the recorded turn available from the header alone.
+test("会话改动汇总多轮文件记录，并随当前会话切换", async () => {
+  const first = "添加导入器";
+  const second = "再修改导入次数并补一份说明";
+  const patches: Record<string, string[]> = {
+    [first]: [`*** Add File: ${DEMO_FILE}`, "+def fetch(url, retries=3):", "+    pass"],
+    [second]: [`*** Update File: ${DEMO_FILE}`, "@@", "-def fetch(url, retries=3):", "+def fetch(url, retries=5):", "     pass",
+      "*** Add File: retry-notes.md", "+Retries are now set to five."],
+  };
+  studio = await launchStudio({ transcriptView: "standard", mockScript: (req) => {
+    const patch = patches[req.lastUserText];
+    if (!patch) return defaultScript(req);
+    if (req.afterToolOutput) return { kind: "text", text: `已完成：${req.lastUserText}` };
+    return { kind: "custom_tool_call", name: "apply_patch", input: ["*** Begin Patch", ...patch, "*** End Patch"].join("\n") };
+  } });
+  const { page, app } = studio;
+  const dir = studio.workspace("alpha");
+  writeFileSync(join(dir, "aaa-other.txt"), "before\n");
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "add", ".");
+  git(dir, "commit", "-q", "-m", "base");
+  writeFileSync(join(dir, "aaa-other.txt"), "after\n");
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: dir });
+  const { task, session } = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", {
+    title: "导入重试",
+    workspaceId: ws.id,
+    firstSession: { profileId: "codex-mock", text: first },
+  });
+  await page.getByTestId("task-card").first().click();
+  await approveUntilAnswered(page, `已完成：${first}`);
+
+  const sessionChanges = page.getByTestId("task-session-changes");
+  await expect(page.getByTestId("task-review").locator("xpath=following-sibling::button[1]")).toHaveText("会话改动");
+  await screenshot(app, "studio", "task-session-changes", page);
+  const turnReview = await nextWindow(app, () => page.getByTestId("turn-changes-review").click());
+  await expect(turnReview.getByTestId("review-scope")).toHaveText("本轮改动");
+
+  // The task header has a separate session window, refreshed when opened again.
+  const sessionReview = await nextWindow(app, () => sessionChanges.click());
+  await expect(sessionReview.getByTestId("review-scope")).toHaveText("会话改动");
+  await expect(sessionReview.getByTestId("review-file")).toHaveCount(1);
+  await expect(sessionReview.getByTestId("diff-lines")).toContainText("retries=3");
+
+  await studio.api("POST", `/api/sessions/${session.id}/messages`, { text: second });
+  await approveUntilAnswered(page, `已完成：${second}`);
+  await expect(page.getByTestId("turn").last().getByTestId("turn-changes")).toContainText("改动了 2 个文件");
   await studio.api("POST", `/api/sessions/${session.id}/messages`, { text: "只解释，不改文件" });
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: 只解释，不改文件");
   await expect(page.getByTestId("turn").last().getByTestId("turn-changes")).toHaveCount(0);
-  const previousReviewUrl = review.url();
-  await recent.click();
-  await expect.poll(() => review.url()).not.toBe(previousReviewUrl);
-  await expect(review.getByTestId("diff-lines")).toContainText("retries=3");
+  await sessionChanges.click();
+  await expect(sessionReview.getByTestId("review-file")).toHaveCount(2);
+  const sessionDiff = sessionReview.getByTestId("diff-lines");
+  await expect(sessionReview.getByTestId("review-file-head")).toContainText("记录了 2 次改动");
+  await expect(sessionReview.getByTestId("review-file-head")).toContainText("+3");
+  await expect(sessionDiff.getByTestId("diff-hunk").first()).toContainText("第 1 次改动");
+  await expect(sessionDiff).toContainText("retries=3");
+  await expect(sessionDiff).toContainText("retries=5");
+  await screenshot(app, "studio", "session-changes-review", sessionReview, "review");
+  await sessionReview.getByTestId("review-file").filter({ hasText: "retry-notes.md" }).click();
+  await expect(sessionDiff).toContainText("Retries are now set to five.");
+  await expect(sessionReview.getByTestId("review-file-head")).toContainText("+1");
+  await expect(sessionReview.getByTestId("review-file").filter({ hasText: "aaa-other.txt" })).toHaveCount(0);
+  await expect(turnReview.getByTestId("diff-lines")).toContainText("retries=3");
+  await expect(turnReview.getByTestId("diff-lines")).not.toContainText("retries=5");
   expect(app.windows().filter((w) => w.url().includes("turnItem="))).toHaveLength(1);
+  expect(app.windows().filter((w) => w.url().includes("sessionChanges="))).toHaveLength(1);
 
   await studio.api("POST", `/api/tasks/${task.id}/sessions`, { profileId: "codex-mock", text: "另一个会话" });
   await page.getByTestId("session-row").filter({ hasText: "另一个会话" }).click();
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: 另一个会话");
-  await expect(recent).toBeVisible();
-  await expect(recent).toBeDisabled();
+  await expect(sessionChanges).toBeVisible();
+  await expect(sessionChanges).toBeDisabled();
 });

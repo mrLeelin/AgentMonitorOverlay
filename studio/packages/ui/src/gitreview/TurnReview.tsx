@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { composeGitReviewMessage, type GitChangedFile, type GitReviewComment, type Workspace } from "@amo-studio/protocol";
+import { composeGitReviewMessage, type FileDiff, type GitChangedFile, type GitReviewComment, type Workspace } from "@amo-studio/protocol";
 import { call, copyText, HostApiError, type HostLink } from "../host/client.js";
 import { buildTranscript, segmentMembers } from "../chat/turns.js";
-import { turnChanges, type ChangedFile } from "../files/changes.js";
+import { recordedChanges, turnChanges, type ChangedFile } from "../files/changes.js";
 import { fileName } from "../files/paths.js";
 import { showToast } from "../lib/toast.js";
 import { TitleMark, WindowControls } from "../shell/WindowControls.js";
@@ -13,13 +13,13 @@ import { dropDraft, newDraftKey } from "./drafts.js";
 import { diffRows, listOrder, step } from "./logic.js";
 import { diffText, typingIn, useSelectAll } from "./selectAll.js";
 import { useDiffTokens } from "./tokens.js";
-import { turnDiff } from "./turnDiff.js";
+import { recordedDiffRows, turnDiff } from "./turnDiff.js";
 
 type TurnComment = GitReviewComment & { rowKey: string };
 
-/** A finished turn's saved edits, independent of the working tree and later turns. */
-export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce }: { link: HostLink; workspace: Workspace; sessionId: string; turnItemId: string; file: string | null; nonce: string }) {
-  const [files, setFiles] = useState<ChangedFile[] | null>(null);
+/** The edits saved in a single turn or the full session. */
+export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce }: { link: HostLink; workspace: Workspace; sessionId: string; turnItemId?: string; file: string | null; nonce: string }) {
+  const [files, setFiles] = useState<Array<ChangedFile & { patches?: FileDiff[] }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(file);
   const [split, setSplit] = useState(false);
@@ -29,23 +29,26 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
   const [active, setActive] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
-  const scope = `turn:${sessionId}:${turnItemId}`;
+  const scope = turnItemId ? `turn:${sessionId}:${turnItemId}` : `session:${sessionId}`;
+  const label = turnItemId ? "本轮改动" : "会话改动";
+  const refresh = turnItemId ? "" : nonce;
 
   useEffect(() => {
-    document.title = `本轮改动 · Review · ${workspace.name}`;
-  }, [workspace.name]);
+    document.title = `${label} · Review · ${workspace.name}`;
+  }, [label, workspace.name]);
   useEffect(() => {
     let live = true;
+    setError(null);
     call(link, "GET /api/sessions/:id/items", { id: sessionId }).then((items) => {
       if (!live) return;
-      const members = buildTranscript(items, false).map(segmentMembers).find((items) => items.some((item) => item.id === turnItemId));
+      const members = turnItemId ? buildTranscript(items, false).map(segmentMembers).find((items) => items.some((item) => item.id === turnItemId)) : items;
       if (!members) throw new Error("找不到这一轮的记录。");
-      const changes = turnChanges(members);
+      const changes = turnItemId ? turnChanges(members) : recordedChanges(members);
       setFiles(changes);
       setSelected((current) => changes.some((f) => f.path === current) ? current : changes[0]?.path ?? null);
     }).catch((err: unknown) => live && setError(err instanceof HostApiError ? err.message : String(err)));
     return () => { live = false; };
-  }, [link, sessionId, turnItemId]);
+  }, [link, sessionId, turnItemId, refresh]);
   useEffect(() => {
     if (file) setSelected(file);
     setDraftAt(null);
@@ -59,10 +62,14 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
 
   const listed = useMemo<GitChangedFile[]>(() => listOrder((files ?? []).map((f) => ({ path: f.path, status: f.change === "add" ? "added" : f.change === "delete" ? "deleted" : "modified", additions: f.added, deletions: f.removed, binary: false }))), [files]);
   const shown = files?.find((f) => f.path === selected) ?? null;
-  const diff = useMemo(() => shown ? turnDiff(shown) : null, [shown]);
+  const diff = useMemo(() => shown ? turnDiff(shown.patches?.[0] ?? shown) : null, [shown]);
   // Repeated edits can reuse a source line number. Keep each recorded occurrence independently addressable.
-  const rows = useMemo(() => diff ? diffRows(diff, "changes").map((r, i) => ({ ...r, key: `${r.key}:${i}` })) : [], [diff]);
-  const tokens = useDiffTokens(diff);
+  const rows = useMemo(() => {
+    if (shown?.patches) return recordedDiffRows(shown.patches);
+    return diff ? diffRows(diff, "changes").map((r, i) => ({ ...r, key: `${r.key}:${i}` })) : [];
+  }, [diff, shown]);
+  // Line-based highlighting cannot share a token map across versions that reuse the same line numbers.
+  const tokens = useDiffTokens((shown?.patches?.length ?? 0) > 1 ? null : diff);
   const placed = useMemo(() => {
     const map = new Map<string, TurnComment[]>();
     for (const c of comments) if (c.path === selected) map.set(c.rowKey, [...(map.get(c.rowKey) ?? []), c]);
@@ -96,7 +103,7 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
   async function copy(close: boolean) {
     setBusy(true);
     try {
-      await copyText(`【本轮改动批注】\n${composeGitReviewMessage(comments, workspace.name)}`);
+      await copyText(`【${label}批注】\n${composeGitReviewMessage(comments, workspace.name)}`);
       setComments([]);
       if (close) window.close();
     } catch (err) {
@@ -105,12 +112,12 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
   }
 
   return (
-    <div className="gr-app" data-testid="turn-review">
+    <div className="gr-app" data-testid={turnItemId ? "turn-review" : "session-review"}>
       <header className="gr-head titlebar">
         <TitleMark />
         <span className="gr-title">Review</span>
         <span className="gr-project">{workspace.name}</span>
-        <span data-testid="review-scope">本轮改动</span>
+        <span data-testid="review-scope">{label}</span>
         <span className="spacer" />
         <div className="gr-seg" role="group" aria-label="显示方式">
           <button type="button" aria-pressed={!split} onClick={() => setSplit(false)}>单栏</button>
@@ -119,17 +126,17 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
         <WindowControls />
       </header>
       <div className="gr-body">
-        <nav className="gr-files" aria-label="本轮改动的文件" style={{ width }}>
+        <nav className="gr-files" aria-label={`${label}的文件`} style={{ width }}>
           <div className="gr-files-head">{files ? `${files.length} 个文件` : "正在读取…"}</div>
           <div className="gr-files-hint gr-dim">↑ / ↓ 或 J / K 切换文件，E 切换单栏 / 左右对照</div>
           <FileList files={listed} layout="flat" selected={selected} perFile={counts} closed={new Set()} onToggle={() => undefined} onSelect={setSelected} onMenu={(f) => setSelected(f.path)} />
         </nav>
         <Splitter width={width} onChange={setWidth} />
-        <section className="gr-diff" aria-label="本轮文件改动">
+        <section className="gr-diff" aria-label={`${label}差异`}>
           {shown && (
             <div className="gr-file-head" data-testid="review-file-head">
               <code title={shown.path}>{fileName(shown.path)}</code>
-              <span className="gr-dim">本轮改动</span>
+              <span className="gr-dim">{turnItemId ? label : `记录了 ${shown.edits} 次改动`}</span>
               <span className="spacer" />
               <span className="add">+{shown.added}</span>
               <span className="del">−{shown.removed}</span>
@@ -140,9 +147,9 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
           )}
           <div className="gr-scroll-wrap"><div className="gr-scroll" ref={scroller}>
             {error && <div className="gr-notice" role="alert">{error}</div>}
-            {!files && !error && <div className="gr-notice">正在读取本轮改动…</div>}
-            {files && !shown && <div className="gr-notice">这一轮没有这个文件的改动记录。</div>}
-            {shown && !rows.length && <div className="gr-notice">这一轮记录了文件改动，但没有保存差异内容。</div>}
+            {!files && !error && <div className="gr-notice">正在读取{label}…</div>}
+            {files && !shown && <div className="gr-notice">{turnItemId ? "这一轮没有这个文件的改动记录。" : "当前会话没有已记录的文件改动。"}</div>}
+            {shown && !rows.length && <div className="gr-notice">已记录文件改动，但没有保存差异内容。</div>}
             {diff && rows.length > 0 && <DiffView
               diff={diff}
               rows={rows}

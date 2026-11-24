@@ -61,7 +61,7 @@ export function ReviewApp() {
       {(link, remote) => {
         const ws = remote ? remoteWorkspace(target.workspaceId, remote.device) : host.state.workspaces.find((w) => w.id === target.workspaceId);
         if (!ws) return <WindowPlaceholder title="Git Review">项目不存在或已移除。</WindowPlaceholder>;
-        if (target.turnItemId && target.sessionId) return <TurnReview key={`${ws.id}:${target.sessionId}:${target.turnItemId}`} link={link} workspace={ws} sessionId={target.sessionId} turnItemId={target.turnItemId} file={target.file ?? null} nonce={target.nonce ?? ""} />;
+        if (target.sessionId && (target.turnItemId || target.sessionChanges)) return <TurnReview key={`${ws.id}:${target.sessionId}:${target.turnItemId ?? ""}`} link={link} workspace={ws} sessionId={target.sessionId} turnItemId={target.turnItemId} file={target.file ?? null} nonce={target.nonce ?? ""} />;
         const worktree = target.worktreeSessionId
           ? host.state.sessions.find((s) => s.id === target.worktreeSessionId && s.workspaceId === ws.id)?.cwd
           : undefined;

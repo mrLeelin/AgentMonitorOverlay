@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionItem } from "@amo-studio/protocol";
-import { diffRows, turnChanges } from "./changes.js";
+import { diffRows, recordedChanges, turnChanges } from "./changes.js";
 
 const base = { sessionId: "s", createdAt: "2026-10-14T00:00:00Z" };
 let seq = 0;
@@ -39,6 +39,13 @@ describe("turnChanges", () => {
       tool({ files: [{ path: "n.ts", change: "update", added: 1, removed: 1, diff: "-a\n+b" }] }),
     ]);
     expect(files[0]!.change).toBe("add");
+  });
+
+  it("counts plain text in an added file and retains each patch in order", () => {
+    const rawAdd = { path: "a.txt", change: "add", added: 0, removed: 0, diff: "one\r\ntwo\r\n" } as const;
+    const update = { path: "a.txt", change: "update", added: 1, removed: 1, diff: "-two\n+three" } as const;
+    const files = recordedChanges([tool({ files: [rawAdd] }), tool({ files: [update] })]);
+    expect(files).toEqual([{ path: "a.txt", change: "add", added: 3, removed: 1, edits: 2, patches: [rawAdd, update] }]);
   });
 });
 

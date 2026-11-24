@@ -1,5 +1,18 @@
 import type { FileDiff, GitDiffHunk, GitFileDiff } from "@amo-studio/protocol";
 import { diffRows } from "../files/changes.js";
+import { diffRows as reviewRows, type DiffRow } from "./logic.js";
+
+export function recordedDiffRows(patches: readonly FileDiff[]): DiffRow[] {
+  return patches.flatMap((patch, index) => {
+    const rows = reviewRows(turnDiff(patch), "changes").map((row, i) => ({ ...row, key: `${index}:${row.key}:${i}` }));
+    if (patches.length === 1) return rows;
+    const label = `第 ${index + 1} 次改动`;
+    const first = rows[0];
+    if (first?.kind === "hunk") first.header = `${label} · ${first.header}`;
+    else rows.unshift({ kind: "hunk", key: `${index}:missing`, header: `${label} · 没有保存差异内容`, hidden: 0 });
+    return rows;
+  });
+}
 
 /** Render only the recorded patch. The current file and Git HEAD may have changed since this turn. */
 export function turnDiff(file: FileDiff): GitFileDiff {

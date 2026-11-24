@@ -14,7 +14,6 @@ import { Thread } from "./Thread.js";
 import { flash } from "./ReplyNav.js";
 import { annotationRange, flashAnnotation, flashRange, highlightsSupported, scrollToBox } from "../review/highlights.js";
 import { REVEAL_ITEM_EVENT, type DeliveryAction } from "../chat/Transcript.js";
-import { buildTranscript, segmentMembers } from "../chat/turns.js";
 import { useSettings } from "../settings/useSettings.js";
 import { showToast } from "../lib/toast.js";
 import { AnnotationPanel } from "../review/AnnotationPanel.js";
@@ -31,7 +30,7 @@ import { bookmarkPassage, openMarks } from "../marks/open.js";
 import { BookmarkCancelled } from "../marks/NotePrompt.js";
 import { MarkButton } from "../marks/MarkButton.js";
 import { FileLinks, type PreviewTarget } from "../files/FileLinks.js";
-import { turnChanges } from "../files/changes.js";
+import { recordedEdits } from "../files/changes.js";
 import { IconFile } from "../attach/icons.js";
 import { FilePreview } from "../files/FilePreview.js";
 import { ArchiveIcon, formatDay, TaskArchivedDialog } from "./Archived.js";
@@ -134,18 +133,10 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const remote = useRemote(link);
   const copy = copyStatus(task, remote);
   const localSessionId = copy ? null : session?.id ?? null;
-  const sessionRunning = session?.status === "running" || session?.status === "awaiting-approval" || session?.status === "awaiting-answer";
-  const recentChanges = useMemo(() => {
+  const hasSessionChanges = useMemo(() => {
     // The previous session's items can still be present on the first render after switching.
-    if (!localSessionId || items[0]?.sessionId !== localSessionId) return null;
-    for (const segment of buildTranscript(items, sessionRunning).toReversed()) {
-      if (segment.running) continue;
-      const members = segmentMembers(segment);
-      const [file] = turnChanges(members);
-      if (file) return { turnItemId: members[0]!.id, file: file.path };
-    }
-    return null;
-  }, [items, localSessionId, sessionRunning]);
+    return !!localSessionId && items[0]?.sessionId === localSessionId && items.some((item) => recordedEdits(item).length > 0);
+  }, [items, localSessionId]);
   const granted = grantsOf(remote, task.id);
   const remoteHeld = remoteHeldTasks(remote).has(task.id);
   const prerequisites = usePrerequisites(link);
@@ -484,15 +475,15 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             <button
               type="button"
               className="btn-ghost small with-icon"
-              title={recentChanges ? "查看当前会话最近一轮记录的文件改动" : "当前会话没有已记录的文件改动"}
-              disabled={!recentChanges}
+              title={hasSessionChanges ? "查看当前会话所有已记录的文件改动" : "当前会话没有已记录的文件改动"}
+              disabled={!hasSessionChanges}
               onClick={() => {
-                if (session && recentChanges) openReview({ workspaceId: session.workspaceId, sessionId: session.id, ...recentChanges });
+                if (session && hasSessionChanges) openReview({ workspaceId: session.workspaceId, sessionId: session.id, sessionChanges: true });
               }}
-              data-testid="task-recent-changes"
+              data-testid="task-session-changes"
             >
               <IconFile />
-              最近改动
+              会话改动
             </button>
           )}
           {!copy && (
