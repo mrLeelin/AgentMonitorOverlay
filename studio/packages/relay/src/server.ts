@@ -20,6 +20,8 @@ import { RelayError, type RelayStore } from "./store.js";
 import { checkDeviceId, checkDeviceName, DeviceHub } from "./devices.js";
 import { checkTodoDevice, TodoStore } from "./todo.js";
 import { DEVICE_CHANNEL_VERSION, MAX_DEVICE_FRAME } from "./devices-protocol.js";
+import { TEAM_TASK_BODY_LIMIT } from "@amo-studio/protocol";
+import { TeamTasksStore } from "./team-tasks.js";
 
 // The relay service (plans/done/relay.md): HTTP for everything, /ws to push new messages and who is online. People register
 // with a name and password (plus the invite passphrase, when the service has one); a login hands the device a key that
@@ -99,13 +101,13 @@ function readRaw(req: IncomingMessage, max: number): Promise<Buffer> {
   });
 }
 
-function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+function readJson(req: IncomingMessage, max = MAX_BODY): Promise<Record<string, unknown>> {
   return new Promise((ok, fail) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         fail(new RelayError("bad_request", "内容太大"));
         req.destroy();
         return;
@@ -174,6 +176,7 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
   };
   // 问题页 (2026-10-31, plans/issues.md): its tables in the same database.
   const issues = new IssueStore(store.db);
+  const teamTasks = new TeamTasksStore(store, opts.filesDir);
   // Screenshots pasted for a report that was never sent: gone after a week, the bytes with them (2026-11-04, the 11-03
   // audit). At start and every 6 hours.
   const pruneImages = () => {
@@ -513,6 +516,24 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
     }
 
     const me = auth(req, url);
+    if (method === "GET" && path === "/api/team-tasks/identity") return send(res, 200, teamTasks.parts(me));
+    if (path === "/api/team-tasks") {
+      if (method === "GET") return send(res, 200, teamTasks.list(me));
+      if (method === "POST") return send(res, 200, teamTasks.create(me, await readJson(req, TEAM_TASK_BODY_LIMIT)));
+    }
+    const teamTask = /^\/api\/team-tasks\/(team-[0-9a-f-]{36})(?:\/(change|files\/([0-9a-f-]{36})))?$/.exec(path);
+    if (teamTask) {
+      const id = teamTask[1]!;
+      if (method === "GET" && !teamTask[2]) return send(res, 200, teamTasks.detail(me, id));
+      if (method === "POST" && teamTask[2] === "change") return send(res, 200, teamTasks.change(me, id, await readJson(req, TEAM_TASK_BODY_LIMIT)));
+      if (method === "GET" && teamTask[3]) {
+        const file = teamTasks.file(me, id, teamTask[3]);
+        if (!existsSync(file.path)) throw new RelayError("not_found", "附件内容已丢失");
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(file.size), "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        pipeline(createReadStream(file.path), res, () => undefined);
+        return;
+      }
+    }
     if (method === "POST" && path === "/api/logout") {
       store.logout(keyOf(req, url)!);
       return send(res, 200, { ok: true });

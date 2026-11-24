@@ -54,7 +54,7 @@ describe("Store", () => {
     const path = tempDbPath();
     const store = makeStore(path);
     const { ws, task } = seed(store);
-    store.db.exec("DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal;");
+    store.db.exec("DROP TABLE local_team_tickets; DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(26);
     open.pop()!.close();
     const migrated = makeStore(path);
@@ -95,7 +95,7 @@ describe("Store", () => {
     store.putCanvas({ ...doc, links: [...doc.links!, collaboration] } as CanvasDoc);
     store.putCanvas({ ...emptyCanvas("only-collaboration"), links: [collaboration] } as CanvasDoc);
     store.putCanvas({ ...doc, id: "unchanged" });
-    store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal;");
+    store.db.exec("DROP TABLE local_team_tickets; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(27);
     open.pop()!.close();
     const upgraded = makeStore(path);

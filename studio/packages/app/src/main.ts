@@ -1,12 +1,12 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, screen, shell, Tray } from "electron";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectHost, HostStartError, keepHostAlive, putHostJson, readHostJson, requestShutdown, stopHost, waitForExit, type HostConnection, type HostLinkOptions } from "./host-link.js";
 import { remoteInUse, remoteQuitNote, type RemoteState } from "@amo-studio/protocol";
 import { createFocusWindow, displays, letTitleDragsMove, mainBounds, pagePressed, recoverLostClicks, refitFocusWindow, rescaleFocusWindow, setFocusActivatable, ShellPrefs, UI_SCALES, uiScaleOk } from "./focus-window.js";
 import { centreIn, displayFor } from "./placement.js";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { platformDataDir, removeStudioRunning, resolveDataDir, writeStudioRunning } from "./paths.js";
 import { runSetup, SETUP_TEMP_PROFILE } from "./setup.js";
@@ -352,6 +352,18 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
   });
 
   ipcMain.handle("amo:host", () => (host ? { url: host.url, token: host.token } : null));
+  ipcMain.handle("amo:save-team-task-attachment", async (event, ticketId: unknown, fileId: unknown, name: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const connection = host;
+    if (!win || !connection || typeof ticketId !== "string" || typeof fileId !== "string" || typeof name !== "string") throw new Error("无法保存团队任务附件");
+    const selection = await dialog.showSaveDialog(win, { title: "保存团队任务附件", defaultPath: basename(name) });
+    if (selection.canceled || !selection.filePath) return false;
+    const response = await fetch(`${connection.url}/api/team-tasks/${encodeURIComponent(ticketId)}/file/${encodeURIComponent(fileId)}`, { headers: { authorization: `Bearer ${connection.token}` }, signal: AbortSignal.timeout(35_000) });
+    const data = await response.json() as { base64?: string; error?: { message?: string } };
+    if (!response.ok || typeof data.base64 !== "string") throw new Error(data.error?.message ?? "附件下载失败，请刷新原单后重试");
+    await writeFile(selection.filePath, Buffer.from(data.base64, "base64"));
+    return true;
+  });
   // The pages draw the title bar and its window buttons (minimise, maximise / restore, close), each for its own window
   // (2026-10-29: 书签, the 画布小窗, Git Review, the viewer and the setup too). The workbench's × only hides it: its
   // close handler (createMainWindow) does that.

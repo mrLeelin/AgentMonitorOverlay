@@ -16,6 +16,7 @@ import { useChoicesFor } from "../lib/choices.js";
 import { taskModelSessions } from "../lib/task-models.js";
 import { TaskModels } from "../lib/TaskModels.js";
 import { usePrerequisites, waitingTitles, WAITING_HINT } from "../task/prerequisites.js";
+import { TEAM_TASK_DRAG, type TeamDrop } from "../teamtasks/StudioTeamTasks.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -64,16 +65,18 @@ interface BoardProps {
   onArchive?(tasks: readonly Task[]): void;
   /** 远程 (step 2): where copies of remote tasks run and whether they can be reached; what this computer granted. */
   link: HostLink;
+  teamDrop?: TeamDrop | undefined;
 }
 
 /** Four columns; the person moves cards (drag a card onto another column), agents never do. Cards carry no buttons. */
-export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
+export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link, teamDrop }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
   const prerequisites = usePrerequisites(link);
   const visible = tasks.filter((t) => inScope(t, scope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const choices = useChoicesFor(link, visible.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
   const [dragging, setDragging] = useState<readonly Task[]>([]);
+  const [teamOver, setTeamOver] = useState(false);
   const [over, setOver] = useState<TaskColumn | null>(null);
   const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? visible.filter((t) => !t.remote).map((t) => t.id) : []);
   const archive = (list: readonly Task[]) => {
@@ -150,21 +153,36 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
         const archivable = col === "done" && !!onArchive;
         return (
           <div
-            className={over === col && dragging.some((t) => t.column !== col) ? "column drop" : "column"}
+            className={`column${over === col && dragging.some((t) => t.column !== col) ? " drop" : ""}${col === "todo" && teamOver ? " tt-drop-active" : ""}`}
             key={col}
             data-column={col}
             data-testid={`column-${col}`}
             onDragOver={(e) => {
+              if (col === "todo" && teamDrop?.available && e.dataTransfer.types.includes(TEAM_TASK_DRAG)) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+                setTeamOver(true);
+                return;
+              }
               if (!dragging.length || !onMove) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
               if (over !== col) setOver(col);
             }}
             onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === col ? null : o));
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setOver((o) => (o === col ? null : o));
+                if (col === "todo") setTeamOver(false);
+              }
             }}
             onDrop={(e) => {
               e.preventDefault();
+              setTeamOver(false);
+              const ticketId = e.dataTransfer.getData(TEAM_TASK_DRAG);
+              if (ticketId) {
+                if (col === "todo" && teamDrop?.available) teamDrop.import(ticketId);
+                return;
+              }
               if (onMove) for (const task of visible) if (!task.remote && task.column !== col && dragging.some((t) => t.id === task.id)) onMove(task, col);
               setDragging([]);
               setOver(null);
@@ -185,6 +203,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
                 </button>
               )}
             </div>
+            {col === "todo" && teamDrop?.available && <div className="tt-drop" data-testid="team-task-drop">拖入团队任务</div>}
             {grouped
               ? topicGroups(cards, topics).map((g, i) => (
                   <div className="topic-group" key={g.topic?.id ?? ""} data-testid="topic-group" data-topic={g.topic?.title ?? ""} data-group-index={i}>
@@ -203,7 +222,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
                   </div>
                 ))
               : cards.map(card)}
-            {cards.length === 0 && <div className="empty-col">空</div>}
+            {cards.length === 0 && !(col === "todo" && teamDrop?.available) && <div className="empty-col">空</div>}
             {/* Archived tasks leave the board; the last column offers them. */}
             {col === TASK_COLUMNS[TASK_COLUMNS.length - 1] && <ArchivedTasks tasks={tasks} workspaces={workspaces} topics={topics} scope={scope} onOpen={onOpen} />}
           </div>

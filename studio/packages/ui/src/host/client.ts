@@ -27,6 +27,7 @@ declare global {
       };
       /** Opens an http(s) link in the system browser (Electron); absent in a plain browser. */
       openExternal?(url: string): Promise<void>;
+      saveTeamTaskAttachment?(ticketId: string, fileId: string, name: string): Promise<boolean>;
       /** The workbench window's icon (taskbar): one of 「AMO 娘」's faces by file name (focus/mascot.ts), or null for the app's. */
       setAppIcon?(face: string | null): void;
       /** Pending items, independent of whether the Focus window is open. */

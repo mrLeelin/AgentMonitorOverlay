@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMO 团队看板 · 交互原型</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ground: #f8f9f3; --paper: #fffefa; --line: #d6dece; --line-strong: #a7b694;
+    --ink: #253021; --muted: #56634f; --green: #355723; --lime: #c9eca5; --green-bg: #edf3e5;
+    --amber: #815020; --amber-bg: #f6ead8; --violet: #594674; --violet-bg: #efebf5;
+    color: var(--ink); background: var(--ground);
+    font: 14px/1.55 "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol { margin: 0; }
+  [hidden] { display: none !important; }
+  h1, h2, h3 { line-height: 1.35; text-wrap: balance; }
+  h1 { font-size: 27px; letter-spacing: -.026em; }
+  h2 { font-size: 18px; }
+  h3 { font-size: 15px; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button, select { cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+  ::selection { color: var(--ink); background: var(--lime); }
+  a { color: var(--green); text-underline-offset: 3px; }
+  .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .topbar { min-height: 58px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--paper); }
+  .brand, .tools, .row, .identity { display: flex; align-items: center; gap: 9px; }
+  .brand { font-size: 16px; font-weight: 730; letter-spacing: -.018em; white-space: nowrap; }
+  .mark { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; color: var(--green); background: var(--lime); }
+  .controls { justify-self: end; }
+  .identity { white-space: nowrap; font-size: 12px; color: var(--muted); }
+  select, .input { min-width: 0; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--paper); }
+  .switch { display: flex; gap: 3px; padding: 3px; background: var(--green-bg); border-radius: 8px; }
+  .switch button { padding: 5px 13px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; white-space: nowrap; font-size: 13px; }
+  .switch button[aria-pressed="true"] { background: var(--paper); color: var(--ink); font-weight: 700; box-shadow: 0 1px 3px #2633201a; }
+  .btn { min-height: 35px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--paper); color: var(--ink); font-weight: 620; white-space: nowrap; }
+  .btn:hover:enabled { background: var(--green-bg); }
+  .primary { border-color: var(--lime); background: var(--lime); color: #263c1d; }
+  .primary:hover:enabled { background: #b9e090; border-color: #b9e090; }
+  .quiet { border-color: transparent; background: transparent; color: var(--muted); }
+  .icon-button { padding: 5px; width: 32px; height: 32px; min-height: 32px; }
+  .board-frame { width: min(100%, 1650px); min-height: calc(100vh - 58px); margin: 0 auto; }
+  .board-frame.in-studio { display: grid; grid-template-columns: 190px minmax(0, 1fr) clamp(405px, 34vw, 540px); }
+  .board-frame.in-studio.team-closed { grid-template-columns: 190px minmax(0, 1fr); }
+  .panel { min-width: 0; padding: 28px 28px 32px; }
+  .workspace-nav { padding: 16px 11px; border-right: 1px solid var(--line); background: #f1f3ea; }
+  .workspace-nav h2 { padding: 5px 8px 9px; color: var(--muted); font-size: 12px; }
+  .workspace-nav button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; overflow-wrap: anywhere; }
+  .workspace-nav button:hover, .workspace-nav button[aria-current="true"] { background: #e4edd7; color: var(--green); }
+  .workspace-nav button[aria-current="true"] { font-weight: 700; }
+  .local-panel { padding: 21px 17px; }
+  .local-panel h1, .in-studio .team-panel h1 { font-size: 21px; overflow-wrap: anywhere; }
+  .local-panel .panel-header { margin-bottom: 16px; }
+  .in-studio .team-panel { padding: 19px 14px 23px; border-left: 1px solid var(--line); background: var(--paper); }
+  .in-studio .team-panel .panel-header { margin-bottom: 12px; }
+  .in-studio .team-panel .lane { min-height: 213px; padding: 7px; }
+  .in-studio .team-panel .card { padding: 7px 8px; }
+  .mobile-project { display: none; }
+  .between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .panel-header { gap: 12px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 20px; }
+  .panel-header .tools { position: relative; flex-wrap: wrap; }
+  .lead, .muted { color: var(--muted); }
+  .lead { margin-top: 5px; font-size: 13px; }
+  .mono { font: 12px/1.4 "Cascadia Mono", Consolas, monospace; color: var(--muted); white-space: nowrap; }
+  .columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+  .in-studio .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lane { min-width: 0; min-height: 270px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #f1f3ea; }
+  .lane-head { display: flex; align-items: baseline; gap: 8px; padding: 2px 3px 8px; border-bottom: 2px solid var(--line); }
+  .lane-head .count, .notice-count { padding: 0 6px; border-radius: 4px; background: #e8ecdf; font: 12px/1.6 "Cascadia Mono", Consolas, monospace; color: var(--muted); }
+  .lane[data-stage="doing"] .lane-head { color: var(--green); border-color: #b4c8a2; }
+  .lane[data-stage="review"] .lane-head { color: var(--amber); border-color: #ddc6a6; }
+  .lane[data-stage="done"] .lane-head { color: var(--violet); border-color: #cec3db; }
+  .lane-note { padding: 7px 3px 8px; color: var(--muted); font-size: 12px; }
+  .stack { display: grid; align-content: start; gap: 7px; }
+  .card { width: 100%; min-width: 0; display: grid; gap: 5px; text-align: left; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+  .card:hover { border-color: var(--line-strong); }
+  .card[draggable="true"] { cursor: grab; }
+  .card[draggable="true"]:active { cursor: grabbing; }
+  .card.is-focused { background: #edf3e3; border-color: var(--line-strong); }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .card-top .icon { width: 15px; height: 15px; color: var(--muted); }
+  .card-title { overflow-wrap: anywhere; font-size: 13px; }
+  .card-meta { display: flex; gap: 3px 9px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .card-meta b { color: var(--ink); font-weight: 600; }
+  .empty { padding: 8px 3px; font-size: 12px; color: var(--muted); }
+  .lane.drop-hover, .drop-zone.drop-hover { border-color: var(--green); background: #e4efd6; }
+  .drop-zone { display: grid; place-items: center; place-content: center; justify-items: center; gap: 5px; min-height: 128px; margin: 12px 0 14px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: 9px; background: #ebf1e4; color: var(--green); text-align: center; }
+  .drop-zone .icon { width: 23px; height: 23px; }
+  .drop-zone .muted { font-size: 12px; }
+  .local-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+  .local-lane { min-width: 0; }
+  .local-lane .lane-head h2 { font-size: 15px; white-space: nowrap; }
+  .local-lane .stack { margin-top: 9px; }
+  .local-lane .drop-zone { min-height: 93px; padding: 8px 5px; margin: 9px 0; }
+  .local-lane .drop-zone strong { font-size: 12px; }
+  .local-lane .drop-zone .icon { width: 19px; height: 19px; }
+  .local-lane .row { flex-wrap: wrap; gap: 4px 6px; }
+  .popover { position: absolute; top: calc(100% + 7px); right: 0; width: min(325px, calc(100vw - 38px)); z-index: 2; padding: 10px; border-radius: 8px; background: var(--paper); box-shadow: 0 7px 26px #27321d2b; }
+  .popover h3 { margin: 1px 2px 7px; }
+  .popover .card + .card { margin-top: 5px; }
+  .notice-count { background: var(--amber-bg); color: var(--amber); }
+  .toast { position: fixed; bottom: 16px; left: 50%; z-index: 5; transform: translateX(-50%); max-width: calc(100vw - 26px); width: max-content; background: #2a3923; color: #fff; padding: 9px 14px; border-radius: 7px; box-shadow: 0 4px 15px #27321d26; font-size: 13px; }
+  .drawer { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(435px, 100vw); height: 100dvh; max-height: none; max-width: none; z-index: 4; overflow-y: auto; padding: 0; border: 0; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); box-shadow: -6px 0 23px #26321b24; }
+  .drawer-top { position: sticky; top: 0; z-index: 1; padding: 11px 17px; border-bottom: 1px solid var(--line); background: var(--paper); }
+  .drawer-body { display: grid; gap: 13px; padding: 17px 19px 28px; }
+  .drawer h2 { overflow-wrap: anywhere; }
+  .body-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .badge { display: inline-flex; padding: 2px 6px; width: fit-content; border-radius: 4px; background: #edf0e7; color: var(--muted); font-size: 12px; }
+  .badge-doing { background: var(--green-bg); color: var(--green); }
+  .badge-review { background: var(--amber-bg); color: var(--amber); }
+  .badge-done { background: var(--violet-bg); color: var(--violet); }
+  .meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .rule { border-top: 1px solid var(--line); padding-top: 12px; }
+  .history { display: grid; gap: 8px; list-style: none; padding: 6px 0 0; }
+  .history li { padding-bottom: 7px; border-bottom: 1px solid var(--line); }
+  .history li:last-child { border-bottom: 0; }
+  .history strong { font-size: 13px; }
+  .history .body-copy { margin-top: 4px; font-size: 13px; }
+  .form { display: grid; gap: 11px; }
+  .form label { display: grid; gap: 4px; font-weight: 600; }
+  .form :is(input, select, textarea) { width: 100%; font-weight: 400; }
+  .form textarea { min-height: 80px; resize: vertical; }
+  .form button[type="submit"] { justify-self: start; }
+  .drawer .tools { flex-wrap: wrap; }
+  .file-link { display: inline-block; width: fit-content; max-width: 100%; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }
+  .guide-step { display: grid; gap: 9px; }
+  .guide-step h3 { font-size: 17px; }
+  @media (max-width: 1150px) {
+    .panel { padding: 21px 16px; } .columns { gap: 8px; }
+    .board-frame.in-studio { grid-template-columns: 145px minmax(0, 1fr) minmax(335px, 40%); }
+    .board-frame.in-studio.team-closed { grid-template-columns: 145px minmax(0, 1fr); }
+    .local-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 870px) {
+    .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topbar { padding-inline: 13px; }
+    .board-frame.in-studio { grid-template-columns: minmax(0, 1fr) minmax(310px, 48%); }
+    .board-frame.in-studio.team-closed { grid-template-columns: minmax(0, 1fr); }
+    .workspace-nav { display: none; } .mobile-project { display: flex; }
+  }
+  @media (max-width: 665px) {
+    .topbar { grid-template-columns: 1fr auto; padding-block: 8px; }
+    .controls { grid-column: 1 / -1; justify-self: start; }
+    .board-frame.in-studio, .board-frame.in-studio.team-closed { grid-template-columns: minmax(0, 1fr); }
+    .local-panel { border-right: 0; border-bottom: 1px solid var(--line); }
+    .in-studio .team-panel { border-left: 0; }
+    .lane { min-height: 205px; padding: 7px; }
+    .panel { padding: 17px 11px; }
+    .drawer { border: 0; width: min(100%, 420px); }
+  }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" hidden>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 6v12m6-12v12"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><path stroke-width="2.8" d="M9 5h.01m6 0h.01M9 12h.01m6 0h.01M9 19h.01m6 0h.01"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M7 10a5 5 0 0 1 10 0c0 4 1 5 2 6H5c1-1 2-2 2-6m3 9h4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12m0-12L6 18"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13l2-7h12l2 7v6H4zm0 0h5l1 3h4l1-3h5"/><path d="M12 2v8m-3-3 3 3 3-3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v10H4z"/></symbol>
+</svg>
+<header class="topbar">
+  <div class="brand"><span class="mark"><svg class="icon" aria-hidden="true"><use href="#i-board"/></svg></span><span id="brand-name">AMO 团队任务</span></div>
+  <nav class="switch" aria-label="切换面板"><button type="button" data-view="team" aria-pressed="true">团队看板</button><button type="button" data-view="studio" aria-pressed="false">Studio 执行</button></nav>
+  <div class="tools controls"><label class="identity">演示身份<select id="actor"></select></label><button type="button" class="btn quiet" data-action="guide">试用指引</button></div>
+</header>
+<main class="board-frame" id="workbench">
+  <nav class="workspace-nav" id="workspace-nav" aria-label="本地项目" hidden></nav>
+  <section class="panel local-panel" id="local-panel" aria-label="本地执行" hidden></section>
+  <section class="panel team-panel" id="team-panel" aria-label="团队看板">
+    <header class="between panel-header">
+      <div><h1>团队看板</h1><p class="lead" id="board-hint">体验从团队接单到提出人验收的流程。</p></div>
+      <div class="tools">
+        <button type="button" class="btn" id="notice-button" data-action="notices" aria-controls="notices" aria-expanded="false"></button>
+        <button type="button" class="btn primary" id="compose-button" data-action="compose"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> 提交任务</button>
+        <section class="popover" id="notices" aria-label="待审核通知" hidden></section>
+      </div>
+    </header>
+    <div class="columns" id="columns"></div>
+  </section>
+</main>
+<dialog class="drawer" id="drawer" aria-labelledby="drawer-title"><header class="between drawer-top"><strong id="drawer-title"></strong><button class="btn quiet icon-button" type="button" data-action="close" aria-label="关闭详情"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="drawer-body" id="drawer-body"></div></dialog>
+<p class="toast" id="toast" role="status" hidden></p>
+
+<script>
+  // Team state and local work stay separate. Every write goes through the same transition rules as the drag UI.
+  const stages = { pending: "待定", doing: "进行中", review: "审查", done: "完成" };
+  const localStages = { todo: "待办", doing: "进行中", review: "待审阅", done: "完成" };
+  const localNext = { todo: "doing", doing: "review", review: "done" };
+  const people = ["林舟", "陈楠", "周遥"];
+  const projects = ["JellybeanUnity", "AmoStudio"];
+  function initialState() {
+    const cards = [
+      ["AMO-048", "结算界面偶尔黑屏", "陈楠", null, "pending", "连续完成两局，第二局点「领取奖励」后偶尔停在黑屏，声音仍在播放。"],
+      ["AMO-047", "背包切页时选中态丢失", "陈楠", "周遥", "pending", "切换到下一页再回来，先前选中的道具没保留。"],
+      ["AMO-046", "调整商店购买按钮的按下反馈", "周遥", "林舟", "pending", "希望按钮的按下反馈与主界面统一。"],
+      ["AMO-045", "补上设置页返回入口", "陈楠", "林舟", "doing", "从设置返回首页的入口在小窗口里看不到。"],
+      ["AMO-044", "统一登录失败时的提示", "林舟", "周遥", "doing", "网络断开和密码错误目前显示的是同一句话。"],
+      ["AMO-043", "校对活动页奖励说明", "林舟", "周遥", "review", "检查每档奖励的领取条件是否一致。"],
+      ["AMO-042", "确认切屏视频循环边界", "周遥", "林舟", "review", "视频循环几次后，末尾偶尔闪一帧。"],
+      ["AMO-041", "修正首局引导的提示文字", "陈楠", "林舟", "done", "引导文案已更新并确认。"],
+      ["AMO-040", "补全任务卡的空状态", "周遥", "陈楠", "done", "已验证无任务时的显示。"],
+    ];
+    return {
+      serial: 48,
+      tickets: cards.map(([id, title, author, executor, stage, description]) => ({ id, title, author, executor, stage, description, files: [], unreadReview: stage === "review", history: [{ actor: author, label: "提出任务", text: "", at: "今天 09:30", files: [] }, ...(stage === "review" ? [{ actor: executor, label: "送审", text: "已处理，请帮忙验收。", at: "今天 11:20", files: [] }] : [])] })),
+      local: [{ ticketId: "AMO-045", owner: "林舟", project: projects[0], column: "doing" }, { ticketId: "AMO-044", owner: "周遥", project: projects[1], column: "doing" }],
+    };
+  }
+  const findTicket = (s, id) => s.tickets.find((ticket) => ticket.id === id);
+  const findLocal = (s, id, owner) => s.local.find((item) => item.ticketId === id && item.owner === owner);
+  const mayMove = (ticket, person, destination) => (ticket.stage === "doing" && destination === "review" && ticket.executor === person)
+    || (ticket.stage === "review" && ["done", "pending"].includes(destination) && ticket.author === person);
+  const mayComment = (ticket, person) => ticket.author === person || ticket.executor === person;
+  function transition(current, action) {
+    const { kind, actor, at, id, text = "", files = [] } = action;
+    const ticket = findTicket(current, id);
+    const event = (label) => ({ actor, label, text, at, files });
+    const update = (patch, label) => ({ ...current, tickets: current.tickets.map((item) => item.id === id ? { ...item, ...patch, history: label ? [...item.history, event(label)] : item.history } : item) });
+    if (kind === "create") {
+      if (!action.title || !action.description) return { error: "请填写标题和说明。" };
+      const serial = current.serial + 1;
+      const newId = `AMO-${String(serial).padStart(3, "0")}`;
+      const created = { id: newId, author: actor, executor: action.executor || null, stage: "pending", title: action.title, description: action.description, files, unreadReview: false, history: [event("提出任务")] };
+      return { current: { ...current, serial, tickets: [created, ...current.tickets] }, id: newId, message: "任务已提交到待定" };
+    }
+    if (!ticket) return { error: "找不到这张任务。" };
+    if (kind === "take") {
+      if (ticket.stage !== "pending") return { error: "从待定列接入团队任务。" };
+      const existing = findLocal(current, id, actor);
+      const local = existing ?? { ticketId: id, owner: actor, project: action.project, column: "todo" };
+      const label = ticket.executor && ticket.executor !== actor ? `接手任务（原执行者 ${ticket.executor}）` : existing ? "重新接手" : "接手任务";
+      const next = update({ stage: "doing", executor: actor, unreadReview: false }, label);
+      return { current: { ...next, local: existing ? next.local : [local, ...next.local] }, local, existing, message: existing ? `已打开 ${local.project} 中原来的本地任务` : `已加入 ${local.project}，团队原单进入进行中` };
+    }
+    if (kind === "move") {
+      if (!mayMove(ticket, actor, action.destination)) return { error: "这一步需要当前执行者或提出人操作。" };
+      const next = action.destination;
+      const label = { review: "送审", done: "确认完成", pending: "退回待定" }[next];
+      return { current: update({ stage: next, unreadReview: next === "review" }, label), message: next === "review" ? `已送审，通知已发给 ${ticket.author}` : next === "pending" ? `已退回待定，执行者仍为 ${ticket.executor}` : "提出人已确认完成" };
+    }
+    if (kind === "comment" && mayComment(ticket, actor)) {
+      if (!text && !files.length) return { error: "请填写评论或添加附件。" };
+      return { current: update({}, "评论"), message: "评论已添加" };
+    }
+    if (kind === "local-next") {
+      const item = findLocal(current, id, actor);
+      const column = item && localNext[item.column];
+      if (!column) return { error: "本地任务已经完成。" };
+      return { current: { ...current, local: current.local.map((entry) => entry === item ? { ...entry, column } : entry) }, message: `本地看板已移到「${localStages[column]}」` };
+    }
+    if (kind === "read" && ticket.author === actor) return { current: update({ unreadReview: false }) };
+    return { error: "当前身份无法执行这个操作。" };
+  }
+</script>
+
+<script>
+  const el = (id) => document.getElementById(id);
+  const safe = (text) => String(text).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  const badge = (stage) => `<span class="badge badge-${stage}">${stages[stage]}</span>`;
+  const options = (values) => values.map((value) => `<option>${safe(value)}</option>`).join("");
+  const presets = { happy: "完成验收", retry: "退回重接" };
+  let state = initialState();
+  let actor = people[0];
+  let project = projects[0];
+  let view = "team";
+  let teamOpen = true;
+  let selected = null;
+  let drawerMode = null;
+  let noticesOpen = false;
+  let dragId = null;
+  let guide = null;
+  let toastTimer;
+
+  function announce(message) {
+    clearTimeout(toastTimer);
+    el("toast").hidden = !message;
+    el("toast").textContent = message || "";
+    if (message) toastTimer = setTimeout(() => { el("toast").hidden = true; }, 2800);
+  }
+  const filesOf = (form) => new FormData(form).getAll("files").filter((file) => file.name).map((file) => ({ name: file.name, url: URL.createObjectURL(file) }));
+  const fileLinks = (files) => files.map((file) => `<a class="file-link" href="${safe(file.url)}" download="${safe(file.name)}">${safe(file.name)}</a>`).join(" ");
+
+  function apply(action) {
+    const result = transition(state, { actor, at: new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date()), ...action });
+    if (result.error) { announce(result.error); return null; }
+    state = result.current;
+    if (result.message) announce(result.message);
+    return result;
+  }
+
+  function teamCard(ticket) {
+    const canDrag = (ticket.stage === "pending" && view === "studio") || mayMove(ticket, actor, "review") || mayMove(ticket, actor, "done");
+    return `<button class="card${selected === ticket.id ? " is-focused" : ""}" type="button" data-action="open" data-ticket="${ticket.id}" draggable="${canDrag}">
+      <span class="card-top"><span class="mono">${ticket.id}</span>${canDrag ? icon("grip") : ""}</span>
+      <strong class="card-title">${safe(ticket.title)}</strong>
+      <span class="card-meta"><span>提出 <b>${safe(ticket.author)}</b></span><span>执行 ${ticket.executor ? `<b>${safe(ticket.executor)}</b>` : "未指派"}</span></span>
+    </button>`;
+  }
+  function render() {
+    const studio = view === "studio";
+    el("actor").value = actor;
+    el("brand-name").textContent = studio ? "AMO Studio" : "AMO 团队任务";
+    document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", button.dataset.view === view));
+    el("workbench").classList.toggle("in-studio", studio);
+    el("workbench").classList.toggle("team-closed", studio && !teamOpen);
+    el("workspace-nav").hidden = !studio;
+    el("local-panel").hidden = !studio;
+    el("team-panel").hidden = studio && !teamOpen;
+    el("compose-button").hidden = studio;
+    el("board-hint").textContent = studio ? "把「待定」里的卡片拖到本地「待办」。" : "体验从团队接单到提出人验收的流程。";
+    const prompts = { pending: "等人接手", doing: "执行者在本地处理", review: "等提出人验收", done: "提出人已确认" };
+    el("columns").innerHTML = Object.entries(stages).map(([stage, title]) => {
+      const tickets = state.tickets.filter((ticket) => ticket.stage === stage);
+      return `<section class="lane" data-stage="${stage}" aria-labelledby="lane-${stage}"><div class="lane-head"><h2 id="lane-${stage}">${title}</h2><span class="count">${tickets.length}</span></div><p class="lane-note">${prompts[stage]}</p><div class="stack">${tickets.map(teamCard).join("") || '<p class="empty">暂无任务</p>'}</div></section>`;
+    }).join("");
+    if (studio) {
+      const local = state.local.filter((item) => item.owner === actor && item.project === project);
+      el("workspace-nav").innerHTML = `<h2>项目</h2>${projects.map((name) => `<button type="button" data-workspace="${safe(name)}" aria-current="${name === project}">${icon("folder")}${safe(name)}</button>`).join("")}`;
+      el("local-panel").innerHTML = `<header class="between panel-header"><div><h1>${safe(project)}</h1><p class="lead">本地看板</p></div><div class="tools"><label class="identity mobile-project">项目<select id="project">${options(projects)}</select></label><button type="button" class="btn" data-action="toggle-team" aria-expanded="${teamOpen}" aria-controls="team-panel">团队任务</button></div></header>
+        <div class="local-columns">${Object.entries(localStages).map(([column, title]) => {
+          const cards = local.filter((entry) => entry.column === column);
+          const drop = column === "todo" && teamOpen ? `<div class="drop-zone" id="local-drop" aria-label="拖入本地待办">${icon("inbox")}<strong>拖入团队任务</strong></div>` : "";
+          return `<section class="local-lane" data-local-column="${column}" aria-labelledby="local-${column}"><div class="lane-head"><h2 id="local-${column}">${title}</h2><span class="count">${cards.length}</span></div>${drop}<div class="stack">${cards.map((item) => {
+            const ticket = findTicket(state, item.ticketId);
+            return `<button type="button" class="card" data-action="local" data-local="${ticket.id}"><span class="mono">${ticket.id}</span><strong class="card-title">${safe(ticket.title)}</strong><span class="meta">${ticket.executor === actor ? `团队 · ${stages[ticket.stage]}` : `已由 ${safe(ticket.executor)} 接手`}</span></button>`;
+          }).join("") || (drop ? "" : '<p class="empty">空</p>')}</div></section>`;
+        }).join("")}</div>`;
+      el("project").value = project;
+    }
+    const reviews = state.tickets.filter((ticket) => ticket.author === actor && ticket.stage === "review").sort((a, b) => Number(b.unreadReview) - Number(a.unreadReview));
+    const unread = reviews.filter((ticket) => ticket.unreadReview).length;
+    el("notice-button").innerHTML = `${icon("bell")} 待审核${unread ? ` <span class="notice-count">${unread}</span>` : ""}`;
+    el("notice-button").setAttribute("aria-expanded", noticesOpen);
+    el("notices").hidden = !noticesOpen;
+    el("notices").innerHTML = `<h3>${safe(actor)} 的待审核任务</h3>${reviews.map((ticket) => `<button type="button" class="card" data-action="notice-open" data-ticket="${ticket.id}"><strong class="card-title">${safe(ticket.title)}</strong><span class="meta">${ticket.unreadReview ? "新通知 · " : ""}${safe(ticket.executor)} 已送审</span></button>`).join("") || '<p class="empty">暂无待审核任务。</p>'}`;
+  }
+
+  function openDrawer(title, markup) {
+    el("drawer-title").textContent = title;
+    el("drawer-body").innerHTML = markup;
+    if (!el("drawer").open) el("drawer").show();
+  }
+  function closeDrawer() {
+    if (el("drawer").open) el("drawer").close();
+    drawerMode = null;
+    selected = null;
+  }
+  function showTicket(id, mode = "ticket") {
+    const ticket = findTicket(state, id);
+    if (!ticket) return;
+    drawerMode = mode;
+    selected = id;
+    noticesOpen = false;
+    if (ticket.author === actor && ticket.unreadReview) apply({ kind: "read", id });
+    render();
+    const local = findLocal(state, id, actor);
+    const localLabel = mode === "local" && local ? { todo: "模拟开始本地执行", doing: "模拟本地处理完毕", review: "归为本地完成" }[local.column] : null;
+    const action = (destination, label, primary = false) => `<button type="button" class="btn${primary ? " primary" : ""}" data-action="move" data-destination="${destination}">${label}</button>`;
+    const taking = ticket.stage === "pending" ? (view === "studio" ? `<button type="button" class="btn primary" data-action="take">${local ? "重新接入本地" : "加入本地待办"}</button>` : '<button type="button" class="btn primary" data-action="open-studio">在 Studio 接单</button>') : "";
+    openDrawer(mode === "local" ? "本地任务" : "团队原单", `
+      <div class="row"><span class="mono">${id}</span>${badge(ticket.stage)}</div><h2>${safe(ticket.title)}</h2>
+      <p class="meta">提出人 ${safe(ticket.author)} · 执行者 ${safe(ticket.executor || "未指派")}${mode === "local" && local ? ` · ${safe(local.project)} · 本地${localStages[local.column]}` : ""}</p>
+      <p class="body-copy">${safe(ticket.description)}</p>${ticket.files.length ? `<div>${fileLinks(ticket.files)}</div>` : ""}
+      <div class="tools">${taking}${localLabel ? `<button type="button" class="btn" data-action="local-next">${localLabel}</button>` : ""}${mayMove(ticket, actor, "review") ? action("review", "团队送审", true) : ""}${mayMove(ticket, actor, "done") ? action("done", "确认完成", true) + action("pending", "退回待定") : ""}</div>
+      <section class="rule"><h3>流转与评论</h3><ol class="history">${[...ticket.history].reverse().map((event) => `<li><div class="between"><strong>${safe(event.label)}</strong><span class="meta">${safe(event.actor)} · ${safe(event.at)}</span></div>${event.text ? `<p class="body-copy">${safe(event.text)}</p>` : ""}${event.files.length ? `<div>${fileLinks(event.files)}</div>` : ""}</li>`).join("")}</ol></section>
+      ${mayComment(ticket, actor) ? '<form class="form rule" id="comment-form"><label>评论<textarea class="input" name="text" placeholder="写下验收意见或补充说明"></textarea></label><label>附件（选填）<input name="files" type="file" multiple></label><button class="btn" type="submit">添加评论</button></form>' : ""}`);
+  }
+  function take(id) {
+    const result = apply({ kind: "take", id, project });
+    if (!result) return;
+    project = result.local.project;
+    if (result.existing) showTicket(id, "local");
+    else { closeDrawer(); render(); document.querySelector(`[data-local="${id}"]`)?.focus({ preventScroll: true }); }
+  }
+  function move(id, destination) {
+    const result = apply({ kind: "move", id, destination });
+    if (!result) return;
+    showTicket(id, drawerMode === "local" ? "local" : "ticket");
+    if (destination === "pending") el("comment-form")?.elements.text.focus();
+  }
+
+  function compose() {
+    drawerMode = "compose";
+    selected = null;
+    openDrawer("提交任务", `<form class="form" id="compose-form">
+      <label>标题<input class="input" name="title" maxlength="110" required placeholder="例如：结算界面偶尔黑屏"></label>
+      <label>执行者（选填）<select name="executor"><option value="">先放到待定</option>${options(people)}</select></label>
+      <label>说明<textarea class="input" name="description" required placeholder="写下希望解决的问题和预期结果"></textarea></label>
+      <label>附件（选填）<input name="files" type="file" multiple></label><button class="btn primary" type="submit">提交到待定</button>
+    </form>`);
+    el("compose-form").elements.title.focus();
+  }
+
+  function guideSteps(scenario) {
+    return [
+      ["林舟接单", "从团队待定接入 JellybeanUnity。原单进入进行中，执行者变为林舟。", () => { actor = "林舟"; view = "studio"; project = projects[0]; apply({ kind: "take", id: "AMO-048", project }); }],
+      ["林舟送审", "执行者把原单移到审查。陈楠会收到待审核通知。", () => apply({ kind: "move", id: "AMO-048", destination: "review" })],
+      ["陈楠查看通知", "切到提出人的视角，查看「待审核」中的原单。", () => { actor = "陈楠"; view = "team"; noticesOpen = true; }],
+      ...(scenario === "happy" ? [["陈楠确认完成", "提出人验收后把单移到完成。", () => { apply({ kind: "move", id: "AMO-048", destination: "done" }); noticesOpen = false; }]] : [
+        ["陈楠退回并留言", "任务回到待定，仍显示林舟是执行者。", () => { apply({ kind: "move", id: "AMO-048", destination: "pending", text: "请补一次断网测试。" }); noticesOpen = false; }],
+        ["林舟重新接入", "使用原来的本地任务，仍能查看退回评论。", () => { actor = "林舟"; view = "studio"; apply({ kind: "take", id: "AMO-048", project }); }],
+      ]),
+    ];
+  }
+  function showGuide() {
+    drawerMode = "guide";
+    selected = null;
+    const step = guide ? guideSteps(guide.scenario)[guide.index] : null;
+    openDrawer("试用指引", `<p>用示例单「结算界面偶尔黑屏」试一次。开始演示会恢复示例数据。</p><div class="tools">${Object.entries(presets).map(([scenario, name]) => `<button type="button" class="btn${guide?.scenario === scenario ? " primary" : ""}" data-action="guide-start" data-scenario="${scenario}">${name}</button>`).join("")}</div>
+      ${guide ? step ? `<div class="guide-step rule"><h3>${step[0]}</h3><p>${step[1]}</p><div><button class="btn primary" type="button" data-action="guide-next">${step[0]}</button></div></div>` : '<p class="rule">演示已走完，可以关闭指引继续手动操作。</p>' : '<p class="meta">也可以关闭指引，用上方的「演示身份」切换提出人或执行者，自己拖卡片。</p>'}`);
+  }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const { view: nextView, action, ticket: id, local, destination, scenario, workspace } = button.dataset;
+    if (nextView) { view = nextView; teamOpen = true; noticesOpen = false; closeDrawer(); render(); return; }
+    if (workspace) { project = workspace; render(); document.querySelector(`[data-workspace="${workspace}"]`)?.focus(); return; }
+    if (action === "open" || action === "notice-open") showTicket(id);
+    if (action === "local") showTicket(local, "local");
+    if (action === "take") take(selected);
+    if (action === "move") move(selected, destination);
+    if (action === "local-next" && apply({ kind: "local-next", id: selected })) showTicket(selected, "local");
+    if (action === "open-studio") { view = "studio"; teamOpen = true; showTicket(selected); }
+    if (action === "toggle-team") { teamOpen = !teamOpen; noticesOpen = false; render(); document.querySelector('[data-action="toggle-team"]')?.focus(); }
+    if (action === "notices") { noticesOpen = !noticesOpen; render(); }
+    if (action === "compose") compose();
+    if (action === "close") { closeDrawer(); render(); }
+    if (action === "guide") showGuide();
+    if (action === "guide-start") { state = initialState(); actor = people[0]; project = projects[0]; view = "team"; teamOpen = true; noticesOpen = false; guide = { scenario, index: 0 }; render(); showGuide(); }
+    if (action === "guide-next" && guide) { guideSteps(guide.scenario)[guide.index++][2](); render(); showGuide(); }
+  });
+  document.addEventListener("change", (event) => {
+    if (event.target.id === "actor") { actor = event.target.value; noticesOpen = false; closeDrawer(); render(); }
+    if (event.target.id === "project") { project = event.target.value; render(); el("project").focus(); }
+  });
+  document.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (form.id === "compose-form") {
+      const { title, description, executor } = form.elements;
+      const result = apply({ kind: "create", title: title.value.trim(), description: description.value.trim(), executor: executor.value, files: filesOf(form) });
+      if (result) showTicket(result.id);
+    }
+    if (form.id === "comment-form" && apply({ kind: "comment", id: selected, text: form.elements.text.value.trim(), files: filesOf(form) })) showTicket(selected, drawerMode);
+  });
+  el("drawer").addEventListener("cancel", (event) => { event.preventDefault(); closeDrawer(); render(); });
+
+  const droppable = (target) => {
+    const ticket = findTicket(state, dragId);
+    if (!ticket) return null;
+    const slot = target.closest("#local-drop");
+    if (slot && view === "studio" && ticket.stage === "pending") return slot;
+    const lane = target.closest("[data-stage]");
+    return lane && mayMove(ticket, actor, lane.dataset.stage) ? lane : null;
+  };
+  function clearDrag() {
+    dragId = null;
+    document.querySelectorAll(".drop-hover").forEach((item) => item.classList.remove("drop-hover"));
+  }
+  document.addEventListener("dragstart", (event) => {
+    const card = event.target.closest('[data-ticket][draggable="true"]');
+    if (!card) return;
+    dragId = card.dataset.ticket;
+    event.dataTransfer.setData("text/plain", dragId);
+    event.dataTransfer.effectAllowed = "move";
+  });
+  document.addEventListener("dragover", (event) => {
+    const target = droppable(event.target);
+    if (!target) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    target.classList.add("drop-hover");
+  });
+  document.addEventListener("dragleave", (event) => {
+    const target = event.target.closest(".drop-hover");
+    if (target && !target.contains(event.relatedTarget)) target.classList.remove("drop-hover");
+  });
+  document.addEventListener("drop", (event) => {
+    const target = droppable(event.target);
+    if (!target) return;
+    event.preventDefault();
+    const id = dragId;
+    clearDrag();
+    if (target.id === "local-drop") take(id);
+    else move(id, target.dataset.stage);
+  });
+  document.addEventListener("dragend", clearDrag);
+  el("actor").innerHTML = options(people);
+  render();
+</script>
+</body>
+</html>

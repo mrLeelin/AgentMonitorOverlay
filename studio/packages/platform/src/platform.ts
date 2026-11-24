@@ -32,9 +32,10 @@ const KNOWN: Record<string, { name: string; desc: string }> = {
   notes: { name: "AMO 便签（独立版）", desc: "随手记，托盘常驻，可以单独用。" },
   // Since 2026-10-28 (the user): its desktop program comes from here too; what it shows still updates from the service.
   relay: { name: "AMO 中转", desc: "策划的 AI 把要确认的事发给程序，人和人聊天。界面由服务器更新，桌面程序在这里更新。" },
+  "team-tasks": { name: "AMO 团队任务", desc: "提交团队任务、跟进进度、验收处理结果。" },
 };
 /** Studio first; AMO 中转 next, a tool of its own, before the two that Studio already carries. */
-const ORDER = ["studio", "relay", "reviewer", "notes"];
+const ORDER = ["studio", "relay", "team-tasks", "reviewer", "notes"];
 /** Listed by the server but not a tool to install from here: the platform updates itself (设置 → 平台更新, self-update.ts). */
 const HIDDEN = new Set([SELF]);
 

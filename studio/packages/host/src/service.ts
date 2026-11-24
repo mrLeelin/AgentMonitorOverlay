@@ -33,6 +33,7 @@ import { CanvasReviewFeature } from "./features/canvasreview/service.js";
 import { TaskPlansFeature } from "./features/taskplans/service.js";
 import { RelaysFeature } from "./features/relays/service.js";
 import { TeamRelayFeature } from "./features/teamrelay/service.js";
+import { TeamTasksFeature } from "./features/teamtasks/service.js";
 import { IssuesFeature } from "./features/issues/service.js";
 import { DutyFeature } from "./features/duty/service.js";
 import { OrchestrationFeature } from "./features/orchestration/service.js";
@@ -101,6 +102,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   readonly remote: RemoteFeature = new RemoteFeature(this);
   /** 会话里用中转 (2026-10-30): sessions ask people on the team through AMO 中转; replies come back into them. */
   readonly teamRelay: TeamRelayFeature = new TeamRelayFeature(this);
+  readonly teamTasks = new TeamTasksFeature(this);
   readonly issues: IssuesFeature = new IssuesFeature(this);
   /** 值守 (2026-10-31): items that start a session, run a command or one of Studio's jobs at set times. */
   readonly duty: DutyFeature = new DutyFeature(this);

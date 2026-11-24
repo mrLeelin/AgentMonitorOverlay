@@ -28,6 +28,8 @@
 
 ## 还开着的事
 
+- AMO 团队任务首版待发布。独立客户端复用平台团队账号，Studio 看板接单，服务器保存原单、附件及流转记录。方案 `plans/done/team-tasks.md`。
+
 - 画布点击与拖动已分开：未选中的卡片可直接拖动，详情只在点击松手后打开，拖完不再弹出；3 条新手势用例及既有框选、多选、平移、连线与详情流程共 12 条隔离 Electron 回归通过，类型检查、构建通过，已检查 `screenshots/studio/canvas-gestures-{drag,drag-dark,click}.png`。扩展检查的旧尺寸用例仍期待旧卡片高度（152，实际 178），已用原始画布代码确认同样失败，本次未改。刷新源码版窗口即可加载；未提交、发布或重启当前 Studio/Host。
 
 - 设置 → 工具与自动化新增「技能展览」：全局/项目按来源浏览，支持搜索、诊断筛选、刷新、查看真实 SKILL.md 和打开目录；发现页提供 Git 仓库、ClawHub、skills.sh 外部入口，暂不提供安装/启停/删除。类型检查、构建、24 条定向测试及 5 条隔离 Electron 用例通过，已检查深浅主题和窄窗口截图 `screenshots/studio/skills-*.png`。方案 `plans/done/skills-exhibition.md`。未提交、发布或重启当前 Studio/Host；需会话空闲后由用户手动重启源码版加载目录接口。

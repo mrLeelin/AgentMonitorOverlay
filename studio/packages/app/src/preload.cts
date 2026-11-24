@@ -7,6 +7,7 @@ type Passage = { itemId: string; start: number; end: number; quote: string };
 
 electron.contextBridge.exposeInMainWorld("amo", {
   host: (): Promise<{ url: string; token: string } | null> => electron.ipcRenderer.invoke("amo:host"),
+  saveTeamTaskAttachment: (ticketId: string, fileId: string, name: string): Promise<boolean> => electron.ipcRenderer.invoke("amo:save-team-task-attachment", ticketId, fileId, name),
   setTaskbarBadge: (count: number, image: string | null): void => electron.ipcRenderer.send("amo:taskbar-badge", count, image),
   pickDirectory: (start?: string | null): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-directory", start ?? undefined),
   pickGitEditor: (): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-git-editor"),

@@ -14,7 +14,7 @@ import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-pu
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
-export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics"> {
+export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "teamTasks" | "topics"> {
   latestDelivery: (taskId: Id) => TaskResult | undefined = () => undefined;
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
@@ -270,7 +270,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
-  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">): Task {
+  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">, link?: (task: Task) => void): Task {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
@@ -280,7 +280,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
     const description = input.description?.trim() ?? "";
     if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
-    const task = this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
+    const create = () => this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
+    const task = link ? this.store.transaction(() => {
+      const created = create();
+      link(created);
+      return created;
+    }) : create();
     this.publish({ type: "task.upserted", task });
     return task;
   }
@@ -579,6 +584,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });
     else if (owner.topicId) this.publish({ type: "topic.upserted", topic: this.store.updateTopic(owner.topicId, {}) });
+    if (owner.taskId && purpose !== "inquiry" && (input.text?.trim() || images.length)) this.f.teamTasks.sessionStarted(owner.taskId);
     return session;
   }
 

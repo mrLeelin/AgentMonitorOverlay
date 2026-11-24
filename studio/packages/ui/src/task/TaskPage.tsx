@@ -57,6 +57,7 @@ import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { decisionNeedsPerson } from "../focus/managedAttention.js";
 import { useMarkReviewSeen } from "../board/reviewSeen.js";
 import { TaskHeader } from "./TaskHeader.js";
+import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
 
 /** The right column starts open on 环境 and remembers the person's choices. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -539,6 +540,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       </div>
       </TaskHeader>
+      {!copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
       {statusAt && <StatusMenu at={statusAt} value={task.column} onPick={(c) => void setColumn(c)} onClose={() => setStatusAt(null)} />}
       {picking === "topic" && (
         <TopicPicker topics={topics} tasks={tasks} current={task.topicId} onPick={(id) => void setTopic(id)} onCreate={(title) => void newTopic(title)} onClose={() => setPicking(null)} />

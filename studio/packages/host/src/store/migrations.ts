@@ -388,4 +388,12 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   ALTER TABLE sessions ADD COLUMN cwd TEXT;
   `,
+  // 31: Keeping the source link and local task in the same transaction makes repeated drops safe.
+  `
+  CREATE TABLE local_team_tickets (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    server TEXT NOT NULL, ticket_id TEXT NOT NULL, started INTEGER NOT NULL DEFAULT 0,
+    awaiting_review INTEGER NOT NULL DEFAULT 0, UNIQUE(server, ticket_id)
+  );
+  `,
 ];

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topics": [{
+    "id": "studio.teamTasks",
+    "label": "团队任务提单、拖入待办和验收",
+    "aliases": ["团队任务", "提单", "团队收件箱", "原单", "接单", "验收", "独立客户端"],
+    "category": "host",
+    "purpose": "团队客户端提交和验收私有原单，Studio 接收并在本地项目执行。",
+    "steps": ["团队原单和附件按提交人与接收人校验权限，使用独立的数据表和接口。", "通过 Host 创建本地待办时，同时写入原单关联；拖入不会启动会话。", "首条工作消息成功送出后同步开工，交付和验收各由对应的人操作。"],
+    "anchors": [
+      { "label": "共享契约", "path": "studio/packages/protocol/src/team-tasks.ts", "anchor": "export interface TeamTask" },
+      { "label": "原单、附件与权限", "path": "studio/packages/relay/src/team-tasks.ts", "anchor": "export class TeamTasksStore" },
+      { "label": "本地关联与同步", "path": "studio/packages/host/src/features/teamtasks/service.ts", "anchor": "export class TeamTasksFeature" },
+      { "label": "Studio 收件箱", "path": "studio/packages/ui/src/teamtasks/StudioTeamTasks.tsx", "anchor": "export function StudioTeamInbox" },
+      { "label": "独立客户端的登录桥接", "path": "studio/packages/team-tasks-app/src/main.ts", "anchor": "const handlers: TeamTasksDesktop" }
+    ],
+    "related": ["studio.tasks", "tool.account", "tool.relayService"],
+    "next": ["studio/plans/done/team-tasks.md", "studio/e2e/studio/team-tasks.spec.ts"]
+  }]
+}

@@ -25,7 +25,8 @@ export const TOOLS = {
   // comes from its service (relay-release.mjs). The portable zip (relay-release --shell) is for clients unpacked by hand.
   // locate (2026-11-03): @amo-studio/relay needs @amo-studio/locate/download since the tool mirror (its index loads
   // server.js → mirror.js), so without it the client could not start; scripts/check-package.mjs found it.
-  relay: { name: "AMO Relay", zip: "AMO-Relay", pkg: "relay-app", description: "AMO 中转", platform: true, packages: ["relay-app", "relay", "locate", "account", "traymenu"] },
+  relay: { name: "AMO Relay", zip: "AMO-Relay", pkg: "relay-app", description: "AMO 中转", platform: true, packages: ["relay-app", "relay", "locate", "account", "protocol", "traymenu"] },
+  "team-tasks": { name: "AMO Team Tasks", zip: "AMO-Team-Tasks", pkg: "team-tasks-app", description: "AMO 团队任务", platform: true, packages: ["team-tasks-app", "ui", "account", "protocol", "relay", "locate"] },
 };
 
 export function tool(id) {

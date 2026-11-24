@@ -18,6 +18,7 @@ import type { OpenInRoutes } from "./openin.js";
 import type { PromptTemplateRoutes } from "./prompt-templates.js";
 import type { QuestionRoutes } from "./questions.js";
 import type { RemoteRoutes } from "./remote.js";
+import type { TeamTaskRoutes } from "./team-tasks.js";
 import type { ViewPackRoutes } from "./viewpacks.js";
 import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "./goals.js";
 
@@ -609,6 +610,7 @@ export interface HostRoutes
     PromptTemplateRoutes,
     QuestionRoutes,
     RemoteRoutes,
+    TeamTaskRoutes,
     ViewPackRoutes {
   "GET /api/state": { req: void; res: StateSnapshot };
   /**

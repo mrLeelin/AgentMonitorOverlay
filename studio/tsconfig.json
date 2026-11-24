@@ -12,6 +12,7 @@
     { "path": "packages/notes" },
     { "path": "packages/relay" },
     { "path": "packages/relay-app" },
+    { "path": "packages/team-tasks-app" },
     { "path": "packages/platform" }
   ]
 }
