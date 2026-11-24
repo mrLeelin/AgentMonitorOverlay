@@ -100,6 +100,55 @@ test("rejects a path that is not a directory", async () => {
   await expect(page.getByRole("alert")).toContainText("not a directory");
 });
 
+test("dropping a task out of review updates the board before the Host responds and rolls back a rejected move", async () => {
+  studio = await launchStudio({ mockModel: false });
+  const { page, app } = studio;
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  const { task } = await studio.api<{ task: Task }>("POST", "/api/tasks", { title: "待审阅的任务", workspaceId: ws.id });
+  const path = `/api/tasks/${task.id}`;
+  const savedColumn = async () => (await studio!.api<{ tasks: Task[] }>("GET", "/api/state")).tasks.find((t) => t.id === task.id)?.column;
+  await studio.api("PATCH", path, { column: "review" });
+  await page.getByTestId("scope-all").click();
+  const review = page.getByTestId("column-review");
+  const done = page.getByTestId("column-done");
+  const card = page.locator(`[data-task-id="${task.id}"]`);
+  const drop = async () => {
+    const box = (await done.boundingBox())!;
+    await card.dragTo(done, { targetPosition: { x: box.width / 2, y: box.height - 20 } });
+  };
+
+  let allowHost!: () => void;
+  const paused = new Promise<void>((resolve) => { allowHost = resolve; });
+  await page.route(`**${path}`, async (route) => {
+    await paused;
+    await route.continue();
+  }, { times: 1 });
+  try {
+    await expect(review.locator(card)).toBeVisible();
+    const request = page.waitForRequest((r) => r.method() === "PATCH" && r.url().endsWith(path));
+    await drop();
+    await request;
+    await expect(done.locator(card)).toBeVisible({ timeout: 1000 });
+    await expect(done.getByTestId("archive-done-all")).toBeDisabled();
+    expect(await savedColumn()).toBe("review");
+  } finally {
+    allowHost();
+  }
+  await expect.poll(savedColumn).toBe("done");
+  await expect(done.locator(card)).toHaveAttribute("draggable", "true");
+  await expect(done.getByTestId("archive-done-all")).toBeEnabled();
+  await screenshot(app, "studio", "board-review-drop", page);
+
+  await studio.api("PATCH", path, { column: "review" });
+  await expect(review.locator(card)).toBeVisible();
+  const message = "最终交付尚未通过用户验收，请在「交付与验收」中明确验收或退回。";
+  await page.route(`**${path}`, (route) => route.fulfill({ status: 409, json: { error: { code: "conflict", message } } }), { times: 1 });
+  await drop();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await expect(review.locator(card)).toBeVisible();
+  expect(await savedColumn()).toBe("review");
+});
+
 test("archived tasks leave the board; the 完成 column lists them, they open read-only and come back", async () => {
   studio = await launchStudio();
   const { page, app } = studio;

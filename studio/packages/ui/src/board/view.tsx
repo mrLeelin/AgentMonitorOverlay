@@ -26,7 +26,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
             scope={scope}
             onOpen={(task) => setView({ kind: "task", taskId: task.id })}
             onNew={() => setView({ kind: "new" })}
-            onMove={(task, column) => void call(link, "PATCH /api/tasks/:id", { id: task.id }, { column }).catch(() => undefined)}
+            onMove={(task, column) => call(link, "PATCH /api/tasks/:id", { id: task.id }, { column })}
             onArchive={(tasks) =>
               void (async () => {
                 for (const task of tasks) await call(link, "POST /api/tasks/:id/archive", { id: task.id }).catch(() => undefined);

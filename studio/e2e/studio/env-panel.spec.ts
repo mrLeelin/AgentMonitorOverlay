@@ -36,6 +36,7 @@ test("the task sidebar shows the environment, the context by category and the se
   await expect(environment).toHaveAttribute("aria-pressed", "true");
   await expect(note).toBeHidden();
   await expect(panel).toBeVisible();
+  await expect(panel.getByRole("heading")).toHaveText(["环境与上下文", "运行位置", "上下文", "MCP"]);
   await expect(panel.getByTestId("env-facts")).toContainText("alpha");
   await expect(panel.getByTestId("env-context-total")).toContainText("已用", { timeout: 30_000 });
   await expect(panel.getByTestId("env-categories")).toBeVisible();
@@ -70,7 +71,7 @@ test("the task sidebar shows the environment, the context by category and the se
   await screenshot(studio.app, "studio", "task-sidebar-environment-light", page);
 
   // 折叠后记住。
-  await panel.getByTestId("env-fold").click();
+  await panel.getByTestId("env-fold").press("Enter");
   await expect(panel.getByTestId("env-context")).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("amo.envPanelFolded"))).toBe("1");
   await panel.getByTestId("env-fold").click();
@@ -79,12 +80,17 @@ test("the task sidebar shows the environment, the context by category and the se
 
 test("a model without a breakdown shows the total and says so (2026-11-18)", async () => {
   studio = await launchStudio();
-  const { page } = studio;
+  const { app, page } = studio;
   await taskWith(studio, "beta", "只有总量", "codex-mock", "你好");
   await page.getByTestId("task-card").filter({ hasText: "只有总量" }).click();
   const panel = page.getByTestId("env-panel");
   await expect(panel.getByTestId("env-context-note")).toContainText("不提供分项", { timeout: 30_000 });
   await expect(panel.getByTestId("env-categories")).toHaveCount(0);
+  await expect(panel.getByTestId("env-context-bar")).toBeVisible();
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await app.evaluate(({ BrowserWindow }, url) => { BrowserWindow.getAllWindows().find((win) => win.webContents.getURL() === url)!.setSize(1000, 760); }, page.url());
+  await screenshot(app, "studio", "task-env-panel-light-narrow", page);
+  expect(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 });
 
 // 重连（2026-11-18，Claude）：一开始连不上的 MCP 修好后，点「重连」就连上，不用重开会话。

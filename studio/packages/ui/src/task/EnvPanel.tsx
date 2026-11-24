@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ContextUsageCategory, Session, SessionContextUsage, SessionItem, Workspace } from "@amo-studio/protocol";
 import { inTurn } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
@@ -6,6 +6,8 @@ import { formatTokens, sessionStats } from "../chat/turns.js";
 import { McpStatus } from "../mcp/shared.js";
 import { useSessionMcp } from "../mcp/SessionMcp.js";
 import { readStored, writeStored } from "../lib/stored.js";
+import { shortFolder } from "../files/paths.js";
+import { IconChevronRight } from "../chat/icons.js";
 import "./env.css";
 
 // 任务页侧栏顶上的「环境与上下文」(2026-11-18 用户定：放侧栏最上面、默认展开)：这台电脑、项目和分支，会话上下文按
@@ -33,15 +35,17 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).slice(-2).join(
 function useContextUsage(link: HostLink, session: Session | null) {
   const [usage, setUsage] = useState<SessionContextUsage | null>(null);
   const [loading, setLoading] = useState(false);
+  const request = useRef(0);
   const id = session?.id ?? null;
   const readable = !!session && session.runtime !== "remote";
   const refresh = useCallback(() => {
+    const current = ++request.current;
     if (!id || !readable) return;
     setLoading(true);
     call(link, "GET /api/sessions/:id/context-usage", { id })
-      .then((u) => setUsage((now) => (u.sessionId === id ? u : now)))
+      .then((u) => { if (current === request.current && u.sessionId === id) setUsage(u); })
       .catch(() => undefined)
-      .finally(() => setLoading(false));
+      .finally(() => { if (current === request.current) setLoading(false); });
   }, [link, id, readable]);
   useEffect(() => {
     setUsage(null);
@@ -68,6 +72,8 @@ export interface EnvPanelProps {
 }
 
 export function EnvPanel({ link, session, items, workspace, branch, machine }: EnvPanelProps) {
+  const headingId = useId();
+  const sectionsId = useId();
   const [folded, setFoldedState] = useState(() => readStored(FOLD_KEY) === "1");
   const setFolded = (on: boolean) => {
     setFoldedState(on);
@@ -76,25 +82,27 @@ export function EnvPanel({ link, session, items, workspace, branch, machine }: E
   const { usage, loading, refresh } = useContextUsage(link, session);
 
   return (
-    <section className="mail-panel env-panel" aria-label="环境与上下文" data-testid="env-panel">
-      <div className="anno-head env-head">
-        <button type="button" className="env-fold" aria-expanded={!folded} onClick={() => setFolded(!folded)} data-testid="env-fold">
-          <span className="env-caret">{folded ? "▸" : "▾"}</span>
-          <span className="anno-title">环境与上下文</span>
-        </button>
+    <section className="env-panel" aria-labelledby={headingId} data-testid="env-panel">
+      <div className="env-head">
+        <h2 className="env-heading" id={headingId}>
+          <button type="button" className="env-fold" aria-controls={sectionsId} aria-expanded={!folded} onClick={() => setFolded(!folded)} data-testid="env-fold">
+            <IconChevronRight />
+            <span>环境与上下文</span>
+          </button>
+        </h2>
         {!folded && session && session.runtime !== "remote" && (
-          <button type="button" className="link-btn env-refresh" disabled={loading} title="重新读一次上下文和 MCP 状态" onClick={refresh} data-testid="env-refresh">
+          <button type="button" className="btn-ghost small env-refresh" disabled={loading} title="刷新上下文和 MCP 状态" onClick={refresh} data-testid="env-refresh">
             {loading ? "读取中…" : "刷新"}
           </button>
         )}
       </div>
-      {!folded && (
-        <>
+      <div id={sectionsId} className="env-sections" hidden={folded}>
+        {!folded && <>
           <EnvFacts session={session} workspace={workspace} branch={branch} machine={machine} />
-          {session && <ContextBlock session={session} items={items} usage={usage} />}
-          {session && session.runtime !== "remote" && <McpBlock link={link} session={session} refreshKey={usage?.breakdown?.at ?? null} />}
-        </>
-      )}
+          {session && <ContextBlock session={session} items={items[0]?.sessionId === session.id ? items : []} usage={usage} />}
+          {session && session.runtime !== "remote" && <McpBlock key={session.id} link={link} session={session} refreshKey={usage} />}
+        </>}
+      </div>
     </section>
   );
 }
@@ -103,27 +111,26 @@ function EnvFacts({ session, workspace, branch, machine }: { session: Session | 
   const cwd = session?.cwd && session.cwd !== workspace?.path ? session.cwd : null;
   return (
     <div className="env-block" data-testid="env-facts">
-      <div className="env-sub">环境</div>
-      {machine && <EnvRow icon="▭" label="电脑" value={machine} />}
-      {workspace && <EnvRow icon="▤" label="项目" value={workspace.name} hint={workspace.path} sub={workspace.path} />}
-      {branch && <EnvRow icon="⑂" label="分支" value={branch} />}
-      {cwd && <EnvRow icon="↳" label="会话目录" value={baseName(cwd)} hint={cwd} sub={cwd} />}
+      <h3 className="env-sub">运行位置</h3>
+      <dl className="env-facts">
+        {machine && <EnvRow label="电脑" value={machine} />}
+        {workspace && <EnvRow label="项目" value={workspace.name} path={workspace.path} />}
+        {branch && <EnvRow label={cwd ? "项目分支" : "分支"} value={branch} />}
+        {cwd && <EnvRow label="会话目录" value={baseName(cwd)} path={cwd} />}
+      </dl>
       {session?.runtime === "remote" && <div className="env-note">这个会话在另一台电脑上运行。</div>}
     </div>
   );
 }
 
-function EnvRow({ icon, label, value, hint, sub }: { icon: string; label: string; value: string; hint?: string; sub?: string }) {
+function EnvRow({ label, value, path }: { label: string; value: string; path?: string }) {
   return (
-    <div className="env-row" title={hint ?? value}>
-      <span className="env-icon" aria-hidden>
-        {icon}
-      </span>
-      <span className="env-label">{label}</span>
-      <span className="env-value">
-        {value}
-        {sub && <span className="env-value-sub"> · {sub}</span>}
-      </span>
+    <div className="env-row" title={path ?? value}>
+      <dt className="env-label">{label}</dt>
+      <dd className="env-value">
+        <span>{value}</span>
+        {path && <span className="env-value-sub">{shortFolder(path, 29)}</span>}
+      </dd>
     </div>
   );
 }
@@ -138,7 +145,7 @@ function ContextBlock({ session, items, usage }: { session: Session; items: read
   const high = total?.percent != null && total.percent >= 80;
   return (
     <div className="env-block" data-testid="env-context">
-      <div className="env-sub">上下文</div>
+      <h3 className="env-sub">上下文</h3>
       {total ? (
         <div className={`env-total${high ? " high" : ""}`} data-testid="env-context-total">
           <span>{total.percent != null ? `已用 ${total.percent}%` : `已用 ${formatTokens(total.used)}`}</span>
@@ -151,11 +158,11 @@ function ContextBlock({ session, items, usage }: { session: Session; items: read
       ) : (
         <div className="env-note">{session.runtime === "remote" ? "远程会话不显示上下文。" : "还没有回复过，发一条消息后再看。"}</div>
       )}
-      {b && b.window > 0 && (
-        <div className="env-bar" aria-hidden>
-          {used.map((c) => (
+      {total?.percent != null && (
+        <div className="env-bar" aria-hidden="true" data-testid="env-context-bar">
+          {b && b.window > 0 ? used.map((c) => (
             <span key={c.id ?? c.name} style={{ width: `${(c.tokens / b.window) * 100}%`, background: colorOf.get(c) }} />
-          ))}
+          )) : <span className={high ? "high" : ""} style={{ width: `${Math.min(100, (total.window ? total.used / total.window * 100 : total.percent))}%` }} />}
         </div>
       )}
       {shown.length > 0 && (
@@ -187,7 +194,7 @@ function ContextBlock({ session, items, usage }: { session: Session; items: read
   );
 }
 
-function McpBlock({ link, session, refreshKey }: { link: HostLink; session: Session; refreshKey: string | null }) {
+function McpBlock({ link, session, refreshKey }: { link: HostLink; session: Session; refreshKey: SessionContextUsage | null }) {
   const { state, setState, refresh } = useSessionMcp(link, session);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [note, setNote] = useState<{ name: string; text: string } | null>(null);
@@ -218,9 +225,9 @@ function McpBlock({ link, session, refreshKey }: { link: HostLink; session: Sess
   const on = (state?.entries ?? []).filter((e) => e.on);
   return (
     <div className="env-block" data-testid="env-mcp">
-      <div className="env-sub">MCP</div>
+      <h3 className="env-sub">MCP</h3>
       {!state && <div className="env-note">正在读取…</div>}
-      {state && !on.length && <div className="env-note">这个会话没有打开的 MCP（Studio 自带的 amo 一直都在）。</div>}
+      {state && !on.length && <div className="env-note">仅启用 Studio 内置的 amo。</div>}
       {on.map((e) => (
         <div key={e.name} className="env-mcp-item">
           <div className="env-mcp" data-testid={`env-mcp-${e.name}`}>

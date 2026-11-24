@@ -1,6 +1,6 @@
-import { useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import { TASK_COLUMNS, taskProject, type ModelProfile, type ProfileChoices, type RemoteState, type Session, type Task, type TaskColumn, type Topic, type Workspace } from "@amo-studio/protocol";
-import type { HostLink } from "../host/client.js";
+import { HostApiError, type HostLink } from "../host/client.js";
 import { copyStatus, grantsOf, useRemote, type CopyStatus } from "../remote/remote.js";
 import { takenText, teamTaken, teamWaits, useTeamThreads } from "../teamrelay/TeamRelay.js";
 import { COLUMN_NAMES, relativeTime, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
@@ -15,6 +15,7 @@ import { TaskRunner } from "./TaskRunner.js";
 import { useChoicesFor } from "../lib/choices.js";
 import { taskModelSessions } from "../lib/task-models.js";
 import { TaskModels } from "../lib/TaskModels.js";
+import { showError } from "../lib/toast.js";
 import { usePrerequisites, waitingTitles, WAITING_HINT } from "../task/prerequisites.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
@@ -54,7 +55,7 @@ interface BoardProps {
   onOpen(task: Task): void;
   onNew?(): void;
   /** A card dropped on another column (the person moves cards; agents never do). */
-  onMove?(task: Task, column: TaskColumn): void;
+  onMove?(task: Task, column: TaskColumn): Promise<Task>;
   /** Unread mail and open decisions per task id. */
   mail?: ReadonlyMap<string, number>;
   decisions?: ReadonlyMap<string, number>;
@@ -66,16 +67,62 @@ interface BoardProps {
   link: HostLink;
 }
 
+type CardMove = { column: TaskColumn; updatedAt: string; saved?: Task };
+
 /** Four columns; the person moves cards (drag a card onto another column), agents never do. Cards carry no buttons. */
 export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
   const prerequisites = usePrerequisites(link);
-  const visible = tasks.filter((t) => inScope(t, scope)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const [moves, setMoves] = useState<ReadonlyMap<string, CardMove>>(new Map());
+  // The PATCH response and the live task update travel separately. Keep the saved position until the board catches up.
+  useEffect(() => {
+    if (!moves.size) return;
+    const caughtUp = [...moves].filter(([id, move]) => {
+      const task = tasks.find((t) => t.id === id);
+      return !task || task.archivedAt || (move.saved && task.updatedAt >= move.saved.updatedAt);
+    });
+    if (!caughtUp.length) return;
+    setMoves((current) => {
+      const next = new Map(current);
+      for (const [id, move] of caughtUp) if (next.get(id) === move) next.delete(id);
+      return next;
+    });
+  }, [moves, tasks]);
+  const visible = tasks.filter((t) => inScope(t, scope)).map((task) => {
+    const move = moves.get(task.id);
+    if (!move) return task;
+    if (!move.saved) return { ...task, column: move.column, updatedAt: move.updatedAt };
+    if (task.updatedAt >= move.saved.updatedAt) return task;
+    return { ...task, column: move.saved.column, updatedAt: move.saved.updatedAt, reviewEnteredAt: move.saved.reviewEnteredAt };
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const choices = useChoicesFor(link, visible.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
   const [dragging, setDragging] = useState<readonly Task[]>([]);
   const [over, setOver] = useState<TaskColumn | null>(null);
   const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? visible.filter((t) => !t.remote).map((t) => t.id) : []);
+  const canMove = (task: Task) => !!onMove && !task.remote && !moves.has(task.id);
+  const moveCards = (cards: readonly Task[], column: TaskColumn) => {
+    if (!onMove || !cards.length) return;
+    const move: CardMove = { column, updatedAt: new Date().toISOString() };
+    setMoves((current) => {
+      const next = new Map(current);
+      for (const task of cards) next.set(task.id, move);
+      return next;
+    });
+    const settle = (id: string, saved?: Task) => setMoves((current) => {
+      if (current.get(id) !== move) return current;
+      const next = new Map(current);
+      if (saved) next.set(id, { ...move, saved });
+      else next.delete(id);
+      return next;
+    });
+    for (const task of cards) {
+      void onMove(task, column).then((saved) => settle(task.id, saved), (error: unknown) => {
+        settle(task.id);
+        showError(error instanceof HostApiError ? error.message : "移动任务失败，请重试。");
+      });
+    }
+  };
   const archive = (list: readonly Task[]) => {
     if (list.length) onArchive?.(list);
   };
@@ -109,9 +156,9 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
       }}
       remote={remote}
       // A copy of a remote task has the column its own computer gives it.
-      draggable={!!onMove && !task.remote}
+      draggable={canMove(task)}
       onDragStart={(event) => {
-        const moving = selection.selected.has(task.id) ? visible.filter((t) => selection.selected.has(t.id)) : [task];
+        const moving = selection.selected.has(task.id) ? visible.filter((t) => selection.selected.has(t.id) && canMove(t)) : [task];
         selection.setSelected(new Set(moving.map((t) => t.id)));
         setDragging(moving);
         if (moving.length > 1) {
@@ -165,7 +212,8 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (onMove) for (const task of visible) if (!task.remote && task.column !== col && dragging.some((t) => t.id === task.id)) onMove(task, col);
+              const draggedIds = new Set(dragging.map((t) => t.id));
+              moveCards(visible.filter((t) => draggedIds.has(t.id) && canMove(t) && t.column !== col), col);
               setDragging([]);
               setOver(null);
             }}
@@ -179,7 +227,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
                 </button>
               )}
               {archivable && cards.length > 0 && (
-                <button type="button" className="bar-btn labeled soft-danger column-archive" title={`归档全部已完成（${cards.length}）：任务和它们的会话一起归档；在「已归档」里能打开、恢复`} onClick={() => archive(cards)} data-testid="archive-done-all">
+                <button type="button" className="bar-btn labeled soft-danger column-archive" title={`归档全部已完成（${cards.length}）：任务和它们的会话一起归档；在「已归档」里能打开、恢复`} disabled={cards.some((task) => moves.has(task.id))} onClick={() => archive(cards)} data-testid="archive-done-all">
                   <ArchiveIcon size={14} />
                   全部归档
                 </button>
@@ -194,7 +242,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
                       <span className="topic-group-count">{g.tasks.length}</span>
                       <span className="topic-group-rule" />
                       {archivable && (
-                        <button type="button" className="bar-btn soft-danger group-archive" aria-label={`归档「${g.topic?.title ?? "未归专题"}」这一组`} title={`归档「${g.topic?.title ?? "未归专题"}」这一组（${g.tasks.length}）：任务和它们的会话一起归档`} onClick={() => archive(g.tasks)} data-testid="archive-done-group">
+                        <button type="button" className="bar-btn soft-danger group-archive" aria-label={`归档「${g.topic?.title ?? "未归专题"}」这一组`} title={`归档「${g.topic?.title ?? "未归专题"}」这一组（${g.tasks.length}）：任务和它们的会话一起归档`} disabled={g.tasks.some((task) => moves.has(task.id))} onClick={() => archive(g.tasks)} data-testid="archive-done-group">
                           <ArchiveIcon size={13} />
                         </button>
                       )}
