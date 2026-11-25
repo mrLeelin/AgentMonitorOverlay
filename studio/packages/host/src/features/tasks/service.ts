@@ -291,7 +291,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /**
-   * Renames, moves between columns, changes the project (only before the first session) or transfers the task to
+   * Renames, moves between columns, changes the default project for new sessions or transfers the task to
    * another topic (or out of its topic): it leaves the old topic's canvas with its dependencies there, and a reference
    * card to it on the new topic's canvas becomes its own card.
    */
@@ -360,7 +360,10 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     if (patch.workspaceId !== undefined) {
       const workspaceId = patch.workspaceId === null || patch.workspaceId === "" ? this.commonWorkspace().id : this.requireLiveWorkspace(String(patch.workspaceId)).id;
-      if (workspaceId !== current.workspaceId && this.store.listSessions({ taskId: id }).length) throw new HostError("conflict", "a task's project cannot change once it has sessions");
+      if (workspaceId !== current.workspaceId) {
+        if (this.f.remote.grants.of(id).length) throw new HostError("conflict", "请先收回这个任务的远程授权，再切换工作区。");
+        if (this.hasStartingSession(id)) throw new HostError("conflict", "任务有会话正在创建，等待创建结束后再切换工作区。");
+      }
       clean.workspaceId = workspaceId;
     }
     if (patch.topicId !== undefined) {

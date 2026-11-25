@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { StateSnapshot, Task, Topic, Workspace } from "@amo-studio/protocol";
+import type { Session, StateSnapshot, Task, Topic, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 // The task page head (2026-10-14, 方案 A): the title, and under it status · project · branch · topic as quiet words
-// that open their own pickers; the right column hidden until 侧栏; 编辑项目 from the project word and the left column.
+// that open their own pickers; the right column hidden until 侧栏; 编辑项目 from the left column.
 
 let studio: Studio | undefined;
 
@@ -38,8 +38,8 @@ test("status, topic and project from the line under the title; the right column 
   await expect(page.getByTestId("task-branch")).toHaveText("feature/drops");
   await expect(page.getByTestId("task-topic")).toHaveText("—");
   await expect(meta).toContainText("·");
-  // Branch opens the repository in the configured Git client; the project stays a label.
-  await expect(meta.getByRole("button")).toHaveCount(4);
+  // Branch opens the configured Git client; the project opens the workspace picker.
+  await expect(meta.getByRole("button")).toHaveCount(5);
   // The right column is off by default; 侧栏 brings it.
   await expect(page.getByText("进度", { exact: true })).toHaveCount(0);
   await screenshot(app, "stage-14", "S14-E-task-head", page);
@@ -120,11 +120,15 @@ test("status, topic and project from the line under the title; the right column 
   await expect(bar.getByTestId("session-track")).toHaveText("追踪");
   await expect(bar.getByRole("button", { name: "在终端打开" })).toHaveCount(0);
   await expect(bar.getByTestId("session-fork").locator("svg circle")).toHaveCount(3);
-  const forkBox = await bar.getByTestId("session-fork").boundingBox();
+  const fork = bar.getByTestId("session-fork");
+  const forkBox = await fork.boundingBox();
   expect(forkBox!.height).toBeGreaterThanOrEqual(30);
   await screenshot(app, "stage-14", "S14-I-session-bar", page);
   const archive = bar.getByTestId("session-archive");
-  expect((await archive.boundingBox())!.x).toBeGreaterThan(forkBox!.x);
+  // On narrow windows 归档 can wrap onto the following line.
+  const currentFork = (await fork.boundingBox())!;
+  const archiveBox = (await archive.boundingBox())!;
+  expect(archiveBox.y >= currentFork.y + currentFork.height || archiveBox.x > currentFork.x).toBe(true);
   await expect(archive).toHaveClass(/soft-danger/);
   // 「B」 (2026-10-28): the face of 分支 beside it, only the glyph in deep red — the task's 归档 the same.
   const glyph = (el: Element) => getComputedStyle(el.querySelector("svg")!).color;
@@ -141,6 +145,80 @@ test("status, topic and project from the line under the title; the right column 
   await page.keyboard.press("Escape");
   await archive.hover();
   await screenshot(app, "stage-14", "S14-I-archive-danger", page);
+});
+
+test("switches a task's workspace and starts new sessions there while keeping the existing session", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  const oldDir = studio.workspace("Frame");
+  const newDir = studio.workspace("Tools");
+  for (const [dir, branch] of [[oldDir, "frame-main"], [newDir, "tools-main"]] as const) {
+    git(dir, "init", "-q", "-b", branch);
+    git(dir, "commit", "-q", "--allow-empty", "-m", "first");
+  }
+  const from = await studio.api<Workspace>("POST", "/api/workspaces", { path: oldDir });
+  const to = await studio.api<Workspace>("POST", "/api/workspaces", { path: newDir });
+  const archived = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("Archived") });
+  await studio.api("POST", `/api/workspaces/${archived.id}/archive`);
+  const topic = await studio.api<Topic>("POST", "/api/topics", { title: "跨项目专题" });
+  const { task, session } = await studio.api<{ task: Task; session: Session }>("POST", "/api/tasks", { title: "可以切换工作区", workspaceId: from.id, topicId: topic.id, worktree: {}, firstSession: { profileId: "codex-mock", text: "hello" } });
+  expect(session.cwd).toBeTruthy();
+  writeFileSync(join(session.cwd!, "frame-worktree.txt"), "kept in the original worktree\n");
+  await page.getByTestId("scope-ws-Frame").click();
+  const card = page.getByTestId("task-card").filter({ hasText: task.title });
+  await card.click();
+
+  const project = page.getByTestId("task-project");
+  const dialog = page.getByRole("dialog", { name: "切换工作区" });
+  const select = dialog.getByRole("combobox", { name: "任务工作区" });
+  const save = dialog.getByRole("button", { name: "切换", exact: true });
+  await project.click();
+  await expect(select).toHaveValue(from.id);
+  await expect(save).toBeDisabled();
+  await expect(select.locator("option")).toHaveText(["公共目录（未指定项目）", "Frame", "Tools"]);
+  await select.selectOption(to.id);
+  await expect(dialog).toContainText(newDir);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(project).toHaveText("Frame");
+
+  await project.press("Enter");
+  await select.selectOption(to.id);
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await screenshot(app, "studio", `task-workspace-${theme}`, page);
+  }
+  await save.click();
+  await expect(project).toHaveText("Tools");
+  await expect(page.getByTestId("task-branch")).toHaveText("tools-main");
+  await expect(page.getByTestId("env-facts")).toContainText("Frame");
+  await expect(page.getByTestId("env-facts")).toContainText("frame-main");
+  await expect(page.getByTestId("task-topic")).toHaveText(topic.title);
+  const reviewOpened = app.waitForEvent("window");
+  await page.getByTestId("task-review").click();
+  const review = await reviewOpened;
+  await expect(review.getByTestId("review-file")).toHaveText([/frame-worktree\.txt/]);
+  await review.close();
+
+  await page.getByTestId("new-session-toggle").click();
+  await page.getByRole("button", { name: "开始新会话" }).click();
+  await expect(page.getByTestId("env-facts")).toContainText("Tools");
+  await expect(page.getByTestId("env-facts")).toContainText("tools-main");
+  const state = await studio.api<StateSnapshot>("GET", "/api/state");
+  expect(state.tasks.find((t) => t.id === task.id)).toMatchObject({ workspaceId: to.id, topicId: topic.id });
+  const previous = state.sessions.find((s) => s.id === session.id);
+  expect(previous).toMatchObject({ taskId: task.id, workspaceId: from.id });
+  expect(previous?.cwd).toBe(session.cwd);
+  expect(state.sessions.find((s) => s.taskId === task.id && s.id !== session.id)?.workspaceId).toBe(to.id);
+
+  await page.getByTestId("scope-ws-Frame").click();
+  await expect(card).toHaveCount(0);
+  await page.getByTestId("scope-ws-Tools").click();
+  await card.click();
+  await project.click();
+  await select.selectOption("");
+  await save.click();
+  await expect(project).toHaveText("未指定项目");
 });
 
 test("编辑项目 from the left column's right-click menu", async () => {

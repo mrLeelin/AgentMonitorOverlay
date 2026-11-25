@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelProfile, Task, Workspace } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
@@ -44,6 +44,29 @@ const until = async (pred: () => boolean) => {
 const column = (task: Task) => store.getTask(task.id)?.column;
 const status = (id: string) => store.getSession(id)?.status;
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+it("changes the workspace for future sessions without interrupting an existing session", async () => {
+  const betaPath = join(root, "beta");
+  mkdirSync(betaPath);
+  const beta = service.projects.addWorkspace({ path: betaPath });
+  const { task, session } = await service.tasks.createTask({ workspaceId: alpha.id, firstSession: { profileId: "p-ds", text: "[[shell: cmd /c echo hold]]" } });
+  await until(() => status(session!.id) === "awaiting-approval");
+
+  const starting = service.tasks.addSession(task.id, { profileId: "p-ds" });
+  expect(() => service.tasks.updateTask(task.id, { workspaceId: beta.id })).toThrow(/会话正在创建/);
+  await starting;
+
+  const grants = vi.spyOn(service.remote.grants, "of").mockReturnValue([{ taskId: task.id, account: "test", device: "peer", name: "Test peer", grantedAt: task.createdAt }]);
+  expect(() => service.tasks.updateTask(task.id, { workspaceId: beta.id })).toThrow(/收回.*远程授权/);
+  grants.mockRestore();
+
+  expect(service.tasks.updateTask(task.id, { workspaceId: beta.id })).toMatchObject({ workspaceId: beta.id, column: "doing" });
+  const next = await service.tasks.addSession(task.id, { profileId: "p-ds" });
+
+  expect(next.workspaceId).toBe(beta.id);
+  expect(store.getSession(session!.id)).toMatchObject({ workspaceId: alpha.id, status: "awaiting-approval" });
+  expect(servers.fakes.get("p-ds")?.calls.filter((call) => call.method === "thread/start").map((call) => call.params)).toMatchObject([{ cwd: alpha.path }, { cwd: alpha.path }, { cwd: beta.path }]);
+});
 
 describe("主控等待下辖任务返回", () => {
   const lead = () => store.createTask({ title: "总主控", workspaceId: alpha.id, column: "doing", lead: true });

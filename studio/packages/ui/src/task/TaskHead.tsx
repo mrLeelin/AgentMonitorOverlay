@@ -13,15 +13,15 @@ import { dutyOfTask, openDuty, useDuty } from "../duty/duty.js";
 const STATUS_DOT: Record<TaskColumn, string> = { todo: "var(--muted-dot)", doing: "var(--running)", review: "var(--attention)", done: "var(--text-dim)" };
 
 /** The current branch of a git project, asked again when the window comes back (it changes outside Studio). */
-export function useGitBranch(link: HostLink, workspaceId: string | null | undefined): { repo: boolean; branch: string | null } {
-  const [state, setState] = useState<{ repo: boolean; branch: string | null }>({ repo: false, branch: null });
+export function useGitBranch(link: HostLink, workspaceId: string | null | undefined): string | null {
+  const [state, setState] = useState<{ workspaceId: string; branch: string | null } | null>(null);
   useEffect(() => {
-    setState({ repo: false, branch: null });
+    setState(null);
     if (!workspaceId || !link.url) return;
     let live = true;
     const load = () =>
       void call(link, "GET /api/workspaces/:id/git/status", { id: workspaceId })
-        .then((s) => live && setState({ repo: s.repo, branch: s.repo ? (s.branch ?? (s.head ? `${s.head.slice(0, 7)}（分离）` : null)) : null }))
+        .then((s) => live && setState({ workspaceId, branch: s.repo ? (s.branch ?? (s.head ? `${s.head.slice(0, 7)}（分离）` : null)) : null }))
         .catch(() => undefined);
     load();
     window.addEventListener("focus", load);
@@ -30,7 +30,7 @@ export function useGitBranch(link: HostLink, workspaceId: string | null | undefi
       window.removeEventListener("focus", load);
     };
   }, [link, workspaceId]);
-  return state;
+  return state && state.workspaceId === workspaceId ? state.branch : null;
 }
 
 /** Where a popover opens: under the element that opened it. */
@@ -213,7 +213,9 @@ export function TaskMeta({
   topic,
   branch,
   disabled,
+  workspaceDisabledReason,
   onStatus,
+  onWorkspace,
   onTopic,
   onGitOpen,
 }: {
@@ -222,7 +224,9 @@ export function TaskMeta({
   topic: Topic | undefined;
   branch: string | null;
   disabled: boolean;
+  workspaceDisabledReason?: string;
   onStatus(at: Anchor): void;
+  onWorkspace(): void;
   onTopic(): void;
   onGitOpen(): void;
 }) {
@@ -240,18 +244,12 @@ export function TaskMeta({
         <span className="remote-badge">远程</span>在 {task.remote.name} 上（{task.remote.account}）
       </span>,
     );
-  else if (workspace && !isCommon(workspace))
-    parts.push(
-      <span key="project" className="meta-item static" title={[workspace.path, workspace.description, "左栏右键项目可以改名字和说明"].filter(Boolean).join("\n")} data-testid="task-project">
-        {Icon.folder}
-        {workspace.name}
-      </span>,
-    );
   else
     parts.push(
-      <span key="project" className="meta-item static" title={workspace ? `在公共目录里运行：${workspace.path}` : undefined}>
-        {Icon.folder}未指定项目
-      </span>,
+      <button key="project" type="button" className="meta-item" disabled={disabled || !!workspaceDisabledReason} title={[workspaceDisabledReason ?? (task.archivedAt ? "请先恢复任务，再切换工作区" : "切换工作区"), workspace?.path, workspace?.description].filter(Boolean).join("\n")} aria-haspopup="dialog" onClick={onWorkspace} data-testid="task-project">
+        {Icon.folder}
+        {workspace && !isCommon(workspace) ? workspace.name : "未指定项目"}
+      </button>,
     );
   if (branch)
     parts.push(

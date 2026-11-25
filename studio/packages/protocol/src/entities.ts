@@ -29,13 +29,13 @@ export const TASK_COLUMNS = ["todo", "doing", "review", "done"] as const;
 export type TaskColumn = (typeof TASK_COLUMNS)[number];
 
 /**
- * A task runs in exactly one workspace (the common space when no project was picked; fixed once it has sessions) and
- * sits in at most one topic. See design/structure.md for the rules.
+ * A task belongs to one workspace (the common space when no project was picked) and sits in at most one topic.
  */
 export interface Task {
   id: Id;
   /** Empty until named; the UI falls back to the first user message. */
   title: string;
+  /** Project on the board and default for new sessions. Existing sessions keep their own workspace. */
   workspaceId: Id;
   /** The topic it belongs to; null when it is in none. */
   topicId: Id | null;
@@ -184,7 +184,7 @@ export interface Session {
   reportTo?: Id;
   runtime: SessionRuntime;
   profileId: Id;
-  /** A task session runs in its task's workspace; a topic session in any of the topic's projects or the common space. */
+  /** The project chosen when the session started. */
   workspaceId: Id;
   /** The working directory of an isolated session, when different from its project directory. */
   cwd?: string;

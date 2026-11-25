@@ -60,6 +60,7 @@ import { TaskHeader } from "./TaskHeader.js";
 import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
 import { LocalTeamBoardTask } from "../teamtasks/StudioTeamBoard.js";
 import { LinkPlaneTaskDialog } from "../teamtasks/PlaneTaskDialogs.js";
+import { TaskWorkspaceDialog } from "./TaskWorkspaceDialog.js";
 
 /** The right column starts open on 环境 and remembers the person's choices. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -151,13 +152,18 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   // 追踪 on the session bar (2026-11-03, 问题 #15): Focus's own 置顶 list, followed across windows.
   const focusPins = useStoredIds(PINNED_KEY);
   const [granting, setGranting] = useState(false);
-  // Git Review: only for a project under git; the branch shows in the line under the title.
-  const gitRepo = useIsGitRepo(link, task.workspaceId) && !copy;
-  const git = useGitBranch(link, task.workspaceId);
   const taskWorkspace = workspaces.find((w) => w.id === task.workspaceId);
   const taskTopic = topics.find((t) => t.id === task.topicId);
+  const sessionWorkspaceId = session?.workspaceId ?? task.workspaceId;
+  const sessionWorkspace = workspaces.find((w) => w.id === sessionWorkspaceId);
+  const git = useGitBranch(link, copy ? null : task.workspaceId);
+  const otherSessionGit = useGitBranch(link, !copy && sessionWorkspaceId !== task.workspaceId ? sessionWorkspaceId : null);
+  const sessionBranch = sessionWorkspaceId === task.workspaceId ? git : otherSessionGit;
+  const reviewSession = session && !session.archivedAt ? session : latestMainSession(sessions, task.id);
+  const reviewWorkspaceId = reviewSession?.workspaceId ?? task.workspaceId;
+  const gitRepo = useIsGitRepo(link, copy ? null : reviewWorkspaceId);
   const [statusAt, setStatusAt] = useState<Anchor | null>(null);
-  const [picking, setPicking] = useState<"topic" | null>(null);
+  const [picking, setPicking] = useState<"topic" | "workspace" | null>(null);
   const [taskMenu, setTaskMenu] = useState<Anchor | null>(null);
   const [describing, setDescribing] = useState(false);
   const [managementOpen, setManagementOpen] = useState(false);
@@ -393,8 +399,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       else await call(link, "POST /api/sessions/:id/items/:itemId/resend", { id, itemId });
     });
   };
-  const workdir = session ? session.cwd ?? workspaces.find((w) => w.id === session.workspaceId)?.path : undefined;
-  const reviewSession = session && !session.archivedAt ? session : latestMainSession(sessions, task.id);
+  const workdir = session ? session.cwd ?? sessionWorkspace?.path : undefined;
   const showError = (text: string) => setToast({ text, error: true });
 
   return (
@@ -422,9 +427,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             task={task}
             workspace={taskWorkspace}
             topic={taskTopic}
-            branch={git.repo && !copy ? git.branch : null}
+            branch={git}
             disabled={!!task.archivedAt || busy || !!copy}
+            {...(granted.length ? { workspaceDisabledReason: "请先收回这个任务的远程授权，再切换工作区" } : {})}
             onStatus={setStatusAt}
+            onWorkspace={() => setPicking("workspace")}
             onTopic={() => setPicking("topic")}
             onGitOpen={() => void run(() => call(link, "POST /api/workspaces/:id/git/open", { id: task.workspaceId }))}
           />
@@ -456,14 +463,14 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               新会话
             </button>
           )}
-          {(gitRepo || (!copy && reviewSession?.cwd)) && (
+          {!copy && (gitRepo || reviewSession?.cwd) && (
             <button
               type="button"
               className="btn-ghost small with-icon"
-              title={reviewSession?.cwd ? "Git Review：查看当前会话工作树的未提交改动" : "Git Review：查看项目工作区的未提交改动"}
+              title={reviewSession?.cwd ? "Git Review：查看当前会话工作树的未提交改动" : reviewSession ? "Git Review：查看当前会话所在项目的未提交改动" : "Git Review：查看项目工作区的未提交改动"}
               onClick={() => {
                 openReview({
-                  workspaceId: reviewSession?.workspaceId ?? task.workspaceId,
+                  workspaceId: reviewWorkspaceId,
                   ...(reviewSession ? { sessionId: reviewSession.id } : {}),
                   ...(reviewSession?.cwd ? { worktreeSessionId: reviewSession.id } : {}),
                 });
@@ -552,6 +559,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         setLinkedRevision((value) => value + 1);
       }} />}
       {statusAt && <StatusMenu at={statusAt} value={task.column} onPick={(c) => void setColumn(c)} onClose={() => setStatusAt(null)} />}
+      {picking === "workspace" && <TaskWorkspaceDialog link={link} task={task} workspaces={workspaces} hasSessions={own.length > 0} onClose={() => setPicking(null)} />}
       {picking === "topic" && (
         <TopicPicker topics={topics} tasks={tasks} current={task.topicId} onPick={(id) => void setTopic(id)} onCreate={(title) => void newTopic(title)} onClose={() => setPicking(null)} />
       )}
@@ -817,7 +825,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             </div>
             {/* Keep both views mounted so switching preserves edits and the environment's refresh state. */}
             <div id="task-sidebar-environment" className="task-sidebar-body" hidden={sidebarView !== "environment"}>
-              <EnvPanel link={link} session={session} items={items} workspace={workspaces.find((w) => w.id === (session?.workspaceId ?? task.workspaceId))} branch={git.repo ? git.branch : null} machine={remote?.device?.name ?? null} />
+              <EnvPanel link={link} session={session} items={items} workspace={sessionWorkspace} branch={sessionBranch} machine={remote?.device?.name ?? null} />
             </div>
             <div id="task-sidebar-activity" className="task-sidebar-body" hidden={sidebarView !== "activity"}>
               <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />

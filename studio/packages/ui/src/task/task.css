@@ -24,6 +24,8 @@
 .new-session { margin-top: 10px; padding: 10px 8px 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 .stack-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dim); }
 .stack-field select { height: var(--ctl-s); padding: 0 6px; border-radius: var(--r-btn); border: 1px solid var(--border-strong); background: var(--panel); color: var(--text); font-size: var(--fs-cap); }
+.task-workspace-dialog select { width: 100%; }
+.task-workspace-path { overflow-wrap: anywhere; font-family: var(--font-code); }
 .archived { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 2px; }
 .archived-toggle { display: flex; align-items: center; gap: 6px; text-align: left; padding: 4px 8px; border: none; border-radius: var(--r-m); background: transparent; color: var(--text-dim); font-size: 12px; font-weight: 600; cursor: pointer; }
 .archived-toggle:hover { background: var(--chip); color: var(--text); }
