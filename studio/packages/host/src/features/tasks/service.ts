@@ -229,7 +229,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     worktree?: { branch?: string };
     /** Filed without a session: the sentence its first session will take (2026-11-05). */
     firstMessage?: string;
-  }): Promise<{ task: Task; session: Session | null }> {
+  }, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.firstSession) {
@@ -256,7 +256,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     let task: Task | undefined;
     try {
-      task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column });
+      task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column }, link);
       const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
       const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first, worktree?.cwd) : null;
       if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
@@ -270,7 +270,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
-  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">): Task {
+  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">, link?: (task: Task) => void): Task {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
@@ -280,7 +280,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
     const description = input.description?.trim() ?? "";
     if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
-    const task = this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
+    const create = () => this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
+    const task = link ? this.store.transaction(() => {
+      const created = create();
+      link(created);
+      return created;
+    }) : create();
     this.publish({ type: "task.upserted", task });
     return task;
   }
@@ -579,6 +584,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });
     else if (owner.topicId) this.publish({ type: "topic.upserted", topic: this.store.updateTopic(owner.topicId, {}) });
+    if (owner.taskId && purpose !== "inquiry" && (input.text?.trim() || images.length)) this.host.reportTaskExecutionStarted(owner.taskId);
     return session;
   }
 

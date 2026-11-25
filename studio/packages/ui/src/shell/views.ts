@@ -11,6 +11,7 @@ import type { ReadPlace } from "../task/readPlace.js";
 // `back`: the page the new-task or task page was opened from, where its "←" returns (the board when absent).
 export type View =
   | { kind: "board" }
+  | { kind: "team"; configure?: boolean; originalUrl?: string }
   /** `callout`: a question on the canvas to open (from Focus, 画布审阅 2026-10-27); `nav` changes with each ask. */
   | { kind: "canvas"; callout?: string; nav?: number }
   /** 全景 (设置 → 测试功能, 2026-11-01): the topic in scope as a tilted map, one lane per task. */
@@ -23,7 +24,7 @@ export type View =
    */
   | { kind: "task"; taskId: string; sessionId?: string; nav?: number; back?: View; created?: boolean; passage?: Passage; scroll?: ReadPlace };
 
-const BACK_LABEL: Partial<Record<View["kind"], string>> = { board: "看板", canvas: "画布", panorama: "全景" };
+const BACK_LABEL: Partial<Record<View["kind"], string>> = { board: "看板", team: "团队任务", canvas: "画布", panorama: "全景" };
 
 /** Where a page's "←" goes and what it says: the page it came from when that is the board, a canvas or 全景, else the board. */
 export function backTo(back: View | undefined): { view: View; label: string } {
@@ -36,7 +37,7 @@ export function backTo(back: View | undefined): { view: View; label: string } {
  */
 export function withOrigin(next: View, current: View): View {
   if ((next.kind !== "task" && next.kind !== "new") || next.back) return next;
-  const origin = current.kind === "board" || current.kind === "canvas" || current.kind === "panorama" ? current : current.kind === "task" || current.kind === "new" ? current.back : undefined;
+  const origin = current.kind === "board" || current.kind === "team" || current.kind === "canvas" || current.kind === "panorama" ? current : current.kind === "task" || current.kind === "new" ? current.back : undefined;
   return origin ? { ...next, back: origin } : next;
 }
 

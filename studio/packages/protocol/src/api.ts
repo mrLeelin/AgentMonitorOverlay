@@ -18,6 +18,8 @@ import type { OpenInRoutes } from "./openin.js";
 import type { PromptTemplateRoutes } from "./prompt-templates.js";
 import type { QuestionRoutes } from "./questions.js";
 import type { RemoteRoutes } from "./remote.js";
+import type { TeamTaskRoutes } from "./team-tasks.js";
+import type { TeamBoardHostRoutes } from "./team-board.js";
 import type { ViewPackRoutes } from "./viewpacks.js";
 import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "./goals.js";
 
@@ -70,6 +72,12 @@ export interface NewSessionInput {
    */
   confirmed?: boolean;
 }
+
+/** Either file a personal task for later, or start its first session in the selected project. */
+export type NewTaskInput = {
+  title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null;
+  column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string };
+};
 
 /** 接续已有会话 (2026-11-05): a Claude session started outside Studio, as GET /api/claude/outside-sessions lists it. */
 export interface OutsideSession {
@@ -609,6 +617,8 @@ export interface HostRoutes
     PromptTemplateRoutes,
     QuestionRoutes,
     RemoteRoutes,
+    TeamTaskRoutes,
+    TeamBoardHostRoutes,
     ViewPackRoutes {
   "GET /api/state": { req: void; res: StateSnapshot };
   /**
@@ -714,7 +724,7 @@ export interface HostRoutes
    */
   "POST /api/tasks": {
     /** `firstMessage`: filed without a session (放进待办), the sentence its first session will start from. */
-    req: { title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null; column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string } };
+    req: NewTaskInput;
     res: { task: Task; session: Session | null };
   };
   /**

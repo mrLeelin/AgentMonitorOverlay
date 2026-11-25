@@ -57,6 +57,9 @@ import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { decisionNeedsPerson } from "../focus/managedAttention.js";
 import { useMarkReviewSeen } from "../board/reviewSeen.js";
 import { TaskHeader } from "./TaskHeader.js";
+import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
+import { LocalTeamBoardTask } from "../teamtasks/StudioTeamBoard.js";
+import { LinkPlaneTaskDialog } from "../teamtasks/PlaneTaskDialogs.js";
 
 /** The right column starts open on 环境 and remembers the person's choices. */
 const SIDEBAR_KEY = "amo.taskSidebar";
@@ -89,12 +92,13 @@ interface TaskPageProps {
   backLabel?: string;
   onBack(): void;
   onOpenTask?(taskId: string): void;
+  onOpenPlaneOriginal?(url: string): void;
 }
 
 type Toast = { text: string; command?: string; error?: boolean } | null;
 
 /** Task page: session tree | conversation with composer. Annotations and the scratchpad join in stage 2. */
-export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask }: TaskPageProps) {
+export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask, onOpenPlaneOriginal }: TaskPageProps) {
   useMarkReviewSeen(task);
   const own = sessions.filter((s) => s.taskId === task.id);
   // The first live session; in an archived task (or one whose sessions are all archived), the latest archived one.
@@ -224,6 +228,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   // Archiving the whole task says so in a box of its own (stage 14), with the way back to where the task was opened
   // from; restoring it is a plain notice.
   const [archivedBox, setArchivedBox] = useState<{ sessions: number } | null>(null);
+  const [linkingPlane, setLinkingPlane] = useState(false);
+  const [linkedRevision, setLinkedRevision] = useState(0);
   const archiveTask = () => {
     // A copy of a remote task is deleted here, not kept as archived: back to where it was opened from.
     if (copy)
@@ -539,6 +545,12 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       </div>
       </TaskHeader>
+      {!copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
+      {!copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal} />}
+      {linkingPlane && <LinkPlaneTaskDialog link={link} taskId={task.id} onClose={() => setLinkingPlane(false)} onDone={() => {
+        setLinkingPlane(false);
+        setLinkedRevision((value) => value + 1);
+      }} />}
       {statusAt && <StatusMenu at={statusAt} value={task.column} onPick={(c) => void setColumn(c)} onClose={() => setStatusAt(null)} />}
       {picking === "topic" && (
         <TopicPicker topics={topics} tasks={tasks} current={task.topicId} onPick={(id) => void setTopic(id)} onCreate={(title) => void newTopic(title)} onClose={() => setPicking(null)} />
@@ -601,6 +613,11 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               data-testid="task-bind-todo"
             >
               绑定到待办…
+            </button>
+          )}
+          {!task.archivedAt && !copy && (
+            <button type="button" role="menuitem" onClick={() => { setTaskMenu(null); setLinkingPlane(true); }}>
+              添加 Plane 原单链接…
             </button>
           )}
           {!task.archivedAt && !copy && (

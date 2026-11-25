@@ -3,6 +3,8 @@ export * from "./goals.js";
 export * from "./context-usage.js";
 export * from "./task-management.js";
 export * from "./task-workflow.js";
+export * from "./team-tasks.js";
+export * from "./team-board.js";
 export * from "./shared-context.js";
 export * from "./canvas-relations.js";
 export * from "./session-tree.js";

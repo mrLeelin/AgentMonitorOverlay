@@ -197,7 +197,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
         const archivable = col === "done" && !!onArchive;
         return (
           <div
-            className={over === col && dragging.some((t) => t.column !== col) ? "column drop" : "column"}
+            className={`column${over === col && dragging.some((t) => t.column !== col) ? " drop" : ""}`}
             key={col}
             data-column={col}
             data-testid={`column-${col}`}
@@ -208,7 +208,9 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
               if (over !== col) setOver(col);
             }}
             onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === col ? null : o));
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setOver((o) => (o === col ? null : o));
+              }
             }}
             onDrop={(e) => {
               e.preventDefault();

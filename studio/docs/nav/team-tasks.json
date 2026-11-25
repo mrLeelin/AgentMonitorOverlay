@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "topics": [{
+    "id": "studio.teamTasks",
+    "label": "Plane 团队看板与本地任务副本",
+    "aliases": ["团队任务", "提单", "团队收件箱", "原单", "接单", "验收", "独立客户端", "Plane", "工作区选择"],
+    "category": "host",
+    "purpose": "Studio 在右侧工作区切换本地页面与 Plane 原生团队看板，标题栏和左侧项目栏照常使用。",
+    "steps": ["从左栏打开团队任务，通过看板右上角的齿轮配置 Plane 工作区和项目，并在右侧工作区登录 Plane。", "Plane 原生页面按项目权限读写工作项、状态、评论和附件。", "右键工作项或拖到左栏专题、项目，确认创建个人任务后保存原单信息，并在 Plane 添加当前执行人。"],
+    "anchors": [
+      { "label": "共享契约", "path": "studio/packages/protocol/src/team-board.ts", "anchor": "export type TeamBoardTicket" },
+      { "label": "Plane 连接与选择", "path": "studio/packages/host/src/features/teamtasks/plane-settings.ts", "anchor": "export class PlaneBoardSettings" },
+      { "label": "Plane 工作项", "path": "studio/integrations/plane/amo_team_board.py", "anchor": "class ProjectWorkItemsView" },
+      { "label": "Plane 原单会话工具", "path": "studio/packages/host/src/features/teamtasks/mcp.ts", "anchor": "export function teamTasksTools" },
+      { "label": "Plane 原单上下文接口", "path": "studio/integrations/plane/amo_team_board.py", "anchor": "class WorkItemContextView" },
+      { "label": "旧看板原单、附件与权限", "path": "studio/packages/team-board-server/src/store.ts", "anchor": "export class TeamBoardStore" },
+      { "label": "本地工作项副本与原单链接", "path": "studio/packages/host/src/features/teamtasks/board.ts", "anchor": "export class TeamBoardHost" },
+      { "label": "Studio 团队看板", "path": "studio/packages/ui/src/teamtasks/StudioTeamBoard.tsx", "anchor": "export function StudioTeamBoard" },
+      { "label": "桌面 Plane 页面与浏览会话", "path": "studio/packages/app/src/team-plane-view.ts", "anchor": "export function installTeamPlaneView" },
+      { "label": "浏览器入口和登录", "path": "studio/packages/team-board-server/web/main.tsx", "anchor": "function App()" }
+    ],
+    "related": ["studio.tasks", "tool.account", "tool.relayService"],
+    "next": ["studio/plans/done/plane-team-tasks.md", "studio/integrations/plane/README.md", "studio/plans/done/team-board-server.md"]
+  }]
+}

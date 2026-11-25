@@ -44,6 +44,7 @@ export type FeatureName =
   | "maintenance"
   | "remote"
   | "teamRelay"
+  | "teamTasks"
   | "issues"
   | "duty";
 

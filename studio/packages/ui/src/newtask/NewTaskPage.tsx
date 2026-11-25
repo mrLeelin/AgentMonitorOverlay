@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { BackButton } from "../shell/BackButton.js";
 import type { ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import type { Scope } from "../board/Board.js";
@@ -12,7 +12,8 @@ import { PRIMARY_ENTER_LABELS, TODO_SHORTCUTS, useTaskEnter } from "../chat/inpu
 import { ComposerMore, FastToggle, Mark, nextEffort, pickLabel, RISKY_PERMISSIONS } from "../chat/pickers.js";
 import { EffortPicker, withEffort } from "../chat/EffortPicker.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
-import { draftText, submitDraft, useTaskDraft, type WorktreeChoice } from "./draft.js";
+import { draftText, submitDraft, useTaskDraft, type CreateTaskFromDraft, type TaskDraft, type WorktreeChoice } from "./draft.js";
+import { Modal } from "../lib/Modal.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
 import { WorktreeDialog } from "./WorktreeDialog.js";
 import { ChoiceRow } from "./ChoiceRow.js";
@@ -61,6 +62,7 @@ interface NewTaskPageProps {
   onBack(): void;
   /** `session` null: the task was only filed (放进待办). */
   onCreated(task: Task, session: Session | null): void;
+  dialog?: { label: string; note: ReactNode; initial: Partial<TaskDraft>; create: CreateTaskFromDraft };
   /** 远程创建 (2026-10-29): opened in 「在别的设备上」 with this device picked (the remote page's 「在它上面新建任务」). */
   remoteDevice?: { account: string; device: string };
   /** A task created on another device: its copy here, once it has come. */
@@ -72,14 +74,14 @@ interface NewTaskPageProps {
  * rows of chips (both may stay unpicked: no project runs in the common folder), the model is a tile, the effort a set
  * of bars, the permissions a segmented control. The draft follows the shared composer shortcuts.
  */
-export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, remoteDevice, onOpenRemote }: NewTaskPageProps) {
-  const { draft, update, reset } = useTaskDraft(profiles);
+export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, dialog, remoteDevice, onOpenRemote }: NewTaskPageProps) {
+  const { draft, update, reset } = useTaskDraft(profiles, dialog?.initial);
   const taskEnter = useTaskEnter(draft.text);
   const { todoShortcut } = taskEnter;
   // 「在这台电脑上 | 在别的设备上」 (4.1): shown with remote on, logged in, and a device that allowed this computer.
   const remote = useRemote(link);
   const [side, setSide] = useState<"here" | "remote">(remoteDevice ? "remote" : "here");
-  const remoteShown = remoteModeShown(remote);
+  const remoteShown = !dialog && remoteModeShown(remote);
   const remoteMode = remoteShown && side === "remote" && !!remote;
   const rows = useDraftChoices({ draft, update, workspaces, topics, tasks });
   const projects = rows.projects;
@@ -92,7 +94,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // 正在启动: the page is covered while the first session starts (filing in 待办 is quick).
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [pendingGoal, setPendingGoal] = useState(readPendingGoalStart);
+  const [pendingGoal, setPendingGoal] = useState(() => dialog ? null : readPendingGoalStart());
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
   const input = useRef<ResourceInputHandle>(null);
@@ -126,7 +128,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // A fresh draft starts where the page was opened from (in a topic, with its one preferred project); a draft with text
   // keeps its own choices.
   useEffect(() => {
-    if (!draft.text.trim()) {
+    if (!dialog && !draft.text.trim()) {
       const projectId = scope.kind === "workspace" ? scope.id : null;
       update({ projectId, ...rows.topicPatch(scope.kind === "topic" ? scope.id : null, projectId) });
     }
@@ -186,7 +188,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
       const setups = draft.refs ? subSessionSetups(draft.text, new Map(Object.entries(draft.refs))) : [];
       const { refs: _refs, ...rest } = draft;
       const title = rest.title.trim() || (resume ? resume.title : resourceTitle(draft.text)) || "";
-      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups, runtime, worktree);
+      const created = await submitDraft(link, { ...rest, title, text }, file, onCanvas, images, resume?.id, setups, runtime, worktree, dialog?.create);
       setResume(null);
       attach.reset();
       reset({ projectId: draft.projectId, topicId: draft.topicId });
@@ -259,7 +261,11 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     return () => window.removeEventListener("keydown", onKey);
   }, [profiles, draft, model, update, remoteMode]);
 
-  if (pendingGoal) return (
+  const wrap = (panel: ReactNode) => dialog
+    ? <Modal portal label={dialog.label} className="draft-task-modal" busy={busy} closeOnBackdrop={false} onClose={onBack}>{panel}</Modal>
+    : panel;
+
+  if (pendingGoal) return wrap(
     <section className="draft-page" aria-label="新任务">
       <div className="page-head"><BackButton label={backLabel} onClick={onBack} /></div>
       <div className="draft-wrap"><div className="draft goal-content" data-testid="draft-goal-recovery">
@@ -276,13 +282,19 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     </section>
   );
 
-  return (
+  return wrap(
     <section className="draft-page" aria-label="新任务">
       <div className="page-head">
-        <BackButton label={backLabel} onClick={onBack} />
-        <span className="page-crumb">/ 新任务</span>
-        <span className="spacer" />
-        <span className="page-crumb">草稿自动保存，离开也不会丢</span>
+        {dialog ? <>
+          <strong>{dialog.label}</strong>
+          <span className="spacer" />
+          <button type="button" className="btn-ghost small" disabled={busy} onClick={onBack}>取消</button>
+        </> : <>
+          <BackButton label={backLabel} onClick={onBack} />
+          <span className="page-crumb">/ 新任务</span>
+          <span className="spacer" />
+          <span className="page-crumb">草稿自动保存，离开也不会丢</span>
+        </>}
       </div>
       <div className="draft-wrap">
         <div className="draft">
@@ -307,6 +319,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
           <p className="draft-lede">
             {remoteMode ? "任务建在你的另一台电脑上，会话在那边跑、用那边的模型账号；能选什么、要不要那边点同意，由它的「远程设置」定。" : "写下第一句话就能开始。项目、模型和思考强度都在下面，点一下就换。"}
           </p>
+          {dialog && <div className="draft-source">{dialog.note}</div>}
 
           {remoteMode ? (
             <RemoteDraft

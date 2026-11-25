@@ -4,9 +4,35 @@ import electron = require("electron");
 
 /** A bookmarked passage of a reply (书签, 2026-10-19): the workbench scrolls to it and flashes it. */
 type Passage = { itemId: string; start: number; end: number; quote: string };
+type PlaneTarget = { server: string; workspace: string; project: string; identity: string; name?: string; originalUrl?: string };
+type PlaneRegion = { x: number; y: number; width: number; height: number };
+type PlaneTheme = "light" | "dark";
+type PlaneItemRef = { id: string } | { url: string };
 
 electron.contextBridge.exposeInMainWorld("amo", {
   host: (): Promise<{ url: string; token: string } | null> => electron.ipcRenderer.invoke("amo:host"),
+  teamPlane: {
+    show: (id: string, target: PlaneTarget, region: PlaneRegion, theme: PlaneTheme, visible: boolean): Promise<boolean> => electron.ipcRenderer.invoke("amo:plane-show", id, target, region, theme, visible),
+    position: (id: string, region: PlaneRegion, visible: boolean, theme: PlaneTheme): void => electron.ipcRenderer.send("amo:plane-position", id, region, visible, theme),
+    hide: (id: string): void => electron.ipcRenderer.send("amo:plane-hide", id),
+    discard: (id: string): void => electron.ipcRenderer.send("amo:plane-discard", id),
+    onSettings: (cb: (id: string) => void): (() => void) => {
+      const listener = (_event: unknown, id: string) => cb(id);
+      electron.ipcRenderer.on("amo:plane-settings", listener);
+      return () => electron.ipcRenderer.removeListener("amo:plane-settings", listener);
+    },
+    onError: (cb: (id: string) => void): (() => void) => {
+      const listener = (_event: unknown, id: string) => cb(id);
+      electron.ipcRenderer.on("amo:plane-error", listener);
+      return () => electron.ipcRenderer.removeListener("amo:plane-error", listener);
+    },
+    onCopy: (cb: (id: string, item: PlaneItemRef) => void): (() => void) => {
+      const listener = (_event: unknown, id: string, item: PlaneItemRef) => cb(id, item);
+      electron.ipcRenderer.on("amo:plane-copy", listener);
+      return () => electron.ipcRenderer.removeListener("amo:plane-copy", listener);
+    },
+  },
+  saveTeamTaskAttachment: (ticketId: string, fileId: string, name: string, board?: boolean, taskId?: string): Promise<boolean> => electron.ipcRenderer.invoke("amo:save-team-task-attachment", ticketId, fileId, name, board, taskId),
   setTaskbarBadge: (count: number, image: string | null): void => electron.ipcRenderer.send("amo:taskbar-badge", count, image),
   pickDirectory: (start?: string | null): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-directory", start ?? undefined),
   pickGitEditor: (): Promise<string | null> => electron.ipcRenderer.invoke("amo:pick-git-editor"),

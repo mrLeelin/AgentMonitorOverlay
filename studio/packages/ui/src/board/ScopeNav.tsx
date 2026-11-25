@@ -52,6 +52,7 @@ interface ScopeNavProps {
   live: boolean;
   /** Opens the settings (the button under the Host status). */
   onSettings?: () => void;
+  teamBoard?: { open: boolean; toggle(): void };
   shortcuts?: ReactNode;
   onScope(scope: Scope): void;
   /**
@@ -74,7 +75,7 @@ function readFolded(): Record<PinKind, boolean> {
  * pinned (they come first, here and wherever they are picked) and each section folds down to its pinned entries. The
  * lists scroll between the fixed top and the Host / usage footer.
  */
-export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, shortcuts, panorama }: ScopeNavProps) {
+export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, teamBoard, shortcuts, panorama }: ScopeNavProps) {
   const [adding, setAdding] = useState(false);
   const [newTopic, setNewTopic] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -161,6 +162,8 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     const review = !!kind && scopedTasks.some((t) => t.column === "review");
     return (
       <div key={testId} className={pinned ? "nav-item pinned" : "nav-item"} title={title}
+        data-plane-drop={teamBoard?.open && target.kind !== "all" ? target.kind : undefined}
+        data-plane-drop-id={teamBoard?.open && target.kind !== "all" ? target.id : undefined}
         data-dragging={dragging?.type === "item" && dragging.kind === kind && dragging.id === id || undefined}
         data-drop={over?.type === "item" && over.kind === kind && over.id === id ? over.after ? "after" : "before" : undefined}
         onDragOver={(e) => {
@@ -183,7 +186,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
           endDrag();
         }}
       >
-        <button type="button" className={kind ? "nav-row nav-scope-row" : "nav-row"} aria-current={!panorama?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
+        <button type="button" className={kind ? "nav-row nav-scope-row" : "nav-row"} aria-current={!teamBoard?.open && !panorama?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
           draggable={!!kind && !!id}
           title={kind ? [title, "拖动排序；Alt ↑ / ↓ 调整顺序（置顶项在前）"].filter(Boolean).join("\n") : title}
           onDragStart={(e) => { if (kind && id) startDrag(e, { type: "item", kind, id }); }}
@@ -428,9 +431,17 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     setDroppedFolders(folders);
   }
 
+  const teamButton = teamBoard && (
+    <button type="button" className="wb-nav-link wb-nav-team" aria-label="团队任务" aria-pressed={teamBoard.open}
+      title={teamBoard.open ? "返回本地任务" : "团队任务"} onClick={teamBoard.toggle}>
+      <BoardGlyph />{!collapsed && "团队任务"}
+    </button>
+  );
+
   if (collapsed)
     return (
       <nav className="scope-nav collapsed" aria-label="范围">
+        {teamButton}
         <span className="spacer" />
         {onSettings && (
           <button type="button" className="fold-btn nav-settings-folded" onClick={onSettings} aria-label="设置" title="设置">
@@ -450,7 +461,8 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     <>
     <nav className="scope-nav" aria-label="范围">
       <div className="nav-top">
-        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !panorama?.current} onClick={() => onScope({ kind: "all" })}>
+        {teamButton}
+        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !teamBoard?.open && !panorama?.current} onClick={() => onScope({ kind: "all" })}>
           <BoardGlyph />全部任务<span className="wb-count">{liveTasks.length}</span>
         </button>
         {panorama && (

@@ -53,6 +53,10 @@ export function App() {
   // Where the workbench was left, again after a restart or reload (2026-10-15; shell/lastPlace).
   const [scope, setScope] = useState<Scope>(() => readPlace().scope);
   const [view, setShownView] = useState<View>(() => readPlace().view);
+  const lastLocalView = useRef<View>({ kind: "board" });
+  useEffect(() => {
+    if (view.kind !== "team") lastLocalView.current = view;
+  }, [view]);
   useEffect(() => savePlace(view, scope), [view, scope]);
   // 后退 / 前进 (2026-10-19): every place shown is a step, except the one a step back or forward just restored.
   const restoring = useRef(false);
@@ -309,6 +313,8 @@ export function App() {
     }
   };
 
+  const team = shown.kind === "team" ? shown : null;
+
   return (
     <FeaturesProvider disabled={disabled}>
     <div className="app">
@@ -333,6 +339,7 @@ export function App() {
           sessions={state.sessions}
           scope={scope}
           live={live}
+          teamBoard={{ open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) }}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
             <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />
@@ -347,7 +354,7 @@ export function App() {
           panorama={views.some((d) => d.kind === "panorama") ? { current: shown.kind === "panorama" || ("back" in shown && shown.back?.kind === "panorama"), open: () => setView({ kind: "panorama" }) } : undefined}
         />
         <div className="main-col">
-          <ViewBar
+          {!team && <ViewBar
             views={views}
             view={shown}
             scope={scope}
@@ -358,10 +365,10 @@ export function App() {
               <ShortcutMenu label="待处理通知" icon={<BellGlyph />} items={() => waiting} empty="当前没有待处理事项" toolbar />
               <ThemeShortcut />
             </div>}
-          />
+          />}
           {/* A page that fails to render says so; the title bar, the left column and the sessions carry on. */}
           <main className="main">
-            <PaneBoundary resetKey={JSON.stringify(shown)}>{def?.render(shown as never, ctx)}</PaneBoundary>
+            <PaneBoundary resetKey={team ? "team" : JSON.stringify(shown)}>{def?.render(shown as never, ctx)}</PaneBoundary>
           </main>
         </div>
       </div>

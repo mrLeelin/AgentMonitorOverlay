@@ -9,10 +9,10 @@ const PLACE_KEY = "amo.lastPlace";
 const SESSIONS_KEY = "amo.lastSessions";
 const MAX_SESSIONS = 100;
 
-type Back = { kind: "board" } | { kind: "canvas" } | { kind: "panorama" };
-type SavedView = { kind: "board" } | { kind: "canvas" } | { kind: "panorama" } | { kind: "new" } | { kind: "task"; taskId: string; back?: Back };
+type Back = { kind: "board" | "team" | "canvas" | "panorama" };
+type SavedView = Back | { kind: "new" } | { kind: "task"; taskId: string; back?: Back };
 
-const isBack = (v: unknown): v is Back => !!v && typeof v === "object" && ((v as Back).kind === "board" || (v as Back).kind === "canvas" || (v as Back).kind === "panorama");
+const isBack = (v: unknown): v is Back => !!v && typeof v === "object" && ["board", "team", "canvas", "panorama"].includes((v as Back).kind);
 
 const readJson = readStoredJson;
 const writeJson = writeStoredJson;
@@ -37,7 +37,7 @@ export function readPlace(): { view: View; scope: Scope } {
     const sessionId = lastSessions()[v.taskId];
     return { view: { kind: "task", taskId: v.taskId, ...(typeof sessionId === "string" ? { sessionId } : {}), ...(isBack(v.back) ? { back: v.back } : {}) }, scope };
   }
-  if (v?.kind === "canvas" || v?.kind === "panorama" || v?.kind === "new") return { view: { kind: v.kind }, scope };
+  if (isBack(v) || v?.kind === "new") return { view: { kind: v.kind }, scope };
   return { view: { kind: "board" }, scope };
 }
 
@@ -46,7 +46,7 @@ export function savePlace(view: View, scope: Scope): void {
   const saved: SavedView =
     view.kind === "task"
       ? { kind: "task", taskId: view.taskId, ...(isBack(view.back) ? { back: { kind: view.back.kind } } : {}) }
-      : view.kind === "canvas" || view.kind === "panorama" || view.kind === "new"
+      : isBack(view) || view.kind === "new"
         ? { kind: view.kind }
         : { kind: "board" };
   writeJson(PLACE_KEY, { view: saved, scope });

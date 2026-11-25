@@ -13,6 +13,11 @@
 .brand-mark.mascot { width: 48px; height: 48px; margin: -7px -3px -7px -7px; }
 .brand-name { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-title); }
 .brand-sep { color: var(--text-dim); }
+.brand-scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+@media (max-width: 1100px) {
+  .topbar .brand { min-width: 0; }
+  .topbar :is(.brand-name, .brand-sep, .win-controls) { flex: none; white-space: nowrap; }
+}
 .view-tabs { display: flex; gap: 2px; padding: 2px; border-radius: calc(var(--r-btn) + 2px); background: var(--chip); }
 .view-tab { height: calc(var(--ctl) - 4px); padding: 0 var(--ctl-px); border-radius: var(--r-btn); border: none; cursor: pointer; font-size: var(--fs-sm); color: var(--text-dim); background: transparent; }
 .view-tab:hover { color: var(--text); }
@@ -36,7 +41,7 @@
 .add-ws-toggle:hover { color: var(--text); }
 .add-ws-actions { display: flex; gap: 6px; }
 
-.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; container: workbench-main / inline-size; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 
 /* The row under the title bar (stage 12): the views' tabs, then "+ 新任务" at the right. It does not drag the window. */

@@ -25,7 +25,7 @@ const GRAPH: Record<string, string[]> = {
   datamgmt: ["attachments", "projects"],
   duty: ["sessions", "tasks"],
   gitreview: ["projects", "remote", "sessions"],
-  guide: ["config"],
+  guide: ["config", "teamtasks"],
   marks: ["openin"],
   orchestration: ["collab", "sessions", "sharedcontext", "tasks"],
   planning: ["canvas", "tasks"],
@@ -38,6 +38,7 @@ const GRAPH: Record<string, string[]> = {
   taskplans: ["canvas", "collab", "orchestration", "sessions", "sharedcontext", "tasks", "topics"],
   tasks: ["canvas", "config", "mcp", "remote", "sessions", "topics"],
   teamrelay: ["config", "sessions"],
+  teamtasks: ["tasks"],
   topics: ["tasks"],
   viewpacks: ["remote"],
 };

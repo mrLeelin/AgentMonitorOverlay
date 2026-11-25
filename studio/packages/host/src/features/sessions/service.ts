@@ -160,7 +160,10 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     if (Date.now() - started >= SLOW_SEND_MS) this.log(`${sessionId} (${runtime}): the message went in after ${Date.now() - started} ms (${result.mode})`);
     update.told();
     // A read-only question or automatic notice does not authorize resuming work the person deliberately paused.
-    if (options.purpose !== "inquiry" && options.purpose !== "notification") this.inbox.resume(sessionId);
+    if (options.purpose !== "inquiry" && options.purpose !== "notification") {
+      this.inbox.resume(sessionId);
+      if (session.taskId && result.mode !== "queue") this.host.reportTaskExecutionStarted(session.taskId);
+    }
     return result;
   }
 

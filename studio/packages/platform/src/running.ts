@@ -50,6 +50,7 @@ export function ownRunningFile(tool: string, env: Env, studioDataDir: string | n
   else if (tool === "notes") dir = home("AMO_NOTES_HOME", "AMO Notes");
   else if (tool === "relay") dir = home("AMO_RELAY_HOME", "AMO Relay");
   else if (tool === "reviewer") dir = home("AMO_REVIEWER_HOME", "AMO Reviewer");
+  else if (tool === "team-tasks") dir = home("AMO_TEAM_TASKS_HOME", "AMO Team Tasks");
   else return null;
   return dir ? join(dir, "running.json") : null;
 }

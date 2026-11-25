@@ -1,0 +1,86 @@
+.tt-desktop { min-height: 100vh; color: var(--text); background: var(--bg); font: 14px/1.6 "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+.tt-desktop [hidden] { display: none; }
+.tt-desktop :is(h1, h2, h3, p), .tt-panel :is(h2, h3, p), .tt-local :is(h3, p) { margin: 0; }
+.tt-desktop h1 { font-size: 23px; line-height: 1.35; overflow-wrap: anywhere; }
+.tt-desktop h2, .tt-panel h2 { font-size: 17px; line-height: 1.4; }
+.tt-button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.tt-button:hover:enabled { background: var(--tint); border-color: var(--border-strong); }
+.tt-button:disabled, .tt-ticket:disabled, .tt-tabs button:disabled { opacity: .6; cursor: default; }
+.tt-button:focus-visible, .tt-ticket:focus-visible, .tt-tabs button:focus-visible, .tt-form :is(input, select, textarea):focus-visible, .tt-panel select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.tt-solid { background: var(--action-fill, var(--tint)); color: light-dark(#253a1c, #1a2414); border-color: transparent; font-weight: 650; }
+.tt-solid:hover:enabled { background: var(--action-fill-hover, var(--selected)); border-color: transparent; }
+.tt-top, .tt-between, .tt-actions, .tt-form-footer, .tt-event-head { display: flex; align-items: center; gap: 9px; }
+.tt-top, .tt-between, .tt-form-footer { justify-content: space-between; }
+.tt-top { padding: 11px 23px; border-bottom: 1px solid var(--border); }
+.tt-brand { display: flex; gap: 9px; align-items: center; font-weight: 700; }
+.tt-mark { width: 29px; height: 29px; border-radius: 8px; display: grid; place-items: center; background: var(--action-fill); color: #294620; }
+.tt-mark svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tt-desktop-main { max-width: 1170px; padding: 29px 25px 40px; margin: 0 auto; }
+.tt-desktop-grid { display: grid; grid-template-columns: minmax(230px, 30%) minmax(0, 1fr); align-items: start; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+.tt-sent { align-self: stretch; min-width: 0; padding: 14px 14px 22px; background: var(--bg-nav); border-right: 1px solid var(--border); border-radius: 11px 0 0 11px; }
+.tt-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); margin: 9px 0 8px; }
+.tt-tabs button { padding: 7px 0; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-dim); font: inherit; cursor: pointer; white-space: nowrap; }
+.tt-tabs button[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); font-weight: 650; }
+.tt-list { display: grid; gap: 4px; }
+.tt-ticket { display: grid; gap: 4px; width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.tt-ticket strong, .tt-ticket span { min-width: 0; overflow-wrap: anywhere; }
+.tt-ticket > span { font-size: 12px; color: var(--text-dim); }
+.tt-ticket:hover:enabled { background: var(--panel-raised); }
+.tt-ticket[aria-current="true"] { background: var(--selected); border-color: var(--border-strong); }
+.tt-status { display: inline-block; flex: none; padding: 2px 7px; border-radius: 5px; background: var(--panel-raised); color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.tt-status.tt-doing { background: var(--tint); color: var(--primary); }
+.tt-status.tt-review { background: var(--attention-bg); color: var(--attention); }
+.tt-status.tt-done { color: var(--completed-text, var(--primary)); }
+.tt-body { padding: 23px 27px 28px; min-width: 0; }
+.tt-form { display: grid; gap: 14px; max-width: 650px; }
+.tt-form label { display: grid; gap: 5px; font-weight: 620; min-width: 0; }
+.tt-form :is(input, select, textarea), .tt-panel select { width: 100%; min-width: 0; padding: 7px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; font: inherit; font-weight: 400; }
+.tt-form input[type="file"] { padding: 6px; border-style: dashed; }
+.tt-form input[type="file"]::file-selector-button { padding: 4px 8px; margin-right: 8px; border: 0; border-radius: 4px; background: var(--tint); color: var(--text); font: inherit; cursor: pointer; }
+.tt-form textarea { min-height: 104px; resize: vertical; }
+.tt-form :is(input, textarea)::placeholder { color: var(--text-dim); }
+.tt-form-footer { padding-top: 12px; border-top: 1px solid var(--border); }
+.tt-form-footer .tt-solid { min-width: 100px; }
+.tt-feedback { margin-top: 16px; }
+.tt-muted, .tt-event-head time { color: var(--text-dim); font-size: 12px; font-weight: 400; }
+.tt-task-meta { margin-top: 5px !important; margin-bottom: 10px !important; overflow-wrap: anywhere; }
+.tt-copy { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 69ch; }
+.tt-history { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border); }
+.tt-history h3 { font-size: 14px; }
+.tt-history ol { list-style: none; margin: 7px 0 14px; padding: 0; }
+.tt-history li { padding: 6px 0; }
+.tt-event-head { flex-wrap: wrap; font-size: 12px; }
+.tt-history .tt-copy { margin-top: 3px; }
+.tt-attachments { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0 0; }
+.tt-attachments .tt-button { min-height: 27px; max-width: 100%; font-size: 12px; text-align: left; }
+.tt-error, .tt-notice { padding: 8px 11px; border-radius: 6px; margin-bottom: 10px !important; overflow-wrap: anywhere; }
+.tt-error { background: var(--error-bg); color: var(--error-text); }
+.tt-notice { background: var(--tint); color: var(--primary); }
+.tt-sign-in { padding: 24px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.tt-sign-in p { margin-top: 7px; }
+.tt-empty { padding: 10px 4px; }
+.tt-panel { width: 345px; flex: 0 0 345px; min-width: 0; border-left: 1px solid var(--border); background: var(--panel); padding: 13px 14px; }
+.tt-panel .tt-list { max-height: 247px; overflow-y: auto; }
+.tt-panel .tt-ticket[draggable="true"] { cursor: grab; }
+.tt-panel .tt-ticket[draggable="true"]:active { cursor: grabbing; }
+.tt-panel .tt-inbox-detail { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 12px; }
+.tt-panel .tt-inbox-detail h3 { overflow-wrap: anywhere; font-size: 16px; }
+.tt-panel .tt-import { display: grid; gap: 5px; margin-top: 12px; }
+.tt-local { padding: 7px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.tt-local-content { padding: 9px 0 3px; max-height: 48vh; overflow: auto; }
+.tt-local .tt-form { gap: 8px; }
+.tt-local .tt-form textarea { min-height: 72px; }
+.tt-local .tt-actions { flex-wrap: wrap; }
+@container workbench-main (max-width: 860px) {
+  .tt-panel { width: 302px; flex-basis: 302px; }
+}
+@media (max-width: 750px) {
+  .tt-desktop-main { padding: 15px; }
+  .tt-desktop-grid { grid-template-columns: minmax(0, 1fr); }
+  .tt-sent { border-right: 0; border-bottom: 1px solid var(--border); border-radius: 11px 11px 0 0; }
+  .tt-sent .tt-list { max-height: 160px; overflow: auto; }
+  .tt-body { padding: 17px; }
+}
+@container workbench-main (max-width: 600px) {
+  .tt-panel { flex-basis: auto; width: 100%; border-left: 0; border-bottom: 1px solid var(--border); }
+}

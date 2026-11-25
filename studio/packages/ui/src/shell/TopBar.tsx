@@ -57,7 +57,7 @@ export function TopBar({
         {scopeName && (
           <>
             <span className="brand-sep">/</span>
-            <span style={{ fontWeight: 500 }}>{scopeName}</span>
+            <span className="brand-scope" title={scopeName}>{scopeName}</span>
           </>
         )}
       </div>

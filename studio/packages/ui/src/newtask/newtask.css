@@ -32,6 +32,9 @@
 /* ---- 草稿任务页 ------------------------------------------------------------------------------------------------- */
 
 .draft-page { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.modal.draft-task-modal { width: min(960px, 100%); max-width: none; max-height: min(860px, 90vh); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.draft-task-modal .draft-wrap { padding-top: 26px; }
+.draft-source { margin-top: -8px; color: var(--text-dim); font-size: var(--fs-sm); }
 .draft-wrap { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 40px 24px 32px; }
 .draft { width: min(780px, 100%); display: flex; flex-direction: column; gap: 18px; }
 .draft-ask { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 30px; line-height: 1.25; letter-spacing: 0.01em; }

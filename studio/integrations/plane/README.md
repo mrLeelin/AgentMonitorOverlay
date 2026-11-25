@@ -1,0 +1,29 @@
+# Plane 团队任务接入
+
+点击 Studio 左栏「团队任务」，右侧工作区加载 Plane Community Edition v1.5.0 的原生项目页。
+
+## 准备 Plane
+
+1. 从对应的 Plane v1.5.0 源码生成覆盖目录。
+
+   ```sh
+   python /path/to/amo/studio/integrations/plane/prepare_overlay.py --source /path/to/plane-v1.5.0 --output /path/to/studio-plane-overlay
+   ```
+
+2. 在 `plane.env` 里设置 `AMO_PLANE_OVERLAY_DIR` 为覆盖目录的绝对路径。新看板使用 Plane 项目权限，可读取自定义状态。
+3. 将此覆盖叠加到已有 Compose 配置，更新 Plane 的 `api` 服务。沿用原工作区和数据卷。此前部署过 Studio 工作流覆盖的环境也需要重新生成整个覆盖目录，以恢复 Plane 自带的创建和状态更新行为。
+
+   ```sh
+   docker compose --env-file plane.env -f docker-compose.yml -f /path/to/amo/studio/integrations/plane/compose.studio.yml up -d --no-deps api
+   ```
+
+## 在 Studio 使用
+
+1. 在 AMO 平台登录。打开「团队任务」，用 Plane 个人访问令牌连接，再选择工作区和项目。
+2. 首次在 Studio 打开工作项页面时，使用 Plane 网页账号登录。工具栏右端齿轮可更改团队连接和所选项目。
+3. 把 Plane 卡片拖到 Studio 左栏的专题或项目，松手后确认「创建个人任务」。也可右键卡片打开弹窗。Studio 保存团队单编号、原始标题、说明、提出人和链接。当前 Plane 令牌所属账号会加入执行人，已有执行人和团队单状态保持原样。
+4. 两边可以分别移动、归档和删除。任务页「更多」可为现有个人任务添加 Plane 原单链接，任务页也可移除链接。
+
+Plane 令牌按当前 AMO 账号保存，以 Windows DPAPI 加密写入 Studio 数据目录的 `plane-team-board.json`，由 Host 发起 API 请求。Electron 按 Plane 服务器和令牌所属账号隔离保存网页会话。
+
+已有关联的 Studio 任务会提示会话在开工前调用 `plane_task_get`。工具从当前任务定位原单，返回实时详情和父项，以及子项、关联项、评论、活动、文件、链接各列表。列表带 `nextOffset` 时，可用对应的 `section` 和 `offset` 继续读取。长说明用 `section: "description"` 续读。长评论用 `section: "comment"` 并带上 `commentId` 和偏移量续读。按需用 `plane_task_file` 读取原单附件或上传的内嵌图片。更新部署时需要同时更新 Plane API 覆盖文件和 Studio Host。

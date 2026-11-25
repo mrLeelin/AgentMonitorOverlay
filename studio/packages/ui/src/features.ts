@@ -5,6 +5,7 @@ import { panoramaView } from "./panorama/view.js";
 import { newTaskView } from "./newtask/view.js";
 import { taskView } from "./task/view.js";
 import { proposalsPanel } from "./planning/view.js";
+import { teamBoardView } from "./teamtasks/StudioTeamBoard.js";
 
 // The UI's features, mirroring the Host's (host/src/features/index.ts): each folder declares its pages and panels in
 // a view.tsx, and they are put together here. The top bar's tabs follow this order.
@@ -13,4 +14,4 @@ import { proposalsPanel } from "./planning/view.js";
 export const BOARD_PANELS: readonly BoardPanel[] = [proposalsPanel];
 
 // 全景 (2026-11-01) after the canvas; it is a 测试功能, there only while turned on. 11-04: no tab; the left column opens it.
-export const VIEWS: readonly AnyViewDef[] = [boardView(BOARD_PANELS), canvasView, panoramaView, newTaskView, taskView];
+export const VIEWS: readonly AnyViewDef[] = [boardView(BOARD_PANELS), teamBoardView, canvasView, panoramaView, newTaskView, taskView];

@@ -54,6 +54,8 @@ import { maintenanceRoutes } from "./maintenance/routes.js";
 import { statsRoutes } from "./stats/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
 import { teamRelayRoutes } from "./teamrelay/routes.js";
+import { teamTasksRoutes } from "./teamtasks/routes.js";
+import { teamTasksTools } from "./teamtasks/mcp.js";
 import { teamRelayTools } from "./teamrelay/mcp.js";
 import { issuesTools } from "./issues/mcp.js";
 import { dutyRoutes } from "./duty/routes.js";
@@ -107,6 +109,7 @@ export const FEATURES: readonly HostFeature[] = [
   { name: "stats", routes: statsRoutes },
   { name: "remote", routes: remoteRoutes },
   { name: "teamrelay", routes: teamRelayRoutes, tools: teamRelayTools },
+  { name: "teamtasks", routes: teamTasksRoutes, tools: teamTasksTools },
   { name: "duty", routes: dutyRoutes, tools: dutyTools },
   { name: "issues", routes: () => [], tools: issuesTools },
 ];

@@ -1,4 +1,5 @@
 import type { Issue, IssueBuildReport, IssueImage, IssueList, IssueRelease, IssuePatch, NewIssue, NewIssueEntry } from "./issues-protocol.js";
+import type { NewTeamTask, TeamTask, TeamTaskChange, TeamTaskIdentity, TeamTaskSummary } from "@amo-studio/protocol";
 import type { FileNote, Health, Member, Message, NewMessage, NewRequest, NewTask, RelayFile, SessionAction, Task, TaskEvent, TaskStatus, TaskView, TeamSettings, Thread, ThreadView, Via } from "./protocol.js";
 
 // The relay's HTTP API as a class, with fetch only: the Node side (MCP, command line, desktop shell) and the client's
@@ -79,6 +80,32 @@ export class RelayClient {
   }
   async members(): Promise<Member[]> {
     return (await this.call<{ members: Member[] }>("GET", "/api/members")).members;
+  }
+  async teamTaskIdentity(): Promise<TeamTaskIdentity> {
+    try {
+      return await this.call("GET", "/api/team-tasks/identity", undefined, AbortSignal.timeout(10_000));
+    } catch (error) {
+      if (error instanceof RelayClientError && error.status === 404) throw new RelayClientError(404, "team_tasks_unavailable", "团队服务器尚未开通团队任务");
+      throw error;
+    }
+  }
+  teamTaskList(): Promise<TeamTaskSummary[]> {
+    return this.call("GET", "/api/team-tasks", undefined, AbortSignal.timeout(10_000));
+  }
+  teamTaskDetail(id: string): Promise<TeamTask> {
+    return this.call("GET", `/api/team-tasks/${encodeURIComponent(id)}`, undefined, AbortSignal.timeout(10_000));
+  }
+  teamTaskCreate(input: NewTeamTask): Promise<TeamTask> {
+    return this.call("POST", "/api/team-tasks", input, AbortSignal.timeout(30_000));
+  }
+  teamTaskChange(id: string, input: TeamTaskChange): Promise<TeamTask> {
+    return this.call("POST", `/api/team-tasks/${encodeURIComponent(id)}/change`, input, AbortSignal.timeout(30_000));
+  }
+  async teamTaskDownload(id: string, fileId: string): Promise<ArrayBuffer> {
+    const path = `/api/team-tasks/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`;
+    const res = await fetch(`${this.server}${path}`, { headers: { authorization: `Bearer ${this.key ?? ""}` }, signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new RelayClientError(res.status, "file", "无法下载附件，请刷新原单后重试");
+    return res.arrayBuffer();
   }
   async threads(): Promise<ThreadView[]> {
     return (await this.call<{ threads: ThreadView[] }>("GET", "/api/threads")).threads;

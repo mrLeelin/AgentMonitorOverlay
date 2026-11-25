@@ -32,6 +32,9 @@
 .nav-row[draggable="true"], .nav-head[draggable="true"] { cursor: grab; }
 .nav-row[draggable="true"]:active, .nav-head[draggable="true"]:active { cursor: grabbing; }
 .nav-item[data-dragging] { opacity: 0.45; }
+.nav-item[data-plane-drag-over] > .nav-row {
+  background: var(--selected); color: var(--primary); outline: 1px dashed var(--primary); outline-offset: -2px;
+}
 .nav-item[data-drop="before"], .nav-section-box[data-drop="before"] { box-shadow: 0 -2px 0 var(--primary); }
 .nav-item[data-drop="after"], .nav-section-box[data-drop="after"] { box-shadow: 0 2px 0 var(--primary); }
 .nav-row .count { min-width: 18px; text-align: right; }

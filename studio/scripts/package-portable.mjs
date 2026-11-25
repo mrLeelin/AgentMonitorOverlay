@@ -46,12 +46,12 @@ const RUNTIME = JSON.parse(readFileSync(join(studio, "node_modules", "electron",
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
 
 /** The program each package runs as (launch.js), when it is one. */
-const MAINS = { studio: "packages/app/dist/main.js", reviewer: "packages/reviewer/dist/main.js", notes: "packages/notes/dist/main.js", platform: "packages/platform/dist/main.js", relay: "packages/relay-app/dist/main.js" };
+const MAINS = { studio: "packages/app/dist/main.js", reviewer: "packages/reviewer/dist/main.js", notes: "packages/notes/dist/main.js", platform: "packages/platform/dist/main.js", relay: "packages/relay-app/dist/main.js", "team-tasks": "packages/team-tasks-app/dist/main.js" };
 /**
  * Workspace packages reached by their path in resources/app/packages: the programs (MAINS), the Host process Studio starts
  * (packages/host/dist/bin.js, which finds its assets and the app folder from there) and the UI folder.
  */
-const BY_PATH = new Set(["app", "host", "reviewer", "notes", "platform", "relay-app", "ui"]);
+const BY_PATH = new Set(["app", "host", "reviewer", "notes", "platform", "relay-app", "team-tasks-app", "ui"]);
 
 // What a packed program carries (2026-11-03, plans/done/package-slim.md; the user settled the scope, only what is safe):
 // no type declarations and no source maps; in third-party packages also none of their docs, tests, examples and tool
@@ -188,6 +188,12 @@ const BUILDS = {
     ],
     // relay-release --shell's build stamp: only the portable zip's 更新桌面程序 compares it with the service's zip.
     platformSkip: /[\\/]relay-app[\\/]dist[\\/]build\.json$/,
+  },
+  "team-tasks": {
+    packages: TOOLS["team-tasks"].packages,
+    programs: ["team-tasks"],
+    icon: () => join(studio, "packages", "app", "assets", "icon.ico"),
+    readme: ["AMO 团队任务", "", "在 AMO 平台登录团队账号后，双击 AMO Team Tasks.exe。团队任务和附件保存在账号所属的团队服务器。"],
   },
 };
 

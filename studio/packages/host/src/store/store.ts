@@ -536,6 +536,10 @@ export class Store extends DocumentStore {
     return (this.db.prepare("SELECT * FROM items WHERE session_id = ? AND seq > ? ORDER BY seq").all(sessionId, afterSeq) as Row[]).map(toItem);
   }
 
+  hasWorkInput(sessionId: Id): boolean {
+    return !!this.db.prepare("SELECT 1 FROM items WHERE session_id = ? AND type = 'user' AND COALESCE(json_extract(body, '$.messagePurpose'), 'work') IN ('work', 'reopen') AND json_extract(body, '$.delivery') IS NULL LIMIT 1").get(sessionId);
+  }
+
   /** The last `count` items of a session, oldest first. */
   listLastItems(sessionId: Id, count: number): SessionItem[] {
     return (this.db.prepare("SELECT * FROM (SELECT * FROM items WHERE session_id = ? ORDER BY seq DESC LIMIT ?) ORDER BY seq").all(sessionId, Math.floor(count)) as Row[]).map(toItem);

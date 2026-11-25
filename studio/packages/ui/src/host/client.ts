@@ -4,6 +4,10 @@ import type { HostErrorBody, HostRoute, RouteRequest, RouteResponse, StateSnapsh
 
 /** A bookmarked passage of a reply (书签, 2026-10-19): the workbench scrolls to it and flashes it. */
 export type Passage = { itemId: string; start: number; end: number; quote: string };
+export type PlaneTarget = { server: string; workspace: string; project: string; identity: string; name?: string; originalUrl?: string };
+export type PlaneRegion = { x: number; y: number; width: number; height: number };
+export type PlaneTheme = "light" | "dark";
+export type PlaneItemRef = { id: string } | { url: string };
 
 /** What a folder picker call answers (packages/app/src/folders.ts). */
 export type FolderResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -27,6 +31,16 @@ declare global {
       };
       /** Opens an http(s) link in the system browser (Electron); absent in a plain browser. */
       openExternal?(url: string): Promise<void>;
+      teamPlane?: {
+        show(id: string, target: PlaneTarget, region: PlaneRegion, theme: PlaneTheme, visible: boolean): Promise<boolean>;
+        position(id: string, region: PlaneRegion, visible: boolean, theme: PlaneTheme): void;
+        hide(id: string): void;
+        discard?(id: string): void;
+        onSettings(cb: (id: string) => void): () => void;
+        onError(cb: (id: string) => void): () => void;
+        onCopy(cb: (id: string, item: PlaneItemRef) => void): () => void;
+      };
+      saveTeamTaskAttachment?(ticketId: string, fileId: string, name: string, board?: boolean, taskId?: string): Promise<boolean>;
       /** The workbench window's icon (taskbar): one of 「AMO 娘」's faces by file name (focus/mascot.ts), or null for the app's. */
       setAppIcon?(face: string | null): void;
       /** Pending items, independent of whether the Focus window is open. */

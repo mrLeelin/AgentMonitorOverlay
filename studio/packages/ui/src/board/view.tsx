@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import { call } from "../host/client.js";
+import { showToast } from "../lib/toast.js";
 import { mailByTask } from "../collab/useInbox.js";
 import { checklistByTask } from "../collab/ChecklistPanel.js";
 import { Board } from "./Board.js";
@@ -16,7 +17,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
       return (
         <>
           {panels.map((panel, i) => featureOn(ctx.disabled, panel.feature) && <Fragment key={i}>{panel.render(ctx)}</Fragment>)}
-          <Board
+            <Board
             link={link}
             tasks={state.tasks}
             sessions={state.sessions}
@@ -29,7 +30,11 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
             onMove={(task, column) => call(link, "PATCH /api/tasks/:id", { id: task.id }, { column })}
             onArchive={(tasks) =>
               void (async () => {
-                for (const task of tasks) await call(link, "POST /api/tasks/:id/archive", { id: task.id }).catch(() => undefined);
+                let firstError = "";
+                for (const task of tasks) await call(link, "POST /api/tasks/:id/archive", { id: task.id }).catch((err: unknown) => {
+                  if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+                });
+                if (firstError) showToast(firstError);
               })()
             }
             mail={mailByTask(data.unreadMail, state.sessions)}
