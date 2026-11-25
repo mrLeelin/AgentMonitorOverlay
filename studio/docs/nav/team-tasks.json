@@ -12,6 +12,7 @@
       { "label": "Plane 连接与选择", "path": "studio/packages/host/src/features/teamtasks/plane-settings.ts", "anchor": "export class PlaneBoardSettings" },
       { "label": "Plane 工作项", "path": "studio/integrations/plane/amo_team_board.py", "anchor": "class ProjectWorkItemsView" },
       { "label": "Plane 原单会话工具", "path": "studio/packages/host/src/features/teamtasks/mcp.ts", "anchor": "export function teamTasksTools" },
+      { "label": "团队任务本机开关", "path": "studio/packages/host/src/service.ts", "anchor": "teamTasksEnabled(): boolean" },
       { "label": "Plane 原单上下文接口", "path": "studio/integrations/plane/amo_team_board.py", "anchor": "class WorkItemContextView" },
       { "label": "旧看板原单、附件与权限", "path": "studio/packages/team-board-server/src/store.ts", "anchor": "export class TeamBoardStore" },
       { "label": "本地工作项副本与原单链接", "path": "studio/packages/host/src/features/teamtasks/board.ts", "anchor": "export class TeamBoardHost" },

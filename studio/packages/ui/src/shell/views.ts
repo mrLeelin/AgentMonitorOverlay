@@ -27,8 +27,9 @@ export type View =
 const BACK_LABEL: Partial<Record<View["kind"], string>> = { board: "看板", team: "团队任务", canvas: "画布", panorama: "全景" };
 
 /** Where a page's "←" goes and what it says: the page it came from when that is the board, a canvas or 全景, else the board. */
-export function backTo(back: View | undefined): { view: View; label: string } {
-  return back && BACK_LABEL[back.kind] ? { view: back, label: BACK_LABEL[back.kind]! } : { view: { kind: "board" }, label: "看板" };
+export function backTo(back: View | undefined, teamTasksEnabled = true): { view: View; label: string } {
+  const label = back && (back.kind !== "team" || teamTasksEnabled) ? BACK_LABEL[back.kind] : undefined;
+  return back && label ? { view: back, label } : { view: { kind: "board" }, label: "看板" };
 }
 
 /**
@@ -61,6 +62,7 @@ export interface ViewContext {
   disabled: readonly OptionalFeature[];
   /** Features being tried out that are turned on (设置 → 测试功能). */
   experimental: readonly ExperimentalFeature[];
+  teamTasksEnabled: boolean;
   setView(view: View): void;
 }
 

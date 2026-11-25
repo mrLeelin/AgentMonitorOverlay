@@ -16,7 +16,11 @@ export function teamTasksRoutes(service: HostService): Route[] {
       const input = body as { workspace?: unknown; project?: unknown } | undefined;
       return board.select(input?.workspace, input?.project);
     }),
-    route("POST /api/team-board/plane/disconnect", () => board.disconnect()),
+    route("POST /api/team-board/plane/disconnect", () => {
+      const connection = board.disconnect();
+      if (!service.teamTasksEnabled()) service.publish({ type: "settings.updated", settings: service.config.settings() });
+      return connection;
+    }),
     route("GET /api/team-board/plane/draft", () => board.draft()),
     route("GET /api/team-board/plane/work-items", () => board.projectBoard()),
     route("POST /api/team-board/plane/resolve-item", ({ body }) => board.resolveWorkItem((body as { url?: unknown } | undefined)?.url)),
@@ -60,7 +64,10 @@ export function teamTasksRoutes(service: HostService): Route[] {
     }),
     route("GET /api/team-tasks/local/:id", ({ params }) => service.teamTasks.local(params.id)),
     route("POST /api/team-tasks/local/:id/change", ({ params, body }) => service.teamTasks.change(params.id, readAction<TeamTaskChange>(body)), { rawBody: TEAM_TASK_BODY_LIMIT }),
-  ];
+  ].map((entry) => ({ ...entry, handle: (context) => {
+    service.requireTeamTasks();
+    return entry.handle(context);
+  } }));
 }
 
 function readAction<T>(body: unknown): T {

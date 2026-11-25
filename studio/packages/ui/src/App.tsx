@@ -40,6 +40,7 @@ import { useSessionSeen, withGrants } from "./lib/sessionSeen.js";
 import { remoteButton, useRemote } from "./remote/remote.js";
 import { RemoteDialog } from "./remote/RemoteDialog.js";
 import { useTaskbarBadge } from "./focus/useTaskbarBadge.js";
+import { discardNativePlaneView } from "./teamtasks/NativePlaneWorkItems.js";
 
 // The shell: the Host connection, the scope and the view in front, the top bar and the left column. Pages come from
 // the features (features.ts); the data several of them share is loaded here once.
@@ -50,6 +51,8 @@ const NO_LINK = { url: "", token: "" };
 export function App() {
   const host = useHostState();
   useTaskbarBadge(host);
+  const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
+  const teamTasksEnabled = settings?.teamTasksEnabled === true;
   // Where the workbench was left, again after a restart or reload (2026-10-15; shell/lastPlace).
   const [scope, setScope] = useState<Scope>(() => readPlace().scope);
   const [view, setShownView] = useState<View>(() => readPlace().view);
@@ -57,6 +60,11 @@ export function App() {
   useEffect(() => {
     if (view.kind !== "team") lastLocalView.current = view;
   }, [view]);
+  useEffect(() => {
+    if (settings?.teamTasksEnabled !== false) return;
+    discardNativePlaneView();
+    if (view.kind === "team") setShownView(lastLocalView.current);
+  }, [settings?.teamTasksEnabled, view.kind]);
   useEffect(() => savePlace(view, scope), [view, scope]);
   // 后退 / 前进 (2026-10-19): every place shown is a step, except the one a step back or forward just restored.
   const restoring = useRef(false);
@@ -70,7 +78,7 @@ export function App() {
   const nav = useNavHistory();
   const go = (dir: -1 | 1) => {
     const tasks = host.kind === "ready" ? host.state.tasks : [];
-    const place = navHistory.step(dir, (p) => p.view.kind !== "task" || tasks.some((t) => t.id === (p.view as { taskId: string }).taskId));
+    const place = navHistory.step(dir, (p) => (p.view.kind !== "team" || teamTasksEnabled) && (p.view.kind !== "task" || tasks.some((t) => t.id === (p.view as { taskId: string }).taskId)));
     if (!place) return;
     restoring.current = true;
     setScope(place.scope);
@@ -99,14 +107,15 @@ export function App() {
     };
   }, []);
   // A task or new-task page remembers where it was opened from (stage 14), whoever opens it: its "←" goes back there.
-  const setView = (next: View) => setShownView((current) => withOrigin(next, current));
+  const setView = (next: View) => {
+    if (next.kind !== "team" || teamTasksEnabled) setShownView((current) => withOrigin(next, current));
+  };
   const focus = useFocusToggle();
   const unreadMail = useUnreadMail(host.kind === "ready" ? host.link : NO_LINK);
   const openDecisions = useOpenDecisions(host.kind === "ready" ? host.link : NO_LINK).filter((d) => host.kind !== "ready" || decisionNeedsPerson(d, host.state.tasks));
   const checklist = useChecklist(host.kind === "ready" ? host.link : NO_LINK);
   const proposals = usePendingProposals(host.kind === "ready" ? host.link : NO_LINK);
   const { todos } = useTodos(host.kind === "ready" ? host.link : NO_LINK);
-  const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   // 远程 (2026-10-29): the top bar's button — 「远程 · N 在线」, a dot while something waits.
   const remoteState = useRemote(host.kind === "ready" ? host.link : null);
   // 值守 (2026-10-31): kept live for the top bar, its dialog and the marks on tasks and sessions.
@@ -264,7 +273,7 @@ export function App() {
   setModelPickerSettings(settings);
   // 测试功能 (2026-11-01): their tabs and pages are there only while turned on; until the settings arrive, none are.
   const experimental = settings?.experimentalFeatures ?? [];
-  const views = VIEWS.filter((d) => featureOn(disabled, d.feature) && experimentalOn(experimental, d.experimental));
+  const views = VIEWS.filter((d) => (d.kind !== "team" || teamTasksEnabled) && featureOn(disabled, d.feature) && experimentalOn(experimental, d.experimental));
   const planning = featureOn(disabled, "planning");
   const decisionsByTask = new Map<string, number>();
   for (const d of openDecisions) if (d.taskId) decisionsByTask.set(d.taskId, (decisionsByTask.get(d.taskId) ?? 0) + 1);
@@ -277,6 +286,7 @@ export function App() {
     data: { unreadMail, openDecisions, decisionsByTask, checklist, proposals, todos },
     disabled,
     experimental,
+    teamTasksEnabled,
     setView,
   };
   // A page of a feature that was just turned off falls back to the board.
@@ -339,7 +349,7 @@ export function App() {
           sessions={state.sessions}
           scope={scope}
           live={live}
-          teamBoard={{ open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) }}
+          teamBoard={teamTasksEnabled ? { open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) } : undefined}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
             <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />

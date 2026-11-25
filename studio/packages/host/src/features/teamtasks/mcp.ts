@@ -4,11 +4,17 @@ import { HostError } from "../../core/shared.js";
 import { fail, json, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 
 export function teamTasksTools({ caller, service }: ToolContext): AmoTool[] {
+  if (!service.teamTasksEnabled()) return [];
   const url = z.string().max(512).optional().describe("Leave out for the current Studio task's linked original. To follow a parent, child or relation, pass its Plane URL.");
   const run = async (read: (taskId: string) => Promise<unknown>) => {
     const session = caller ? service.store.getSession(caller.sessionId) : null;
     if (!session?.taskId || session.runtime === "remote" || service.store.getTask(session.taskId)?.remote) return fail("请在已关联 Plane 原单的本地任务会话中调用。");
-    try { return json(await read(session.taskId)); }
+    try {
+      service.requireTeamTasks();
+      const value = await read(session.taskId);
+      service.requireTeamTasks();
+      return json(value);
+    }
     catch (error) {
       if (error instanceof HostError) return fail(error.message);
       throw error;
@@ -39,6 +45,7 @@ export function teamTasksTools({ caller, service }: ToolContext): AmoTool[] {
       run: (args) => run(async (taskId) => {
         const { url: original, fileId } = file.parse(args);
         const { bytes, name } = await service.teamTasks.board.contextFile(taskId, fileId, original);
+        service.requireTeamTasks();
         const saved = service.attachments.saveFile(Buffer.from(bytes), name);
         return { name: saved.name, size: saved.size, path: saved.path };
       }),

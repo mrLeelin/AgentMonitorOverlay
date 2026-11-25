@@ -4,8 +4,8 @@ import { backTo, type ViewDef } from "../shell/views.js";
 /** The draft task page (top bar 新任务, the canvas's 新任务, Ctrl Shift N). "←" returns where it was opened from. */
 export const newTaskView: ViewDef<"new"> = {
   kind: "new",
-  render: (view, { link, state, scope, setView }) => {
-    const back = backTo(view.back);
+  render: (view, { link, state, scope, setView, teamTasksEnabled }) => {
+    const back = backTo(view.back, teamTasksEnabled);
     return (
       <NewTaskPage
         link={link}

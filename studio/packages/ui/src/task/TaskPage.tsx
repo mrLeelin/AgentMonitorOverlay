@@ -126,6 +126,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
     if (session) navHistory.pickSession(task.id, session.id);
   }, [task.id, session?.id]);
   const settings = useSettings(link);
+  const teamTasksEnabled = settings?.teamTasksEnabled === true;
   const { items } = useSessionItems(link, session?.id ?? null);
   const annotations = useAnnotations(link, session?.id ?? null);
   const annotationRefs = useAnnotationRefs(session?.id ?? null, annotations);
@@ -236,6 +237,9 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const [archivedBox, setArchivedBox] = useState<{ sessions: number } | null>(null);
   const [linkingPlane, setLinkingPlane] = useState(false);
   const [linkedRevision, setLinkedRevision] = useState(0);
+  useEffect(() => {
+    if (!teamTasksEnabled) setLinkingPlane(false);
+  }, [teamTasksEnabled]);
   const archiveTask = () => {
     // A copy of a remote task is deleted here, not kept as archived: back to where it was opened from.
     if (copy)
@@ -552,9 +556,9 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       </div>
       </TaskHeader>
-      {!copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
-      {!copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal} />}
-      {linkingPlane && <LinkPlaneTaskDialog link={link} taskId={task.id} onClose={() => setLinkingPlane(false)} onDone={() => {
+      {teamTasksEnabled && !copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
+      {teamTasksEnabled && !copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal} />}
+      {teamTasksEnabled && linkingPlane && <LinkPlaneTaskDialog link={link} taskId={task.id} onClose={() => setLinkingPlane(false)} onDone={() => {
         setLinkingPlane(false);
         setLinkedRevision((value) => value + 1);
       }} />}
@@ -623,7 +627,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               绑定到待办…
             </button>
           )}
-          {!task.archivedAt && !copy && (
+          {teamTasksEnabled && !task.archivedAt && !copy && (
             <button type="button" role="menuitem" onClick={() => { setTaskMenu(null); setLinkingPlane(true); }}>
               添加 Plane 原单链接…
             </button>

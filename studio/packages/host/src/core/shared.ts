@@ -10,6 +10,7 @@ export const COMMON_NAME = "公共";
 export const PRESETS_KEY = "settings:presets";
 export const DISABLED_FEATURES_KEY = "settings:disabled-features";
 export const EXPERIMENTAL_FEATURES_KEY = "settings:experimental-features";
+export const TEAM_TASKS_ENABLED_KEY = "settings:team-tasks-enabled";
 /** 设置 → 功能 → 中转 (2026-10-30): "1" when what sessions ask through 中转 goes without waiting for 发送. */
 export const TEAM_AUTO_SEND_KEY = "settings:team-auto-send";
 /** 设置 → 额度: where each account's quota shows. */

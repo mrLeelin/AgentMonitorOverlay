@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { PLANE_WORK_ITEM_DRAG, type PlaneBoardConnection, type Workspace } from "@amo-studio/protocol";
-import { launchStudio } from "../support/studio.js";
+import { launchStudio, screenshot } from "../support/studio.js";
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
 const plus = icon("M8 4v8M4 8h8");
@@ -134,6 +134,15 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     ] },
   };
   let connection = catalog;
+  const sidebarTeam = page.getByRole("navigation", { name: "范围" }).getByRole("button", { name: "团队任务", exact: true });
+  const features = async () => {
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+    const advanced = dialog.getByRole("button", { name: "高级设置", exact: true });
+    if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
+    await dialog.getByRole("tab", { name: "功能开关", exact: true }).click();
+    return dialog.getByTestId("feature-teamtasks");
+  };
   try {
     const local = await api<Workspace>("POST", "/api/workspaces", { path: workspace("LocalWorkspace") });
     const second = await api<Workspace>("POST", "/api/workspaces", { path: workspace("TopicWorkspace") });
@@ -145,6 +154,12 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     await page.route("**/api/team-board/local/*/reference", (route) => route.fulfill({
       json: { url: originalUrl, number: "TALUO-16", title: "780", creator: "测试成员", creatorAvatarUrl: origin + "/creator.gif" },
     }));
+    const initialSwitch = await features();
+    await expect(initialSwitch).not.toBeChecked();
+    await expect(sidebarTeam).toHaveCount(0);
+    await initialSwitch.click();
+    await expect(sidebarTeam).toHaveCount(1);
+    await page.keyboard.press("Escape");
     const scope = page.getByTestId("scope-ws-LocalWorkspace");
     await scope.click();
     await page.getByTestId("column-todo").getByText("本地任务详情", { exact: true }).click();
@@ -441,6 +456,27 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     await expect.poll(boardLoads).toBe(originalLoads + 2);
     await expect.poll(matchRightPane).toBe(true);
     expect((await nativeView())!.id).not.toBe(originalView);
+
+    const activeSwitch = await features();
+    await expect(activeSwitch).toBeChecked();
+    await activeSwitch.click();
+    await expect(sidebarTeam).toHaveCount(0);
+    await expect.poll(nativeView).toBeNull();
+    await expect(page.getByTestId("column-todo")).toBeVisible();
+    await screenshot(app, "studio", "team-tasks-disabled", page);
+    await page.keyboard.press("Escape");
+    await page.getByTestId("column-todo").getByText("本地任务详情", { exact: true }).click();
+    await expect(source).toHaveCount(0);
+    await page.getByTestId("task-more").click();
+    await expect(page.getByRole("menuitem", { name: "添加 Plane 原单链接…" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    const restoreSwitch = await features();
+    await expect(restoreSwitch).not.toBeChecked();
+    await restoreSwitch.click();
+    await expect(sidebarTeam).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("task-title")).toHaveText("本地任务详情");
+    await expect(original).toBeVisible();
   } finally {
     await close();
     await new Promise<void>((resolve) => remote.close(() => resolve()));

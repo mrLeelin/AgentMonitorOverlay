@@ -88,7 +88,7 @@ export class TeamTasksFeature extends Feature<"tasks"> {
 
   sessionStarted(taskId: string): void {
     const link = this.link(taskId);
-    if (!link || link.started) return;
+    if (!link || link.started || !this.host.teamTasksEnabled()) return;
     this.store.db.prepare("UPDATE local_team_tickets SET started = 1 WHERE task_id = ?").run(taskId);
     // The local session has started. A temporary outage must not make it look like session creation failed.
     void this.syncStart(link).catch((error: unknown) => this.host.log(`team task start could not sync: ${String(error)}`));
@@ -97,6 +97,7 @@ export class TeamTasksFeature extends Feature<"tasks"> {
   private async syncStart(link: Link): Promise<TeamTask> {
     const client = this.client(link.server);
     const ticket = await this.relay(() => client.teamTaskDetail(link.ticket_id));
+    this.host.requireTeamTasks();
     return ticket.status === "pending" ? this.relay(() => client.teamTaskChange(ticket.id, { revision: ticket.revision, action: "start" })) : ticket;
   }
 
@@ -124,7 +125,7 @@ export class TeamTasksFeature extends Feature<"tasks"> {
   }
 
   private observe(link: Link, ticket: TeamTaskSummary): void {
-    if (!link.awaiting_review || (ticket.status !== "doing" && ticket.status !== "done")) return;
+    if (!link.awaiting_review || (ticket.status !== "doing" && ticket.status !== "done") || !this.host.teamTasksEnabled()) return;
     const task = this.store.getTask(link.task_id);
     if (task?.archivedAt) return;
     this.store.db.prepare("UPDATE local_team_tickets SET awaiting_review = 0 WHERE task_id = ?").run(link.task_id);

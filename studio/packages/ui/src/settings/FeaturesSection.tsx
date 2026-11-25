@@ -5,7 +5,7 @@ import { call, HostApiError, type HostLink } from "../host/client.js";
 // 设置 → 功能: optional features on or off. Off hides their pages and panels in both windows and their tools from the
 // agents (sessions started from then on); their data stays and comes back when the feature is turned on again.
 
-export function FeaturesSection({ link, disabled, teamAutoSend, shellHelp }: { link: HostLink; disabled: readonly OptionalFeature[]; teamAutoSend: boolean; shellHelp: boolean }) {
+export function FeaturesSection({ link, disabled, teamTasksEnabled, teamAutoSend, shellHelp }: { link: HostLink; disabled: readonly OptionalFeature[]; teamTasksEnabled: boolean | undefined; teamAutoSend: boolean; shellHelp: boolean }) {
   // Shown at once; the Host's settings event confirms it (or the error puts it back).
   const [shown, setShown] = useState<readonly OptionalFeature[]>(disabled);
   const [busy, setBusy] = useState(false);
@@ -14,19 +14,23 @@ export function FeaturesSection({ link, disabled, teamAutoSend, shellHelp }: { l
   // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the list by content
   useEffect(() => setShown(disabled), [key]);
 
-  async function toggle(id: OptionalFeature, on: boolean) {
-    const next = on ? shown.filter((x) => x !== id) : [...shown, id];
-    setShown(next);
+  async function save(change: { disabledFeatures: OptionalFeature[] } | { teamTasksEnabled: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      await call(link, "PUT /api/settings", {}, { disabledFeatures: next });
+      await call(link, "PUT /api/settings", {}, change);
     } catch (err) {
       setShown(disabled);
       setError(err instanceof HostApiError ? err.message : String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function toggle(id: OptionalFeature, on: boolean) {
+    const next = on ? shown.filter((x) => x !== id) : [...shown, id];
+    setShown(next);
+    void save({ disabledFeatures: next });
   }
 
   return (
@@ -46,6 +50,15 @@ export function FeaturesSection({ link, disabled, teamAutoSend, shellHelp }: { l
           </label>
         );
       })}
+      {teamTasksEnabled !== undefined && (
+        <label className="settings-row feature-row">
+          <input type="checkbox" checked={teamTasksEnabled} disabled={busy} onChange={(e) => void save({ teamTasksEnabled: e.target.checked })} data-testid="feature-teamtasks" />
+          <span className="feature-text">
+            <span className="settings-label">团队任务</span>
+            <span className="settings-hint">在左栏显示团队看板，并允许 AI 读取 Plane 原单。关闭后，已保存的连接和原单关联会保留。</span>
+          </span>
+        </label>
+      )}
       {error && (
         <span className="form-error" role="alert">
           {error}

@@ -49,7 +49,7 @@ import { RemoteRuntime } from "./features/remote/runtime.js";
 import { RuntimeRouter } from "./runtime/runtime.js";
 import { TeamLink } from "./core/teamlink.js";
 import type { Feature, FeatureName } from "./core/feature.js";
-import { HostError, type HostServiceEvents } from "./core/shared.js";
+import { HostError, TEAM_TASKS_ENABLED_KEY, type HostServiceEvents } from "./core/shared.js";
 
 // The composition root behind the Host API: the store, the runtimes and the event stream, the helpers every feature
 // shares, and one object per feature (features/<name>/). HTTP routes and MCP tools call into the features.
@@ -114,6 +114,15 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.teamTasks.sessionStarted(taskId);
   }
 
+  teamTasksEnabled(): boolean {
+    const choice = this.store.getKv(TEAM_TASKS_ENABLED_KEY)?.value;
+    return choice === undefined ? this.teamTasks.board.configured() : choice === "1";
+  }
+
+  requireTeamTasks(): void {
+    if (!this.teamTasksEnabled()) throw new HostError("read_only", "团队任务已关闭。可在「设置 → 高级设置 → 功能开关」重新开启。");
+  }
+
   constructor(
     readonly store: Store,
     runtime: SessionRuntimeApi,
@@ -152,6 +161,11 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));
     this.config.watchClaudeAccounts();
+    this.teamLink.on("account", (account, previous) => {
+      if (account?.server !== previous?.server || account?.name !== previous?.name) {
+        this.publish({ type: "settings.updated", settings: this.config.settings() });
+      }
+    });
     this.tasks.latestDelivery = (id) => this.orchestration.results(id).at(-1);
     this.tasks.ensureStructure();
     this.relays.prepareInbox();

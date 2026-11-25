@@ -13,6 +13,7 @@ import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
 import { PlaneBoardSettings } from "./plane-settings.js";
+import { teamTasksRoutes } from "./routes.js";
 
 const origin = "https://plane.test";
 const projectId = "71eac826-1d93-4182-9832-b640d4ca1369";
@@ -47,12 +48,12 @@ beforeEach(async () => {
   planeViewer = "plane-account";
   const { workspace, task } = callerTask();
   session = store.createSession({ taskId: task.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId: workspace.id, title: "", status: "idle", writer: "workbench", runtimeRef: "fixture" });
+  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({ owner: "fixture", server: origin, sealed: "fixture-encrypted-key", selected: null });
   const server = createAmoMcpServer(service, { sessionId: session.id });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   mcp = new Client({ name: "plane-context-test", version: "0" });
   await server.connect(serverTransport);
   await mcp.connect(clientTransport);
-  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({ owner: "fixture", server: origin, sealed: "fixture-encrypted-key", selected: null });
   vi.spyOn(dpapi, "unprotect").mockResolvedValue("fixture-plane-key");
   fetchPlane.mockReset();
   fetchPlane.mockImplementation(async (input) => {
@@ -76,6 +77,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await mcp.close();
   await servers.close();
   store.close();
@@ -89,6 +91,33 @@ async function call(name: string, args: Record<string, unknown> = {}) {
 }
 
 describe("Plane work item context", () => {
+  it("defaults to the existing connection and lets an explicit switch hide access without deleting it", async () => {
+    expect(service.config.settings().teamTasksEnabled).toBe(true);
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plane_task_get");
+    expect(() => service.config.updateSettings({ teamTasksEnabled: "false" })).toThrow(/true or false/);
+    expect(service.config.updateSettings({ teamTasksEnabled: false }).teamTasksEnabled).toBe(false);
+    expect(await call("plane_task_get")).toMatchObject({ error: true, text: expect.stringContaining("团队任务已关闭") });
+    expect(await call("plane_task_file", { fileId })).toMatchObject({ error: true, text: expect.stringContaining("团队任务已关闭") });
+    expect(service.teamTasks.board.contextInstruction(session.taskId!)).toBe("");
+    const routes = teamTasksRoutes(service);
+    const entry = routes.find((entry) => entry.path === "/api/team-board/plane/work-items/:id");
+    expect(() => entry!.handle({ method: "GET", path: "", params: { id: workItemId }, query: new URLSearchParams(), body: undefined })).toThrow(/团队任务已关闭/);
+    expect(fetchPlane).not.toHaveBeenCalled();
+    expect(service.teamTasks.board.reference(session.taskId!)?.url).toContain(workItemId);
+    expect(service.config.updateSettings({ teamTasksEnabled: true }).teamTasksEnabled).toBe(true);
+    expect((await call("plane_task_get")).data.item.id).toBe(workItemId);
+  });
+
+  it("hides the feature by default on an installation without a saved team connection", () => {
+    vi.stubEnv("AMO_TEAM_BOARD_URL", undefined);
+    vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue(undefined);
+    expect(service.config.settings().teamTasksEnabled).toBe(false);
+    vi.stubEnv("AMO_TEAM_BOARD_URL", origin);
+    expect(service.config.settings().teamTasksEnabled).toBe(true);
+    vi.stubEnv("AMO_TEAM_BOARD_URL", undefined);
+    expect(service.config.updateSettings({ teamTasksEnabled: true }).teamTasksEnabled).toBe(true);
+  });
+
   it("reads the bound original, follows the provided parent URL and pages older comments", async () => {
     const first = await call("plane_task_get");
     expect(first.data).toMatchObject({ item: { id: workItemId, state: "审查中" }, parent: { url: parentUrl }, children: { items: [{ title: "子工作项" }] }, comments: { nextOffset: 10 } });
