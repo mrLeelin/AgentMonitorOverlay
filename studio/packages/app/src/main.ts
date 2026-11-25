@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, screen, shell, Tray } from "electron";
 import { installTeamPlaneView } from "./team-plane-view.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -413,6 +413,26 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
     if (typeof text !== "string") return;
     if (testMode) ((globalThis as { __amoCopied?: string[] }).__amoCopied ??= []).push(text);
     else clipboard.writeText(text);
+  });
+  ipcMain.handle("amo:copy-message", async (_event, input: unknown) => {
+    const value = input as { text?: unknown; html?: unknown; png?: unknown } | null;
+    if (typeof value?.text !== "string" || typeof value.html !== "string") throw new Error("Invalid message clipboard formats");
+    const { text, html, png } = value;
+    const item = new ClipboardItem({
+      ...(text ? { "text/plain": text } : {}),
+      "text/html": html,
+      ...(png instanceof Uint8Array ? { "image/png": new Blob([new Uint8Array(png)], { type: "image/png" }) } : {}),
+    });
+    if (testMode) {
+      // Exercise the same formats in the hidden test shell without replacing the user's clipboard.
+      (globalThis as { __amoCopiedMessage?: unknown }).__amoCopiedMessage = {
+        text: text ? await (await item.getType("text/plain")).text() : "",
+        html: await (await item.getType("text/html")).text(),
+        png: item.types.includes("image/png") ? Buffer.from(await (await item.getType("image/png")).arrayBuffer()).toString("base64") : null,
+      };
+      return;
+    }
+    await clipboard.write([item]);
   });
   // Links in replies open in the system browser; only http(s) is allowed through.
   ipcMain.handle("amo:open-external", async (_event, url: unknown) => {

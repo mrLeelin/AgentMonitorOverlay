@@ -1,8 +1,10 @@
 import { Fragment, type ReactNode } from "react";
 import type { MessageImage } from "@amo-studio/protocol";
-import { inlineFileNote } from "./inlineResources.js";
+import { inlineFileNote, MESSAGE_URL_PATTERN } from "./inlineResources.js";
 import type { FileRefItem } from "./refs.js";
 import { MessageFiles, MessageImages } from "./MessageAttachments.js";
+
+const INLINE_PATTERN = new RegExp(`【(图片|资源) (\\d+)：[^】]*】|${MESSAGE_URL_PATTERN.source}`, "g");
 
 /** The visible labels are plain Chinese for the model; the transcript resolves their numbered attachments. */
 export function inlineMessage(text: string, images: readonly MessageImage[], files: readonly FileRefItem[], renderText: (text: string) => ReactNode) {
@@ -10,7 +12,7 @@ export function inlineMessage(text: string, images: readonly MessageImage[], fil
   const usedFiles = new Set<FileRefItem>();
   const parts: ReactNode[] = [];
   let at = 0;
-  for (const match of text.matchAll(/【(图片|资源) (\d+)：[^】]*】|https?:\/\/[^\s<>（）【】，。；]+/g)) {
+  for (const match of text.matchAll(INLINE_PATTERN)) {
     const url = /^https?:\/\//i.test(match[0]) ? match[0] : null;
     const n = Number(match[2]);
     const image = match[1] === "图片" ? images[n - 1] : undefined;

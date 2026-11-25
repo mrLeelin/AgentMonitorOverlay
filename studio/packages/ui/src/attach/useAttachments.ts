@@ -91,12 +91,14 @@ export function useAttachments(link: HostLink, inline?: { text: string; insert(t
   }, []);
 
   const addImages = useCallback(
-    (list: readonly File[]) => {
+    (list: readonly File[], insert?: (tokens: string[]) => void) => {
       if (!list.length) return;
       const added = list.map((file) => ({ file, item: { key: `img-${crypto.randomUUID()}`, name: file.name || "图片", preview: URL.createObjectURL(file), state: "uploading" as const } }));
       for (const a of added) { live.current.add(a.item.key); previews.current.set(a.item.key, a.item.preview); }
       setImages((cur) => [...cur, ...added.map((a) => a.item)]);
-      insertion.current?.(added.map((a) => imageToken(a.item)).join(" "));
+      const tokens = added.map((a) => imageToken(a.item));
+      if (insert) insert(tokens);
+      else insertion.current?.(tokens.join(" "));
       for (const { file, item } of added) {
         uploadAttachment(link, file)
           .then((att) => {

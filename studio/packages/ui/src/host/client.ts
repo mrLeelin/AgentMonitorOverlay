@@ -47,6 +47,7 @@ declare global {
       setTaskbarBadge?(count: number, image: string | null): void;
       /** Writes text to the system clipboard (Electron); works without window focus. */
       copyText?(text: string): Promise<void>;
+      copyMessage?(input: { text: string; html: string; png?: Uint8Array }): Promise<void>;
       /** The 便签 program (2026-10-30): text and pictures together. */
       copyRich?(input: { text: string; images: Uint8Array[] }): Promise<void>;
       setMinWidth?(px: number): void;

@@ -41,6 +41,16 @@ test("renders tables, nested lists, code with copy, and opens links outside the 
   await expect(reply.getByRole("button", { name: "已复制" })).toBeVisible();
   expect(await app.evaluate(() => (globalThis as { __amoCopied?: string[] }).__amoCopied)).toEqual(["DropTable.Normalize(table);"]);
 
+  const userCopy = page.getByTestId("msg-user").first().getByRole("button", { name: "复制消息" });
+  await userCopy.focus();
+  await expect(userCopy).toHaveCSS("opacity", "1");
+  await userCopy.press("Enter");
+  await expect(page.getByTestId("msg-user").first().getByRole("button", { name: "已复制" })).toBeVisible();
+  expect(await app.evaluate(() => (globalThis as { __amoCopied?: string[] }).__amoCopied)).toEqual(["DropTable.Normalize(table);", "[[markdown]]"]);
+
+  await page.getByRole("button", { name: "复制回复" }).click();
+  await expect.poll(() => app.evaluate(() => (globalThis as { __amoCopied?: string[] }).__amoCopied?.[2])).toContain("DropTable.Normalize(table);");
+
   // Test mode records the URL instead of opening the system browser.
   await reply.getByRole("link", { name: "掉落表规范" }).click();
   await expect.poll(() => app.evaluate(() => (globalThis as { __amoOpenedUrls?: string[] }).__amoOpenedUrls ?? [])).toEqual(["https://example.com/drop-tables"]);

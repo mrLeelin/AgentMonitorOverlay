@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { lineSuffix } from "@amo-studio/protocol";
 import { ResourceInput, type ResourceInputHandle, type ResourceInputProps } from "./ResourceInput.js";
 import type { AttachmentsState } from "./useAttachments.js";
-import { resourceSpans, urlResource } from "./inlineResources.js";
+import { replaceResources, resourceSpans, urlResource } from "./inlineResources.js";
+import { readSentMessage } from "./messageClipboard.js";
 import { baseName } from "./refs.js";
 import { Lightbox } from "./MessageAttachments.js";
 import { viewFile, useFileLinks } from "../files/FileLinks.js";
@@ -33,6 +34,16 @@ export function AttachmentInput({ attach, ref, ...props }: Omit<ResourceInputPro
       }}
       resources={resources}
       onPaste={(e) => {
+        const message = readSentMessage(e.clipboardData.getData("text/html"));
+        if (message) {
+          e.preventDefault();
+          if (message.images.length) {
+            attach.addImages(message.images, (tokens) => {
+              local.current?.insert(replaceResources(message.text, (r, token) => r.kind === "image" ? tokens[Number(r.key)] ?? token : token));
+            });
+          } else local.current?.insert(message.text);
+          return;
+        }
         if (e.clipboardData.files.length) {
           e.preventDefault();
           attach.addDropped([...e.clipboardData.files]);

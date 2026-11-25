@@ -8,10 +8,12 @@ import { IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconEdit, IconT
 import { ProcessGroup, Shimmer, MemberRow } from "./ProcessRows.js";
 import { buildTranscript, foldable, formatDuration, formatTokens, outputSpeed, segmentMembers, turnLabel, windowStart, type AgentItem, type ApprovalItem, type Row, type Segment, type TurnItem } from "./turns.js";
 import type { TranscriptView } from "./prefs.js";
-import { MessageFiles, MessageImages } from "../attach/MessageAttachments.js";
+import { AttachLink, MessageFiles, MessageImages } from "../attach/MessageAttachments.js";
 import { splitFileRefItems } from "../attach/refs.js";
 import { mentionSpans, splitMentionRefs } from "../attach/mentions.js";
 import { inlineMessage } from "../attach/InlineMessage.js";
+import { copySentMessage } from "../attach/messageClipboard.js";
+import { useFileLinks } from "../files/FileLinks.js";
 
 /** The line under a message whose @ names were explained to the model (2026-11-05: sub-session setups named too). */
 function mentionBrief(blocks: string): string {
@@ -335,6 +337,8 @@ function StandaloneItem({ item, busy, highlights, onApprove }: { item: SessionIt
  * changed about its task (2026-10-17; the tag shows the lines on hover).
  */
 function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) {
+  const link = useContext(AttachLink);
+  const fileLinks = useFileLinks();
   const { text: sent, update } = splitRoleUpdate(item.text);
   const { text: own, refs: annotations } = splitAnnotationRefs(sent);
   const { text: withRefs, refs } = splitFileRefItems(own);
@@ -345,9 +349,10 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
       ? <span key={i} className="mention-token" title={names.get(p.text.slice(1))} data-testid="msg-mention">{p.text}</span>
       : p.text)
     : part);
+  const copyable = !!(text.trim() || item.images?.length || refs.length || annotations.length);
   return (
     <div className="msg-user-row">
-      <div className="msg-user" data-testid="msg-user">
+      <div className="msg-user" data-testid="msg-user" data-copyable={copyable ? "" : undefined}>
         {inline.images.length ? <MessageImages images={inline.images} /> : null}
         {annotations.length > 0 && (
           <span className="msg-anno-refs">
@@ -373,6 +378,9 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
           <span className="msg-role-update" title={update} data-testid="msg-role-update">
             AMO 更新：已告诉它任务的变化
           </span>
+        )}
+        {copyable && (
+          <CopyMessageButton label="复制消息" copy={() => copySentMessage({ text, refs, images: item.images ?? [], annotations }, link, fileLinks?.workspaceId ?? undefined, fileLinks?.remote)} />
         )}
       </div>
       {item.delivery && <DeliveryLine item={item} />}
@@ -488,24 +496,29 @@ type SubsUsage = { count: number; input: number; cachedInput: number; output: nu
 const SPEED_TITLE = "输出 token ÷ 生成用时：每次模型调用从第一个输出 token 到结束（不含等首个 token、命令、工具和等你确认的时间，和 DSH 一样）";
 const APPROX_SPEED_TITLE = "子 agent 的速度是估算：输出 token ÷ 每次调用从发出请求到写完的时间（含等第一个 token 的时间，Studio 拿不到子 agent 的逐字输出），所以比主会话的生成速度偏低，不能直接比";
 
-function TurnFooter({ answer, usage, speed, approx, subs, endedAt, model, always }: { answer: AgentItem; usage?: TurnUsage; speed: number | null; approx: boolean; subs: SubsUsage | null; endedAt?: string; model: string; always: boolean }) {
-  const [copied, setCopied] = useState(false);
+function CopyMessageButton({ copy, label }: { copy(): Promise<void>; label: string }) {
+  const [result, setResult] = useState<"copying" | "copied" | "failed" | null>(null);
   useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
+    if (!result || result === "copying") return;
+    const t = setTimeout(() => setResult(null), 1500);
     return () => clearTimeout(t);
-  }, [copied]);
+  }, [result]);
+  const title = result === "copied" ? "已复制" : result === "failed" ? "复制失败，点击重试" : result === "copying" ? "正在复制…" : label;
+  return (
+    <button type="button" className="icon-btn" aria-label={title} title={title} aria-busy={result === "copying" || undefined} onClick={() => {
+      if (result === "copying") return;
+      setResult("copying");
+      void copy().then(() => setResult("copied"), () => setResult("failed"));
+    }}>
+      {result === "copied" ? <IconCheck /> : <IconCopy />}
+    </button>
+  );
+}
+
+function TurnFooter({ answer, usage, speed, approx, subs, endedAt, model, always }: { answer: AgentItem; usage?: TurnUsage; speed: number | null; approx: boolean; subs: SubsUsage | null; endedAt?: string; model: string; always: boolean }) {
   return (
     <div className="turn-foot" data-reveal={always ? "always" : "hover"} data-testid="turn-foot">
-      <button
-        type="button"
-        className="icon-btn"
-        aria-label={copied ? "已复制" : "复制回复"}
-        title={copied ? "已复制" : "复制回复"}
-        onClick={() => void copyText(answer.markdown).then(() => setCopied(true))}
-      >
-        {copied ? <IconCheck /> : <IconCopy />}
-      </button>
+      <CopyMessageButton copy={() => copyText(answer.markdown)} label="复制回复" />
       <span className="turn-foot-time">{clock(endedAt ?? answer.createdAt)}</span>
       {usage && <UsageButton usage={usage} speed={speed} approx={approx} subs={subs} model={model} />}
       {speed !== null && (

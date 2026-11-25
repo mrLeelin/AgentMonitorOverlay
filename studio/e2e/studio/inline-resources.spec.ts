@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator } from "@playwright/test";
 import { TINY_PNG_BASE64 } from "@amo-studio/testkit";
@@ -59,26 +59,109 @@ test("inserts images, URLs and files at the caret and sends the matching real at
   const file = join(studio!.workspace("assets"), "配置[最终].json");
   writeFileSync(file, '{"retry":3}');
   await page.getByTestId("draft-attach-input").setInputFiles(file);
-  await expect(input.getByTestId("inline-resource")).toHaveCount(3);
+  await caret(input, "。", 1);
+  await paste(input, undefined, "补充图.png");
+  await expect(input.getByTestId("inline-resource")).toHaveCount(4);
+  await expect(input.locator('[data-state="ready"]')).toHaveCount(4);
   await expect(input).toContainText("example.com");
   await screenshot(studio!.app, "studio", "inline-resources-draft", page);
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await screenshot(studio!.app, "studio", "inline-resources-draft-dark", page);
   await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
-  await input.getByRole("button", { name: /查看大图/ }).click();
+  await input.getByRole("button", { name: /查看大图.*设计稿\.png/ }).click();
   await expect(page.getByTestId("lightbox")).toBeVisible();
   await page.keyboard.press("Escape");
   await input.press("Enter");
   const sent = page.getByTestId("msg-user").first();
-  await expect(sent.locator(".msg-text .msg-images img")).toHaveCount(1);
+  await expect(sent.locator(".msg-text .msg-images img")).toHaveCount(2);
   await expect(sent.locator(".msg-text").getByTestId("msg-file")).toContainText("配置[最终].json");
   await expect(sent.locator(".msg-url")).toHaveAttribute("title", "https://example.com/design?q=中文");
   const agent = page.getByTestId("msg-agent").last();
-  await expect(agent).toContainText("[images: 1]", { timeout: 30_000 });
+  await expect(agent).toContainText("[images: 2]", { timeout: 30_000 });
   await expect(agent).toContainText("文中资源 1");
   await expect(agent).toContainText(file);
   await expect(agent).not.toContainText("[[amo:");
   await screenshot(studio!.app, "studio", "inline-resources-sent", page);
+
+  const copy = sent.getByRole("button", { name: "复制消息" });
+  await expect(copy).toHaveCSS("opacity", "0");
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await sent.hover();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await screenshot(studio!.app, "studio", "sent-message-copy-dark", page);
+  await copy.click();
+  await expect(sent.getByRole("button", { name: "已复制" })).toBeVisible();
+  const copied = await studio!.app.evaluate(() => (globalThis as { __amoCopiedMessage?: { text: string; html: string; png: string } }).__amoCopiedMessage!);
+  expect(copied.text).toBe(`参考这张图，使用这个网址https://example.com/design?q=中文，再看这个文件${file}。`);
+  expect(copied.png).toBe(TINY_PNG_BASE64);
+  expect(copied.html.match(/<img /g)).toHaveLength(2);
+  expect(copied.html).toContain(`src="data:image/png;base64,${TINY_PNG_BASE64}"`);
+  expect(copied.html).not.toContain("【图片");
+  expect(copied.html).not.toContain("?token=");
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await screenshot(studio!.app, "studio", "sent-message-copy-light", page);
+
+  const message = page.getByLabel("输入消息");
+  await message.focus();
+  const uploads: Promise<{ name: string; path: string }>[] = [];
+  page.on("response", (response) => {
+    if (response.request().method() === "POST" && response.url().includes("/api/attachments?")) uploads.push(response.json());
+  });
+  await message.evaluate((el, formats) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", formats.text);
+    data.setData("text/html", formats.html);
+    data.items.add(new File([Uint8Array.from(atob(formats.png), (c) => c.charCodeAt(0))], "image.png", { type: "image/png" }));
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  }, copied);
+  const resources = message.getByTestId("inline-resource");
+  await expect(resources).toHaveCount(4);
+  await expect(resources.nth(0)).toHaveAttribute("title", "设计稿.png");
+  await expect(resources.nth(1)).toHaveAttribute("title", "https://example.com/design?q=中文");
+  await expect(resources.nth(2)).toHaveAttribute("title", file);
+  await expect(resources.nth(3)).toHaveAttribute("title", "补充图.png");
+  await expect(message.locator('[data-state="ready"]')).toHaveCount(4);
+  expect(uploads).toHaveLength(2);
+  const saved = await Promise.all(uploads);
+  expect(Object.fromEntries(saved.map(({ name, path }) => [name, readFileSync(path).toString("base64")]))).toEqual({
+    "设计稿.png": TINY_PNG_BASE64, "补充图.png": TINY_PNG_BASE64,
+  });
+  await expect(message).not.toContainText("【图片");
+  await screenshot(studio!.app, "studio", "sent-message-paste", page);
+  await message.press("Enter");
+  await expect(page.getByTestId("msg-user").last().locator(".msg-text .msg-images img")).toHaveCount(2);
+});
+
+test("copies an image-only message as both original JPEG and clipboard bitmap, and can retry a failed read", async () => {
+  const { page, input } = await newDraft();
+  const jpeg = await input.evaluate(async (el) => {
+    const canvas = new OffscreenCanvas(4, 4);
+    canvas.getContext("2d")!.fillRect(0, 0, 4, 4);
+    const blob = await canvas.convertToBlob({ type: "image/jpeg" });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const data = new DataTransfer();
+    data.items.add(new File([blob], "参考图.jpg", { type: blob.type }));
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    return btoa(String.fromCharCode(...bytes));
+  });
+  await expect(input.locator('[data-state="ready"]')).toHaveCount(1);
+  await input.press("Enter");
+  const sent = page.getByTestId("msg-user").first();
+  const image = sent.locator(".msg-images img");
+  await expect(image).toBeVisible();
+  const source = (await image.getAttribute("src"))!;
+  await page.route(source, (route) => route.abort());
+  await sent.hover();
+  await sent.getByRole("button", { name: "复制消息" }).click();
+  await expect(sent.getByRole("button", { name: "复制失败，点击重试" })).toBeVisible();
+  await page.unroute(source);
+  await sent.getByRole("button", { name: "复制失败，点击重试" }).click();
+  await expect(sent.getByRole("button", { name: "已复制" })).toBeVisible();
+  const copied = await studio!.app.evaluate(() => (globalThis as { __amoCopiedMessage?: { text: string; html: string; png: string } }).__amoCopiedMessage!);
+  expect(copied.text).toBe("");
+  expect(copied.html).toContain(`src="data:image/jpeg;base64,${jpeg}"`);
+  expect(copied.html).toContain('alt="参考图.jpg"');
+  expect(Buffer.from(copied.png, "base64").subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
 });
 
 test("deletes a whole image, undoes it, and keeps the caret when an upload finishes", async () => {

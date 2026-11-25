@@ -7,6 +7,9 @@ export type InlineResource =
 
 export interface ResourceSpan { token: string; start: number; end: number; resource: InlineResource }
 
+/** The same URL boundaries in sent messages and when their clipboard content returns to a draft. */
+export const MESSAGE_URL_PATTERN = /https?:\/\/[^\s<>（）【】，。；]+/g;
+
 /** Encoded data keeps brackets, Chinese names and Windows paths out of the token's delimiters. */
 export function resourceToken(resource: InlineResource): string {
   return `[[amo:${resource.kind}:${encodeURIComponent(JSON.stringify(resource))}]]`;
