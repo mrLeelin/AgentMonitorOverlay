@@ -425,4 +425,34 @@ export const MIGRATIONS: readonly Migration[] = [
   CREATE UNIQUE INDEX local_team_board_original ON local_team_board_links (server, account, ticket_id) WHERE request_id IS NULL;
   CREATE UNIQUE INDEX local_team_board_request ON local_team_board_links (server, account, ticket_id, request_id) WHERE request_id IS NOT NULL;
   `,
+  // 36: Bot identity and requests live independently of the projects and conversations they point to.
+  `
+  CREATE TABLE studio_bots (
+    id TEXT PRIMARY KEY, name_key TEXT NOT NULL UNIQUE, data TEXT NOT NULL,
+    task_id TEXT UNIQUE REFERENCES tasks(id) ON DELETE SET NULL,
+    home_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL
+  );
+  CREATE TABLE studio_bot_requests (
+    id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES studio_bots(id),
+    source_session_id TEXT, session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL, data TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX studio_bot_requests_source ON studio_bot_requests (source_session_id, created_at DESC);
+  CREATE INDEX studio_bot_requests_session ON studio_bot_requests (session_id);
+  CREATE TABLE studio_bot_workers (
+    request_id TEXT PRIMARY KEY REFERENCES studio_bot_requests(id), task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
+  );
+  CREATE TABLE studio_bot_groups (
+    id TEXT PRIMARY KEY, name_key TEXT NOT NULL UNIQUE, data TEXT NOT NULL
+  );
+  CREATE TABLE studio_bot_group_posts (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES studio_bot_groups(id), created_at TEXT NOT NULL, data TEXT NOT NULL,
+    dispatched INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX studio_bot_group_posts_group ON studio_bot_group_posts(group_id, created_at DESC);
+  CREATE TABLE studio_bot_group_chats (
+    group_id TEXT NOT NULL REFERENCES studio_bot_groups(id), bot_id TEXT NOT NULL REFERENCES studio_bots(id),
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, PRIMARY KEY(group_id, bot_id)
+  );
+  `,
 ];

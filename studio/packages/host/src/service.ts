@@ -36,6 +36,7 @@ import { TeamRelayFeature } from "./features/teamrelay/service.js";
 import { TeamTasksFeature } from "./features/teamtasks/service.js";
 import { IssuesFeature } from "./features/issues/service.js";
 import { DutyFeature } from "./features/duty/service.js";
+import { BotsFeature } from "./features/bots/service.js";
 import { OrchestrationFeature } from "./features/orchestration/service.js";
 import { SharedContextFeature } from "./features/sharedcontext/service.js";
 import { ChatFilesFeature } from "./features/chatfiles/service.js";
@@ -106,6 +107,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   readonly issues: IssuesFeature = new IssuesFeature(this);
   /** 值守 (2026-10-31): items that start a session, run a command or one of Studio's jobs at set times. */
   readonly duty: DutyFeature = new DutyFeature(this);
+  readonly bots: BotsFeature = new BotsFeature(this);
   /** The runtimes of this computer, plus "remote" for copies of tasks paired devices granted it (远程 step 2). */
   readonly runtime: SessionRuntimeApi;
 
@@ -173,6 +175,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.orchestration.prepareInbox();
     this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);
     this.sessions.watchReports();
+    this.bots.recover();
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();
     this.tasks.watchColumns();
@@ -180,6 +183,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.orchestration.watch();
     this.taskPlans.watch();
     this.relays.watch();
+    this.duty.botJob = this.bots.dutyJob();
     this.duty.registerCheck(this.issues.dutyCheck());
     this.tasks.recoverColumns();
   }

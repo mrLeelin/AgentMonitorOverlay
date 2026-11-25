@@ -6,7 +6,7 @@ import { baseName, dirName } from "./refs.js";
 // 提示词模板. Pure logic;
 // the hook and the list live beside it.
 
-export type MentionKind = "task" | "session" | "project" | "mark" | "file" | "find" | "subsession" | "commit" | "template";
+export type MentionKind = "bot" | "task" | "session" | "project" | "mark" | "file" | "find" | "subsession" | "commit" | "template";
 
 export interface MentionOption {
   kind: MentionKind;
@@ -14,6 +14,7 @@ export interface MentionOption {
   id: string;
   name: string;
   hint: string;
+  avatar?: string | null;
   /** A session listed under its task (the new-task page, 2026-10-29). */
   sub?: boolean;
 }
@@ -50,7 +51,7 @@ export interface SubSessionSpec {
 
 /** A task, session, sub-session setup or 快速提交 picked with @: the text keeps "@name", the message says what it is. */
 export type MentionPick =
-  | { kind: "task"; id: string }
+  | { kind: "task" | "bot"; id: string }
   | { kind: "session"; id: string; taskId: string | null }
   | { kind: "project"; id: string; path: string }
   | { kind: "subsession"; spec: SubSessionSpec }
@@ -101,6 +102,7 @@ function taskSessions(sessions: readonly Session[]): Map<string, Session[]> {
 
 export function mentionGroups(input: {
   query: string;
+  bots?: readonly { id: string; name: string; purpose: string; avatar?: string | null }[];
   tasks: readonly Task[];
   /** Tasks of pinned topics and projects come first. */
   pinnedTask?(task: Task): boolean;
@@ -159,6 +161,7 @@ export function mentionGroups(input: {
     return { kind: "file", id: f.path, name: f.path.slice(slash + 1), hint: slash > 0 ? f.path.slice(0, slash) : "" };
   });
   const groups: MentionGroup[] = [
+    { kind: "bot", heading: "Bots", options: (input.bots ?? []).filter((bot) => contains(bot.name, q)).slice(0, PER_GROUP).map((bot) => ({ kind: "bot", id: bot.id, name: bot.name, avatar: bot.avatar, hint: bot.purpose.split("\n")[0]!.slice(0, 64) })) },
     { kind: "task", heading: "任务", options: tasks },
     { kind: "session", heading: "会话", options: sessions },
     { kind: "project", heading: "项目", options: projects },

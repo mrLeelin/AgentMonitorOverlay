@@ -53,6 +53,7 @@ interface ScopeNavProps {
   /** Opens the settings (the button under the Host status). */
   onSettings?: () => void;
   teamBoard?: { open: boolean; toggle(): void };
+  bots?: { current: boolean; open(): void };
   shortcuts?: ReactNode;
   onScope(scope: Scope): void;
   /**
@@ -75,7 +76,7 @@ function readFolded(): Record<PinKind, boolean> {
  * pinned (they come first, here and wherever they are picked) and each section folds down to its pinned entries. The
  * lists scroll between the fixed top and the Host / usage footer.
  */
-export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, teamBoard, shortcuts, panorama }: ScopeNavProps) {
+export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, teamBoard, bots, shortcuts, panorama }: ScopeNavProps) {
   const [adding, setAdding] = useState(false);
   const [newTopic, setNewTopic] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -186,7 +187,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
           endDrag();
         }}
       >
-        <button type="button" className={kind ? "nav-row nav-scope-row" : "nav-row"} aria-current={!teamBoard?.open && !panorama?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
+        <button type="button" className={kind ? "nav-row nav-scope-row" : "nav-row"} aria-current={!teamBoard?.open && !panorama?.current && !bots?.current && isCurrent(scope, target)} onClick={() => onScope(target)} onContextMenu={onMenu} data-testid={testId}
           draggable={!!kind && !!id}
           title={kind ? [title, "拖动排序；Alt ↑ / ↓ 调整顺序（置顶项在前）"].filter(Boolean).join("\n") : title}
           onDragStart={(e) => { if (kind && id) startDrag(e, { type: "item", kind, id }); }}
@@ -438,10 +439,15 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     </button>
   );
 
+  const botsButton = bots && <button type="button" className={collapsed ? "fold-btn" : "wb-nav-link"} aria-label="Bots" aria-current={bots.current} title="Bots" onClick={bots.open}>
+    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="14" height="11" rx="3" fill="none" stroke="currentColor" /><path d="M10 2v3m-3 5h.1m5.9 0h.1M8 13h4" fill="none" stroke="currentColor" /></svg>{!collapsed && "Bots"}
+  </button>;
+
   if (collapsed)
     return (
       <nav className="scope-nav collapsed" aria-label="范围">
         {teamButton}
+        {botsButton}
         <span className="spacer" />
         {onSettings && (
           <button type="button" className="fold-btn nav-settings-folded" onClick={onSettings} aria-label="设置" title="设置">
@@ -462,9 +468,10 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     <nav className="scope-nav" aria-label="范围">
       <div className="nav-top">
         {teamButton}
-        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !teamBoard?.open && !panorama?.current} onClick={() => onScope({ kind: "all" })}>
+        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !teamBoard?.open && !panorama?.current && !bots?.current} onClick={() => onScope({ kind: "all" })}>
           <BoardGlyph />全部任务<span className="wb-count">{liveTasks.length}</span>
         </button>
+        {botsButton}
         {panorama && (
           <div className="nav-item">
             <button type="button" className="nav-row" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">

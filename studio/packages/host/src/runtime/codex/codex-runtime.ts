@@ -4,6 +4,7 @@ import { inTurn, type ApprovalDecision, type Attachment, type Id, type ModelOpti
 import type { Store } from "../../store/store.js";
 import { codexThreadParams, profileGone, type CodexConfig } from "../profiles.js";
 import { McpIdentities } from "../../mcp/identity.js";
+import { isBotTask } from "../../features/bots/data.js";
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
@@ -121,9 +122,10 @@ export class CodexRuntime extends RuntimeBase {
   async startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]): Promise<Session> {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
-    const token = this.options.identities?.issue();
-    const options = this.leadTask(input.taskId) ? { ...input.options, permission: "read-only" } : input.options ?? {};
-    const developerInstructions = token ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
+    const token = isBotTask(this.store, input.taskId) ? undefined : this.options.identities?.issue();
+    const options = this.restrictedTask(input.taskId) ? { ...input.options, permission: "read-only" } : input.options ?? {};
+    const role = token ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
+    const developerInstructions = input.developerInstructions ?? role;
     const params = this.threadParams(profile, token);
     const cwd = input.cwd ?? input.workspace.path;
     const lead = await this.leadConfig(handle, input.taskId, cwd);
@@ -150,7 +152,7 @@ export class CodexRuntime extends RuntimeBase {
     });
     if (lead.config) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
-    if (developerInstructions) this.options.roleGiven?.(session.id);
+    if (role) this.options.roleGiven?.(session.id);
     if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
     return this.store.getSession(session.id)!;
   }
@@ -347,7 +349,7 @@ export class CodexRuntime extends RuntimeBase {
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     return this.withGoalMutation(sessionId, async () => {
       const session = this.requireSession(sessionId);
-      if (this.leadTask(session.taskId)) options = { ...options, permission: "read-only" };
+      if (this.restrictedTask(session.taskId)) options = { ...options, permission: "read-only" };
       // Serialize even the first Goal activation with option edits: neither may capture the other's old permissions.
       if (session.goal) {
         const handle = await this.handleFor(session.profileId);
@@ -594,7 +596,7 @@ export class CodexRuntime extends RuntimeBase {
     if (!parent.runtimeRef) throw new Error(`session ${sessionId} has no thread yet`);
     const profile = this.profile(profileId ?? parent.profileId);
     const handle = await this.handleFor(parent.profileId);
-    const token = this.options.identities?.issue();
+    const token = isBotTask(this.store, parent.taskId) ? undefined : this.options.identities?.issue();
     const cwd = target?.cwd ?? parent.cwd;
     const lead = await this.leadConfig(handle, parent.taskId, cwd ?? this.store.getWorkspace(parent.workspaceId)?.path);
     const params = this.threadParams(profile, token);
@@ -875,7 +877,7 @@ export class CodexRuntime extends RuntimeBase {
 
   private permissionOf(options: SessionOptions, taskId: Id | null) {
     // 2026-11-07: 主控 manages tasks and canvases through AMO, never escalates into local file editing.
-    if (this.leadTask(taskId)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
+    if (this.restrictedTask(taskId)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
     const p = codexPermission(options.permission);
     return { approvalPolicy: this.options.approvalPolicy ?? p.approvalPolicy, sandbox: this.options.sandbox ?? p.sandbox, reviewer: p.reviewer };
   }
@@ -935,19 +937,26 @@ export class CodexRuntime extends RuntimeBase {
     return !!taskId && this.store.getTask(taskId)?.lead === true;
   }
 
+  private restrictedTask(taskId: Id | null): boolean {
+    return this.leadTask(taskId) || isBotTask(this.store, taskId);
+  }
+
   private requireLeadThread(session: Session): void {
-    if (!this.leadTask(session.taskId)) {
+    if (!this.restrictedTask(session.taskId)) {
       this.store.deleteKv(`codex-lead-readonly:${session.id}`);
       return;
     }
-    if (this.leadTask(session.taskId) && this.store.getKv(`codex-lead-readonly:${session.id}`)?.value !== session.runtimeRef) {
-      throw new Error("这个会话在主控只读限制生效前已启动，请新开主控会话；旧会话不能继续执行。");
+    if (this.store.getKv(`codex-lead-readonly:${session.id}`)?.value !== session.runtimeRef) {
+      throw new Error(this.leadTask(session.taskId)
+        ? "这个会话在主控只读限制生效前已启动，请新开主控会话；旧会话不能继续执行。"
+        : "这个 Bot 会话没有应用只读限制，请新开聊天继续。");
     }
   }
 
   /** MCP servers run outside the command sandbox: a read-only lead must not inherit their write tools. */
   private async leadConfig(handle: CodexServerHandle, taskId: Id | null, cwd?: string): Promise<{ config?: CodexConfig }> {
-    if (!this.leadTask(taskId)) return {};
+    const bot = isBotTask(this.store, taskId);
+    if (!bot && !this.leadTask(taskId)) return {};
     const read = await handle.client.request("config/read", { includeLayers: false, ...(cwd ? { cwd } : {}) }) as codex.v2.ConfigReadResponse;
     if (!read.config || typeof read.config !== "object") throw new Error("无法读取 Codex 配置，不能安全启动只读主控。");
     const config: CodexConfig = {};
@@ -957,12 +966,12 @@ export class CodexRuntime extends RuntimeBase {
     if (servers && typeof servers === "object" && !Array.isArray(servers)) {
       // Only amend an existing server: tool settings alone would create an AMO entry with no transport.
       const amo = servers.amo;
-      if (amo && typeof amo === "object" && !Array.isArray(amo)) {
+      if (!bot && amo && typeof amo === "object" && !Array.isArray(amo)) {
         for (const name of LEAD_MANAGEMENT_TOOLS) config[`mcp_servers.amo.tools.${name}.approval_mode`] = "approve";
       }
       for (const name of Object.keys(servers)) {
         if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Codex MCP 服务名无法安全隔离，不能启动只读主控。");
-        if (name !== "amo") config[`mcp_servers.${name}.enabled`] = false;
+        if (bot || name !== "amo") config[`mcp_servers.${name}.enabled`] = false;
       }
     }
     return { config };

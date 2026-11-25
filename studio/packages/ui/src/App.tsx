@@ -350,6 +350,7 @@ export function App() {
           scope={scope}
           live={live}
           teamBoard={teamTasksEnabled ? { open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) } : undefined}
+          bots={{ current: shown.kind === "bots", open: () => setView({ kind: "bots" }) }}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
             <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />
@@ -391,6 +392,11 @@ export function App() {
           settings={settings}
           {...(settingsOpen.page ? { page: settingsOpen.page } : {})}
           onClose={() => setSettingsOpen(false)}
+          onOpenBotChat={(session) => {
+            if (!session.taskId) return;
+            setSettingsOpen(false);
+            setView({ kind: "task", taskId: session.taskId, sessionId: session.id, nav: Date.now() });
+          }}
           onOpenRemote={() => {
             setSettingsOpen(false);
             setRemoteOpen(true);

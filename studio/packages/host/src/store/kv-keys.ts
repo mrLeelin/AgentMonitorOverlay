@@ -72,6 +72,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "duty.runs", scope: "global", owner: "features/duty/service.ts", what: "值守的运行记录" },
   { key: "duty.found", scope: "global", owner: "features/duty/service.ts", what: "值守检查上次找到的" },
   { key: "duty.sessions", scope: "global", owner: "features/duty/service.ts", what: "值守开的会话 → 值守项（留最近 300 个）" },
+  { key: "bots.webhooks-device", scope: "global", owner: "features/bots/webhooks.ts", what: "启用了 Bot Webhook 的中转账号和设备" },
   { key: "issues.sessions", scope: "global", owner: "features/issues/service.ts", what: "问题页：每个问题最后写它的会话（留最近 300 个）" },
   { key: "sessions.inbox", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱里有待送消息的会话" },
   { key: "sessions.inbox.paused", scope: "global", owner: "features/sessions/inbox.ts", what: "用户停止会话后暂停自动投递，重启仍保持" },

@@ -91,6 +91,7 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
   private readonly running = new Map<Id, Running>();
   private readonly jobs = new Map<string, DutyJob>();
   private readonly checks = new Map<string, DutyCheckJob>();
+  botJob?: { check(id: Id): void; run(action: Extract<DutyAction, { kind: "bot" }>, run: DutyRun): Promise<DutyJobResult> };
   /** Tests: the clock. */
   now: () => number = Date.now;
 
@@ -322,6 +323,13 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
       const timeoutSec = typeof a.timeoutSec === "number" && a.timeoutSec > 0 ? Math.min(Math.floor(a.timeoutSec), 24 * 3600) : DEFAULT_TIMEOUT_SEC;
       return { kind: "command", command, workspaceId, timeoutSec };
     }
+    if (a.kind === "bot") {
+      const botId = optId(a.botId);
+      const prompt = typeof a.prompt === "string" ? a.prompt.trim() : "";
+      if (!botId || !prompt || prompt.length > 20_000 || !this.botJob) throw new HostError("bad_request", "请选择 Bot 并填写运行内容。");
+      this.botJob.check(botId);
+      return { kind: "bot", botId, prompt };
+    }
     if (a.kind === "builtin") {
       if (typeof a.name !== "string" || !this.jobs.has(a.name)) throw new HostError("bad_request", `没有这个 Studio 任务：${String(a.name)}`);
       return { kind: "builtin", name: a.name };
@@ -426,8 +434,8 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
     let result: DutyJobResult;
     try {
       const a = item.action;
-      if (a.kind === "session") {
-        const started = await this.startSession(item, a, r.abort.signal);
+      if (a.kind === "session" || a.kind === "bot") {
+        const started = a.kind === "session" ? await this.startSession(item, a, r.abort.signal) : await this.botJob?.run(a, run) ?? { ok: false, summary: "Bot 服务不可用。" };
         if (started.sessionId && !started.skipped) {
           r.sessionId = started.sessionId;
           if (started.repliesBefore !== undefined) r.repliesBefore = started.repliesBefore;

@@ -3,6 +3,7 @@ import { DUTY_DONE_MARK, projectWorkspaces, type DutyAction, type DutyCheckOne, 
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { defaultModel, effortLabel, useProfileChoices } from "../lib/choices.js";
 import { dutyTree, setDuty, useDuty } from "../duty/duty.js";
+import { useBots } from "../bots/BotRequests.js";
 
 // 设置 → 值守 (2026-10-31, plans/issues.md): items that run at set times — start a session with a set prompt, run a
 // command, or one of Studio's own jobs. The list says when each runs next and how its last run went; 立即运行 runs one
@@ -49,6 +50,7 @@ function checkLabel(c: DutyCheckOne, ctx: DutyCtx): string {
 export function actionText(a: DutyAction, ctx: DutyCtx): string {
   const profile = (id?: string | null) => ctx.profiles.find((p) => p.id === id)?.label ?? id ?? "";
   if (a.kind === "builtin") return `Studio：${ctx.builtins.find((b) => b.name === a.name)?.label ?? a.name}`;
+  if (a.kind === "bot") return `发送给 Bot · ${a.prompt}`;
   if (a.kind === "command") {
     const ws = ctx.snapshot?.workspaces.find((w) => w.id === a.workspaceId);
     return `命令：${a.command}${ws ? `（在「${ws.name}」里）` : ""}`;
@@ -154,6 +156,8 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
   const [unit, setUnit] = useState<number>(startUnit[1]);
   const [mode, setMode] = useState<"every" | "daily">(item && "daily" in item.schedule ? "daily" : "every");
   const [kind, setKind] = useState<DutyAction["kind"]>(a?.kind ?? "session");
+  const bots = useBots(link);
+  const [botId, setBotId] = useState(a?.kind === "bot" ? a.botId : "");
   const [profileId, setProfileId] = useState(a?.kind === "session" ? a.profileId : (ctx.profiles[0]?.id ?? ""));
   const [model, setModel] = useState(a?.kind === "session" ? (a.options?.model ?? "") : "");
   const [effort, setEffort] = useState(a?.kind === "session" ? (a.options?.effort ?? "") : "");
@@ -161,7 +165,7 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
   const { choices } = useProfileChoices(link, kind === "session" && profileId ? profileId : null);
   const shownModel = choices && ((model && choices.models.find((m) => m.id === model)) || defaultModel(choices));
   const [fallback, setFallback] = useState(a?.kind === "session" ? (a.fallbackProfileId ?? "") : "");
-  const [prompt, setPrompt] = useState(a?.kind === "session" ? a.prompt : "");
+  const [prompt, setPrompt] = useState(a?.kind === "session" || a?.kind === "bot" ? a.prompt : "");
   const [taskId, setTaskId] = useState(a?.kind === "session" ? (a.taskId ?? "") : "");
   const [workspaceId, setWorkspaceId] = useState(a?.kind === "session" || a?.kind === "command" ? (a.workspaceId ?? "") : "");
   const [taskTitle, setTaskTitle] = useState(a?.kind === "session" ? (a.taskTitle ?? "") : "");
@@ -187,7 +191,7 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
         ? { kind, profileId, prompt, taskId: taskId || null, workspaceId: workspaceId || null, taskTitle, options: { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(permission ? { permission } : {}) }, fallbackProfileId: fallback || null, check: checkKind === "command" ? { kind: "command", command: checkCommand, workspaceId: checkWorkspace || null } : checkKind === "builtin" ? { kind: "builtin", name: checkName } : checkKind === "all" && check?.kind === "all" ? check : null, untilDone }
         : kind === "command"
           ? { kind, command, workspaceId: workspaceId || null, timeoutSec: Math.round(Number(timeoutMin) * 60) }
-          : { kind, name };
+          : kind === "bot" ? { kind, botId, prompt } : { kind, name };
     return { title, schedule, action, parentId: parentId || null };
   }
 
@@ -254,6 +258,7 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
               <button type="button" role="radio" className="chip" aria-checked={kind === "command"} aria-pressed={kind === "command"} onClick={() => setKind("command")}>
                 跑命令
               </button>
+              {(bots.length > 0 || kind === "bot") && <button type="button" role="radio" className="chip" aria-checked={kind === "bot"} aria-pressed={kind === "bot"} onClick={() => setKind("bot")}>运行 Bot</button>}
               {ctx.builtins.length > 0 && (
                 <button type="button" role="radio" className="chip" aria-checked={kind === "builtin"} aria-pressed={kind === "builtin"} onClick={() => setKind("builtin")}>
                   Studio 自带
@@ -453,6 +458,10 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
               <span className="settings-hint">{ctx.builtins.find((b) => b.name === name)?.description}</span>
             </div>
           )}
+          {kind === "bot" && <div className="settings-section">
+            <label>Bot <select className="field" value={botId} onChange={(e) => setBotId(e.target.value)}><option value="">选择 Bot</option>{bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}{bot.enabled ? "" : "（已停用）"}</option>)}</select></label>
+            <label>运行内容 <textarea className="field" value={prompt} onChange={(e) => setPrompt(e.target.value)} /></label>
+          </div>}
         </>
       )}
       {error && <span className="settings-hint error">{error}</span>}

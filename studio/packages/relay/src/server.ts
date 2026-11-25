@@ -22,6 +22,7 @@ import { checkTodoDevice, TodoStore } from "./todo.js";
 import { DEVICE_CHANNEL_VERSION, MAX_DEVICE_FRAME } from "./devices-protocol.js";
 import { TEAM_TASK_BODY_LIMIT } from "@amo-studio/protocol";
 import { TeamTasksStore } from "./team-tasks.js";
+import { BotWebhooks, botHookId } from "./bot-webhooks.js";
 
 // The relay service (plans/done/relay.md): HTTP for everything, /ws to push new messages and who is online. People register
 // with a name and password (plus the invite passphrase, when the service has one); a login hands the device a key that
@@ -177,6 +178,7 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
   // 问题页 (2026-10-31, plans/issues.md): its tables in the same database.
   const issues = new IssueStore(store.db);
   const teamTasks = new TeamTasksStore(store, opts.filesDir);
+  const botHooks = new BotWebhooks(store.db);
   // Screenshots pasted for a report that was never sent: gone after a week, the bytes with them (2026-11-04, the 11-03
   // audit). At start and every 6 hours.
   const pruneImages = () => {
@@ -322,6 +324,7 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
       const kick = (name: string) => {
         for (const ws of sockets.get(name) ?? []) ws.close(1012, "account changed");
         devices.dropAccount(name);
+        botHooks.removeOwner(name);
       };
       if (method === "GET" && path === "/api/admin/members") {
         const online = new Map(members().map((m) => [m.name, m]));
@@ -515,7 +518,39 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
       throw new RelayError("not_found", `没有这个文件：${path}`);
     }
 
+    const webhook = /^\/api\/bot-hooks\/([\w-]+)(?:\/events\/([\w-]+))?$/.exec(path);
+    if (webhook) {
+      const id = botHookId(webhook[1]);
+      botHooks.authenticate(id, req.headers.authorization);
+      if (method === "POST" && !webhook[2]) {
+        const event = await readJson(req, 96_000);
+        botHooks.authenticate(id, req.headers.authorization);
+        return send(res, 202, botHooks.submit(id, event));
+      }
+      if (method === "GET" && webhook[2]) return send(res, 200, botHooks.lookup(id, botHookId(webhook[2])));
+      throw new RelayError("not_found", "Webhook 接口无效。");
+    }
     const me = auth(req, url);
+    if (path === "/api/bot-hooks" || path === "/api/bot-hook-inbox") {
+      const device = checkDeviceId(url.searchParams.get("device"));
+      if (path === "/api/bot-hooks") {
+        if (method === "GET") return send(res, 200, botHooks.list(me, device));
+        if (method === "POST") {
+          const body = await readJson(req, 4096);
+          return send(res, 200, botHooks.add(me, device, botHookId(body.botId), body.allowResult === true));
+        }
+        if (method === "DELETE") {
+          botHooks.remove(me, device, botHookId(url.searchParams.get("id")), botHookId(url.searchParams.get("botId")));
+          return send(res, 200, { ok: true });
+        }
+      }
+      if (path === "/api/bot-hook-inbox" && method === "GET") return send(res, 200, botHooks.pending(me, device));
+      if (path === "/api/bot-hook-inbox" && method === "PATCH") {
+        botHooks.update(me, device, await readJson(req, 24_000));
+        return send(res, 200, { ok: true });
+      }
+      throw new RelayError("not_found", "Webhook 接口无效。");
+    }
     if (method === "GET" && path === "/api/team-tasks/identity") return send(res, 200, teamTasks.parts(me));
     if (path === "/api/team-tasks") {
       if (method === "GET") return send(res, 200, teamTasks.list(me));

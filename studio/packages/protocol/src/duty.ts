@@ -43,6 +43,8 @@ export type DutyAction =
   | { kind: "session"; profileId: Id; prompt: string; taskId?: Id | null; workspaceId?: Id | null; taskTitle?: string; options?: SessionOptions; fallbackProfileId?: Id | null; check?: DutyCheck | null; untilDone?: boolean }
   /** A command line, run in project `workspaceId`'s folder (the common folder without one), below normal priority. */
   | { kind: "command"; command: string; workspaceId?: Id | null; timeoutSec?: number }
+  /** A fresh conversation of a Bot for each scheduled run. */
+  | { kind: "bot"; botId: Id; prompt: string }
   /** One of Studio's own jobs, by name (DutyState.builtins lists them). */
   | { kind: "builtin"; name: string };
 

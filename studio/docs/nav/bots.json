@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "studio.bots",
+      "label": "Bots（主聊天、群组、值守与 Webhook）",
+      "aliases": ["Bot", "机器人", "审核员", "主聊天", "Webhook"],
+      "category": "host",
+      "purpose": "本机 Bot 复用 Codex 会话，职责、记忆和主聊天独立保存。从任务 @ Bot 后可选主聊天、已有聊天或新会话，结论回到原会话。Bots 工作台汇总历史、群组、待办和自动运行。Webhook 经中转投递到账号绑定的设备。",
+      "steps": [
+        "调整路由或历史时，确保请求 ID、收件箱消息和 Codex 回合保持一一对应，重试不重复运行。",
+        "调整 Bot 权限时，验证新建、追问、归档恢复和线程分支都使用只读限制。",
+        "修改 Webhook 时，核对 Relay 凭据隔离、账号与设备范围及结果默认仅对本机可见。"
+      ],
+      "anchors": [
+        { "label": "Bot 主聊天与请求", "path": "studio/packages/host/src/features/bots/service.ts", "anchor": "export class BotsFeature" },
+        { "label": "Bot 工作台", "path": "studio/packages/ui/src/bots/view.tsx", "anchor": "export const botsView" },
+        { "label": "Webhook 入口和事件", "path": "studio/packages/relay/src/bot-webhooks.ts", "anchor": "export class BotWebhooks" }
+      ],
+      "related": ["studio.sessions", "studio.duty", "studio.remote"],
+      "next": ["studio/plans/studio-bots.md", "studio/e2e/studio/bots.spec.ts"]
+    }
+  ]
+}

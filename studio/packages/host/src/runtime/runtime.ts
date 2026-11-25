@@ -56,7 +56,7 @@ export interface SessionRuntimeApi {
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
-  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void }): Promise<Session>;
+  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void; developerInstructions?: string }): Promise<Session>;
   /** Claude only (接续已有会话, 2026-11-05): sessions started outside Studio that a new task can go on from. */
   outsideSessions?(): Promise<OutsideSessionList>;
   /** Claude only: the end of one of those, to recognise it; null when it has no conversation. */

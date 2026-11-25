@@ -8,6 +8,7 @@ import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
+import { isBotTask } from "../bots/data.js";
 import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
@@ -506,6 +507,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
+    if (isBotTask(this.store, owner.taskId) && this.requireProfile(input.profileId).runtime !== "codex") throw new HostError("bad_request", "Bot 会话当前只支持 Codex。");
     return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
   }
 

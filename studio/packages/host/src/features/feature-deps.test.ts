@@ -24,6 +24,7 @@ const GRAPH: Record<string, string[]> = {
   config: ["claudeaccounts", "scratchpad"],
   datamgmt: ["attachments", "projects"],
   duty: ["sessions", "tasks"],
+  bots: ["sessions", "tasks"],
   gitreview: ["projects", "remote", "sessions"],
   guide: ["config", "teamtasks"],
   marks: ["openin"],

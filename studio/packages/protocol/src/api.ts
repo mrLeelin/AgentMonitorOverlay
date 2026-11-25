@@ -9,6 +9,7 @@ import type { ChatFileRoutes } from "./chatfiles.js";
 import type { CliRoutes } from "./cli.js";
 import type { DataRoutes } from "./datamgmt.js";
 import type { DutyRoutes } from "./duty.js";
+import type { BotRoutes } from "./bots.js";
 import type { FileRoutes } from "./files.js";
 import type { GitReviewRoutes } from "./gitreview.js";
 import type { MaintenanceRoutes } from "./maintenance.js";
@@ -610,6 +611,7 @@ export interface HostRoutes
     CliRoutes,
     DataRoutes,
     DutyRoutes,
+    BotRoutes,
     FileRoutes,
     GitReviewRoutes,
     MaintenanceRoutes,

@@ -11,6 +11,8 @@ import { StartingCover } from "../lib/StartingCover.js";
 import { sessionModelName, useProfileChoices } from "../lib/choices.js";
 import { SessionTree } from "./SessionTree.js";
 import { Thread } from "./Thread.js";
+import { BotAvatar } from "../bots/BotAvatar.js";
+import { useBots } from "../bots/BotRequests.js";
 import { flash } from "./ReplyNav.js";
 import { annotationRange, flashAnnotation, flashRange, highlightsSupported, scrollToBox } from "../review/highlights.js";
 import { REVEAL_ITEM_EVENT, type DeliveryAction } from "../chat/Transcript.js";
@@ -100,6 +102,8 @@ type Toast = { text: string; command?: string; error?: boolean } | null;
 
 /** Task page: session tree | conversation with composer. Annotations and the scratchpad join in stage 2. */
 export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask, onOpenPlaneOriginal }: TaskPageProps) {
+  const bots = useBots(link, !task.remote);
+  const ownerBot = bots.find((bot) => bot.taskId === task.id);
   useMarkReviewSeen(task);
   const own = sessions.filter((s) => s.taskId === task.id);
   // The first live session; in an archived task (or one whose sessions are all archived), the latest archived one.
@@ -413,6 +417,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         <BackButton label={backLabel} onClick={onBack} />
         <div className="task-head-main">
           <h1 className="task-title" data-testid="task-title">
+            {ownerBot && <BotAvatar name={ownerBot.name} avatar={ownerBot.avatar} size={30} />}
             <EditableName
               value={task.title}
               placeholder="未命名任务"
@@ -769,6 +774,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           <FileLinks link={link} workspaceId={session?.workspaceId ?? task.workspaceId} sessionId={session?.id ?? null} cwd={session?.cwd} onPreview={setPreview} onError={showError} {...(copy ? { remoteTask: task.id } : {})}>
             <Thread
               link={link}
+              bots={bots}
               {...(copy ? { remote: { blocked: copy.blocked, revoked: copy.state === "revoked" } } : {})}
               presets={settings?.presets ?? []}
               session={session}

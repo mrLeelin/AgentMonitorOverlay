@@ -7,6 +7,7 @@ import { useFileMarks } from "../marks/useFileMarks.js";
 import { enterKey } from "../chat/inputPrefs.js";
 import type { FileRefItem } from "./refs.js";
 import { fileToken } from "./inlineResources.js";
+import { BotAvatar } from "../bots/BotAvatar.js";
 import { mentionGroups, mentionSpans, QUICK_COMMIT, subSessionName, subSessionSetups, withMentionRefs, type MentionGroup, type MentionOption, type MentionPick, type SubSessionSpec } from "./mentions.js";
 
 /**
@@ -28,6 +29,7 @@ export function useComposerMentions(input: {
   text: string;
   setText(next: string): void;
   tasks: readonly Task[];
+  bots?: Parameters<typeof mentionGroups>[0]["bots"];
   sessions: readonly Session[];
   current: Session | null;
   /** A file was picked: its absolute path. */
@@ -113,6 +115,7 @@ export function useComposerMentions(input: {
     const pinnedTask = (t: Task) => (!!t.topicId && pins.has("topic", t.topicId)) || pins.has("project", t.workspaceId);
     return mentionGroups({
       query,
+      bots: input.bots,
       tasks,
       pinnedTask,
       sessions,
@@ -125,7 +128,7 @@ export function useComposerMentions(input: {
       ...(projects && (query || projectsAlways) ? { projects: pinnedFirst(projects, pins.project, (w) => w.id) } : {}),
       ...(draftMode ? { sessionsUnderTasks: true, find: !!workspaceId } : {}),
     });
-  }, [query, tasks, pins, sessions, current, shownFiles, marks, workspaceId, subsession, commit, template, projects, projectsAlways, draftMode]);
+  }, [query, tasks, pins, sessions, current, shownFiles, marks, workspaceId, subsession, commit, template, projects, projectsAlways, draftMode, input.bots]);
   const flat = groups.flatMap((g) => g.options);
   const hl = Math.min(highlight, Math.max(flat.length - 1, 0));
 
@@ -164,7 +167,7 @@ export function useComposerMentions(input: {
     const session = option.kind === "session" ? sessions.find((s) => s.id === option.id) : undefined;
     const project = option.kind === "project" ? projects?.find((w) => w.id === option.id) : undefined;
     const pick: MentionPick =
-      option.kind === "task" ? { kind: "task", id: option.id } : project ? { kind: "project", id: project.id, path: project.path } : { kind: "session", id: option.id, taskId: session?.taskId ?? null };
+      option.kind === "task" || option.kind === "bot" ? { kind: option.kind, id: option.id } : project ? { kind: "project", id: project.id, path: project.path } : { kind: "session", id: option.id, taskId: session?.taskId ?? null };
     setPicked((cur) => new Map(cur).set(option.name, pick));
   };
 
@@ -249,6 +252,13 @@ export function useComposerMentions(input: {
     },
     /** The 子会话设定 the message names, sent to the Host with it (2026-11-05). Read before expand(). */
     setups: (message: string) => subSessionSetups(message, picked),
+    bots: (message: string) => {
+      const names = mentionSpans(message, [...picked.keys()]).flatMap((part) => part.mention ? [part.text.slice(1)] : []);
+      return [...new Set(names)].flatMap((name) => {
+        const pick = picked.get(name);
+        return pick?.kind === "bot" ? [{ id: pick.id, name }] : [];
+      });
+    },
     /** The message as sent (see withMentionRefs). Forgets the picks. */
     expand(message: string): string {
       const out = withMentionRefs(message, picked);
@@ -302,7 +312,7 @@ export function MentionList({ mentions, inline = false }: { mentions: ComposerMe
                   mentions.choose(o);
                 }}
               >
-                <span className="suggest-name">{o.sub ? `└ 会话「${o.name}」` : o.name}</span>
+                {o.kind === "bot" ? <span className="suggest-name bot-identity"><BotAvatar name={o.name} avatar={o.avatar} size={22} /><span>{o.name}</span></span> : <span className="suggest-name">{o.sub ? `└ 会话「${o.name}」` : o.name}</span>}
                 <span className="suggest-hint">{o.hint}</span>
               </button>
             );

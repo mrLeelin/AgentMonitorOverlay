@@ -393,7 +393,7 @@ export class CodexEvents {
         if (sent) {
           st.sent.delete(clientId as string);
           this.core.messagePurposeConsumed(s.id, sent.itemId);
-          this.core.updateItem(sent.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
+          this.core.updateItem(sent.itemId, (it) => (it.type === "user" ? { ...withDelivery(it, undefined), raw: { runtime: "codex", method: it.raw?.method ?? method, turnId, itemId: item.id } } : it));
           const row = this.core.store.getItem(sent.itemId);
           if (row?.type === "user") this.core.messageDelivered(s.id, row.text);
           return;

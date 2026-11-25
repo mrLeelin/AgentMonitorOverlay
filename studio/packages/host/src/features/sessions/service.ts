@@ -11,6 +11,7 @@ import { readSetups, rememberSetups } from "./setups.js";
 import { newId } from "../../store/store.js";
 import type { ContextBreakdown, SessionContextUsage, SessionForkOptions, SessionForkRequest, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 import { createForkWorktree, forkGitOptions } from "./fork-worktree.js";
+import { isBotHome, isBotTask } from "../bots/data.js";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -333,6 +334,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   }
 
   async archive(sessionId: Id): Promise<Session[]> {
+    if (isBotHome(this.store, sessionId)) throw new HostError("conflict", "请从 Bots 设置新建主聊天，再归档旧聊天。");
     this.requireSession(sessionId);
     return this.wrap(() => this.runtime.archive(sessionId));
   }
@@ -379,6 +381,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    */
   async terminal(sessionId: Id, launch: boolean): Promise<TerminalAttach> {
     const s = this.requireSession(sessionId);
+    if (isBotTask(this.store, s.taskId)) throw new HostError("read_only", "只读 Bot 会话不能交给终端。");
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be opened in a terminal");
     if (s.runtime === "claude") return this.handToTerminal(s, launch);
     const info = await this.wrap(() => this.runtime.attachInfo(sessionId));

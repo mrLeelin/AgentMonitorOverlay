@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 202
+      "used": 203
     },
     "claude": {
       "limit": 300,
@@ -1427,6 +1427,11 @@
       "at": "2026-11-15T04:39:28.868Z",
       "provider": "gpt",
       "note": "complex-fixed-1794716477367 actual turn/start 28"
+    },
+    {
+      "at": "2026-11-25T12:37:51.709Z",
+      "provider": "gpt",
+      "note": "Orca Bots migration: one isolated read-only fixture turn"
     }
   ]
 }

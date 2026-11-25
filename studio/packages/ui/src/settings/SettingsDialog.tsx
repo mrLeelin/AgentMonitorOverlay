@@ -27,6 +27,8 @@ import { pickDirectory } from "../folders/FolderPicker.js";
 import { GitEditorPage } from "./GitEditorPage.js";
 import { PromptTemplateManager } from "../attach/PromptTemplateDialog.js";
 import { SkillsPage } from "./SkillsPage.js";
+import { BotsPage } from "../bots/BotsPage.js";
+import type { Session } from "@amo-studio/protocol";
 import { IconAgent, IconChevronRight, IconEnvironment, IconPlan, IconSearch, IconShield, IconTerminal, IconX } from "../chat/icons.js";
 import { PageActionsSlot } from "./PageActions.js";
 import { SettingField } from "./SettingField.js";
@@ -52,6 +54,7 @@ const PAGES = [
   { id: "stats", group: "models", label: "用量统计", keywords: "用量 token 费用 花费 消耗" },
   { id: "mcp", group: "tools", label: "MCP", keywords: "服务 工具 stdio HTTP" },
   { id: "skills", group: "tools", label: "技能展览", keywords: "技能 Skills Agent 全局 项目 发现 来源 目录 Codex Claude ClawHub skills.sh" },
+  { id: "bots", group: "tools", label: "Bots", keywords: "Bot 机器人 审核员 主聊天 记忆" },
   { id: "git-editor", group: "tools", label: "Git 编辑器", keywords: "程序 路径 自动 检测 打开方式" },
   { id: "duty", group: "tools", label: "值守", keywords: "调度 定时 任务 自动" },
   { id: "network", group: "advanced", label: "网络", keywords: "连接 代理 proxy HTTP SOCKS 连通性" },
@@ -82,7 +85,7 @@ let lastGroup: SettingsGroup | null = "general";
 const groupFor = (page: SettingsPage): SettingsGroup => PAGES.find((p) => p.id === page)!.group;
 
 /** Settings keeps one category expanded; search temporarily previews matching pages across all categories. */
-export function SettingsDialog({ link, state, settings, page: startPage, onClose, onOpenRemote }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void }) {
+export function SettingsDialog({ link, state, settings, page: startPage, onClose, onOpenRemote, onOpenBotChat }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void; onOpenBotChat?: (session: Session) => void }) {
   const [selectedPage, setPage] = useState<SettingsPage>(startPage ?? lastPage);
   const [expanded, setExpanded] = useState<SettingsGroup | null>(startPage ? groupFor(startPage) : lastGroup);
   const [search, setSearch] = useState("");
@@ -256,6 +259,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                   </div>
                 )}
                 {page === "network" && <NetworkPage link={link} value={settings?.network} />}
+                {page === "bots" && <BotsPage link={link} state={state} onOpenChat={onOpenBotChat} />}
                 {page === "ui" && <UiPage link={link} onOpenRemote={onOpenRemote} />}
 
                 {page === "models" && <ModelsPage link={link} settings={settings} />}
