@@ -29,6 +29,7 @@
 ## 还开着的事
 
 - Plane 团队任务在 Studio 右侧工作区加载原生看板和工作项详情，右键工作项可创建本地副本。关联任务开工时提示 AI 通过只读 MCP 核对原单，待团队部署 Plane 覆盖层和 Studio Host。方案 `plans/done/plane-team-tasks.md`。
+- Studio 接入 Unity 方案待确认：首版在会话点击 `@Prefab`，打开对应工程并选中资源。方案见 `plans/studio-unity-connection.md`。
 
 - 画布点击与拖动已分开：未选中的卡片可直接拖动，详情只在点击松手后打开，拖完不再弹出；3 条新手势用例及既有框选、多选、平移、连线与详情流程共 12 条隔离 Electron 回归通过，类型检查、构建通过，已检查 `screenshots/studio/canvas-gestures-{drag,drag-dark,click}.png`。扩展检查的旧尺寸用例仍期待旧卡片高度（152，实际 178），已用原始画布代码确认同样失败，本次未改。刷新源码版窗口即可加载；未提交、发布或重启当前 Studio/Host。
 
