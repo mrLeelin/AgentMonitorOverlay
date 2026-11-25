@@ -14,7 +14,7 @@ import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-pu
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
-export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "teamTasks" | "topics"> {
+export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics"> {
   latestDelivery: (taskId: Id) => TaskResult | undefined = () => undefined;
   readonly leadPromotion = new TaskLeadPromotion(this.host, this);
   private readonly sessionStarts = new Map<Id, number>();
@@ -229,7 +229,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     worktree?: { branch?: string };
     /** Filed without a session: the sentence its first session will take (2026-11-05). */
     firstMessage?: string;
-  }): Promise<{ task: Task; session: Session | null }> {
+  }, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.firstSession) {
@@ -256,7 +256,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     let task: Task | undefined;
     try {
-      task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column });
+      task = this.createTaskRecord({ ...input, title: input.title?.trim() || input.firstSession?.text?.trim().slice(0, 60), firstMessage: input.firstSession ? "" : input.firstMessage, column: input.firstSession ? "doing" : input.column }, link);
       const { subsessions: _setups, ...first } = input.firstSession ?? { profileId: "" };
       const session = input.firstSession ? await this.startSession({ taskId: task.id, topicId: null }, workspace, first, worktree?.cwd) : null;
       if (session && setups.length) this.f.sessions.rememberSetups(session.id, setups);
@@ -584,7 +584,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });
     else if (owner.topicId) this.publish({ type: "topic.upserted", topic: this.store.updateTopic(owner.topicId, {}) });
-    if (owner.taskId && purpose !== "inquiry" && (input.text?.trim() || images.length)) this.f.teamTasks.sessionStarted(owner.taskId);
+    if (owner.taskId && purpose !== "inquiry" && (input.text?.trim() || images.length)) this.host.reportTaskExecutionStarted(owner.taskId);
     return session;
   }
 

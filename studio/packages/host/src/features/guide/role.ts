@@ -14,7 +14,7 @@ import { WORKFLOW_READING_GUIDE } from "./guide.js";
 export { leadsTopic, noteOwnDescription, recordRole, refTopics, roleFacts, roleUpdate, type AmoRole, type RoleFacts, type RoleSubject } from "../../core/role.js";
 
 /** What the card reads besides the store: the person's notes on models as sub-sessions (设置 → 子会话). */
-type CardHost = FeatureHost<"config">;
+type CardHost = FeatureHost<"config" | "teamTasks">;
 
 const taskName = (t: Task) => t.title || "未命名任务";
 const oneLine = (s: string, max: number) => s.replace(/\s+/g, " ").slice(0, max);
@@ -43,6 +43,8 @@ function cardOf(service: CardHost, f: RoleFacts): string {
   if (f.task) {
     lines.push(`- 任务：${taskName(f.task)}（${f.task.id}）· 状态 ${f.task.column}${f.task.lead ? " · 主控" : ""}`);
     if (f.task.description) lines.push(`- 任务说明预览：${oneLine(f.task.description, 400)}${f.task.description.replace(/\s+/g, " ").length > 400 ? "…（已截断）" : ""}；完整原文用 task_get({taskId:"${f.task.id}"}) 读取 description，保留换行和尾部要求，不必请主控补发。`);
+    const plane = service.teamTasks.board.contextInstruction(f.task.id);
+    if (plane) lines.push(`- ${plane}`);
     const manager = f.task.managerTaskId ? service.store.getTask(f.task.managerTaskId) : null;
     lines.push(`- 直属主控：${manager ? `${taskName(manager)}（${manager.id}）` : "未分配；同专题和画布位置不代表归属"}`);
     const root = managementRoot(service.store.listTasks(), f.task.id);

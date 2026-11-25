@@ -396,4 +396,33 @@ export const MIGRATIONS: readonly Migration[] = [
     awaiting_review INTEGER NOT NULL DEFAULT 0, UNIQUE(server, ticket_id)
   );
   `,
+  // 32: A shared board can be opened with another team account on the same Studio data directory.
+  `
+  CREATE TABLE local_team_board_links (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    server TEXT NOT NULL, account TEXT NOT NULL, ticket_id TEXT NOT NULL, UNIQUE(server, account, ticket_id)
+  );
+  `,
+  // 33: Restore a returned team's original task when the same person claims it again.
+  `
+  ALTER TABLE local_team_board_links ADD COLUMN returned INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 34: Keep the Plane work item's original details available even when the server is offline.
+  `
+  ALTER TABLE local_team_board_links ADD COLUMN plane_context TEXT;
+  `,
+  // 35: Each confirmed Plane draft owns a separate local task. Retrying that draft finds the same task.
+  `
+  ALTER TABLE local_team_board_links RENAME TO local_team_board_links_old;
+  CREATE TABLE local_team_board_links (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    server TEXT NOT NULL, account TEXT NOT NULL, ticket_id TEXT NOT NULL,
+    returned INTEGER NOT NULL DEFAULT 0, plane_context TEXT, request_id TEXT
+  );
+  INSERT INTO local_team_board_links (task_id, server, account, ticket_id, returned, plane_context)
+    SELECT task_id, server, account, ticket_id, returned, plane_context FROM local_team_board_links_old;
+  DROP TABLE local_team_board_links_old;
+  CREATE UNIQUE INDEX local_team_board_original ON local_team_board_links (server, account, ticket_id) WHERE request_id IS NULL;
+  CREATE UNIQUE INDEX local_team_board_request ON local_team_board_links (server, account, ticket_id, request_id) WHERE request_id IS NOT NULL;
+  `,
 ];

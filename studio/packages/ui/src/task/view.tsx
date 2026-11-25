@@ -26,6 +26,7 @@ export const taskView: ViewDef<"task"> = {
         backLabel={back.label}
         onBack={() => setView(back.view)}
         onOpenTask={(taskId) => setView({ kind: "task", taskId, back: view.back })}
+        onOpenPlaneOriginal={(originalUrl) => setView({ kind: "team", originalUrl })}
       />
     );
   },

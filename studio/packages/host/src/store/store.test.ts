@@ -50,11 +50,34 @@ describe("Store", () => {
     expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
   });
 
+  it("preserves the archived Plane reference while allowing a new draft per submission", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { ws, task } = seed(store);
+    store.updateTask(task.id, { archivedAt: "2026-11-24T00:00:00Z" });
+    store.db.exec("DROP TABLE local_team_board_links; DELETE FROM schema_migrations WHERE version = 35;");
+    for (const migration of MIGRATIONS.slice(31, 34)) store.db.exec(typeof migration === "string" ? migration : migration.sql);
+    const source = "https://plane.example/api/v1/amo-team-board/workspaces/team/projects/project";
+    const context = JSON.stringify({ number: "TEAM-14", title: "团队原单", creator: "提出人" });
+    store.db.prepare("INSERT INTO local_team_board_links (task_id, server, account, ticket_id, plane_context) VALUES (?, ?, ?, ?, ?)").run(task.id, source, "actor", "item", context);
+    open.pop()!.close();
+
+    const migrated = makeStore(path);
+    const fresh = migrated.createTask({ title: "新的个人任务", workspaceId: ws.id });
+    const second = migrated.createTask({ title: "另一次提交", workspaceId: ws.id });
+    const insert = migrated.db.prepare("INSERT INTO local_team_board_links (task_id, server, account, ticket_id, request_id) VALUES (?, ?, ?, ?, ?)");
+    insert.run(fresh.id, source, "actor", "item", "submit-1");
+    expect(() => insert.run(second.id, source, "actor", "item", "submit-1")).toThrow(/UNIQUE/);
+    insert.run(second.id, source, "actor", "item", "submit-2");
+    expect(migrated.db.prepare("SELECT plane_context FROM local_team_board_links WHERE task_id = ?").get(task.id)).toEqual({ plane_context: context });
+    expect(migrated.getTask(task.id)?.archivedAt).toBe("2026-11-24T00:00:00Z");
+  });
+
   it("migrates unassigned legacy tasks without guessing managers and persists transfers across reopen", () => {
     const path = tempDbPath();
     const store = makeStore(path);
     const { ws, task } = seed(store);
-    store.db.exec("DROP TABLE local_team_tickets; DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
+    store.db.exec("DROP TABLE local_team_board_links; DROP TABLE local_team_tickets; DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(26);
     open.pop()!.close();
     const migrated = makeStore(path);
@@ -95,7 +118,7 @@ describe("Store", () => {
     store.putCanvas({ ...doc, links: [...doc.links!, collaboration] } as CanvasDoc);
     store.putCanvas({ ...emptyCanvas("only-collaboration"), links: [collaboration] } as CanvasDoc);
     store.putCanvas({ ...doc, id: "unchanged" });
-    store.db.exec("DROP TABLE local_team_tickets; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
+    store.db.exec("DROP TABLE local_team_board_links; DROP TABLE local_team_tickets; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(27);
     open.pop()!.close();
     const upgraded = makeStore(path);

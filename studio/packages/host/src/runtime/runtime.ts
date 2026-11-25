@@ -155,7 +155,7 @@ const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", 
  * step 2) — 2026-11-05, plans/host-structure.md 8a: it used to be a wrapper around the router.
  */
 export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements SessionRuntimeApi {
-  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; goal?: (sessionId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
+  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; goal?: (sessionId: Id) => string; startup?: (taskId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
   private readonly purposeBoundaries = new Map<Id, Id>();
   private readonly dispatching = new Map<Id, { purpose: MessagePurpose; done: Promise<void> }>();
   private readonly goalStopVersions = new Map<Id, number>();
@@ -271,16 +271,20 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]) {
     if (input.taskId) this.context?.checkStart?.(input.taskId, true);
     const context = input.taskId ? this.context?.task(input.taskId) ?? "" : "";
-    const text = input.text && input.taskId ? this.withContext(input.text, context) : input.text;
+    const startup = input.text && input.taskId ? this.context?.startup?.(input.taskId) ?? "" : "";
+    const text = input.text ? this.withContext(this.withContext(input.text, startup), context) : input.text;
     const beforeDispatch = this.frozenInputGuard(text ?? "", context, () => input.taskId ? this.context?.task(input.taskId) ?? "" : "", () => { if (input.taskId) this.context?.checkStart?.(input.taskId, false); }, input.beforeDispatch);
     return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch });
   }
   sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}) {
     const goalSession = this.store.getSession(sessionId);
     if (goalSession?.goal?.status === "active" && (options.purpose === "inquiry" || options.purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
-    const taskId = this.store.getSession(sessionId)?.taskId;
+    const taskId = goalSession?.taskId;
     if (taskId) this.context?.checkStart?.(taskId, false);
-    const context = this.context?.session(sessionId) ?? "", input = this.withContext(text, context);
+    const work = !options.purpose || options.purpose === "work" || options.purpose === "reopen";
+    const startup = taskId && goalSession.runtime !== "remote" && work ? this.context?.startup?.(taskId) ?? "" : "";
+    const context = this.context?.session(sessionId) ?? "";
+    const input = this.withContext(startup && !this.store.hasWorkInput(sessionId) ? this.withContext(text, startup) : text, context);
     options = { ...options, skillText: options.skillText ?? text };
     const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
     const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";

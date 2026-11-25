@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { HostRoutes, ModelProfile, Session, SessionOptions, SubsessionSetup, Task } from "@amo-studio/protocol";
+import type { HostRoutes, ModelProfile, NewTaskInput, Session, SessionOptions, SubsessionSetup, Task } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { defaultProfile, rememberProfile, rememberWorkspace, repick } from "../lib/profiles.js";
 import { isHiddenPick, rememberPick, type ModelPick } from "../lib/recents.js";
@@ -92,17 +92,19 @@ export function draftText(draft: Pick<TaskDraft, "text" | "refs">): string {
 const save = (d: TaskDraft): void => writeStoredJson(KEY, d);
 
 /** The shared draft. `update` merges; switching the model drops an effort or permission the new one may not take. */
-export function useTaskDraft(profiles: readonly ModelProfile[]) {
-  const [draft, setDraft] = useState<TaskDraft>(() => load(profiles));
+export function useTaskDraft(profiles: readonly ModelProfile[], initial?: Partial<TaskDraft>) {
+  const isolated = initial !== undefined;
+  const [draft, setDraft] = useState<TaskDraft>(() => initial ? { ...emptyDraft(profiles), ...initial } : load(profiles));
   const latest = useRef(draft);
   latest.current = draft;
   useEffect(() => {
+    if (isolated) return;
     const onStorage = (e: StorageEvent) => {
       if (e.key === KEY) setDraft(load(profiles));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [profiles]);
+  }, [profiles, isolated]);
   // A model hidden in 设置 → 模型 after the draft took it gives way to the default (问题 #14); so does an empty pick
   // once the profiles have loaded.
   const modelHidden = isHiddenPick(draft.pick.profileId, draft.pick.model);
@@ -111,25 +113,25 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
     if (next === null) return;
     setDraft((cur) => {
       const fixed = { ...cur, pick: { profileId: next, model: null }, options: {} };
-      save(fixed);
+      if (!isolated) save(fixed);
       return fixed;
     });
-  }, [profiles, draft.pick.profileId, modelHidden]);
+  }, [profiles, draft.pick.profileId, modelHidden, isolated]);
   const update = useCallback((patch: Partial<TaskDraft>) => {
     setDraft((cur) => {
       const next = { ...cur, ...patch };
       if (patch.pick && patch.pick.profileId !== cur.pick.profileId) next.options = {};
-      save(next);
+      if (!isolated) save(next);
       return next;
     });
-  }, []);
+  }, [isolated]);
   const reset = useCallback(
     (keep: Partial<TaskDraft> = {}) => {
       const next = { ...emptyDraft(profiles), pick: latest.current.pick, ...keep };
-      save(next);
+      if (!isolated) save(next);
       setDraft(next);
     },
-    [profiles],
+    [profiles, isolated],
   );
   return { draft, update, reset };
 }
@@ -140,8 +142,10 @@ export function useTaskDraft(profiles: readonly ModelProfile[]) {
  * with the first message (not when only filing).
  */
 /** `resumeFrom` (接续已有会话, 2026-11-05): the outside Claude session the first session goes on from; the text may be empty then. */
-export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[], goalRuntime?: ModelProfile["runtime"], worktree?: WorktreeChoice): Promise<{ task: Task; session: Session | null }> {
-  if (readPendingGoalStart()) throw new Error("已有一次 Goal 开启尚未完成，请回到新建任务页重试或进入已建会话。");
+export type CreateTaskFromDraft = (input: NewTaskInput) => Promise<{ task: Task; session: Session | null; existing?: boolean }>;
+
+export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolean, onCanvas = false, attachments: readonly string[] = [], resumeFrom?: string, subsessions?: readonly SubsessionSetup[], goalRuntime?: ModelProfile["runtime"], worktree?: WorktreeChoice, create?: CreateTaskFromDraft): Promise<{ task: Task; session: Session | null }> {
+  if ((!create || draft.goal) && readPendingGoalStart()) throw new Error("已有一次 Goal 开启尚未完成，请回到新建任务页重试或进入已建会话。");
   if (draft.lead && resumeFrom) throw new Error("接续已有会话不能作为主控带队，请新建主控会话。");
   const text = draftText(draft);
   if (draft.goal && (file || resumeFrom || attachments.length)) throw new Error(file ? "Goal 需要直接开始，不能放进待办。" : resumeFrom ? "接续已有会话请在会话内开启 Goal。" : "Goal 直接启动暂不带图片，请关闭 Goal 发送图片，再在会话内开启。");
@@ -151,7 +155,7 @@ export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolea
   const options: SessionOptions = { ...draft.options, ...(draft.pick.model ? { model: draft.pick.model } : {}) };
   // Lead isolation is enforced by each runtime (Claude calls it plan); never reuse the draft's writable choice.
   if (draft.lead) delete options.permission;
-  const created = await call(link, "POST /api/tasks", {}, {
+  const request: NewTaskInput = {
     ...(draft.title.trim() ? { title: draft.title.trim() } : file || goal ? { title: text.split("\n")[0]!.slice(0, 60) } : {}),
     workspaceId: draft.projectId,
     topicId: draft.topicId,
@@ -163,7 +167,9 @@ export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolea
     ...(file
       ? { firstMessage: text }
       : { firstSession: { profileId: draft.pick.profileId, ...(!goal && text ? { text } : {}), ...(Object.keys(options).length ? { options } : {}), ...(attachments.length ? { attachments: [...attachments] } : {}), ...(resumeFrom ? { resumeFrom } : {}), ...(setups.length ? { subsessions: [...setups] } : {}) } }),
-  });
+  };
+  const created = create ? await create(request) : { ...await call(link, "POST /api/tasks", {}, request), existing: false };
+  if (created.existing) return created;
   if (goal && created.session) {
     // Persist before activation: an error or a renderer reload must not turn Retry into a duplicate task.
     const pending = { taskId: created.task.id, sessionId: created.session.id, goal, ...(onCanvas && created.task.topicId ? { onCanvas: true } : {}) };

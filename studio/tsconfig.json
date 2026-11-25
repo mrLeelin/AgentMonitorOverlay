@@ -13,6 +13,7 @@
     { "path": "packages/relay" },
     { "path": "packages/relay-app" },
     { "path": "packages/team-tasks-app" },
+    { "path": "packages/team-board-server" },
     { "path": "packages/platform" }
   ]
 }

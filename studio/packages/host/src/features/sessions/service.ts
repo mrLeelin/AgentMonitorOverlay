@@ -20,7 +20,7 @@ export const SLOW_SEND_MS = 5000;
 const busy = (s: Session) => inTurn(s.status);
 
 /** Sessions: conversation, approvals, branches, archive, names and options, terminals. */
-export class SessionsFeature extends Feature<"attachments" | "collab" | "config" | "remote" | "review" | "tasks" | "teamTasks" | "sharedContext"> {
+export class SessionsFeature extends Feature<"attachments" | "collab" | "config" | "remote" | "review" | "tasks" | "sharedContext"> {
   /** Messages from agents and from Studio: held until the session is free (inbox.ts). */
   readonly inbox = new SessionInbox(this.host, this);
 
@@ -162,7 +162,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     // A read-only question or automatic notice does not authorize resuming work the person deliberately paused.
     if (options.purpose !== "inquiry" && options.purpose !== "notification") {
       this.inbox.resume(sessionId);
-      if (session.taskId && result.mode !== "queue") this.f.teamTasks.sessionStarted(session.taskId);
+      if (session.taskId && result.mode !== "queue") this.host.reportTaskExecutionStarted(session.taskId);
     }
     return result;
   }

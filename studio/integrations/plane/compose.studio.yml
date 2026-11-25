@@ -1,0 +1,10 @@
+services:
+  api:
+    environment:
+      AMO_PLANE_TEAM_PROJECTS: ${AMO_PLANE_TEAM_PROJECTS:-}
+    volumes:
+      - ${AMO_PLANE_OVERLAY_DIR:-./studio-plane-overlay}/amo_team_board.py:/code/plane/amo_team_board.py:ro
+      - ${AMO_PLANE_OVERLAY_DIR:-./studio-plane-overlay}/amo_team_workflow.py:/code/plane/amo_team_workflow.py:ro
+      - ${AMO_PLANE_OVERLAY_DIR:-./studio-plane-overlay}/app_issue.py:/code/plane/app/views/issue/base.py:ro
+      - ${AMO_PLANE_OVERLAY_DIR:-./studio-plane-overlay}/api_issue.py:/code/plane/api/views/issue.py:ro
+      - ${AMO_PLANE_OVERLAY_DIR:-./studio-plane-overlay}/api_urls.py:/code/plane/api/urls/__init__.py:ro

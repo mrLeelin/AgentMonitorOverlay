@@ -77,6 +77,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "sessions.peer-queue", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱以前 session_send 的队列（启动时迁进收件箱，过一两个版本删）" },
   { key: "teamrelay.sends", scope: "global", owner: "features/teamrelay/service.ts", what: "中转：会话要发的（等人确认、已发出）" },
   { key: "teamrelay.threads", scope: "global", owner: "features/teamrelay/service.ts", what: "中转：会话发出的中转会话" },
+  { key: "plane-task-drafts", scope: "global", owner: "features/teamtasks/board.ts", what: "每个 AMO 账号待发布的 Plane 草稿及重试编号" },
   // 远程
   { key: "remote.enabled", scope: "global", owner: "features/remote/service.ts", what: "远程为哪个账号打开（默认关闭）" },
   { key: "remote.pairs", scope: "global", owner: "features/remote/service.ts", what: "配对的设备" },

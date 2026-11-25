@@ -59,11 +59,6 @@
 .tt-sign-in { padding: 24px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .tt-sign-in p { margin-top: 7px; }
 .tt-empty { padding: 10px 4px; }
-.tt-board-shell { display: flex; flex-direction: column; flex: 1 0 auto; min-width: 0; }
-.tt-board-bar { display: flex; justify-content: flex-end; padding: 8px 23px 0; }
-.tt-board-row { flex: 1 0 auto; min-width: 0; display: flex; align-items: stretch; }
-.tt-board-row > .board { flex: 1 1 auto; min-width: 0; }
-.tt-board-row.has-inbox > .board { grid-template-columns: repeat(4, minmax(0, 1fr)); padding-inline: 14px; gap: 10px; }
 .tt-panel { width: 345px; flex: 0 0 345px; min-width: 0; border-left: 1px solid var(--border); background: var(--panel); padding: 13px 14px; }
 .tt-panel .tt-list { max-height: 247px; overflow-y: auto; }
 .tt-panel .tt-ticket[draggable="true"] { cursor: grab; }
@@ -71,15 +66,12 @@
 .tt-panel .tt-inbox-detail { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 12px; }
 .tt-panel .tt-inbox-detail h3 { overflow-wrap: anywhere; font-size: 16px; }
 .tt-panel .tt-import { display: grid; gap: 5px; margin-top: 12px; }
-.tt-drop { display: grid; min-height: 63px; padding: 7px; place-content: center; text-align: center; color: var(--primary); border: 1px dashed var(--border-strong); border-radius: 8px; background: var(--tint); font-size: 12px; }
-.column.tt-drop-active .tt-drop { background: var(--action-fill); color: #263a1d; border-color: var(--primary); border-style: solid; }
 .tt-local { padding: 7px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .tt-local-content { padding: 9px 0 3px; max-height: 48vh; overflow: auto; }
 .tt-local .tt-form { gap: 8px; }
 .tt-local .tt-form textarea { min-height: 72px; }
 .tt-local .tt-actions { flex-wrap: wrap; }
-@media (max-width: 1080px) {
-  .tt-board-row.has-inbox > .board { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+@container workbench-main (max-width: 860px) {
   .tt-panel { width: 302px; flex-basis: 302px; }
 }
 @media (max-width: 750px) {
@@ -88,6 +80,7 @@
   .tt-sent { border-right: 0; border-bottom: 1px solid var(--border); border-radius: 11px 11px 0 0; }
   .tt-sent .tt-list { max-height: 160px; overflow: auto; }
   .tt-body { padding: 17px; }
-  .tt-board-row.has-inbox { flex-direction: column-reverse; }
+}
+@container workbench-main (max-width: 600px) {
   .tt-panel { flex-basis: auto; width: 100%; border-left: 0; border-bottom: 1px solid var(--border); }
 }

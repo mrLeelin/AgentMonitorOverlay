@@ -14,8 +14,9 @@
       "@amo-studio/traymenu": ["./packages/traymenu/src/index.ts"],
       "@amo-studio/host": ["./packages/host/src/index.ts"],
       "@amo-studio/reviewer": ["./packages/reviewer/src/index.ts"],
-      "@amo-studio/relay": ["./packages/relay/src/index.ts"]
+      "@amo-studio/relay": ["./packages/relay/src/index.ts"],
+      "@amo-studio/team-board-server": ["./packages/team-board-server/src/server.ts"]
     }
   },
-  "include": ["packages/protocol/src", "packages/testkit/src", "packages/host/src", "packages/app/src", "packages/notes/src", "packages/reviewer/src", "packages/relay/src", "packages/relay-app/src", "packages/account/src", "packages/locate/src", "packages/traymenu/src", "packages/platform/src", "e2e", "vitest.config.ts"]
+  "include": ["packages/protocol/src", "packages/testkit/src", "packages/host/src", "packages/app/src", "packages/notes/src", "packages/reviewer/src", "packages/relay/src", "packages/relay-app/src", "packages/account/src", "packages/locate/src", "packages/traymenu/src", "packages/platform/src", "packages/team-board-server/src", "e2e", "vitest.config.ts"]
 }

@@ -2,10 +2,12 @@ import { TASK_DESCRIPTION_MAX, type LinkedTeamTask, type Task, type TeamTask, ty
 import { RelayClient, RelayClientError } from "@amo-studio/relay/light";
 import { Feature } from "../../core/feature.js";
 import { HostError } from "../../core/shared.js";
+import { TeamBoardHost } from "./board.js";
 
 type Link = { task_id: string; server: string; ticket_id: string; started: number; awaiting_review: number };
 
 export class TeamTasksFeature extends Feature<"tasks"> {
+  readonly board = new TeamBoardHost(this.host);
   private client(server?: string): RelayClient {
     const account = this.teamLink.account;
     if (!account) throw new HostError("bad_request", "请先在 AMO 平台里登录");

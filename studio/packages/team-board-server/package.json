@@ -1,0 +1,9 @@
+{
+  "name": "@amo-studio/team-board-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": { "build:web": "tsc -p tsconfig.web.json && vite build web --config web/vite.config.ts --outDir ../dist-web --emptyOutDir", "start": "node dist/main.js" },
+  "dependencies": { "@amo-studio/protocol": "0.0.0", "react": "19.3.0", "react-dom": "19.3.0" }
+}

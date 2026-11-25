@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, screen, shell, Tray } from "electron";
+import { installTeamPlaneView } from "./team-plane-view.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectHost, HostStartError, keepHostAlive, putHostJson, readHostJson, requestShutdown, stopHost, waitForExit, type HostConnection, type HostLinkOptions } from "./host-link.js";
@@ -352,13 +353,17 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
   });
 
   ipcMain.handle("amo:host", () => (host ? { url: host.url, token: host.token } : null));
-  ipcMain.handle("amo:save-team-task-attachment", async (event, ticketId: unknown, fileId: unknown, name: unknown) => {
+  installTeamPlaneView(() => mainWindow);
+  ipcMain.handle("amo:save-team-task-attachment", async (event, ticketId: unknown, fileId: unknown, name: unknown, board?: unknown, taskId?: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const connection = host;
     if (!win || !connection || typeof ticketId !== "string" || typeof fileId !== "string" || typeof name !== "string") throw new Error("无法保存团队任务附件");
     const selection = await dialog.showSaveDialog(win, { title: "保存团队任务附件", defaultPath: basename(name) });
     if (selection.canceled || !selection.filePath) return false;
-    const response = await fetch(`${connection.url}/api/team-tasks/${encodeURIComponent(ticketId)}/file/${encodeURIComponent(fileId)}`, { headers: { authorization: `Bearer ${connection.token}` }, signal: AbortSignal.timeout(35_000) });
+    const path = board === true && typeof taskId === "string"
+      ? `team-board/local/${encodeURIComponent(taskId)}`
+      : `${board === true ? "team-board" : "team-tasks"}/${encodeURIComponent(ticketId)}`;
+    const response = await fetch(`${connection.url}/api/${path}/file/${encodeURIComponent(fileId)}`, { headers: { authorization: `Bearer ${connection.token}` }, signal: AbortSignal.timeout(35_000) });
     const data = await response.json() as { base64?: string; error?: { message?: string } };
     if (!response.ok || typeof data.base64 !== "string") throw new Error(data.error?.message ?? "附件下载失败，请刷新原单后重试");
     await writeFile(selection.filePath, Buffer.from(data.base64, "base64"));
@@ -412,10 +417,10 @@ if (!app.requestSingleInstanceLock() || quitAsked(process.argv)) {
   // Links in replies open in the system browser; only http(s) is allowed through.
   ipcMain.handle("amo:open-external", async (_event, url: unknown) => {
     if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
-    // Tests never open a browser (it would take focus); they read the recorded URLs instead.
+    // Automated tests record the URL. An interactive demo explicitly opts in to opening the browser.
     if (testMode) {
       ((globalThis as { __amoOpenedUrls?: string[] }).__amoOpenedUrls ??= []).push(url);
-      return;
+      if (process.env.AMO_STUDIO_TEST_EXTERNAL_LINKS !== "1") return;
     }
     await shell.openExternal(url);
   });

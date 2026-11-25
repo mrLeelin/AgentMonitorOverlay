@@ -102,12 +102,17 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   readonly remote: RemoteFeature = new RemoteFeature(this);
   /** 会话里用中转 (2026-10-30): sessions ask people on the team through AMO 中转; replies come back into them. */
   readonly teamRelay: TeamRelayFeature = new TeamRelayFeature(this);
-  readonly teamTasks = new TeamTasksFeature(this);
+  readonly teamTasks: TeamTasksFeature = new TeamTasksFeature(this);
   readonly issues: IssuesFeature = new IssuesFeature(this);
   /** 值守 (2026-10-31): items that start a session, run a command or one of Studio's jobs at set times. */
   readonly duty: DutyFeature = new DutyFeature(this);
   /** The runtimes of this computer, plus "remote" for copies of tasks paired devices granted it (远程 step 2). */
   readonly runtime: SessionRuntimeApi;
+
+  /** Keep legacy Relay team tickets in sync with actual execution, without making tasks and sessions depend on the board. */
+  reportTaskExecutionStarted(taskId: Id): void {
+    this.teamTasks.sessionStarted(taskId);
+  }
 
   constructor(
     readonly store: Store,
@@ -142,7 +147,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     const router = runtime instanceof RuntimeRouter ? runtime : RuntimeRouter.around(store, runtime);
     router.register("remote", new RemoteRuntime(() => this.remote.copies));
     this.runtime = router;
-    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), goal: (id) => this.sharedContext.goalContext(id), validate: (sessionId, itemId) => { const item = this.store.getItem(itemId); if (!item || item.sessionId !== sessionId) return false; this.sessions.inbox.checkSource(item); return this.sharedContext.validateMessage(sessionId, itemId); }, checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze), defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options) });
+    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), goal: (id) => this.sharedContext.goalContext(id), startup: (id) => this.teamTasks.board.contextInstruction(id), validate: (sessionId, itemId) => { const item = this.store.getItem(itemId); if (!item || item.sessionId !== sessionId) return false; this.sessions.inbox.checkSource(item); return this.sharedContext.validateMessage(sessionId, itemId); }, checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze), defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options) });
     router.on("message-delivered", (sessionId, text) => this.sharedContext.markDelivered(sessionId, text));
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));
