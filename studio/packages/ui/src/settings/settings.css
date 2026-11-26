@@ -8,6 +8,11 @@
 .bots-chooser { margin-bottom: 16px; }
 .bot-avatar { display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 50%; background: hsl(var(--avatar-hue) 39% 87%); color: hsl(var(--avatar-hue) 51% 22%); font-weight: 700; line-height: 1; vertical-align: middle; }
 .bot-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bot-avatar > svg { width: 78%; height: 78%; }
+.bot-nav-roster { margin-inline-start: 16px; padding-inline-start: 5px; border-inline-start: 1px solid var(--border); max-height: min(22vh, 200px); overflow-y: auto; }
+.bot-nav-roster .wb-nav-link span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-followup { display: grid; gap: 6px; }
+.bot-followup textarea { width: 100%; resize: vertical; }
 .bot-identity { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .bots-settings textarea.field { width: min(100%, 540px); min-height: 64px; resize: vertical; }
 .bot-import { position: relative; cursor: pointer; }

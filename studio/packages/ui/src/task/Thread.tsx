@@ -661,7 +661,11 @@ ${d}` : restored));
                 {/* A remote session's approvals grey while its computer is away (or the grant is gone): they are checked again there. */}
                 <SubagentStatusContext.Provider value={subagentStatus}>
                   <Transcript session={session} items={items.filter((item) => !(item.type === "user" && (item.queueCancelled || (onDelivery && !readOnly && !blocked && !archived && item.fromPerson && item.afterTurn && item.delivery === "held"))))} annotations={annotations} model={model} busy={busy || !!blocked} view={view} onApprove={onApprove} onJump={onJump} keepTurn={initialScroll?.key} {...(onDelivery && !readOnly && !blocked ? { onDelivery: deliver } : {})} givingWay={halting === "now"} waitsForSubagents={waitsForSubagents} />
-                  <BotRequestList rows={botRequests.rows} bots={bots} />
+                  <BotRequestList rows={botRequests.rows} bots={bots} onFollowUp={canMentionBot && !readOnly && sessionId ? async (row, text, id) => {
+                    if (!row.sessionId) throw new Error("找不到这次请求的 Bot 会话。");
+                    await call(link, "POST /api/bots/:id/requests", { id: row.botId }, { id, sourceSessionId: sessionId, destination: { sessionId: row.sessionId }, text });
+                    botRequests.refresh();
+                  } : undefined} />
                 </SubagentStatusContext.Provider>
               </QuestionSeatContext.Provider>
             </AttachLink.Provider>

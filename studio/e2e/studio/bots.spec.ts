@@ -14,7 +14,7 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   const settings = page.getByTestId("studio-bots-settings");
   await settings.getByRole("button", { name: "用审核员模板" }).click();
   const avatarPreview = settings.getByTestId("bot-avatar-preview");
-  await expect(avatarPreview.locator(".bot-avatar")).toHaveText("审");
+  await expect(avatarPreview.locator(".bot-avatar svg")).toBeVisible();
   const picture = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 160;
@@ -51,7 +51,7 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   const input = page.getByRole("textbox", { name: "输入消息" });
   await input.pressSequentially("@");
   await expect(page.getByRole("option", { name: /审核员/ }).locator(".bot-avatar img")).toBeVisible();
-  await page.getByText("审核员", { exact: true }).click();
+  await page.getByRole("option", { name: /审核员/ }).click();
   await input.pressSequentially("检查当前改动");
   await expect(page.getByLabel("发送给 Bot")).toHaveValue("home");
   await input.press("Enter");
@@ -63,10 +63,28 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   expect(request?.sessionId).toBeTruthy();
   expect(request?.sessionId).not.toBe(session.id);
   await result.getByText("查看结论").click();
+  const nextHome = await studio.api<Session>("POST", `/api/bots/${bot!.id}/home`, { reset: true });
+  expect(nextHome.id).not.toBe(request!.sessionId);
+  await result.getByRole("button", { name: "追问 审核员" }).click();
+  await result.getByRole("textbox", { name: "追问 审核员" }).fill("这条结论对应哪个文件？");
   await screenshot(app, "studio", "bots-request", page);
-  await result.getByRole("button", { name: /打开 Bot 会话/ }).click();
+  await result.getByRole("button", { name: "发送追问" }).click();
+  const followUp = result.filter({ hasText: "这条结论对应哪个文件？" });
+  await expect(followUp).toContainText("已完成", { timeout: 45_000 });
+  const records = await studio.api<BotRequest[]>("GET", `/api/bot-requests?sourceSessionId=${session.id}`);
+  expect(records).toHaveLength(2);
+  expect(records.every((row) => row.sessionId === request!.sessionId)).toBe(true);
+  await followUp.getByRole("button", { name: /打开 Bot 会话/ }).click();
   await expect(page.getByTestId("task-title").locator(".bot-avatar img")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "输入消息" })).toBeVisible();
+  await page.getByRole("button", { name: "全部任务", exact: true }).click();
+  await expect(page.getByTestId("task-card").filter({ hasText: task.title })).toBeVisible();
+  await page.getByRole("group", { name: "Bot 主聊天" }).getByRole("button", { name: "审核员" }).click();
+  await expect(page.getByTestId("task-title")).toContainText("审核员");
+  await expect(page.getByRole("textbox", { name: "输入消息" })).toBeVisible();
+  await expect(page.getByText("这条结论对应哪个文件？", { exact: true })).toHaveCount(0);
+  const chats = await studio.api<Session[]>("GET", `/api/bots/${bot!.id}/chats`);
+  expect(chats).toHaveLength(2);
 });
 
 test("group members answer in their own chats and show results in the Bot workbench", async () => {

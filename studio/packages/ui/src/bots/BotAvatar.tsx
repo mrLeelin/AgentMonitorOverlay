@@ -6,7 +6,11 @@ export function BotAvatar({ name, avatar, size = 24 }: { name: string; avatar?: 
   const hue = [...label].reduce((value, char) => (value * 31 + char.codePointAt(0)!) % 360, 88);
   const style = { width: size, height: size, fontSize: Math.round(size * .47), "--avatar-hue": hue } as CSSProperties;
   return <span className="bot-avatar" aria-hidden="true" style={style}>
-    {avatar && broken !== avatar ? <img src={avatar} alt="" draggable={false} onError={() => setBroken(avatar)} /> : [...label][0] || "B"}
+    {avatar && broken !== avatar ? <img src={avatar} alt="" draggable={false} onError={() => setBroken(avatar)} /> :
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+        <path d="M12 3v3M3 12v3m18-3v3" /><rect x="5" y="7" width="14" height="13" rx="4" />
+        <path d="M9 12v1m6-1v1m-5 3q2 1.5 4 0" />
+      </svg>}
   </span>;
 }
 

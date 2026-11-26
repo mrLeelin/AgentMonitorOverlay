@@ -350,7 +350,7 @@ export function App() {
           scope={scope}
           live={live}
           teamBoard={teamTasksEnabled ? { open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) } : undefined}
-          bots={{ current: shown.kind === "bots", open: () => setView({ kind: "bots" }) }}
+          bots={{ current: shown.kind === "bots", ...(shown.kind === "task" ? { taskId: shown.taskId } : {}), open: () => setView({ kind: "bots" }), openChat: (taskId, sessionId) => setView({ kind: "task", taskId, sessionId, back: { kind: "bots" }, nav: Date.now() }) }}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
             <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />

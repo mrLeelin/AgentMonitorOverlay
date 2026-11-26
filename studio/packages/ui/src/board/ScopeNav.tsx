@@ -8,6 +8,8 @@ import type { Scope } from "./Board.js";
 import { UsageFooter } from "./UsageFooter.js";
 import { KindIcon } from "./KindIcon.js";
 import { BoardGlyph } from "../shell/WorkbenchShortcuts.js";
+import { BotAvatar } from "../bots/BotAvatar.js";
+import { botsChanged, useBots } from "../bots/BotRequests.js";
 import { GroupItems, ProjectReviewMenu, type MenuGroups, type ProjectMenuAt } from "../gitreview/ProjectReviewMenu.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { EditProjectDialog } from "./EditProjectDialog.js";
@@ -53,7 +55,7 @@ interface ScopeNavProps {
   /** Opens the settings (the button under the Host status). */
   onSettings?: () => void;
   teamBoard?: { open: boolean; toggle(): void };
-  bots?: { current: boolean; open(): void };
+  bots?: { current: boolean; taskId?: string; open(): void; openChat(taskId: string, sessionId: string): void };
   shortcuts?: ReactNode;
   onScope(scope: Scope): void;
   /**
@@ -92,6 +94,18 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   const [editing, setEditing] = useState<string | null>(null);
   const [editingTopicId, setEditingTopic] = useState<string | null>(null);
   const [collapsed, setCollapsedState] = useState(readNavFolded);
+  const roster = useBots(link, !!bots && live && !collapsed).filter((bot) => bot.enabled);
+  const [openingBot, setOpeningBot] = useState(false);
+  async function openBot(id: string) {
+    if (openingBot || !bots) return;
+    setOpeningBot(true);
+    try {
+      const home = await call(link, "POST /api/bots/:id/home", { id }, {});
+      botsChanged();
+      if (home.taskId) bots.openChat(home.taskId, home.id);
+    } catch (err) { showToast({ text: err instanceof Error ? err.message : String(err), error: true }); }
+    finally { setOpeningBot(false); }
+  }
   const settingsTitle = "设置：界面主题、公共目录、模型、便签、功能、数据管理";
   // The column's width, dragged at its right edge (2026-10-15); it also lines up the brand in the title bar.
   const navW = useDragWidth("amo.navWidth", 224, 180, 420);
@@ -472,6 +486,11 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
           <BoardGlyph />全部任务<span className="wb-count">{liveTasks.length}</span>
         </button>
         {botsButton}
+        {roster.length > 0 && <div className="bot-nav-roster" role="group" aria-label="Bot 主聊天">
+          {roster.map((bot) => <button key={bot.id} className="wb-nav-link" type="button" disabled={openingBot} aria-current={!!bot.taskId && bots?.taskId === bot.taskId} title={`打开 ${bot.name} 主聊天`} onClick={() => void openBot(bot.id)}>
+            <BotAvatar name={bot.name} avatar={bot.avatar} size={22} /><span>{bot.name}</span>
+          </button>)}
+        </div>}
         {panorama && (
           <div className="nav-item">
             <button type="button" className="nav-row" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">
