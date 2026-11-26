@@ -159,14 +159,16 @@ test("A ticks a project and a model; B creates a task on A from its new-task pag
   await expect(projectRow.getByRole("button", { name: /可以远程的项目/ })).toHaveAttribute("aria-pressed", "true");
   await expect(b.page.getByTestId("scope-hint")).toHaveText("在 A 台式机 上的 可以远程的项目 里运行 · 放进那边的「掉落表整理」");
   const text = b.page.getByTestId("remote-draft-text");
-  // 问题 #1 (2026-10-31, the user: 只列被控端的): @ offers only 提示词模板…, listing A's global templates and the picked
+  // 问题 #1 (2026-10-31, the user: 只列被控端的): / offers 提示词模板…, listing A's global templates and the picked
   // project's — not A's other project's, not B's own; read-only, one pastes into the first sentence.
   await a.api("POST", "/api/prompt-templates", { title: "A 全局的巡检", body: "在 A 上看一遍" });
   await a.api("POST", "/api/prompt-templates", { title: "A 这个项目的", body: "p", workspaceId: allowed.id });
   await a.api("POST", "/api/prompt-templates", { title: "A 别的项目的", body: "o", workspaceId: other.id });
   await b.api("POST", "/api/prompt-templates", { title: "B 自己的", body: "b" });
   await text.fill("@");
-  const suggest = b.page.getByTestId("suggest");
+  await expect(b.page.getByTestId("suggest")).toHaveCount(0);
+  await text.fill("/");
+  const suggest = b.page.getByTestId("slash-menu");
   await expect(suggest.getByRole("option")).toHaveText([/提示词模板/]);
   await suggest.getByRole("option", { name: /提示词模板/ }).click();
   const templates = b.page.getByTestId("prompt-dialog");

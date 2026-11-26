@@ -1,16 +1,27 @@
-import { useState, type CSSProperties } from "react";
+import { createContext, useState, type CSSProperties } from "react";
+import type { StudioBot } from "@amo-studio/protocol";
+import { IconPeople } from "../chat/icons.js";
+
+export const TranscriptBots = createContext<readonly StudioBot[]>([]);
+
+export function botAvatarHue(name: string) {
+  return [...name.trim()].reduce((value, char) => (value * 31 + char.codePointAt(0)!) % 360, 88);
+}
 
 export function BotAvatar({ name, avatar, size = 24 }: { name: string; avatar?: string | null; size?: number }) {
   const [broken, setBroken] = useState<string | null>(null);
-  const label = name.trim();
-  const hue = [...label].reduce((value, char) => (value * 31 + char.codePointAt(0)!) % 360, 88);
+  const hue = botAvatarHue(name);
   const style = { width: size, height: size, fontSize: Math.round(size * .47), "--avatar-hue": hue } as CSSProperties;
   return <span className="bot-avatar" aria-hidden="true" style={style}>
     {avatar && broken !== avatar ? <img src={avatar} alt="" draggable={false} onError={() => setBroken(avatar)} /> :
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-        <path d="M12 3v3M3 12v3m18-3v3" /><rect x="5" y="7" width="14" height="13" rx="4" />
-        <path d="M9 12v1m6-1v1m-5 3q2 1.5 4 0" />
-      </svg>}
+      <span className="bot-avatar-face" />}
+  </span>;
+}
+
+export function BotGroupAvatar({ members, size = 21 }: { members: readonly StudioBot[]; size?: number }) {
+  return <span className="bot-group-faces" aria-hidden="true">
+    {members.slice(0, 2).map((bot) => <BotAvatar key={bot.id} name={bot.name} avatar={bot.avatar} size={size} />)}
+    {!members.length && <span className="bot-group-empty-face" style={{ width: size, height: size }}><IconPeople /></span>}
   </span>;
 }
 

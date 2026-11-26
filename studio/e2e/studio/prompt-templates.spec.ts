@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import type { Session, Task, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
-// 提示词模板 (2026-10-31): @ → AMO 扩展功能 → 提示词模板… opens the template window; a template is written there (or by
-// an agent through MCP, marked AI 写的), and picking one puts its text where @ was typed, in a session's composer and
+// / → AMO 扩展功能 → 提示词模板… opens the template window; a template is written there (or by
+// an agent through MCP, marked AI 写的), and picking one puts its text where / was typed, in a session's composer and
 // on the new-task page.
 
 let studio: Studio | undefined;
@@ -27,8 +27,8 @@ test("prompt templates: write one, paste it into a session's composer, project-o
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: hello", { timeout: 30_000 });
 
   const dialog = page.getByTestId("prompt-dialog");
-  await composer(page).pressSequentially("先看这个 @");
-  await page.getByTestId("suggest").getByRole("option", { name: /提示词模板/ }).click();
+  await composer(page).pressSequentially("先看这个 /");
+  await page.getByTestId("slash-menu").getByRole("option", { name: /提示词模板/ }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("还没有模板");
 
@@ -48,7 +48,7 @@ test("prompt templates: write one, paste it into a session's composer, project-o
   await expect(dialog.getByTestId("prompt-item").first()).toContainText("alpha");
   await screenshot(studio.app, "studio", "prompt-templates-dialog", page);
 
-  // Search, then Enter pastes the picked one where @ was.
+  // Search, then Enter pastes the picked one where / was typed.
   await dialog.getByLabel("搜索模板").fill("巡检");
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await dialog.getByLabel("搜索模板").press("Enter");
@@ -57,8 +57,9 @@ test("prompt templates: write one, paste it into a session's composer, project-o
   await expect(composer(page)).toBeFocused();
 
   // Edit and delete in the window.
-  await composer(page).fill("@");
-  await page.getByTestId("suggest").getByRole("option", { name: /提示词模板/ }).click();
+  await page.route("**/api/sessions/*/commands", (route) => route.abort());
+  await composer(page).fill("/模板");
+  await page.getByTestId("slash-menu").getByRole("option", { name: /提示词模板/ }).click();
   await dialog.getByTestId("prompt-item").filter({ hasText: "打包检查" }).click();
   await dialog.getByRole("button", { name: "编辑" }).click();
   await dialog.getByLabel("在哪里出现").selectOption({ label: "全局：所有项目" });
@@ -82,8 +83,10 @@ test("prompt templates on the new-task page", async () => {
   await page.getByRole("button", { name: "+ 新任务" }).click();
   const first = page.getByLabel("第一句话");
   await expect(first).toBeFocused();
-  await first.pressSequentially("@");
-  await page.getByTestId("suggest").getByRole("option", { name: /提示词模板/ }).click();
+  await first.pressSequentially("/");
+  const menu = page.getByTestId("slash-menu");
+  await expect(menu.locator('[data-group="amo"]')).toHaveText([/开子会话…/, /提示词模板…/]);
+  await menu.getByRole("option", { name: /提示词模板/ }).click();
   const dialog = page.getByTestId("prompt-dialog");
   await expect(dialog.getByTestId("prompt-item")).toHaveCount(1);
   await dialog.getByTestId("prompt-ok").click();

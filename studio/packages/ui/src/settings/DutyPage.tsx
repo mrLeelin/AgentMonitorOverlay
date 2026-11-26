@@ -3,7 +3,7 @@ import { DUTY_DONE_MARK, projectWorkspaces, type DutyAction, type DutyCheckOne, 
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { defaultModel, effortLabel, useProfileChoices } from "../lib/choices.js";
 import { dutyTree, setDuty, useDuty } from "../duty/duty.js";
-import { useBots } from "../bots/BotRequests.js";
+import { useBots } from "../bots/roster.js";
 
 // 设置 → 值守 (2026-10-31, plans/issues.md): items that run at set times — start a session with a set prompt, run a
 // command, or one of Studio's own jobs. The list says when each runs next and how its last run went; 立即运行 runs one

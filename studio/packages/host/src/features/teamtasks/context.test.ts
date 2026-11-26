@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -48,7 +49,7 @@ beforeEach(async () => {
   planeViewer = "plane-account";
   const { workspace, task } = callerTask();
   session = store.createSession({ taskId: task.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId: workspace.id, title: "", status: "idle", writer: "workbench", runtimeRef: "fixture" });
-  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({ owner: "fixture", server: origin, sealed: "fixture-encrypted-key", selected: null });
+  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({ server: origin, sealed: "fixture-encrypted-key", selected: null, identityId: planeViewer });
   const server = createAmoMcpServer(service, { sessionId: session.id });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   mcp = new Client({ name: "plane-context-test", version: "0" });
@@ -91,6 +92,63 @@ async function call(name: string, args: Record<string, unknown> = {}) {
 }
 
 describe("Plane work item context", () => {
+  it("adopts the matching old connection and draft without adopting another AMO account's settings", async () => {
+    vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockRestore();
+    const amoAccount = { server: "https://amo.test", name: "mine", key: "fixture-amo-key" };
+    const owner = JSON.stringify([amoAccount.server, amoAccount.name]);
+    const account = vi.spyOn(service.teamLink, "account", "get").mockReturnValue(null);
+    const selection = { workspace: "demo", project: projectId };
+    const old = { owner, server: origin, sealed: "fixture-encrypted-key", selected: selection };
+    const other = { ...old, owner: JSON.stringify([amoAccount.server, "other"]), sealed: "other-encrypted-key" };
+    const file = join(root, "plane-team-board.json");
+    writeFileSync(file, JSON.stringify([other, old]));
+    const draft = { title: "已有草稿", description: "说明" };
+    store.setKv("plane-task-drafts", JSON.stringify({ [createHash("sha256").update(owner).digest("hex")]: draft }));
+    const workItem = fetchPlane.getMockImplementation()!;
+    fetchPlane.mockImplementation(async (input, init) => String(input).endsWith("/catalog/") ? Response.json({
+      identity: { id: planeViewer, name: "测试成员" }, workspaces: [{ slug: "demo", projects: [{ id: projectId }] }],
+    }) : workItem(input, init));
+    const board = service.teamTasks.board;
+
+    expect(await board.connection()).toMatchObject({ available: true, selected: null, catalog: null });
+    expect(fetchPlane).not.toHaveBeenCalled();
+    account.mockReturnValue(amoAccount);
+    expect(await board.connection()).toMatchObject({ selected: selection, catalog: { identity: { id: planeViewer } } });
+    account.mockReturnValue(null);
+    expect(await board.connection()).toMatchObject({ selected: selection });
+    expect(board.draft()).toEqual(draft);
+    expect((await call("plane_task_get")).data.item.id).toBe(workItemId);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ connection: { identityId: planeViewer }, legacy: [other] });
+    board.disconnect();
+    account.mockReturnValue(amoAccount);
+    expect(await board.connection()).toMatchObject({ selected: null, catalog: null });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ connection: null, legacy: [other] });
+  });
+
+  it("saves and publishes drafts with Plane identity while AMO is signed out", async () => {
+    vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockRestore();
+    vi.spyOn(dpapi, "protect").mockResolvedValue("fixture-encrypted-key");
+    fetchPlane.mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/catalog/")) return Response.json({
+        identity: { id: planeViewer, name: "测试成员" }, workspaces: [{ slug: "demo", projects: [{ id: projectId }] }],
+      });
+      return Response.json(init?.method === "POST" ? { id: workItemId, title: "Plane 草稿" } : { viewerId: planeViewer, writable: true });
+    });
+    const board = service.teamTasks.board;
+    const address = `${origin}/demo/projects/${projectId}/`;
+    const draft = { title: "Plane 草稿", description: "说明" };
+    await board.connect(address, "fixture-plane-token-123");
+    board.saveDraft(draft);
+    planeViewer = "other-account";
+    await board.connect(address, "other-plane-token-123");
+    expect(board.draft()).toBeNull();
+    planeViewer = "plane-account";
+    await board.connect(address, "fixture-plane-token-123");
+    expect(board.draft()).toEqual(draft);
+    expect(await board.publishDraft(draft)).toEqual({ id: workItemId, title: draft.title });
+    expect(board.draft()).toBeNull();
+  });
+
   it("defaults to the existing connection and lets an explicit switch hide access without deleting it", async () => {
     expect(service.config.settings().teamTasksEnabled).toBe(true);
     expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plane_task_get");

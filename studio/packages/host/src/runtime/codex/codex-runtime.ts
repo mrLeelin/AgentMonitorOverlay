@@ -4,7 +4,7 @@ import { inTurn, type ApprovalDecision, type Attachment, type Id, type ModelOpti
 import type { Store } from "../../store/store.js";
 import { codexThreadParams, profileGone, type CodexConfig } from "../profiles.js";
 import { McpIdentities } from "../../mcp/identity.js";
-import { isBotTask } from "../../features/bots/data.js";
+import { isBotTask, isReadOnlyTask, newChatOptions, updatedChatOptions } from "../../features/bots/data.js";
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
@@ -123,7 +123,7 @@ export class CodexRuntime extends RuntimeBase {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
     const token = isBotTask(this.store, input.taskId) ? undefined : this.options.identities?.issue();
-    const options = this.restrictedTask(input.taskId) ? { ...input.options, permission: "read-only" } : input.options ?? {};
+    const options = newChatOptions(this.store, input.taskId, profile.id, "codex", input.options);
     const role = token ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
     const developerInstructions = input.developerInstructions ?? role;
     const params = this.threadParams(profile, token);
@@ -134,7 +134,6 @@ export class CodexRuntime extends RuntimeBase {
       ...this.permissions(options, input.taskId),
       ...params,
       ...(lead.config ? { config: { ...params.config, ...lead.config } } : {}),
-      ...(lead.config ? { approvalPolicy: "never" as const, sandbox: "read-only" as const, approvalsReviewer: "user" as const } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     });
@@ -150,7 +149,7 @@ export class CodexRuntime extends RuntimeBase {
       runtimeRef: started.thread.id,
       options,
     });
-    if (lead.config) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
+    if (this.restrictedTask(input.taskId, options)) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (role) this.options.roleGiven?.(session.id);
     if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
@@ -349,7 +348,7 @@ export class CodexRuntime extends RuntimeBase {
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     return this.withGoalMutation(sessionId, async () => {
       const session = this.requireSession(sessionId);
-      if (this.restrictedTask(session.taskId)) options = { ...options, permission: "read-only" };
+      options = updatedChatOptions(this.store, session, options);
       // Serialize even the first Goal activation with option edits: neither may capture the other's old permissions.
       if (session.goal) {
         const handle = await this.handleFor(session.profileId);
@@ -557,8 +556,11 @@ export class CodexRuntime extends RuntimeBase {
     const session = this.requireSession(sessionId);
     // Pause even between native rounds, when there is temporarily no activeTurnId.
     let pauseError: unknown;
-    try { await this.pauseGoal(sessionId); } catch (err) { pauseError = err; }
+    if (!options.expectedTurnId) {
+      try { await this.pauseGoal(sessionId); } catch (err) { pauseError = err; }
+    }
     const st = this.sessionState(sessionId);
+    if (options.expectedTurnId && st.activeTurnId !== options.expectedTurnId) return;
     if (!st.activeTurnId || !session.runtimeRef) {
       // No turn to stop, but still 等待回答 for async questions (2026-11-17: the Free 主控's 停止 found nothing and it
       // waited on): the person stops waiting.
@@ -607,7 +609,7 @@ export class CodexRuntime extends RuntimeBase {
         threadId: parent.runtimeRef, ...params, ...this.permissions(parent.options, parent.taskId),
         ...(target ? { lastTurnId: target.lastTurnId } : {}),
         ...(cwd ? { cwd } : {}),
-        ...(lead.config ? { config: { ...params.config, ...lead.config }, approvalPolicy: "never" as const, sandbox: "read-only" as const, approvalsReviewer: "user" as const } : {}),
+        ...(lead.config ? { config: { ...params.config, ...lead.config } } : {}),
       });
       created = r.thread.id;
       if (cwd && (!r.cwd || relative(cwd, r.cwd))) throw new Error("Codex 没有在所选工作目录创建分支。");
@@ -617,7 +619,7 @@ export class CodexRuntime extends RuntimeBase {
       }
       if (this.requireSession(sessionId).archivedAt) throw new Error("原会话已归档，请恢复后重试。");
       const fork = this.events.adoptThread(r.thread, parent, "fork", parent.profileId);
-      if (lead.config) this.store.setKv(`codex-lead-readonly:${fork.id}`, r.thread.id);
+      if (this.restrictedTask(parent.taskId, parent.options)) this.store.setKv(`codex-lead-readonly:${fork.id}`, r.thread.id);
       if (token) this.options.identities!.bind(token, fork.id);
       return fork;
     } catch (err) {
@@ -877,7 +879,7 @@ export class CodexRuntime extends RuntimeBase {
 
   private permissionOf(options: SessionOptions, taskId: Id | null) {
     // 2026-11-07: 主控 manages tasks and canvases through AMO, never escalates into local file editing.
-    if (this.restrictedTask(taskId)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
+    if (this.restrictedTask(taskId, options)) return { approvalPolicy: "never" as const, sandbox: "read-only" as const, reviewer: "user" as const };
     const p = codexPermission(options.permission);
     return { approvalPolicy: this.options.approvalPolicy ?? p.approvalPolicy, sandbox: this.options.sandbox ?? p.sandbox, reviewer: p.reviewer };
   }
@@ -937,12 +939,12 @@ export class CodexRuntime extends RuntimeBase {
     return !!taskId && this.store.getTask(taskId)?.lead === true;
   }
 
-  private restrictedTask(taskId: Id | null): boolean {
-    return this.leadTask(taskId) || isBotTask(this.store, taskId);
+  private restrictedTask(taskId: Id | null, options: SessionOptions): boolean {
+    return isReadOnlyTask(this.store, taskId, "codex", options);
   }
 
   private requireLeadThread(session: Session): void {
-    if (!this.restrictedTask(session.taskId)) {
+    if (!this.restrictedTask(session.taskId, session.options)) {
       this.store.deleteKv(`codex-lead-readonly:${session.id}`);
       return;
     }

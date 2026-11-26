@@ -98,7 +98,6 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
   const input = useRef<ResourceInputHandle>(null);
-  const slash = useSlashCommands({ link, session: null, draft: { profileId: draft.pick.profileId, workspaceId: draft.projectId }, text: draft.text, setText: (text) => update({ text }), onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)) });
   // Images and files pasted, dropped or picked go with the first sentence (2026-10-19); they are not kept in the draft.
   const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
   const picker = useRef<HTMLInputElement>(null);
@@ -163,6 +162,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     // 2026-11-05: the task's first session may start sub-sessions, so 开子会话… is offered here too.
     subsession: true,
   });
+  const slash = useSlashCommands({ link, session: null, draft: { profileId: draft.pick.profileId, workspaceId: draft.projectId }, text: draft.text, setText: (text) => update({ text }), actions: mentions.actions, onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)) });
 
   const where = `${draft.projectId ? `在 ${projects.find((w) => w.id === draft.projectId)?.name ?? "?"} 里运行` : "不指定项目：在公共目录里运行"}${topic ? ` · 放进「${topic.title}」` : ""}`;
 

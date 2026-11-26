@@ -8,7 +8,8 @@ import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
-import { isBotTask } from "../bots/data.js";
+import { assertBotTaskEnabled, isBotTask } from "../bots/data.js";
+import { supportsBotRuntime } from "@amo-studio/protocol";
 import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
@@ -285,7 +286,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const task = link ? this.store.transaction(() => {
       const created = create();
       link(created);
-      return created;
+      return this.store.getTask(created.id)!;
     }) : create();
     this.publish({ type: "task.upserted", task });
     return task;
@@ -485,7 +486,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /** What nothing was chosen for, from 设置 → 模型 (the CLI's own defaults when the person set none). */
-  private async withDefaults(profileId: Id, options: SessionOptions): Promise<SessionOptions> {
+  async withDefaults(profileId: Id, options: SessionOptions): Promise<SessionOptions> {
     const prefs = readModelPrefs(this.store)[profileId];
     if (!prefs || (options.model && options.effort && options.permission)) return options;
     try {
@@ -507,7 +508,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
-    if (isBotTask(this.store, owner.taskId) && this.requireProfile(input.profileId).runtime !== "codex") throw new HostError("bad_request", "Bot 会话当前只支持 Codex。");
+    assertBotTaskEnabled(this.store, owner.taskId);
+    if (isBotTask(this.store, owner.taskId) && !supportsBotRuntime(this.requireProfile(input.profileId).runtime)) throw new HostError("bad_request", "请选择支持只读 Bot 的模型渠道。");
     return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
   }
 

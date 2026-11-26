@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotRequest, type Id, type Session, type StudioBot } from "@amo-studio/protocol";
+import { inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotRequest, type BotSidebarData, type Id, type Session, type StudioBot } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { boundedText, HostError, isRemoteCopy } from "../../core/shared.js";
 import type { DutyFeature } from "../duty/service.js";
 import { BotWebhookBridge } from "./webhooks.js";
+import { assertBotsEnabled, botsEnabled, botInstructions, isBotTask } from "./data.js";
+import { supportsBotRuntime } from "@amo-studio/protocol";
 
 interface BotRow {
   id: Id;
@@ -43,8 +45,16 @@ function botAvatar(value: unknown): string | null {
   }
   throw new HostError("bad_request", "头像格式无效，请重新选择图片。");
 }
-type SavedPost = Omit<BotGroupPost, "replies">;
+type SavedPost = Pick<BotGroupPost, "id" | "text" | "targetIds" | "createdAt">;
+type PostRow = { group_id: Id; data: string; dispatched: number };
 const groupAskId = (group: Id, post: Id, bot: Id) => createHash("sha256").update(JSON.stringify([group, post, bot])).digest("hex");
+const activeBot = "json_extract(data, '$.deletedAt') IS NULL";
+
+function botName(value: unknown): string {
+  const name = boundedText(value, "名称", 40);
+  if (/[\r\n@\u0000]/u.test(name)) throw new HostError("bad_request", "Bot 名称不能包含控制字符或 @。");
+  return name;
+}
 
 export class BotsFeature extends Feature<"tasks" | "sessions"> {
   private readonly operations = new Map<Id, Promise<unknown>>();
@@ -54,13 +64,30 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   list(): StudioBot[] {
-    return (this.store.db.prepare("SELECT * FROM studio_bots ORDER BY name_key").all() as unknown as BotRow[]).map(readBot);
+    return (this.store.db.prepare(`SELECT * FROM studio_bots WHERE ${activeBot} ORDER BY name_key`).all() as unknown as BotRow[]).map(readBot);
+  }
+
+  sidebar(): BotSidebarData {
+    const latest = this.store.db.prepare(`SELECT b.id, (
+      SELECT substr(json_extract(i.body, '$.markdown'), 1, 180)
+      FROM sessions s JOIN items i ON i.session_id = s.id
+      WHERE s.task_id = b.task_id AND s.kind = 'main' AND s.archived_at IS NULL AND i.type = 'agent'
+      ORDER BY i.created_at DESC, i.seq DESC LIMIT 1
+    ) AS preview FROM studio_bots b WHERE b.task_id IS NOT NULL AND ${activeBot}`).all() as { id: Id; preview: string | null }[];
+    const workers = this.store.db.prepare(`SELECT r.bot_id AS botId, w.task_id AS taskId
+      FROM studio_bot_workers w JOIN studio_bot_requests r ON r.id = w.request_id`).all() as BotSidebarData["workers"];
+    return { previews: Object.fromEntries(latest.flatMap(({ id, preview }) => preview ? [[id, preview.replace(/\s+/gu, " ").trim()]] : [])), workers };
   }
 
   private bot(id: Id): StudioBot {
-    const row = this.store.db.prepare("SELECT * FROM studio_bots WHERE id = ?").get(id) as unknown as BotRow | undefined;
-    if (!row) throw new HostError("not_found", "找不到这个 Bot。");
-    return readBot(row);
+    const bot = this.findBot(id);
+    if (!bot) throw new HostError("not_found", "找不到这个 Bot。");
+    return bot;
+  }
+
+  private findBot(id: Id): StudioBot | undefined {
+    const row = this.store.db.prepare(`SELECT * FROM studio_bots WHERE id = ? AND ${activeBot}`).get(id) as unknown as BotRow | undefined;
+    return row && readBot(row);
   }
 
   listWebhooks(id: Id) { this.bot(id); return this.webhooks.list(id); }
@@ -71,7 +98,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     return {
       check: (id) => { this.bot(id); },
       run: async (action, run) => {
-        const bot = this.bot(action.botId);
+        if (!botsEnabled(this.store)) return { ok: true, skipped: true, summary: "Bots 已关闭。" };
+        const bot = this.findBot(action.botId);
+        if (!bot) return { ok: true, skipped: true, summary: "Bot 已删除。" };
         if (!bot.enabled) return { ok: true, skipped: true, summary: "Bot 已停用。" };
         const id = createHash("sha256").update(`${run.itemId}:${run.startedAt}`).digest("hex");
         const request = await this.request(bot.id, { id, destination: "new", text: action.prompt });
@@ -82,28 +111,71 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   save(raw: Record<string, unknown>, id?: Id): StudioBot {
-    const previous = id ? this.bot(id) : null;
-    const name = boundedText(raw.name, "名称", 40);
-    if (/[\r\n@]/u.test(name)) throw new HostError("bad_request", "Bot 名称不能包含换行或 @。");
-    const nameKey = name.normalize("NFKC").toLowerCase();
+    if (!id) assertBotsEnabled(this.store);
+    const previous = id ? this.bot(id) : undefined;
+    const name = botName(raw.name);
     const profileId = boundedText(raw.profileId, "模型配置", 200);
     const profile = this.requireProfile(profileId);
-    if (profile.runtime !== "codex" || profile.unavailable) throw new HostError("bad_request", "请选择可用的 Codex 配置。");
+    if (!supportsBotRuntime(profile.runtime) || profile.unavailable) throw new HostError("bad_request", "请选择可运行只读 Bot 的 AMO 模型渠道。");
+    const sameProfile = previous?.profileId === profileId;
+    const model = raw.model === undefined ? (sameProfile ? previous?.model : null) : raw.model === null ? null : boundedText(raw.model, "模型", 256);
+    const effort = raw.effort === undefined ? (sameProfile && previous?.model === model ? previous?.effort : null) : raw.effort === null ? null : boundedText(raw.effort, "推理强度", 50);
     const workspaceId = raw.workspaceId === null ? null : boundedText(raw.workspaceId, "项目", 200);
     if (workspaceId) this.requireLiveWorkspace(workspaceId);
     if (typeof raw.enabled !== "boolean" || typeof raw.memory !== "string" || raw.memory.length > 32_000) {
       throw new HostError("bad_request", "请检查 Bot 的启用状态和记忆长度。");
     }
     const avatar = raw.avatar === undefined ? previous?.avatar ?? null : botAvatar(raw.avatar);
-    const data: BotInput = { name, avatar, profileId, workspaceId, enabled: raw.enabled, purpose: boundedText(raw.purpose, "职责", 8000), memory: raw.memory.trim() };
+    const data: BotInput = { name, avatar, profileId, model: model ?? null, effort: effort ?? null, workspaceId, enabled: raw.enabled, purpose: boundedText(raw.purpose, "职责", 8000), memory: raw.memory.trim() };
+    return this.writeBot(data, previous);
+  }
+
+  patch(id: Id, raw: Record<string, unknown>): StudioBot {
+    const previous = this.bot(id);
+    if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") throw new HostError("bad_request", "Bot 启用状态无效。");
+    const { id: _id, taskId: _taskId, homeSessionId: _homeSessionId, ...data } = previous;
+    return this.writeBot({ ...data, name: raw.name === undefined ? previous.name : botName(raw.name), enabled: raw.enabled ?? previous.enabled }, previous);
+  }
+
+  private writeBot(data: BotInput, previous?: StudioBot): StudioBot {
+    const nameKey = data.name.normalize("NFKC").toLowerCase();
     const botId = previous?.id ?? randomUUID();
-    this.store.transaction(() => {
+    const renamed = this.store.transaction(() => {
       const used = this.store.db.prepare("SELECT id FROM studio_bots WHERE name_key = ? AND id <> ?").get(nameKey, botId);
       if (used) throw new HostError("conflict", "已有同名 Bot。");
       this.store.db.prepare(`INSERT INTO studio_bots (id, name_key, data) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET name_key = excluded.name_key, data = excluded.data`).run(botId, nameKey, JSON.stringify(data));
+      return previous?.taskId && previous.name !== data.name ? this.store.updateTask(previous.taskId, { title: data.name }) : undefined;
     });
+    if (renamed) this.publish({ type: "task.upserted", task: renamed });
+    this.publish({ type: "bots.changed" });
     return this.bot(botId);
+  }
+
+  remove(id: Id): Promise<{ ok: true }> {
+    return this.serial(id, async () => {
+      const bot = this.findBot(id);
+      if (!bot) return { ok: true };
+      const sessions = bot.taskId ? this.store.listSessions({ taskId: bot.taskId }) : [];
+      if (sessions.some((session) => this.chatHasWork(session))) throw new HostError("conflict", "这个 Bot 还有运行或排队的消息，请处理完再删除。");
+      const groups = this.groups().filter((group) => group.memberIds.includes(id));
+      this.store.transaction(() => {
+        // Keep the identity required by persisted replies and the read-only ownership of its historical chats.
+        this.store.db.prepare("UPDATE studio_bots SET name_key = ?, data = ?, home_session_id = NULL WHERE id = ?")
+          .run(`\u0000${id}`, JSON.stringify({ name: bot.name, enabled: false, deletedAt: new Date().toISOString() }), id);
+        this.store.db.prepare("DELETE FROM studio_bot_group_chats WHERE bot_id = ?").run(id);
+        const update = this.store.db.prepare("UPDATE studio_bot_groups SET data = ? WHERE id = ?");
+        for (const group of groups) update.run(JSON.stringify({ ...group, memberIds: group.memberIds.filter((member) => member !== id) }), group.id);
+      });
+      this.publish({ type: "bots.changed" });
+      if (groups.length) this.publish({ type: "bot-groups.changed" });
+      return { ok: true };
+    });
+  }
+
+  private chatHasWork(session: Session): boolean {
+    return !session.archivedAt && (inTurn(session.status) || session.goal?.status === "active" || this.f.sessions.inbox.isDispatching(session.id) ||
+      (["held", "waiting"] as const).some((delivery) => this.store.findItems(session.id, "user", { delivery }, { limit: 1 }).length > 0));
   }
 
   chats(id: Id): Session[] {
@@ -123,38 +195,70 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   saveGroup(raw: Record<string, unknown>, id?: Id): BotGroup {
-    if (id) this.group(id);
-    const name = boundedText(raw.name, "群组名称", 40);
-    if (/[\r\n]/u.test(name)) throw new HostError("bad_request", "群组名不能包含换行。");
+    assertBotsEnabled(this.store);
+    const previous = id ? this.group(id) : undefined;
     const memberIds = this.botIds(raw.memberIds);
     for (const memberId of memberIds) this.bot(memberId);
-    const group = { id: id ?? randomUUID(), name, memberIds };
-    const key = name.normalize("NFKC").toLowerCase();
+    return this.writeGroup({ id: previous?.id ?? randomUUID(), name: boundedText(raw.name, "群组名称", 40), memberIds });
+  }
+
+  patchGroup(id: Id, raw: Record<string, unknown>): BotGroup {
+    assertBotsEnabled(this.store);
+    const group = this.group(id);
+    if (raw.name !== undefined) group.name = boundedText(raw.name, "群组名称", 40);
+    if (raw.memberIds !== undefined) {
+      group.memberIds = this.botIds(raw.memberIds);
+      for (const memberId of group.memberIds) this.bot(memberId);
+    }
+    return this.writeGroup(group);
+  }
+
+  private writeGroup(group: BotGroup): BotGroup {
+    if (/[\r\n]/u.test(group.name)) throw new HostError("bad_request", "群组名不能包含换行。");
+    const key = group.name.normalize("NFKC").toLowerCase();
     if (this.store.db.prepare("SELECT id FROM studio_bot_groups WHERE name_key = ? AND id <> ?").get(key, group.id)) throw new HostError("conflict", "已有同名群组。");
     this.store.db.prepare(`INSERT INTO studio_bot_groups (id, name_key, data) VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET data = excluded.data, name_key = excluded.name_key`).run(group.id, key, JSON.stringify(group));
+    this.publish({ type: "bot-groups.changed" });
     return group;
   }
 
-  private botIds(value: unknown): Id[] {
-    if (!Array.isArray(value) || value.length < 1 || value.length > 30 || value.some((id: unknown) => typeof id !== "string" || !/^[\w-]{1,80}$/u.test(id))) {
-      throw new HostError("bad_request", "请选择 1 至 30 个 Bot。");
+  removeGroup(id: Id): Promise<{ ok: true }> {
+    return this.serial(`group:${id}`, async () => {
+      const chats = this.store.db.prepare("SELECT session_id FROM studio_bot_group_chats WHERE group_id = ?").all(id) as { session_id: Id | null }[];
+      if (chats.some(({ session_id }) => {
+        const session = session_id ? this.store.getSession(session_id) : undefined;
+        return session && this.chatHasWork(session);
+      })) throw new HostError("conflict", "这个群组还有运行或排队的消息，请处理完再删除。");
+      const deleted = this.store.transaction(() => {
+        this.store.db.prepare("DELETE FROM studio_bot_group_chats WHERE group_id = ?").run(id);
+        this.store.db.prepare("DELETE FROM studio_bot_group_posts WHERE group_id = ?").run(id);
+        return this.store.db.prepare("DELETE FROM studio_bot_groups WHERE id = ?").run(id).changes;
+      });
+      if (deleted) this.publish({ type: "bot-groups.changed" });
+      return { ok: true };
+    });
+  }
+
+  private botIds(value: unknown, minimum = 1): Id[] {
+    if (!Array.isArray(value) || value.length < minimum || value.length > 30 || value.some((id: unknown) => typeof id !== "string" || !/^[\w-]{1,80}$/u.test(id))) {
+      throw new HostError("bad_request", `请选择 ${minimum} 至 30 个 Bot。`);
     }
     return [...new Set<string>(value)];
   }
 
   posts(groupId: Id): BotGroupPost[] {
     this.group(groupId);
-    const rows = this.store.db.prepare("SELECT data FROM studio_bot_group_posts WHERE group_id = ? ORDER BY created_at DESC LIMIT 100").all(groupId) as unknown as { data: string }[];
-    return rows.map(({ data }) => this.readPost(groupId, JSON.parse(data) as SavedPost));
+    const rows = this.store.db.prepare("SELECT data, dispatched FROM studio_bot_group_posts WHERE group_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100").all(groupId) as unknown as PostRow[];
+    return rows.map(({ data, dispatched }) => this.readPost(groupId, JSON.parse(data) as SavedPost, !!dispatched));
   }
 
-  private readPost(groupId: Id, post: SavedPost): BotGroupPost {
+  private readPost(groupId: Id, post: SavedPost, dispatchComplete: boolean): BotGroupPost {
     const replies = post.targetIds.flatMap((id) => {
       const request = this.getRequest(groupAskId(groupId, post.id, id));
       return request ? [this.status(request)] : [];
     });
-    return { ...post, replies };
+    return { ...post, replies, dispatchComplete };
   }
 
   post(groupId: Id, raw: Record<string, unknown>): Promise<BotGroupPost> {
@@ -163,41 +267,127 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const id = boundedText(raw.id, "消息编号", 80);
       if (!/^[\w-]+$/u.test(id)) throw new HostError("bad_request", "消息编号有误。");
       const text = boundedText(raw.text, "消息", 20_000);
-      const targetIds = this.botIds(raw.targetIds).sort();
-      const old = this.store.db.prepare("SELECT group_id, data FROM studio_bot_group_posts WHERE id = ?").get(id) as { group_id: Id; data: string } | undefined;
+      const targetIds = this.botIds(raw.targetIds, 0).sort();
+      const old = this.store.db.prepare("SELECT group_id, data, dispatched FROM studio_bot_group_posts WHERE id = ?").get(id) as PostRow | undefined;
       const previous = old ? JSON.parse(old.data) as SavedPost : undefined;
       if (previous && (old?.group_id !== groupId || previous.text !== text || JSON.stringify(previous.targetIds) !== JSON.stringify(targetIds))) throw new HostError("conflict", "消息编号已用于另一条群消息。");
-      if (targetIds.some((target) => !group.memberIds.includes(target) || (!previous && !this.bot(target).enabled))) throw new HostError("bad_request", "请选择已启用的群组成员。");
+      if (previous && old?.dispatched) return this.readPost(groupId, previous, true);
       const record = previous ?? { id, text, targetIds, createdAt: new Date().toISOString() };
-      if (!previous) this.store.db.prepare("INSERT INTO studio_bot_group_posts (id, group_id, created_at, data) VALUES (?, ?, ?, ?)").run(id, groupId, record.createdAt, JSON.stringify(record));
+      if (!previous) {
+        assertBotsEnabled(this.store);
+        if (targetIds.some((target) => !group.memberIds.includes(target) || !this.findBot(target)?.enabled)) throw new HostError("bad_request", "请选择已启用的群组成员。");
+        this.store.db.prepare("INSERT INTO studio_bot_group_posts (id, group_id, created_at, data) VALUES (?, ?, ?, ?)").run(id, groupId, record.createdAt, JSON.stringify(record));
+        this.publish({ type: "bot-group-posts.changed", groupId });
+      }
       await this.dispatchPost(group, record);
-      return this.readPost(groupId, record);
+      return this.readPost(groupId, record, true);
     });
   }
 
   private async dispatchPost(group: BotGroup, record: SavedPost): Promise<void> {
     await Promise.all(record.targetIds.map(async (botId) => {
       const id = groupAskId(group.id, record.id, botId);
-      if (!group.memberIds.includes(botId)) return;
+      if (!this.group(group.id).memberIds.includes(botId)) return;
       const prior = this.getRequest(id);
+      if (!this.findBot(botId)?.enabled || !botsEnabled(this.store)) return;
       const chat = this.store.db.prepare("SELECT session_id FROM studio_bot_group_chats WHERE group_id = ? AND bot_id = ?").get(group.id, botId) as { session_id: Id | null } | undefined;
       const session = chat?.session_id ? this.store.getSession(chat.session_id) : undefined;
-      if (!prior && !this.bot(botId).enabled) return;
       const destination: BotDestination = prior?.destination ?? (session && !session.archivedAt ? { sessionId: session.id } : "new");
-      const result = await this.request(botId, { id, text: prior?.text ?? `【群组 ${group.name}】\n${record.text}`.slice(0, 20_000), destination });
+      let result: BotRequest;
+      try {
+        result = await this.request(botId, { id, text: prior?.text ?? `【群组 ${group.name}】\n${record.text}`.slice(0, 20_000), destination });
+      } catch (error) {
+        // A Bot can be paused or removed while its earlier dispatch holds its lock.
+        if (!this.findBot(botId)?.enabled || !botsEnabled(this.store)) return;
+        throw error;
+      }
+      if (!this.findBot(botId)) return;
       if (result.sessionId && result.status !== "failed") {
         this.store.db.prepare(`INSERT INTO studio_bot_group_chats (group_id, bot_id, session_id) VALUES (?, ?, ?)
           ON CONFLICT(group_id, bot_id) DO UPDATE SET session_id = excluded.session_id`).run(group.id, botId, result.sessionId);
       }
     }));
     this.store.db.prepare("UPDATE studio_bot_group_posts SET dispatched = 1 WHERE id = ?").run(record.id);
+    this.publish({ type: "bot-group-posts.changed", groupId: group.id });
+  }
+
+  stopGroupReply(groupId: Id, postId: Id, botId: Id): Promise<{ ok: true }> {
+    return this.serial(botId, async () => {
+      const post = this.store.db.prepare("SELECT data FROM studio_bot_group_posts WHERE group_id = ? AND id = ?").get(groupId, postId) as { data: string } | undefined;
+      if (!post) throw new HostError("not_found", "找不到这条群聊消息。");
+      const request = this.getRequest(groupAskId(groupId, postId, botId));
+      if (!request || request.botId !== botId || !(JSON.parse(post.data) as SavedPost).targetIds.includes(botId)) throw new HostError("not_found", "这条 Bot 回复还没有开始。");
+      const reply = this.status(request);
+      if (reply.status !== "queued" && reply.status !== "running" && reply.status !== "waiting") return { ok: true };
+      const item = this.store.getItem(inboxId(reply.id));
+      if (item?.type === "user" && item.sessionId === reply.sessionId) {
+        const turnId = item.raw?.itemId ? item.raw.turnId : undefined;
+        if (item.delivery === "held") this.f.sessions.inbox.cancelBotRequest(item.sessionId, item.id);
+        else if (item.delivery === undefined && turnId) await this.wrap(() => this.runtime.interrupt(item.sessionId, { expectedTurnId: turnId }));
+        else throw new HostError("conflict", "回复正在启动，请稍后再试。");
+      } else {
+        this.settled({ ...reply, status: "stopped" });
+      }
+      this.publish({ type: "bot-group-posts.changed", groupId });
+      return { ok: true };
+    });
   }
 
   home(id: Id, reset = false): Promise<Session> {
     return this.serial(id, () => this.openHome(this.bot(id), reset));
   }
 
-  async request(id: Id, raw: Record<string, unknown>): Promise<BotRequest> {
+  mention(botId: Id, raw: Record<string, unknown>) {
+    return this.mentionMany({ ...raw, recipients: [{ botId, destination: raw.destination }] });
+  }
+
+  mentionMany(raw: Record<string, unknown>) {
+    const id = boundedText(raw.id, "提及编号", 80);
+    if (!/^[\w-]+$/u.test(id)) throw new HostError("bad_request", "提及编号有误。");
+    if (!Array.isArray(raw.recipients) || !raw.recipients.length) throw new HostError("bad_request", "请选择 Bot。");
+    const recipients = raw.recipients.map((r: unknown) => {
+      if (!r || typeof r !== "object" || !("botId" in r)) throw new HostError("bad_request", "Bot 无效。");
+      return { botId: boundedText(r.botId, "Bot", 200), destination: this.destination("destination" in r ? r.destination : undefined) };
+    });
+    if (new Set(recipients.map((r) => r.botId)).size !== recipients.length) throw new HostError("bad_request", "Bot 重复。");
+    return this.serial(`mention:${id}`, () => this.queueMention(recipients, id, raw));
+  }
+
+  private async queueMention(recipients: { botId: Id; destination: BotDestination }[], id: Id, raw: Record<string, unknown>) {
+    assertBotsEnabled(this.store);
+    const bots = recipients.map((r) => this.bot(r.botId));
+    const source = this.requireSession(boundedText(raw.sourceSessionId, "发起会话", 200));
+    if (bots.some((bot) => !bot.enabled) || isRemoteCopy(source) || source.kind === "sub" || isBotTask(this.store, source.taskId) || source.archivedAt || source.writer === "terminal-handoff") {
+      throw new HostError("bad_request", "当前会话不能代为派发 Bot 请求。");
+    }
+    const text = boundedText(raw.text, "消息", 20_000);
+    const binding = { kind: "mention" as const, ...recipients[0]!, text, ...(recipients.length > 1 ? { others: recipients.slice(1) } : {}) };
+    const itemId = `bot-mention:${id}`;
+    const previous = this.store.getItem(itemId);
+    if (previous && (previous.sessionId !== source.id || previous.type !== "user" || JSON.stringify(previous.botLetter) !== JSON.stringify(binding))) throw new HostError("conflict", "提及编号已用于另一条消息。");
+    const title = text.split(/\r?\n/, 1)[0]!.slice(0, 100);
+    if (!source.title && !previous) await this.f.sessions.renameSession(source.id, title);
+    const targets = bots.map((bot, i) => `「${bot.name}」的 mentionId 为 ${bots.length === 1 ? id : `${id}:${i + 1}`}`).join("；");
+    const message = `${text}\n\n【AMO Bot 提及】${targets}。用户要求联系时，分别调用 bot_ask，text 写清给该 Bot 的问题和必要背景。仅讨论 Bot 时直接回答。派发完本次需要联系的所有 Bot 后结束本轮，各自的回信会陆续送达。`;
+    this.f.sessions.inbox.resume(source.id);
+    await this.f.sessions.inbox.put(source.id, message, undefined, itemId, { fromPerson: true, purpose: "work", botLetter: binding });
+    return { ok: true as const };
+  }
+
+  async ask(sourceId: Id, mentionId: Id, text: string) {
+    const match = /^([\w-]{1,80})(?::([1-9]\d*))?$/u.exec(mentionId);
+    if (!match) throw new HostError("bad_request", "提及编号有误。");
+    const item = this.store.getItem(`bot-mention:${match[1]}`);
+    if (item?.type !== "user" || item.sessionId !== sourceId || !item.fromPerson || item.delivery === "expired" || item.delivery === "unsent") throw new HostError("bad_request", "找不到本会话的 Bot 提及。");
+    const binding = item.botLetter;
+    if (binding?.kind !== "mention") throw new HostError("bad_request", "消息未绑定 Bot。");
+    const recipient = binding.others ? [binding, ...binding.others][Number(match[2]) - 1] : !match[2] ? binding : undefined;
+    if (!recipient) throw new HostError("bad_request", "请选择这条消息里对应 Bot 的提及编号。");
+    const id = createHash("sha256").update(`agent-mention:${mentionId}`).digest("hex");
+    return this.request(recipient.botId, { id, text, sourceSessionId: sourceId, destination: recipient.destination }, true);
+  }
+
+  async request(id: Id, raw: Record<string, unknown>, reportToSource = false): Promise<BotRequest> {
     const requestId = boundedText(raw.id, "请求编号", 80);
     if (!/^[\w-]+$/u.test(requestId)) throw new HostError("bad_request", "请求编号有误。");
     return this.serial(id, async () => {
@@ -213,9 +403,10 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
         }
         return this.deliver(previous);
       }
+      assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       if (source?.taskId && source.taskId === bot.taskId) throw new HostError("bad_request", "请在当前 Bot 会话直接发送消息。");
-      const queued: BotRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued" };
+      const queued: BotRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}) };
       this.store.db.prepare("INSERT INTO studio_bot_requests (id, bot_id, source_session_id, created_at, data) VALUES (?, ?, ?, ?, ?)").run(requestId, id, queued.sourceSessionId, queued.createdAt, JSON.stringify(queued));
       return this.deliver(queued);
     });
@@ -227,6 +418,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       if (!record) throw new HostError("not_found", "找不到 Bot 请求。");
       const previous = this.store.db.prepare("SELECT task_id FROM studio_bot_workers WHERE request_id = ?").get(id) as { task_id: Id } | undefined;
       if (previous) return { task: this.requireTask(previous.task_id), session: this.store.listSessions({ taskId: previous.task_id }).find((session) => !session.parentId) ?? null };
+      assertBotsEnabled(this.store);
       const request = this.status(record);
       if (request.status !== "completed" || !request.result) throw new HostError("conflict", "Bot 提供结论后再创建执行任务。");
       const bot = this.bot(request.botId);
@@ -237,7 +429,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const title = `处理${bot.name}的结论 · ${request.text}`.slice(0, 80);
       const description = `【原请求】\n${request.text}\n\n【Bot 结论】\n${request.result}`;
       return this.f.tasks.createTask({ title, workspaceId: workspace.id, worktree: {}, description,
-        firstSession: { profileId: bot.profileId, options: { permission: "workspace-write" }, text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。\n\n${description.slice(0, 12_000)}` },
+        firstSession: { profileId: bot.profileId, options: { model: bot.model ?? undefined, effort: bot.effort ?? undefined, permission: this.requireProfile(bot.profileId).runtime === "claude" ? "acceptEdits" : "workspace-write" }, text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。\n\n${description.slice(0, 12_000)}` },
       }, (task) => {
         this.store.db.prepare("INSERT INTO studio_bot_workers (request_id, task_id) VALUES (?, ?)").run(id, task.id);
       });
@@ -256,6 +448,11 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const rows = this.store.db.prepare("SELECT * FROM studio_bot_requests WHERE session_id = ? AND json_extract(data, '$.status') = 'queued'").all(event.session.id) as unknown as RequestRow[];
       for (const row of rows) this.status(readRequest(row));
     });
+    const outstanding = this.store.db.prepare("SELECT * FROM studio_bot_requests WHERE json_extract(data, '$.reportToSource') = 1 AND json_extract(data, '$.reported') IS NULL").all() as unknown as RequestRow[];
+    for (const row of outstanding) {
+      const request = this.status(this.fromRequestRow(row));
+      if (["completed", "failed", "stopped"].includes(request.status)) this.report(request);
+    }
     const rows = this.store.db.prepare("SELECT * FROM studio_bot_requests WHERE delivered = 0 AND json_extract(data, '$.status') = 'queued'").all() as unknown as RequestRow[];
     for (const row of rows) {
       const request = readRequest(row);
@@ -296,34 +493,36 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   private async openHome(bot: StudioBot, reset: boolean): Promise<Session> {
+    assertBotsEnabled(this.store);
     if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
     const before = bot.homeSessionId ? this.store.getSession(bot.homeSessionId) : undefined;
-    if (before && !before.archivedAt && !reset && before.profileId === bot.profileId) return before;
+    if (before && !before.archivedAt && !reset) return before;
     if (before && (inTurn(before.status) || this.store.findItems(before.id, "user", { delivery: "held" }, { limit: 1 }).length)) {
       throw new HostError("conflict", "主聊天仍有待处理消息，完成后再新建主聊天。");
     }
     const session = await this.startChat(bot, "主聊天");
     this.store.db.prepare("UPDATE studio_bots SET home_session_id = ? WHERE id = ?").run(session.id, bot.id);
+    this.publish({ type: "bots.changed" });
     return session;
   }
 
   private async startChat(bot: StudioBot, title: string, source?: Session): Promise<Session> {
     const workspace = bot.workspaceId ? this.requireLiveWorkspace(bot.workspaceId) : this.commonWorkspace();
-    const task = bot.taskId ? this.requireTask(bot.taskId) : this.store.transaction(() => {
-      const created = this.f.tasks.createTaskRecord({ title: bot.name, workspaceId: bot.workspaceId, column: "doing" });
+    const task = bot.taskId ? this.requireTask(bot.taskId) : this.f.tasks.createTaskRecord({ title: bot.name, workspaceId: bot.workspaceId, column: "doing" }, (created) => {
       this.store.db.prepare("UPDATE studio_bots SET task_id = ? WHERE id = ?").run(created.id, bot.id);
-      return created;
     });
+    if (!bot.taskId) this.publish({ type: "bots.changed" });
     if (task.archivedAt) throw new HostError("conflict", "请先恢复 Bot 的任务。");
     const selected = source ? this.requireLiveWorkspace(source.workspaceId) : workspace;
-    const developerInstructions = [`你是 ${bot.name}。`, `【职责】\n${bot.purpose}`, ...(bot.memory ? [`【记忆】\n${bot.memory}`] : [])].join("\n\n");
-    return this.f.tasks.trackSessionStart(task.id, () => this.wrap(() => this.runtime.startSession({ taskId: task.id, topicId: null, profileId: bot.profileId, workspace: selected, ...(source?.cwd ? { cwd: source.cwd } : {}), title, developerInstructions, options: { permission: "read-only" } })));
+    const options = await this.f.tasks.withDefaults(bot.profileId, { ...(bot.model ? { model: bot.model } : {}), ...(bot.effort ? { effort: bot.effort } : {}), permission: this.requireProfile(bot.profileId).runtime === "claude" ? "plan" : "read-only" });
+    return this.f.tasks.trackSessionStart(task.id, () => this.wrap(() => this.runtime.startSession({ taskId: task.id, topicId: null, profileId: bot.profileId, workspace: selected, ...(source?.cwd ? { cwd: source.cwd } : {}), title, developerInstructions: botInstructions(bot), options })));
   }
 
   private async deliver(request: BotRequest): Promise<BotRequest> {
     if (request.status !== "queued" || this.store.getItem(inboxId(request.id))) return this.status(request);
-    const bot = this.bot(request.botId);
     try {
+      const bot = this.bot(request.botId);
+      assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       const source = request.sourceSessionId ? this.store.getSession(request.sourceSessionId) : undefined;
       if (request.sourceSessionId && (!source || source.archivedAt)) throw new HostError("conflict", "发起会话已不可用。");
@@ -333,20 +532,25 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
         : selected === "new" ? await this.startChat(bot, request.text.slice(0, 50), source)
         : this.requireSession(selected.sessionId);
       const currentBot = this.bot(bot.id);
-      if (!currentBot.taskId || session.taskId !== currentBot.taskId || session.archivedAt || session.kind !== "main" || session.runtime !== "codex") {
+      assertBotsEnabled(this.store);
+      if (!currentBot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
+      if (!currentBot.taskId || session.taskId !== currentBot.taskId || session.archivedAt || session.kind !== "main" || !supportsBotRuntime(session.runtime)) {
         throw new HostError("bad_request", "请选择该 Bot 的有效聊天。");
       }
       this.store.db.prepare("UPDATE studio_bot_requests SET session_id = ? WHERE id = ?").run(session.id, request.id);
       request = { ...request, sessionId: session.id };
       const cwd = source && (source.cwd ?? this.store.getWorkspace(source.workspaceId)?.path);
       const text = [`你是 ${bot.name}。`, `【职责】\n${bot.purpose}`, ...(bot.memory ? [`【记忆】\n${bot.memory}`] : []), ...(cwd ? [`【本次任务的工作目录】\n${cwd}`] : []), `【本次请求】\n${request.text}`].join("\n\n");
-      await this.f.sessions.inbox.put(session.id, text, undefined, inboxId(request.id));
+      const origin = source ? (source.taskId && this.store.getTask(source.taskId)?.title) || source.title || "项目会话" : null;
+      const heading = `来自「${origin}」的请求`;
+      // Requests need their own turns so stopping or attributing a reply affects only that request.
+      await this.f.sessions.inbox.put(session.id, origin ? `【Bot 来信】${heading}\n\n${text}` : text, undefined, inboxId(request.id),
+        { afterTurn: true, ...(origin ? { botLetter: { kind: "request", heading, text: request.text } } : {}) });
       this.store.db.prepare("UPDATE studio_bot_requests SET delivered = 1 WHERE id = ?").run(request.id);
       return this.status(request);
     } catch (error) {
       const failed: BotRequest = { ...request, status: "failed", result: error instanceof Error ? error.message : String(error) };
-      this.store.db.prepare("UPDATE studio_bot_requests SET data = ? WHERE id = ?").run(JSON.stringify(failed), request.id);
-      return failed;
+      return this.settled(failed);
     }
   }
 
@@ -357,7 +561,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     if (!session || message?.type !== "user") return request;
     if (session.taskId) request = { ...request, taskId: session.taskId };
     if (message.delivery === "expired" || message.delivery === "unsent") return this.settled({ ...request, status: "stopped" });
-    const turnId = message.raw?.turnId;
+    if (message.delivery === "held" || message.delivery === "waiting") return request;
+    // Inbox rows inherit the turn showing in the transcript as they are queued. Only the Codex echo binds the request to its actual turn.
+    const turnId = message.raw?.itemId ? message.raw.turnId : undefined;
     if (!turnId) return session.archivedAt ? this.settled({ ...request, status: "stopped" }) : request;
     const [turn] = this.store.findItems(session.id, "turn", { turnId }, { newest: true, limit: 1 });
     if (turn?.type !== "turn") return request;
@@ -369,7 +575,25 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   private settled(request: BotRequest): BotRequest {
+    request = { ...request, settledAt: request.settledAt ?? new Date().toISOString() };
     this.store.db.prepare("UPDATE studio_bot_requests SET data = ?, delivered = 1 WHERE id = ?").run(JSON.stringify(request), request.id);
+    this.report(request);
     return request;
+  }
+
+  private report(request: BotRequest): void {
+    if (!request.reportToSource || !request.sourceSessionId || request.reported) return;
+    const sourceId = request.sourceSessionId;
+    void this.serial(`report:${request.id}`, async () => {
+      const source = this.store.getSession(sourceId);
+      const itemId = `bot-reply:${request.id}`;
+      if (source && !source.archivedAt && !isRemoteCopy(source) && !this.store.getItem(itemId)) {
+        const result = request.result || (request.status === "stopped" ? "处理已停止。" : "没有返回结论。");
+        const payload = JSON.stringify({ bot: request.botName, question: request.text, status: request.status, result });
+        const heading = `${request.botName} · ${request.status === "failed" ? "请求失败" : request.status === "stopped" ? "已停止" : "回信"}`;
+        await this.f.sessions.inbox.put(sourceId, `【Bot 回信】${payload}\n\n以上是受委托 Bot 对本次请求的反馈。结合用户原始要求核对结论并继续答复。`, undefined, itemId, { purpose: "notification", botLetter: { kind: "reply", heading, text: result } });
+      }
+      this.store.db.prepare("UPDATE studio_bot_requests SET data = json_set(data, '$.reported', json('true')) WHERE id = ?").run(request.id);
+    }).catch((err: unknown) => this.log(`Bot reply delivery failed: ${String(err)}`));
   }
 }

@@ -41,7 +41,7 @@ export function PlaneTeamBoardPicker({ link, connection, onChange, onDraft }: {
     void update(() => call(link, "POST /api/team-board/plane/connect", undefined, { server: String(data.get("server")).trim(), token: String(data.get("token")).trim() }));
   }
 
-  if (!connection.available) return <p className="tb-empty">请先在 AMO 平台里登录，再点刷新。</p>;
+  if (!connection.available) return <p className="tb-empty">请重启 Studio，加载支持直接连接 Plane 的新版后台。</p>;
   return <div className="tb-plane">
     {connection.catalog && <div className="tb-plane-fields">
       <label>Plane 工作区<select value={selectedWorkspace} disabled={busy} onChange={(event) => {

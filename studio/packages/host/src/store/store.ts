@@ -186,12 +186,12 @@ export class Store extends DocumentStore {
   }
 
   getTask(id: Id): Task | undefined {
-    const r = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Row | undefined;
+    const r = this.db.prepare("SELECT t.*, b.id AS bot_id FROM tasks t LEFT JOIN studio_bots b ON b.task_id = t.id WHERE t.id = ?").get(id) as Row | undefined;
     return r && toTask(r);
   }
 
   listTasks(): Task[] {
-    return (this.db.prepare("SELECT * FROM tasks ORDER BY created_at, id").all() as Row[]).map(toTask);
+    return (this.db.prepare("SELECT t.*, b.id AS bot_id FROM tasks t LEFT JOIN studio_bots b ON b.task_id = t.id ORDER BY t.created_at, t.id").all() as Row[]).map(toTask);
   }
 
   /** `description`, `firstMessage`: empty removes it. */

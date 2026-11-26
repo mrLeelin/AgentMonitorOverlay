@@ -7,9 +7,13 @@ export interface BotInput {
   purpose: string;
   memory: string;
   profileId: Id;
+  model?: string | null;
+  effort?: string | null;
   workspaceId: Id | null;
   enabled: boolean;
 }
+
+export const supportsBotRuntime = (runtime: string): boolean => ["codex", "claude", "dsh"].includes(runtime);
 
 export interface StudioBot extends BotInput {
   id: Id;
@@ -17,7 +21,20 @@ export interface StudioBot extends BotInput {
   homeSessionId: Id | null;
 }
 
+export type BotDraftContent = Pick<BotInput, "name" | "purpose" | "memory" | "avatar">;
+
+export interface BotSidebarData {
+  previews: Record<Id, string>;
+  workers: { botId: Id; taskId: Id }[];
+}
+
 export type BotDestination = "home" | "new" | { sessionId: Id };
+export interface BotRecipient { botId: Id; destination: BotDestination }
+
+/** Display and routing metadata stored with the inbox item, independent of model-visible prose. */
+export type BotLetter =
+  | { kind: "mention"; botId: Id; destination: BotDestination; text: string; others?: BotRecipient[] }
+  | { kind: "request" | "reply"; heading: string; text: string };
 
 export interface BotRequest {
   id: Id;
@@ -29,8 +46,12 @@ export interface BotRequest {
   taskId?: Id;
   text: string;
   createdAt: Timestamp;
+  settledAt?: Timestamp;
   status: "queued" | "running" | "waiting" | "completed" | "stopped" | "failed";
   result?: string;
+  /** Only requests dispatched by the source agent return a message to that agent. */
+  reportToSource?: boolean;
+  reported?: boolean;
 }
 
 export interface BotRouteInput {
@@ -52,6 +73,7 @@ export interface BotGroupPost {
   targetIds: Id[];
   createdAt: Timestamp;
   replies: BotRequest[];
+  dispatchComplete?: boolean;
 }
 
 export interface BotWebhook {
@@ -71,9 +93,15 @@ export interface BotWebhookEvent {
 }
 
 export interface BotRoutes {
+  "POST /api/bot-mentions": { req: { id: Id; sourceSessionId: Id; text: string; recipients: BotRecipient[] }; res: { ok: true } };
+  "POST /api/bots/:id/mentions": { req: BotRouteInput & { sourceSessionId: Id }; res: { ok: true } };
   "GET /api/bots": { req: void; res: StudioBot[] };
+  "GET /api/bots/sidebar": { req: void; res: BotSidebarData };
+  "POST /api/bots/import-link": { req: { url: string }; res: BotDraftContent };
   "POST /api/bots": { req: BotInput; res: StudioBot };
   "PUT /api/bots/:id": { req: BotInput; res: StudioBot };
+  "PATCH /api/bots/:id": { req: Partial<Pick<BotInput, "name" | "enabled">>; res: StudioBot };
+  "DELETE /api/bots/:id": { req: void; res: { ok: true } };
   "GET /api/bots/:id/chats": { req: void; res: Session[] };
   "POST /api/bots/:id/home": { req: { reset?: boolean }; res: Session };
   "POST /api/bots/:id/requests": { req: BotRouteInput; res: BotRequest };
@@ -81,8 +109,11 @@ export interface BotRoutes {
   "GET /api/bot-groups": { req: void; res: BotGroup[] };
   "POST /api/bot-groups": { req: Omit<BotGroup, "id">; res: BotGroup };
   "PUT /api/bot-groups/:id": { req: Omit<BotGroup, "id">; res: BotGroup };
+  "PATCH /api/bot-groups/:id": { req: Partial<Omit<BotGroup, "id">>; res: BotGroup };
+  "DELETE /api/bot-groups/:id": { req: void; res: { ok: true } };
   "GET /api/bot-groups/:id/posts": { req: void; res: BotGroupPost[] };
   "POST /api/bot-groups/:id/posts": { req: Pick<BotGroupPost, "id" | "text" | "targetIds">; res: BotGroupPost };
+  "POST /api/bot-groups/:id/posts/:postId/replies/:botId/stop": { req: void; res: { ok: true } };
   "GET /api/bots/:id/webhooks": { req: void; res: BotWebhook[] };
   "POST /api/bots/:id/webhooks": { req: { allowResult?: boolean }; res: BotWebhook & { token: string } };
   "DELETE /api/bots/:id/webhooks/:hookId": { req: void; res: { ok: true } };

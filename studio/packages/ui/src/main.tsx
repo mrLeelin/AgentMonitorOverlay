@@ -29,6 +29,7 @@ import "./panorama/panorama.css";
 import "./collab/collab.css";
 import "./planning/planning.css";
 import "./settings/settings.css";
+import "./bots/bots.css";
 import "./settings/stats.css";
 import "./remote/remote.css";
 import "./scratchpad/scratchpad.css";

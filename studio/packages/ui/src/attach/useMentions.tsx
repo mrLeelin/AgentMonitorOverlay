@@ -5,6 +5,7 @@ import { mentionAt, withoutMention } from "../newtask/draft.js";
 import { pinnedFirst, usePins } from "../lib/pins.js";
 import { useFileMarks } from "../marks/useFileMarks.js";
 import { enterKey } from "../chat/inputPrefs.js";
+import type { SlashAction } from "../chat/cli/slash.js";
 import type { FileRefItem } from "./refs.js";
 import { fileToken } from "./inlineResources.js";
 import { BotAvatar } from "../bots/BotAvatar.js";
@@ -14,11 +15,8 @@ import { mentionGroups, mentionSpans, QUICK_COMMIT, subSessionName, subSessionSe
  * @ in a session's composer: tasks, sessions of the same project or topic, recently changed files (or, once something
  * is typed, the project's files that match), the project's marked files (S12-D), and "找文件…" for the selector. A task
  * or session keeps "@名字" in the text and the message says which one it is; a file becomes a reference chip, a marked
- * one carrying its range and note. Under「AMO 扩展功能」: 开子会话… (2026-10-26) asks for a model and effort and puts
- *「@子会话N」in the text, the message then saying how to start sub-sessions with AMO's session_start; 快速提交 (also
- * Ctrl+Shift+P) confirms whether to push too and puts「@快速提交」there, the message then saying how to commit, pull,
- * merge (and push). 提示词模板… (2026-10-31) opens the template window; the picked template's text goes where @ was typed
- * (plain text, nothing added to the message).
+ * one carrying its range and note. The / menu's AMO actions share this draft state because their dialogs
+ * insert prompt text or add message metadata at the position where the action was selected.
  *
  * 2026-10-29: projects too (in the composer once something is typed). The new-task page and the quick bar use the same
  * list with no session of their own (`current` null): each task lists its sessions under it, the files are the picked
@@ -122,13 +120,10 @@ export function useComposerMentions(input: {
       current,
       files: shownFiles?.files ?? [],
       marks: workspaceId ? (marks ?? []) : [],
-      subsession,
-      commit,
-      template,
       ...(projects && (query || projectsAlways) ? { projects: pinnedFirst(projects, pins.project, (w) => w.id) } : {}),
       ...(draftMode ? { sessionsUnderTasks: true, find: !!workspaceId } : {}),
     });
-  }, [query, tasks, pins, sessions, current, shownFiles, marks, workspaceId, subsession, commit, template, projects, projectsAlways, draftMode, input.bots]);
+  }, [query, tasks, pins, sessions, current, shownFiles, marks, workspaceId, projects, projectsAlways, draftMode, input.bots]);
   const flat = groups.flatMap((g) => g.options);
   const hl = Math.min(highlight, Math.max(flat.length - 1, 0));
 
@@ -147,13 +142,10 @@ export function useComposerMentions(input: {
         return;
       }
     }
-    if (option.kind === "file" || option.kind === "find" || option.kind === "mark" || option.kind === "subsession" || option.kind === "commit" || option.kind === "template") {
+    if (option.kind === "file" || option.kind === "find" || option.kind === "mark") {
       setText(withoutMention(text, active));
       setCaret(null);
-      if (option.kind === "subsession") setSubAt(active.start);
-      else if (option.kind === "commit") setCommitAt(active.start);
-      else if (option.kind === "template") setTemplateAt(active.start);
-      else if (option.kind === "find") input.onFind(active.query);
+      if (option.kind === "find") input.onFind(active.query);
       else if (option.kind === "mark") {
         const m = marks?.find((x) => x.id === option.id);
         if (m && input.onMark) input.onMark({ path: m.path, startLine: m.startLine, endLine: m.endLine, note: m.note });
@@ -180,7 +172,14 @@ export function useComposerMentions(input: {
     return at + inserted.length;
   };
 
+  const actions: SlashAction[] = [
+    ...(subsession ? [{ name: "开子会话…", description: "选模型、强度，补充这轮的话", select: setSubAt }] : []),
+    ...(commit ? [{ name: QUICK_COMMIT, description: "分条提交、拉取合并，可选推送　Ctrl+Shift+P", select: setCommitAt }] : []),
+    ...(template ? [{ name: "提示词模板…", description: "选一条存好的提示词，粘进输入框", select: setTemplateAt }] : []),
+  ];
+
   return {
+    actions,
     open: flat.length > 0,
     /** 快速提交 is offered here (for Ctrl+Shift+P too). */
     canCommit: commit,
@@ -203,7 +202,7 @@ export function useComposerMentions(input: {
       setCaret(null);
       setTemplateAt(at);
     },
-    /** The window's answer: the template's text where @ was typed (on a new line after other text); the caret after it (null when cancelled). */
+    /** Insert the template's text at the saved position; return the caret or null when cancelled. */
     finishTemplate(body: string | null): number | null {
       const at = Math.min(templateAt ?? text.length, text.length);
       setTemplateAt(null);
@@ -216,7 +215,7 @@ export function useComposerMentions(input: {
     },
     /** 开子会话…'s dialog is up. */
     askingSubsession: subAt !== null,
-    /** The dialog's answer: 「@子会话·模型·强度」 where @ was typed; the caret after it (null when cancelled). */
+    /** Insert 「@子会话·模型·强度」 at the saved position; return the caret or null when cancelled. */
     finishSubsession(spec: SubSessionSpec | null): number | null {
       const at = Math.min(subAt ?? text.length, text.length);
       setSubAt(null);

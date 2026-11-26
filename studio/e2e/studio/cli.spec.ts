@@ -46,13 +46,13 @@ test("Codex: the / menu, compaction, review mode and retries", async () => {
   await reply(page, "MOCK: hello");
   await idle(page);
 
-  // "/" opens the menu: Studio's commands first, then Codex's review mode and the project's skills.
+  // "/" opens the menu with AMO dialogs, Studio commands, Codex review and project skills.
   const composer = page.getByLabel("输入消息");
   await composer.fill("/");
   const menu = page.getByTestId("slash-menu");
   await expect(menu.getByRole("option", { name: /\/release-notes/ })).toBeVisible({ timeout: 30_000 });
-  await expect(menu.locator(".suggest-h")).toHaveText(["Studio", "命令", "Skills"]);
-  await expect(menu.getByRole("option").first()).toContainText("/compact");
+  await expect(menu.locator(".suggest-h")).toHaveText(["AMO 扩展功能", "Studio", "命令", "Skills"]);
+  await expect(menu.locator('[data-group="studio"]').first()).toContainText("/compact");
   await expect(menu.getByRole("option", { name: /\/review/ }).first()).toContainText("Git Review");
   await expect(menu.locator('[data-group="runtime"]').filter({ hasText: "/code-review" })).toContainText("让 Codex 审查改动");
   await screenshot(app, "stage-12", "S12-E-slash-menu", page);
@@ -131,7 +131,7 @@ test("Claude: commands, a background command, retries, notices, images and sugge
   await expect(menu.getByRole("option", { name: /^\/context/ })).toBeVisible({ timeout: 30_000 });
   await expect(menu.getByRole("option", { name: /^\/clear/ })).toHaveCount(0);
   await expect(menu.getByRole("option", { name: /^\/model/ })).toHaveCount(0);
-  await expect(menu.locator(".suggest-h").first()).toHaveText("Studio");
+  await expect(menu.locator(".suggest-h").first()).toHaveText("AMO 扩展功能");
   await screenshot(app, "stage-12", "S12-E-slash-menu-claude", page);
 
   // /cost (an alias of /usage) runs without the model: its output is a record, not a reply.

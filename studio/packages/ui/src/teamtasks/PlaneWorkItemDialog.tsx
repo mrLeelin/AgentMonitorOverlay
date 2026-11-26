@@ -7,7 +7,7 @@ import { PLANE_PRIORITIES, planeStateName } from "./PlaneWorkItemLayouts.js";
 
 export function PlaneWorkItemDialog({ link, item, board, target, projects, onProject, onCopy, onChange, onClose }: {
   link: HostLink;
-  item: PlaneWorkItem;
+  item: Pick<PlaneWorkItem, "id" | "number" | "title">;
   board: PlaneProjectBoard;
   target?: Workspace;
   projects?: readonly Workspace[];

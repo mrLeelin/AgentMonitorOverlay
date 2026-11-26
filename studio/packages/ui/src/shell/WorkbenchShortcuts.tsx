@@ -53,9 +53,9 @@ export function ShortcutMenu({ label, icon, items, empty, count, toolbar = false
     if (event.relatedTarget !== trigger.current && !panel.current?.contains(event.relatedTarget)) panel.current?.hidePopover();
   };
   return <>
-    <button ref={trigger} type="button" className={toolbar ? "wb-bell" : "wb-nav-link"} popoverTarget={id} aria-label={label} onBlur={closeOnBlur}
+    <button ref={trigger} type="button" className={toolbar ? "wb-bell" : "nav-row nav-shortcut"} popoverTarget={id} aria-label={label} onBlur={closeOnBlur}
       aria-expanded={open} aria-controls={id} title={toolbar ? label : undefined}>
-      {icon}{!toolbar && label}{count !== undefined && <span className="wb-count">{count}</span>}
+      {icon}{!toolbar && <span className="name">{label}</span>}{count !== undefined && <span className="nav-count">{count}</span>}
     </button>
     <div id={id} ref={panel} className={toolbar ? "wb-shortcuts below" : "wb-shortcuts beside"} popover="auto"
       role="region" aria-label={label} onBlur={closeOnBlur} onToggle={e => setOpen(e.newState === "open")}>
@@ -83,4 +83,4 @@ export function ThemeShortcut() {
 export const BoardGlyph = () => <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M7 3v14m6-14v14"/></svg>;
 export const RecentGlyph = () => <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v10H8l-4 3v-3H3zM6 7h8m-8 3h5"/></svg>;
 export const NeedsGlyph = () => <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.5v5m0 3h.01"/></svg>;
-export const BellGlyph = () => <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V10a6 6 0 0 1 12 0v6l2 2H4zM10 20h4"/></svg>;
+export const BellGlyph = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 16V10a6 6 0 0 1 12 0v6l2 2H4zM10 20h4"/></svg>;

@@ -275,7 +275,7 @@
       "label": "提示词模板",
       "aliases": ["提示词模板", "prompt template", "prompt_template_save", "PromptTemplatesFeature"],
       "category": "host",
-      "purpose": "人存的常用提示词（全局或按项目），在设置 → 提示词模板统一管理，从输入框 @ 列表里挑；AI 可以存，删要人批准。取代了扩展包（10-31）。维护用的几份原文在 docs/prompt-templates/。",
+      "purpose": "人存的常用提示词（全局或按项目），在设置 → 提示词模板统一管理，从输入框的 / 菜单里挑；AI 可以存，删要人批准。取代了扩展包（10-31）。维护用的几份原文在 docs/prompt-templates/。",
       "anchors": [
         { "label": "PromptTemplatesFeature", "path": "studio/packages/host/src/features/prompttemplates/service.ts", "anchor": "export class PromptTemplatesFeature" },
         { "label": "设置入口与共用编辑器", "path": "studio/packages/ui/src/attach/PromptTemplateDialog.tsx", "anchor": "export function PromptTemplateManager" },
@@ -382,7 +382,7 @@
       "label": "对话里的命令与技能（/ 和 $ 菜单、后台命令）",
       "aliases": ["/ 菜单", "$", "技能", "Skills", "快速指令", "快捷指令", "slash", "CliFeature", "后台命令", "background command"],
       "category": "host",
-      "purpose": "会话输入框 / 列出 Studio 与 runtime 的快捷指令和技能，$ 在光标处搜索并插入技能；新建任务第一句话按所选项目与模型发现可用于首条消息的指令与技能，不创建会话或调用模型。完整技能引用自动高亮，可点击打开真实 SKILL.md；手动输入与草稿恢复同样生效。支持筛选、键盘选择和补全。还包括运行命令、后台命令的停止和输出、对话设置。",
+      "purpose": "输入框 / 的「AMO 扩展功能」可打开子会话设定、快速提交和提示词模板。消息开头的 / 还列出 Studio 与 runtime 的指令和技能，$ 在光标处搜索并插入技能；新建任务第一句话按所选项目与模型发现可用于首条消息的指令与技能，不创建会话或调用模型。完整技能引用自动高亮，可点击打开真实 SKILL.md；手动输入与草稿恢复同样生效。支持筛选、键盘选择和补全。还包括运行命令、后台命令的停止和输出、对话设置。",
       "anchors": [
         { "label": "CliFeature", "path": "studio/packages/host/src/features/cli/service.ts", "anchor": "export class CliFeature" },
         { "label": "协议", "path": "studio/packages/protocol/src/cli.ts" },

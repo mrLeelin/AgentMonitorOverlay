@@ -35,6 +35,7 @@ import { ClaudeAccounts } from "./accounts.js";
 import { ClaudeWake } from "./wake-control.js";
 import { adoptedKey, isCompactSummary, listOutsideSessions, previewOutsideSession, sameFolder } from "./outside.js";
 import { leadReadOnlyHooks, leadToolAllowed, LEAD_READ_ONLY_REASON } from "./lead-policy.js";
+import { isBotTask, botTaskInstructions } from "../../features/bots/data.js";
 import { currentMessagePurpose, queueMessagePurpose } from "../message-purpose.js";
 import { claudeSkillPaths } from "./skill-paths.js";
 import { ClaudeGoals } from "./goals.js";
@@ -209,7 +210,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       title: input.title ?? "",
       runtimeRef: randomUUID(),
-      options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
+      options: (this.store.getTask(input.taskId ?? "")?.lead || isBotTask(this.store, input.taskId)) ? { ...input.options, permission: "plan" } : input.options ?? {},
     });
     rememberSessionLogin(this.store, session.id, home.login);
     if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
@@ -271,7 +272,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       workspaceId: input.workspace.id,
       title,
       runtimeRef: forked.sessionId,
-      options: this.store.getTask(input.taskId ?? "")?.lead ? { ...input.options, permission: "plan" } : input.options ?? {},
+      options: (this.store.getTask(input.taskId ?? "")?.lead || isBotTask(this.store, input.taskId)) ? { ...input.options, permission: "plan" } : input.options ?? {},
     });
     rememberSessionLogin(this.store, session.id, home.login);
     this.store.setKv(adoptedKey(ref), session.id);
@@ -329,7 +330,12 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     void live.ready.then(() => {
       this.assertCurrentMessage(sessionId, itemId);
       options.beforeDispatch?.();
-      this.updateItem(itemId, (row) => row.type === "user" ? withDelivery(row, delivery) : row);
+      this.updateItem(itemId, (row) => {
+        if (row.type !== "user") return row;
+        const sent = withDelivery(row, delivery);
+        return mode === "start" && live.turn && itemId.startsWith("bot-request:")
+          ? { ...sent, raw: { runtime: "claude", method: "bot/request", itemId: uuid, turnId: live.turn.id } } : sent;
+      });
       live.push({ content, uuid });
       // Older CLIs have no consumed-message acknowledgement: report transport delivery only after the process is ready.
       if (!live.capabilities.has("msg_lifecycle_v1")) {
@@ -423,14 +429,15 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * until the computer was restarted): the CLI is asked to stop, and Studio does not wait on it for long — a process
    * that has not ended the turn after stopGraceMs is closed, and one that does not even go then is let go.
    */
-  async interrupt(sessionId: Id): Promise<void> {
-    this.goals.invalidate(sessionId);
+  async interrupt(sessionId: Id, options: { expectedTurnId?: string } = {}): Promise<void> {
+    if (options.expectedTurnId && this.live.get(sessionId)?.turn?.id !== options.expectedTurnId) return;
+    if (!options.expectedTurnId) this.goals.invalidate(sessionId);
     let goalError: unknown;
-    if (this.goals.activeOrPending(sessionId)) {
+    if (!options.expectedTurnId && this.goals.activeOrPending(sessionId)) {
       try { await this.goals.pause(sessionId); } catch (error) { goalError = error; }
     }
     const live = this.live.get(sessionId);
-    if (!live?.running) { if (goalError) throw goalError; return; }
+    if (!live?.running || (options.expectedTurnId && live.turn?.id !== options.expectedTurnId)) { if (goalError) throw goalError; return; }
     live.interrupted = true;
     this.asks.declineAll(live);
     const grace = this.options.stopGraceMs ?? STOP_GRACE_MS;
@@ -535,7 +542,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
   /** Switches model, effort or permissions; a running Claude Code process takes them at once. */
   async setOptions(sessionId: Id, options: SessionOptions): Promise<Session> {
     this.requireSession(sessionId);
-    if (this.isLead(sessionId)) options = { ...options, permission: "plan" };
+    if (this.readOnlyTask(sessionId)) options = { ...options, permission: "plan" };
     const session = this.updateSession(sessionId, { options });
     const live = this.live.get(sessionId);
     if (live) {
@@ -616,7 +623,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     this.goals.invalidate(sessionId);
     if (this.goals.activeOrPending(sessionId)) await this.goals.pause(sessionId);
     const session = this.writable(sessionId);
-    if (this.isLead(sessionId)) throw Object.assign(new Error("主控的本地文件只读，不能交给可写的终端。"), { code: "read_only" });
+    if (this.readOnlyTask(sessionId)) throw Object.assign(new Error("主控的本地文件只读，不能交给可写的终端。"), { code: "read_only" });
     if (this.live.get(sessionId)?.running) throw Object.assign(new Error("回复还在生成，等这一轮结束或先打断，再交给终端"), { code: "conflict" });
     const exe = requireClaudeCode();
     const workspace = this.store.getWorkspace(session.workspaceId);
@@ -760,7 +767,8 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const cwd = session.cwd ?? workspace.path;
     const ref = session.runtimeRef!;
     const home = this.homeOf(session.id);
-    const agentsMd = agentsMdInstructions(cwd);
+    const bot = isBotTask(this.store, session.taskId);
+    const agentsMd = bot ? botTaskInstructions(this.store, session.taskId) : agentsMdInstructions(cwd);
     // Before anything is set up: without a Claude Code the person is told so, not a spawn error.
     const exe = requireClaudeCode();
 
@@ -798,13 +806,13 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         env: agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv), ...claudeAutoCompactEnv(this.store, profile.id) }),
         // As in a terminal: CLAUDE.md, settings, hooks, commands and skills of the project and of the config dir (Studio's
         // own with the token, the person's with the local login).
-        settingSources: CLI_SETTING_SOURCES,
+        settingSources: bot ? [] : CLI_SETTING_SOURCES,
         // Claude Code's own system prompt, as in a terminal (without it the SDK sends a one-line prompt), plus a project's
         // AGENTS.md when it has no CLAUDE.md.
         systemPrompt: { type: "preset", preset: "claude_code", ...(agentsMd ? { append: agentsMd } : {}) },
-        permissionMode: this.isLead(session.id) ? "plan" : claudePermissionMode(session.options.permission),
+        permissionMode: this.readOnlyTask(session.id) ? "plan" : claudePermissionMode(session.options.permission),
         // Lets the person switch to 全部允许 mid-session; the mode itself stays what the session chose.
-        allowDangerouslySkipPermissions: !this.isLead(session.id),
+        allowDangerouslySkipPermissions: !this.readOnlyTask(session.id),
         ...(session.options.model ? { model: session.options.model } : {}),
         ...(session.options.effort ? { effort: session.options.effort as never } : {}),
         includePartialMessages: true,
@@ -812,11 +820,12 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         // conversation, and its output counts come closer to the real ones.
         forwardSubagentText: true,
         promptSuggestions: readChatSettings(this.store).promptSuggestions,
-        canUseTool: (toolName, toolInput, ctx) => (this.isLead(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry") && !leadToolAllowed(toolName)
+        canUseTool: (toolName, toolInput, ctx) => (this.readOnlyTask(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry") && !leadToolAllowed(toolName)
           ? Promise.resolve({ behavior: "deny" as const, message: LEAD_READ_ONLY_REASON })
           : this.asks.askPerson(session.id, live, toolName, toolInput, ctx),
-        hooks: { PreToolUse: [...(leadReadOnlyHooks(() => this.isLead(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry").PreToolUse ?? []), ...(STRIP_SUBAGENT_MODE.PreToolUse ?? [])] },
+        hooks: { PreToolUse: [...(leadReadOnlyHooks(() => this.readOnlyTask(session.id) || currentMessagePurpose(this.store, session.id) === "inquiry").PreToolUse ?? []), ...(STRIP_SUBAGENT_MODE.PreToolUse ?? [])] },
         ...this.mcpOptions(session.id, plan, live),
+        ...(bot ? { tools: ["Read", "Glob", "Grep"], plugins: [] } : {}),
         // MCP 设置 (2026-11-04): in the person's own config dir the CLI loads their servers itself (OAuth, plugins and
         // its approvals as in a terminal); those turned off are denied to this process only (managedSettings is the
         // SDK's policy tier: nothing is written, unlike toggleMcpServer, which writes ~/.claude.json), .mcp.json ones
@@ -824,8 +833,8 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         ...(plan.strict ? { strictMcpConfig: true } : {}),
         ...(plan.deny.length ? { managedSettings: { deniedMcpServers: plan.deny.map((serverName) => ({ serverName })) } } : {}),
         // Fast mode (2026-11-05): only when chosen (on or off); never chosen, the person's own setting applies.
-        ...(plan.enableJson.length || session.options.fast !== undefined
-          ? { settings: { ...(plan.enableJson.length ? { enabledMcpjsonServers: plan.enableJson } : {}), ...(session.options.fast !== undefined ? { fastMode: session.options.fast } : {}) } }
+        ...(bot || plan.enableJson.length || session.options.fast !== undefined
+          ? { settings: { ...(bot ? { disableAllHooks: true } : {}), ...(plan.enableJson.length ? { enabledMcpjsonServers: plan.enableJson } : {}), ...(session.options.fast !== undefined ? { fastMode: session.options.fast } : {}) } }
           : {}),
         // A session that already has a transcript continues it; a new one starts under the id Studio chose.
         ...(hasTranscript(ref, home) ? { resume: ref } : { sessionId: ref }),
@@ -835,7 +844,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     });
     // With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB the CLI starts in "default" whatever --permission-mode says (CLI 2.1.296,
     // checked in S12-B); switching once it runs works, so a session in another mode switches before its first message.
-    const mode = this.isLead(session.id) ? "plan" : claudePermissionMode(session.options.permission);
+    const mode = this.readOnlyTask(session.id) ? "plan" : claudePermissionMode(session.options.permission);
     if (mode !== "default") {
       live.ready = live.q.setPermissionMode(mode).catch((err: unknown) => {
         this.emit("log", `could not set the permission mode of ${session.id}: ${String(err)}`);
@@ -846,9 +855,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     return live;
   }
 
-  private isLead(sessionId: Id): boolean {
+  private readOnlyTask(sessionId: Id): boolean {
     const session = this.store.getSession(sessionId);
-    return !!(session?.taskId && this.store.getTask(session.taskId)?.lead);
+    return !!(session?.taskId && (this.store.getTask(session.taskId)?.lead || isBotTask(this.store, session.taskId)));
   }
 
   private async consume(sessionId: Id, live: Live): Promise<void> {
@@ -990,6 +999,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * allowed up front; everything else still goes through canUseTool.
    */
   private mcpOptions(sessionId: Id, plan: McpLaunch, live: Live) {
+    if (isBotTask(this.store, this.requireSession(sessionId).taskId)) return { mcpServers: {} };
     const tools = this.options.mcpTools?.(sessionId) ?? [];
     const others = Object.fromEntries(Object.entries(plan.explicit).map(([name, spec]) => [name, sdkServer(spec)]));
     if (!tools.length) {
@@ -1011,6 +1021,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   /** The session's MCP servers now. `native`: it runs in the person's own config dir (the default account's). */
   private mcpPlan(sessionId: Id, home: ClaudeHome): McpLaunch {
+    if (isBotTask(this.store, this.requireSession(sessionId).taskId)) return { explicit: {}, deny: [], enableJson: [], strict: true };
     const native = home.login === "local" && sameDir(home.dir, this.local.dir);
     return this.options.mcp?.launch(sessionId, native) ?? { explicit: {}, deny: [], enableJson: [], strict: home.login === "local" };
   }

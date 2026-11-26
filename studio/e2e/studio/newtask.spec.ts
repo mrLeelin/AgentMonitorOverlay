@@ -375,14 +375,14 @@ test("@ in the first sentence refers to a task (and its sessions) without changi
   expect(made.workspaceId).toBe((await studio.api<StudioSettings>("GET", "/api/settings")).commonWorkspace.id);
 });
 
-test("@ 开子会话… on the new-task page: the setup goes with the first sentence and survives leaving the page (2026-11-05)", async () => {
+test("/ 开子会话… on the new-task page: the setup goes with the first sentence and survives leaving the page", async () => {
   studio = await launchStudio();
   const { page } = studio;
   await page.getByRole("button", { name: "+ 新任务" }).click();
   const text = page.getByLabel("第一句话");
-  await text.pressSequentially("先查原因 @子");
-  const suggest = page.getByTestId("suggest");
-  await expect(suggest.getByRole("option", { name: /开子会话…/ })).toBeVisible();
+  await text.pressSequentially("先查原因 /子");
+  const menu = page.getByTestId("slash-menu");
+  await expect(menu.getByRole("option", { name: /开子会话…/ })).toBeVisible();
   await text.press("Enter");
   const dialog = page.getByTestId("subsession-dialog");
   await expect(dialog).toBeVisible();

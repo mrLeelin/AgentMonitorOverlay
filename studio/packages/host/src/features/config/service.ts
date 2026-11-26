@@ -11,6 +11,7 @@ import { HostError, sessionOptions, boundedText, PRESETS_KEY, MAX_PRESETS, WRITA
 import { Feature } from "../../core/feature.js";
 import { checkNetwork, readNetwork, NETWORK_KEY } from "../../runtime/network.js";
 import { inTurn } from "@amo-studio/protocol";
+import { BOTS_ENABLED_KEY, CONFIRM_BOT_HOME_RESET_KEY, botsEnabled } from "../bots/data.js";
 
 /** Studio settings, 常用预设, model credentials, model choices and subscription usage. */
 export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
@@ -38,6 +39,8 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
       presets: this.presets(),
       disabledFeatures: this.disabledFeatures(),
       teamTasksEnabled: this.host.teamTasksEnabled(),
+      botsEnabled: botsEnabled(this.store),
+      confirmBotHomeReset: this.store.getKv(CONFIRM_BOT_HOME_RESET_KEY)?.value !== "0",
       experimentalFeatures: this.experimentalFeatures(),
       devUiDir: this.devUiDir(),
       teamAutoSend: this.teamAutoSend(),
@@ -240,7 +243,13 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
    * Moves the common space to another folder, replaces the 常用预设 list, turns optional features on or off, sets the
    * scratchpad shortcut (便签) and/or how the Claude subscription signs in (sessions started from then on).
    */
-  updateSettings(input: { network?: unknown; commonDir?: unknown; devUiDir?: unknown; presets?: unknown; disabledFeatures?: unknown; experimentalFeatures?: unknown; teamTasksEnabled?: unknown; teamAutoSend?: unknown; shellHelp?: unknown; scratchpadShortcut?: unknown; modelPrefs?: unknown; scratchpadSafeNewlines?: unknown; quotaDisplay?: unknown; quickModels?: unknown; autoCompactTokens?: unknown; autoCompactProfiles?: unknown; projectGroups?: unknown; topicGroups?: unknown; subsessionNotes?: unknown }): StudioSettings {
+  updateSettings(input: { network?: unknown; commonDir?: unknown; devUiDir?: unknown; presets?: unknown; disabledFeatures?: unknown; experimentalFeatures?: unknown; teamTasksEnabled?: unknown; botsEnabled?: unknown; confirmBotHomeReset?: unknown; teamAutoSend?: unknown; shellHelp?: unknown; scratchpadShortcut?: unknown; modelPrefs?: unknown; scratchpadSafeNewlines?: unknown; quotaDisplay?: unknown; quickModels?: unknown; autoCompactTokens?: unknown; autoCompactProfiles?: unknown; projectGroups?: unknown; topicGroups?: unknown; subsessionNotes?: unknown }): StudioSettings {
+    for (const [field, key] of [["botsEnabled", BOTS_ENABLED_KEY], ["confirmBotHomeReset", CONFIRM_BOT_HOME_RESET_KEY]] as const) {
+      const value = input[field];
+      if (value === undefined) continue;
+      if (typeof value !== "boolean") throw new HostError("bad_request", `${field} must be true or false`);
+      this.store.setKv(key, value ? "1" : "0");
+    }
     if (input.subsessionNotes !== undefined) this.store.setKv(SUBSESSION_NOTES_KEY, JSON.stringify(this.checkSubsessionNotes(input.subsessionNotes)));
     if (input.projectGroups !== undefined) this.store.setKv(PROJECT_GROUPS_KEY, JSON.stringify(this.checkProjectGroups(input.projectGroups)));
     if (input.topicGroups !== undefined) this.store.setKv(TOPIC_GROUPS_KEY, JSON.stringify(this.checkTopicGroups(input.topicGroups)));

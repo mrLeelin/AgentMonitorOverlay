@@ -12,6 +12,7 @@ type PlaneItemRef = { id: string } | { url: string };
 electron.contextBridge.exposeInMainWorld("amo", {
   host: (): Promise<{ url: string; token: string } | null> => electron.ipcRenderer.invoke("amo:host"),
   teamPlane: {
+    checkSession: (target: PlaneTarget): Promise<boolean> => electron.ipcRenderer.invoke("amo:plane-check-session", target),
     show: (id: string, target: PlaneTarget, region: PlaneRegion, theme: PlaneTheme, visible: boolean): Promise<boolean> => electron.ipcRenderer.invoke("amo:plane-show", id, target, region, theme, visible),
     position: (id: string, region: PlaneRegion, visible: boolean, theme: PlaneTheme): void => electron.ipcRenderer.send("amo:plane-position", id, region, visible, theme),
     hide: (id: string): void => electron.ipcRenderer.send("amo:plane-hide", id),

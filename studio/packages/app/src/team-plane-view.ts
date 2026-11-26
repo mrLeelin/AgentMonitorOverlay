@@ -244,6 +244,11 @@ function targetOf(value: unknown): Target | null {
   } catch { return null; }
 }
 
+function planeProfile(target: Target): Electron.Session {
+  const account = createHash("sha256").update(JSON.stringify([target.url.origin, target.identity])).digest("hex").slice(0, 32);
+  return session.fromPartition(`persist:amo-plane-${account}`);
+}
+
 export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): void {
   let current: PlaneView | null = null;
 
@@ -252,7 +257,10 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
     const { owner, view } = current;
     current = null;
     if (!owner.isDestroyed()) owner.contentView.removeChildView(view);
-    if (!view.webContents.isDestroyed()) view.webContents.close();
+    if (!view.webContents.isDestroyed()) {
+      view.webContents.session.webRequest.onCompleted(null);
+      view.webContents.close();
+    }
   }
   app.on("before-quit", close);
 
@@ -270,6 +278,18 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
     const owner = mainWindow();
     return owner && !owner.isDestroyed() && event.sender === owner.webContents && event.senderFrame === owner.webContents.mainFrame ? owner : null;
   };
+
+  ipcMain.handle("amo:plane-check-session", async (event, input: unknown) => {
+    const target = targetOf(input);
+    if (!validatedOwner(event) || !target) return false;
+    try {
+      // Probe only Plane's existing cookie session. The API key stays with the Host.
+      const response = await planeProfile(target).fetch(new URL("/api/users/me/", target.url).href, {
+        credentials: "include", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000),
+      });
+      return response.ok && (await response.json() as { id?: unknown } | null)?.id === target.identity;
+    } catch { return false; }
+  });
 
   function place(instance: PlaneView, bounds: Rectangle, visible: boolean, theme: unknown) {
     instance.visible = visible;
@@ -303,8 +323,7 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
       return current === instance;
     }
     close();
-    const account = createHash("sha256").update(JSON.stringify([target.url.origin, target.identity])).digest("hex").slice(0, 32);
-    const profile = session.fromPartition(`persist:amo-plane-${account}`);
+    const profile = planeProfile(target);
     profile.setPermissionRequestHandler((contents, permission, callback) => {
       callback(permission === "clipboard-sanitized-write" && URL.parse(contents.getURL())?.origin === target.url.origin);
     });
@@ -316,6 +335,11 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
     view.setVisible(false);
     view.setBounds(bounds);
     owner.contentView.addChildView(view);
+    profile.webRequest.onCompleted({ urls: ["*://*/api/users/me/"] }, (request) => {
+      if (current !== instance || request.webContentsId !== contents.id || URL.parse(request.url)?.origin !== target.url.origin || ![401, 403].includes(request.statusCode)) return;
+      close();
+      owner.webContents.send("amo:plane-error", id);
+    });
     const dispose = () => { if (current === instance) close(); };
     owner.once("closed", dispose);
     owner.webContents.once("did-start-loading", dispose);

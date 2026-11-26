@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { projectWorkspaces, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
+import { projectWorkspaces, type ModelProfile, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { togglePin, usePins, type PinKind } from "../lib/pins.js";
 import { ContextMenu } from "../lib/ContextMenu.js";
@@ -8,8 +8,8 @@ import type { Scope } from "./Board.js";
 import { UsageFooter } from "./UsageFooter.js";
 import { KindIcon } from "./KindIcon.js";
 import { BoardGlyph } from "../shell/WorkbenchShortcuts.js";
-import { BotAvatar } from "../bots/BotAvatar.js";
-import { botsChanged, useBots } from "../bots/BotRequests.js";
+import { IconAgent, IconChevronDown, IconChevronRight, IconPlus } from "../chat/icons.js";
+import { BotsNav, type BotsNavActions } from "../bots/BotsNav.js";
 import { GroupItems, ProjectReviewMenu, type MenuGroups, type ProjectMenuAt } from "../gitreview/ProjectReviewMenu.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
 import { EditProjectDialog } from "./EditProjectDialog.js";
@@ -48,6 +48,7 @@ interface ScopeNavProps {
   workspaces: readonly Workspace[];
   topics: readonly Topic[];
   tasks: readonly Task[];
+  profiles: readonly ModelProfile[];
   /** For the dot on a folded group that has something waiting for the person. */
   sessions?: readonly Session[];
   scope: Scope;
@@ -55,7 +56,7 @@ interface ScopeNavProps {
   /** Opens the settings (the button under the Host status). */
   onSettings?: () => void;
   teamBoard?: { open: boolean; toggle(): void };
-  bots?: { current: boolean; taskId?: string; open(): void; openChat(taskId: string, sessionId: string): void };
+  bots?: BotsNavActions;
   shortcuts?: ReactNode;
   onScope(scope: Scope): void;
   /**
@@ -78,7 +79,7 @@ function readFolded(): Record<PinKind, boolean> {
  * pinned (they come first, here and wherever they are picked) and each section folds down to its pinned entries. The
  * lists scroll between the fixed top and the Host / usage footer.
  */
-export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope, live, onScope, onSettings, teamBoard, bots, shortcuts, panorama }: ScopeNavProps) {
+export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], profiles, scope, live, onScope, onSettings, teamBoard, bots, shortcuts, panorama }: ScopeNavProps) {
   const [adding, setAdding] = useState(false);
   const [newTopic, setNewTopic] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -94,18 +95,6 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   const [editing, setEditing] = useState<string | null>(null);
   const [editingTopicId, setEditingTopic] = useState<string | null>(null);
   const [collapsed, setCollapsedState] = useState(readNavFolded);
-  const roster = useBots(link, !!bots && live && !collapsed).filter((bot) => bot.enabled);
-  const [openingBot, setOpeningBot] = useState(false);
-  async function openBot(id: string) {
-    if (openingBot || !bots) return;
-    setOpeningBot(true);
-    try {
-      const home = await call(link, "POST /api/bots/:id/home", { id }, {});
-      botsChanged();
-      if (home.taskId) bots.openChat(home.taskId, home.id);
-    } catch (err) { showToast({ text: err instanceof Error ? err.message : String(err), error: true }); }
-    finally { setOpeningBot(false); }
-  }
   const settingsTitle = "设置：界面主题、公共目录、模型、便签、功能、数据管理";
   // The column's width, dragged at its right edge (2026-10-15); it also lines up the brand in the title bar.
   const navW = useDragWidth("amo.navWidth", 224, 180, 420);
@@ -135,7 +124,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     e.dataTransfer.setData("application/x-amo-nav", JSON.stringify(item));
     setDragging(item);
   };
-  const liveTasks = tasks.filter((t) => !t.archivedAt);
+  const liveTasks = tasks.filter((t) => !t.archivedAt && !t.botId);
 
   // 项目分组 (2026-10-22, design B 树形) and 专题分组 (2026-10-27, the same): kept by the Host with the settings;
   // folding is per machine.
@@ -220,11 +209,6 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
             {doing && <span className="nav-task-dot" data-status="doing" role="img" aria-label="有进行中的任务" title="有进行中的任务" />}
             {review && <span className="nav-task-dot" data-status="review" role="img" aria-label="有待审阅的任务" title="有待审阅的任务" />}
           </span>
-          {pinned && (
-            <svg className="nav-pinned" width="11" height="11" viewBox="0 0 12 12" role="img" aria-label="已置顶">
-              <path d="M4 1.5 H8 L7.4 5 L9.5 7 H2.5 L4.6 5 Z M6 7 V11" />
-            </svg>
-          )}
           {badge}
         </button>
         {kind && id && (
@@ -367,22 +351,16 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     },
   });
 
-  // Section heads are small spaced labels with a rule to the +, apart from the entries under them (2026-10-15, design A);
-  // the label folds the section, and a folded one shows ▸.
   const head = (kind: PinKind, label: string, total: number, add: () => void, addLabel: string) => (
     <div className="nav-head" draggable title="拖动标题调整项目和专题模块的上下顺序" onDragStart={(e) => startDrag(e, { type: "section", kind })} onDragEnd={endDrag}>
       <button type="button" className="nav-fold" aria-expanded={!folded[kind]} onClick={() => fold(kind)} title={folded[kind] ? "展开" : "折叠：只留置顶的"} data-testid={`fold-${kind}`}>
-        {folded[kind] && (
-          <span className="nav-chev" aria-hidden="true">
-            ▸
-          </span>
-        )}
+        {folded[kind] ? <IconChevronRight /> : <IconChevronDown />}
         {label}
         <span className="nav-total">{total}</span>
       </button>
       <span className="nav-rule" aria-hidden="true" />
-      <button type="button" className="nav-add" onClick={add} aria-label={addLabel} title={addLabel}>
-        +
+      <button type="button" className="nav-action" onClick={add} aria-label={addLabel} title={addLabel}>
+        <IconPlus />
       </button>
     </div>
   );
@@ -447,21 +425,17 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
   }
 
   const teamButton = teamBoard && (
-    <button type="button" className="wb-nav-link wb-nav-team" aria-label="团队任务" aria-pressed={teamBoard.open}
+    <button type="button" className="nav-row nav-shortcut wb-nav-team" aria-label="团队任务" aria-pressed={teamBoard.open}
       title={teamBoard.open ? "返回本地任务" : "团队任务"} onClick={teamBoard.toggle}>
-      <BoardGlyph />{!collapsed && "团队任务"}
+      <BoardGlyph />{!collapsed && <span className="name">团队任务</span>}
     </button>
   );
-
-  const botsButton = bots && <button type="button" className={collapsed ? "fold-btn" : "wb-nav-link"} aria-label="Bots" aria-current={bots.current} title="Bots" onClick={bots.open}>
-    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="14" height="11" rx="3" fill="none" stroke="currentColor" /><path d="M10 2v3m-3 5h.1m5.9 0h.1M8 13h4" fill="none" stroke="currentColor" /></svg>{!collapsed && "Bots"}
-  </button>;
 
   if (collapsed)
     return (
       <nav className="scope-nav collapsed" aria-label="范围">
         {teamButton}
-        {botsButton}
+        {bots && <button type="button" className="fold-btn" aria-label="打开 Bots 工作台" aria-current={bots.current} title="打开 Bots 工作台" onClick={() => bots.open()}><IconAgent /></button>}
         <span className="spacer" />
         {onSettings && (
           <button type="button" className="fold-btn nav-settings-folded" onClick={onSettings} aria-label="设置" title="设置">
@@ -482,18 +456,12 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
     <nav className="scope-nav" aria-label="范围">
       <div className="nav-top">
         {teamButton}
-        <button type="button" className="wb-nav-link" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !teamBoard?.open && !panorama?.current && !bots?.current} onClick={() => onScope({ kind: "all" })}>
-          <BoardGlyph />全部任务<span className="wb-count">{liveTasks.length}</span>
+        <button type="button" className="nav-row nav-shortcut" data-testid="scope-all" aria-label="全部任务" aria-current={scope.kind === "all" && !teamBoard?.open && !panorama?.current && !bots?.current} onClick={() => onScope({ kind: "all" })}>
+          <BoardGlyph /><span className="name">全部任务</span><span className="nav-count">{liveTasks.length}</span>
         </button>
-        {botsButton}
-        {roster.length > 0 && <div className="bot-nav-roster" role="group" aria-label="Bot 主聊天">
-          {roster.map((bot) => <button key={bot.id} className="wb-nav-link" type="button" disabled={openingBot} aria-current={!!bot.taskId && bots?.taskId === bot.taskId} title={`打开 ${bot.name} 主聊天`} onClick={() => void openBot(bot.id)}>
-            <BotAvatar name={bot.name} avatar={bot.avatar} size={22} /><span>{bot.name}</span>
-          </button>)}
-        </div>}
         {panorama && (
           <div className="nav-item">
-            <button type="button" className="nav-row" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">
+            <button type="button" className="nav-row nav-shortcut" aria-current={panorama.current} onClick={panorama.open} data-testid="nav-panorama" title="全景：所有专题和任务画在一张图上（测试功能）">
               <span className="name">全景</span>
             </button>
           </div>
@@ -514,6 +482,7 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], scope
         }}
         onDropCapture={dropFolders}
       >
+        {bots && <BotsNav link={link} live={live} profiles={profiles} workspaces={workspaces} tasks={tasks} sessions={sessions} nav={bots} />}
         {sectionRows.map((kind) => kind === "topic" ? (
         <section key="topic" className="nav-section-box" aria-label="专题" {...sectionDrop("topic")}>
           {head("topic", "专题", liveTopics.length, () => setNewTopic(""), "新专题")}

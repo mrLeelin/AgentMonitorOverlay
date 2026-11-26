@@ -12,7 +12,7 @@ import { sessionModelName, useProfileChoices } from "../lib/choices.js";
 import { SessionTree } from "./SessionTree.js";
 import { Thread } from "./Thread.js";
 import { BotAvatar } from "../bots/BotAvatar.js";
-import { useBots } from "../bots/BotRequests.js";
+import { useBots } from "../bots/roster.js";
 import { flash } from "./ReplyNav.js";
 import { annotationRange, flashAnnotation, flashRange, highlightsSupported, scrollToBox } from "../review/highlights.js";
 import { REVEAL_ITEM_EVENT, type DeliveryAction } from "../chat/Transcript.js";
@@ -131,6 +131,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   }, [task.id, session?.id]);
   const settings = useSettings(link);
   const teamTasksEnabled = settings?.teamTasksEnabled === true;
+  const botsEnabled = settings?.botsEnabled !== false;
+  const botBlock = (task.botId || ownerBot) && (!botsEnabled ? "Bots 已关闭" : !ownerBot ? "Bot 配置不可用" : !ownerBot.enabled ? "这个 Bot 已停用" : undefined);
   const { items } = useSessionItems(link, session?.id ?? null);
   const annotations = useAnnotations(link, session?.id ?? null);
   const annotationRefs = useAnnotationRefs(session?.id ?? null, annotations);
@@ -775,6 +777,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             <Thread
               link={link}
               bots={bots}
+              botsEnabled={botsEnabled}
+              botBlock={botBlock || undefined}
               {...(copy ? { remote: { blocked: copy.blocked, revoked: copy.state === "revoked" } } : {})}
               presets={settings?.presets ?? []}
               session={session}

@@ -19,7 +19,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
           {panels.map((panel, i) => featureOn(ctx.disabled, panel.feature) && <Fragment key={i}>{panel.render(ctx)}</Fragment>)}
             <Board
             link={link}
-            tasks={state.tasks}
+            tasks={state.tasks.filter((task) => !task.botId)}
             sessions={state.sessions}
             workspaces={state.workspaces}
             topics={state.topics}

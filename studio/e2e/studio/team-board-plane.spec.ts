@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { PLANE_WORK_ITEM_DRAG, type PlaneBoardConnection, type Workspace } from "@amo-studio/protocol";
+import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type PlaneBoardConnection, type Task, type Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot } from "../support/studio.js";
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -84,6 +85,87 @@ function boardFixture(mainIssueId: string) {
   </div></div><article hidden><h1>780</h1><textarea aria-label="工作项说明"></textarea></article></main>`;
 }
 
+test("connects and reopens the Plane board without web sign-in", async () => {
+  const projectId = "3af9b331-e9aa-4f1d-ae07-fcbb149ece27";
+  const itemId = "6e1afba8-22ae-44c1-b4ad-223fad55ce4a";
+  const states = [
+    { id: "066d5cd0-4f23-4dab-a314-cc270916d04a", name: "待办", color: "#6B7280", group: "unstarted" },
+    { id: "2d5324ba-00c5-41eb-8606-c32c9245240e", name: "进行中", color: "#3B82F6", group: "started" },
+    { id: "8ee6b0f8-ade5-4a14-be8e-9d16ed51ddb7", name: "完成", color: "#22C55E", group: "completed" },
+  ];
+  const projectApi = `${PLANE_BOARD_API}/workspaces/taluo/projects/${projectId}`;
+  const item = { id: itemId, number: "TALUO-16", title: "令牌看板上的工作项", stateId: states[0]!.id, priority: "none", assigneeIds: [], labelIds: [], startDate: null, dueDate: null, revision: 1, archived: false };
+  const token = "fixture-plane-token-123";
+  let webLoads = 0;
+  let apiKeyUsedForWebSession = false;
+  let webIdentity: string | null = null;
+  const remote = createServer((request, response) => {
+    const json = (body: object, status = 200) => response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+    if (request.url === "/api/users/me/") {
+      apiKeyUsedForWebSession ||= !!request.headers["x-api-key"];
+      return webIdentity ? json({ id: webIdentity }) : json({}, 401);
+    }
+    if (request.url === `${PLANE_BOARD_API}/catalog/` && request.headers["x-api-key"] === token) {
+      return json({
+        identity: { id: "plane-member", name: "Plane 成员" },
+        workspaces: [{ slug: "taluo", name: "Taluo", projects: [{ id: projectId, name: "团队项目", writable: true, missing: [] }] }],
+      });
+    }
+    if (request.url === `${projectApi}/work-items` && request.headers["x-api-key"] === token) {
+      return json({ name: "团队项目", viewerId: "plane-member", writable: true, states, members: [], labels: [], items: [item] });
+    }
+    if (request.url === `${projectApi}/work-items/${itemId}` && request.headers["x-api-key"] === token) {
+      return json({ ...item, description: "通过令牌读取的团队工作项说明", creator: "Plane 成员", files: [], comments: [], canDelete: true });
+    }
+    if (request.url === `${PLANE_BOARD_API}/workspaces/taluo/resolve/TALUO/16` && request.headers["x-api-key"] === token) return json({ project: projectId, ticketId: itemId });
+    if (request.url === `/taluo/projects/${projectId}/issues/`) {
+      webLoads++;
+      return response.writeHead(200, { "content-type": "text/html" }).end('<form><input type="email"><input type="password"></form>');
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+  const address = remote.address();
+  if (!address || typeof address === "string") throw new Error("Invalid Plane fixture address");
+  const origin = `http://127.0.0.1:${address.port}`;
+  let studio = await launchStudio();
+  const teamButton = () => studio.page.getByRole("navigation", { name: "范围" }).getByRole("button", { name: "团队任务", exact: true });
+  try {
+    await studio.api("PUT", "/api/settings", { teamTasksEnabled: true });
+    await teamButton().click();
+    const { page } = studio;
+    await expect(page.getByRole("button", { name: "连接 Plane" })).toBeVisible();
+    await screenshot(studio.app, "studio", "plane-connect-without-amo", page);
+    await page.getByLabel("Plane 地址或项目链接").fill(`${origin}/taluo/`);
+    await page.getByLabel("Plane 个人访问令牌").fill(token);
+    await page.getByRole("button", { name: "连接 Plane" }).click();
+    await page.getByLabel("Plane 项目").selectOption(projectId);
+    const card = page.getByRole("button", { name: /令牌看板上的工作项/ });
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.getByText("通过令牌读取的团队工作项说明")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await screenshot(studio.app, "studio", "plane-board-without-web-sign-in", page);
+    const local = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("PlaneLocal") });
+    const { task } = await studio.api<{ task: Task }>("POST", "/api/tasks", { title: "已关联的个人任务", workspaceId: local.id });
+    await studio.api("POST", `/api/team-board/local/${task.id}/link`, { url: `${origin}/taluo/projects/${projectId}/issues/${itemId}/` });
+    await page.getByTestId("scope-ws-PlaneLocal").click();
+    await page.getByTestId("column-todo").getByText("已关联的个人任务", { exact: true }).click();
+    await page.getByRole("button", { name: "打开 Plane 原单", exact: true }).click();
+    await expect(page.getByText("通过令牌读取的团队工作项说明")).toBeVisible();
+    await studio.close({ keepData: true });
+    webIdentity = "another-plane-member";
+    studio = await launchStudio({ root: studio.root });
+    await teamButton().click();
+    await expect(studio.page.getByRole("button", { name: /令牌看板上的工作项/ })).toBeVisible();
+    expect(webLoads).toBe(0);
+    expect(apiKeyUsedForWebSession).toBe(false);
+  } finally {
+    await studio.close();
+    remote.close();
+  }
+});
+
 test("Plane replaces the right work area and Studio keeps its title bar and sidebar", async ({}, testInfo) => {
   const projectId = "3af9b331-e9aa-4f1d-ae07-fcbb149ece27";
   const issueId = "6e1afba8-22ae-44c1-b4ad-223fad55ce4a";
@@ -91,9 +173,14 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
   const path = `/taluo/projects/${projectId}/issues/`;
   const originalPath = "/taluo/browse/TALUO-16/";
   const requests: string[] = [];
+  let webSessionExpired = false;
   const boardLoads = () => requests.filter((url) => url === path).length;
   const remote = createServer((request, response) => {
     requests.push(request.url ?? "");
+    if (request.url === "/api/users/me/") {
+      const id = /(?:^|;\s*)fixture-session=(fixture-(?:worker|other))(?:;|$)/.exec(request.headers.cookie ?? "")?.[1];
+      return response.writeHead(id && !webSessionExpired ? 200 : 401, { "content-type": "application/json" }).end(JSON.stringify({ id }));
+    }
     if (request.url === "/creator.gif") {
       return response.writeHead(200, { "content-type": "image/gif" }).end(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
     }
@@ -144,6 +231,10 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     return dialog.getByTestId("feature-teamtasks");
   };
   try {
+    const identities = ["fixture-worker", "fixture-other"].map((id) => ({ id, partition: `persist:amo-plane-${createHash("sha256").update(JSON.stringify([origin, id])).digest("hex").slice(0, 32)}` }));
+    await app.evaluate(async ({ session }, { origin, identities }) => {
+      for (const { id, partition } of identities) await session.fromPartition(partition).cookies.set({ url: origin, name: "fixture-session", value: id });
+    }, { origin, identities });
     const local = await api<Workspace>("POST", "/api/workspaces", { path: workspace("LocalWorkspace") });
     const second = await api<Workspace>("POST", "/api/workspaces", { path: workspace("TopicWorkspace") });
     await api("POST", "/api/topics", { title: "拖入专题", workspaceIds: [second.id] });
@@ -456,6 +547,17 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     await expect.poll(boardLoads).toBe(originalLoads + 2);
     await expect.poll(matchRightPane).toBe(true);
     expect((await nativeView())!.id).not.toBe(originalView);
+
+    await page.route("**/api/team-board/plane/work-items", (route) => route.fulfill({
+      json: { name: "Plane 演练工程", viewerId: "fixture-other", writable: true, states: [], members: [], labels: [], items: [] },
+    }));
+    webSessionExpired = true;
+    await app.evaluate(({ webContents }, url) => {
+      const child = webContents.getAllWebContents().find((candidate) => candidate.getURL() === url)!;
+      void child.executeJavaScript("fetch('/api/users/me/', {cache: 'no-store'})").catch(() => {});
+    }, origin + path);
+    await expect(page.getByText("这个项目还没有工作项。", { exact: true })).toBeVisible();
+    await expect.poll(nativeView).toBeNull();
 
     const activeSwitch = await features();
     await expect(activeSwitch).toBeChecked();

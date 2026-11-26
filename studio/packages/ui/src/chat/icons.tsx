@@ -91,6 +91,11 @@ export const IconChevronRight = () => (
     <path d="m6 4 4 4-4 4" />
   </Svg>
 );
+export const IconPlus = () => (
+  <Svg>
+    <path d="M8 3.5v9M3.5 8h9" />
+  </Svg>
+);
 export const IconCopy = () => (
   <Svg>
     <rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.8" />
@@ -139,6 +144,22 @@ export const IconStop = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
     <rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="currentColor" />
   </svg>
+);
+
+export const IconPeople = () => (
+  <Svg><circle cx="6" cy="5" r="2.2" /><path d="M1.8 13v-1.3a3 3 0 0 1 3-3h2.4a3 3 0 0 1 3 3V13m.3-10a2 2 0 0 1 0 4m1 1.8a3 3 0 0 1 2.7 3V13" /></Svg>
+);
+
+export const IconReply = () => (
+  <Svg><path d="m6 3.8-3.6 3.6L6 11m-3.6-3.6h6.9a4.3 4.3 0 0 1 4.3 4.3" /></Svg>
+);
+
+export const IconPause = () => (
+  <Svg><path d="M5.5 3.7v8.6m5-8.6v8.6" /></Svg>
+);
+
+export const IconTrash = () => (
+  <Svg><path d="M2.5 4.4h11M6 4.4V2.5h4v1.9m2.2 0-.7 9H4.5l-.7-9m2.7 3v3.5m3-3.5v3.5" /></Svg>
 );
 export const IconClock = () => (
   <Svg>

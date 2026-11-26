@@ -29,11 +29,12 @@ for (const trigger of ["/", "$"] as const) {
     await expect(menu).toBeVisible();
     await expect(menu.locator('[data-group="skill"]')).toHaveCount(2);
     await expect(menu.locator('[data-group="studio"]')).toHaveCount(trigger === "/" ? 1 : 0);
+    await expect(menu.locator('[data-group="amo"]')).toHaveCount(trigger === "/" ? 3 : 0);
     await expect(menu.getByRole("option", { name: new RegExp(`\\${trigger}release-notes`) })).toBeVisible();
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-    await screenshot(app, "studio", `composer-${trigger === "/" ? "slash" : "skills"}-dark`, page);
+    await screenshot(app, "studio", `composer-${trigger === "/" ? "amo-slash" : "skills"}-dark`, page);
     await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
-    await screenshot(app, "studio", `composer-${trigger === "/" ? "slash" : "skills"}-light`, page);
+    await screenshot(app, "studio", `composer-${trigger === "/" ? "amo-slash" : "skills"}-light`, page);
     await composer.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(composer).toHaveText(trigger);

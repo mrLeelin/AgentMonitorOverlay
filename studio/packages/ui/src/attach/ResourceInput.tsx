@@ -2,6 +2,7 @@ import { useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type
 import "./resourceInput.css";
 import { replaceResources } from "./inlineResources.js";
 import { skillTokens } from "./skillTokens.js";
+import { botAvatarHue } from "../bots/BotAvatar.js";
 import { enterKey, useNewlineShortcut } from "../chat/inputPrefs.js";
 
 export const RESOURCE_CLIPBOARD_MIME = "application/x-amo-composer-text";
@@ -39,6 +40,8 @@ export interface ResourceInputProps {
   "data-testid"?: string;
   resources: readonly InputResource[];
   mentions?: readonly string[];
+  botMentions?: readonly { id: string; name: string; avatar?: string | null }[];
+  onBotSettings?(at: { id: string; x: number; y: number }): void;
   skills?: readonly { name: string; description?: string; skillPath?: string }[];
   onOpenSkill?(name: string): void;
   onOpen?(token: string): void;
@@ -175,6 +178,33 @@ export function ResourceInput(props: ResourceInputProps) {
           const span = document.createElement("span");
           span.className = "mention-token";
           span.textContent = `@${name}`;
+          const bot = latest.current.botMentions?.find((b) => b.name === name);
+          if (bot) {
+            span.className = "bot-mention-chip";
+            span.dataset.resourceToken = `@${name}`;
+            span.dataset.botSettings = bot.id;
+            span.contentEditable = "false";
+            span.tabIndex = 0;
+            span.setAttribute("role", "button");
+            span.setAttribute("aria-haspopup", "menu");
+            span.setAttribute("aria-label", `${name}，发送设置`);
+            span.title = "点击更改发送方式或聊天";
+            const avatar = document.createElement("span");
+            avatar.className = "bot-avatar";
+            avatar.style.setProperty("--avatar-hue", String(botAvatarHue(name)));
+            const face = document.createElement("span");
+            face.className = "bot-avatar-face";
+            avatar.append(face);
+            if (bot.avatar) {
+              const image = document.createElement("img");
+              image.alt = "";
+              image.draggable = false;
+              image.onerror = () => image.replaceWith(face);
+              image.src = bot.avatar;
+              avatar.replaceChildren(image);
+            }
+            span.replaceChildren(avatar, document.createTextNode(name));
+          }
           fragment.append(span);
           at += name.length + 1;
         } else {
@@ -329,7 +359,7 @@ export function ResourceInput(props: ResourceInputProps) {
     const el = root.current;
     if (!el || composing.current) return;
     // Editable skill spans must be redrawn as names change, including punctuation typed at their boundary.
-    const nextSignature = JSON.stringify([props.resources, props.mentions, props.skills, props.skills?.length ? props.value : null]);
+    const nextSignature = JSON.stringify([props.resources, props.mentions, props.botMentions, props.skills, props.skills?.length ? props.value : null]);
     const current = readNode(el);
     const focused = document.activeElement === el;
     let selection = restoreOnFocus.current && !focused ? held.current : selectionAt(el, held.current);
@@ -358,6 +388,12 @@ export function ResourceInput(props: ResourceInputProps) {
     if (composing.current || event.nativeEvent.isComposing) return;
     const skill = event.target instanceof HTMLElement && event.target !== root.current ? event.target.dataset.inputSkill : undefined;
     const chord = enterKey(event);
+    if (event.target instanceof HTMLElement && event.target.hasAttribute("data-bot-settings") && (chord === "plain" || event.key === " ")) {
+      event.preventDefault();
+      const box = event.target.getBoundingClientRect();
+      props.onBotSettings?.({ id: event.target.dataset.botSettings!, x: box.left, y: box.bottom });
+      return;
+    }
     if (skill && (chord === "plain" || event.key === " ")) {
       event.preventDefault();
       props.onOpenSkill?.(skill);
@@ -481,10 +517,16 @@ export function ResourceInput(props: ResourceInputProps) {
       onCopy={(event) => copy(event, false)}
       onCut={(event) => copy(event, true)}
       onMouseDown={(event) => {
-        if ((event.target as Element).closest(".resource-atom button, [data-input-skill]")) event.preventDefault();
+        if ((event.target as Element).closest(".resource-atom button, [data-input-skill], [data-bot-settings]")) event.preventDefault();
       }}
       onClick={(event) => {
         const target = event.target as Element;
+        const bot = target.closest<HTMLElement>("[data-bot-settings]");
+        if (bot) {
+          const box = bot.getBoundingClientRect();
+          props.onBotSettings?.({ id: bot.dataset.botSettings!, x: box.left, y: box.bottom });
+          return;
+        }
         const skill = target.closest<HTMLElement>("[data-input-skill]")?.dataset.inputSkill;
         if (skill) { props.onOpenSkill?.(skill); return; }
         const atom = target.closest<HTMLElement>("[data-resource-token]");

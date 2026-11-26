@@ -6,6 +6,13 @@ import { parseSlashCommand, type SlashCommand, type SlashCommandGroup } from "@a
 
 export const GROUP_ORDER: readonly SlashCommandGroup[] = ["studio", "runtime", "skill", "custom"];
 
+/** An AMO dialog opened from the composer menu at the picked command's position. */
+export interface SlashAction {
+  name: string;
+  description: string;
+  select(at: number): void;
+}
+
 /** The command name being typed: the text starts with "/" and the caret is still inside the name. */
 export function slashAt(text: string, caret: number): { query: string; end: number } | null {
   const m = /^\/([^\s/]*)/.exec(text);
@@ -15,8 +22,8 @@ export function slashAt(text: string, caret: number): { query: string; end: numb
   return { query: m[1]!, end };
 }
 
-/** `$` mentions can appear within a request; `/` commands belong at the start of the message. */
-export function commandAt(text: string, caret: number): { query: string; start: number; end: number; trigger: "/" | "$" } | null {
+/** Skill mentions and AMO actions can appear within a request; runtime commands start the message. */
+export function commandAt(text: string, caret: number, inlineSlash = false): { query: string; start: number; end: number; trigger: "/" | "$" } | null {
   const start = text.length - text.trimStart().length;
   const slash = slashAt(text.slice(start), caret - start);
   if (slash) return { ...slash, start, end: start + slash.end, trigger: "/" };
@@ -24,6 +31,13 @@ export function commandAt(text: string, caret: number): { query: string; start: 
     const start = match.index! + match[1]!.length;
     const end = start + 1 + match[2]!.length;
     if (caret > start && caret <= end) return { query: match[2]!, start, end, trigger: "$" };
+  }
+  if (inlineSlash) {
+    for (const match of text.matchAll(/\s\/([^\s/]*)(?=\s|$)/g)) {
+      const start = match.index! + 1;
+      const end = start + 1 + match[1]!.length;
+      if (caret > start && caret <= end) return { query: match[1]!, start, end, trigger: "/" };
+    }
   }
   return null;
 }

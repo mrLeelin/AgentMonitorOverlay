@@ -29,6 +29,19 @@ function makeStore(path = ":memory:"): Store {
   return store;
 }
 
+/** These fixtures start before migration 36 and replay it when the database is reopened. */
+function removeBotSchema(store: Store): void {
+  store.db.exec(`
+    DROP TABLE studio_bot_group_chats;
+    DROP TABLE studio_bot_group_posts;
+    DROP TABLE studio_bot_groups;
+    DROP TABLE studio_bot_workers;
+    DROP TABLE studio_bot_requests;
+    DROP TABLE studio_bots;
+    DELETE FROM schema_migrations WHERE version = 36;
+  `);
+}
+
 function seed(store: Store) {
   const ws = store.addWorkspace({ path: "C:/sandbox/alpha", name: "alpha" });
   const task = store.createTask({ title: "Retry", workspaceId: ws.id });
@@ -55,6 +68,7 @@ describe("Store", () => {
     const store = makeStore(path);
     const { ws, task } = seed(store);
     store.updateTask(task.id, { archivedAt: "2026-11-24T00:00:00Z" });
+    removeBotSchema(store);
     store.db.exec("DROP TABLE local_team_board_links; DELETE FROM schema_migrations WHERE version = 35;");
     for (const migration of MIGRATIONS.slice(31, 34)) store.db.exec(typeof migration === "string" ? migration : migration.sql);
     const source = "https://plane.example/api/v1/amo-team-board/workspaces/team/projects/project";
@@ -77,6 +91,7 @@ describe("Store", () => {
     const path = tempDbPath();
     const store = makeStore(path);
     const { ws, task } = seed(store);
+    removeBotSchema(store);
     store.db.exec("DROP TABLE local_team_board_links; DROP TABLE local_team_tickets; DROP INDEX tasks_manager; ALTER TABLE tasks DROP COLUMN manager_task_id; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(26);
     open.pop()!.close();
@@ -118,6 +133,7 @@ describe("Store", () => {
     store.putCanvas({ ...doc, links: [...doc.links!, collaboration] } as CanvasDoc);
     store.putCanvas({ ...emptyCanvas("only-collaboration"), links: [collaboration] } as CanvasDoc);
     store.putCanvas({ ...doc, id: "unchanged" });
+    removeBotSchema(store);
     store.db.exec("DROP TABLE local_team_board_links; DROP TABLE local_team_tickets; ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; ALTER TABLE sessions DROP COLUMN cwd;");
     store.db.prepare("DELETE FROM schema_migrations WHERE version >= ?").run(27);
     open.pop()!.close();

@@ -39,6 +39,7 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
   configure: boolean; originalUrl?: string; onConfigure(open: boolean): void; onOpen(id: string, sessionId?: string): void;
 }) {
   const [connection, setConnection] = useState<PlaneBoardConnection | null>(null);
+  const [nativeSession, setNativeSession] = useState<{ key: string; valid: boolean } | null>(null);
   const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const [snapshot, setSnapshot] = useState(empty);
   const [loaded, setLoaded] = useState(false);
@@ -60,13 +61,15 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
   const planeTarget = useMemo(() => connection?.server && connection.selected && connection.catalog
     ? { server: connection.server, ...connection.selected, identity: connection.catalog.identity.id, name: activeProject?.name, originalUrl } : null,
   [connection, activeProject?.name, originalUrl]);
-  const nativeAvailable = !!window.amo?.teamPlane;
+  const checkSession = window.amo?.teamPlane?.checkSession;
+  const nativeKey = planeTarget ? nativePlaneKey(planeTarget) : null;
   let originalProblem = "";
   if (originalUrl && connection && !configure && !connection.error) {
-    if (!nativeAvailable) originalProblem = "请在 Studio 桌面客户端打开这张 Plane 原单。";
-    else if (!planeTarget) originalProblem = "请先连接这张原单所属的 Plane 服务器，并选择团队项目。";
+    if (!planeTarget) originalProblem = "请先连接这张原单所属的 Plane 服务器，并选择团队项目。";
     else if (URL.parse(originalUrl)?.origin !== URL.parse(planeTarget.server)?.origin) originalProblem = "请切换到这张原单所属的 Plane 服务器。";
   }
+  const showBoard = !!planeTarget && !configure && !legacy && !choosingWorkspace && !originalProblem;
+  const checkingSession = showBoard && !!checkSession && nativeSession?.key !== nativeKey;
   const claimable = snapshot.writable === false ? [] : snapshot.tickets.filter((ticket) =>
     ticket.status === "pending" || (ticket.status === "doing" && !ticket.localTaskId && isTeamBoardActor(ticket.assignee, ticket.assigneeId, snapshot)));
 
@@ -82,6 +85,7 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
   const applyConnection = useCallback((next: PlaneBoardConnection) => {
     if (!next.error && (!next.selected || !next.catalog || !next.server)) discardNativePlaneView();
     request.current++;
+    setNativeSession(null);
     setChoosingWorkspace(false);
     setSelected(null); setSnapshot(empty);
     setLoaded(false); setError(""); setConnection(next);
@@ -98,6 +102,14 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
     void loadConnection();
     return () => { connectionRequest.current++; };
   }, [loadConnection]);
+
+  useEffect(() => {
+    if (!showBoard || !checkSession || !planeTarget || !nativeKey) return;
+    let live = true;
+    const report = (valid: boolean) => { if (live) setNativeSession({ key: nativeKey, valid }); };
+    void checkSession(planeTarget).then(report, () => report(false));
+    return () => { live = false; };
+  }, [showBoard, checkSession, planeTarget, nativeKey]);
 
   useEffect(() => {
     if (!legacy || configure) return;
@@ -118,20 +130,23 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
     } finally { busy.current = false; void refresh(); }
   }
 
-  if (planeTarget && !configure && !choosingWorkspace && nativeAvailable && !originalProblem) return <section className="studio-team-native" id="studio-team-board" aria-label="Plane 团队任务">
-    <NativePlaneWorkItems key={nativePlaneKey(planeTarget)} link={link} target={planeTarget} accountName={connection?.catalog?.identity.name ?? "当前 Plane 账号"}
+  if (checkingSession) return <section className="studio-team-native" id="studio-team-board" aria-label="Plane 团队任务"><div className="plane-native-status"><p role="status">正在打开 Plane …</p></div></section>;
+  if (showBoard && nativeKey && nativeSession?.key === nativeKey && nativeSession.valid) return <section className="studio-team-native" id="studio-team-board" aria-label="Plane 团队任务">
+    <NativePlaneWorkItems key={nativeKey} link={link} target={planeTarget} accountName={connection?.catalog?.identity.name ?? "当前 Plane 账号"}
       localProjects={options} localProject={scopeProject?.id ?? ""} topics={topics} tasks={tasks} sessions={sessions} profiles={profiles} topicId={topicId}
-      onOpen={onOpen} onSettings={() => onConfigure(true)} />
+      onOpen={onOpen} onSettings={() => onConfigure(true)} onUnavailable={() => setNativeSession({ key: nativeKey, valid: false })} />
   </section>;
 
-  const fallback = !!planeTarget && !configure && !legacy && !choosingWorkspace && !originalProblem;
+  const fallback = showBoard;
+  const openInPlane = fallback ? openOriginal(originalUrl ?? `${planeTarget.server}/${planeTarget.workspace}/projects/${planeTarget.project}/issues/`, setError) : undefined;
   return <section className={`tb-panel studio-team-page${fallback ? " studio-team-fallback" : ""}`} id="studio-team-board" aria-labelledby="studio-team-board-title">
     <header className="tb-between tb-head">
-      <h2 id="studio-team-board-title">{legacy && !configure ? "可领取任务" : fallback ? "团队看板" : "团队连接设置"}</h2>
+      <h2 id="studio-team-board-title">{legacy && !configure ? "可领取任务" : fallback ? activeProject?.name ?? "团队看板" : "团队连接设置"}</h2>
       <div className="tb-row">
         {fallback && activeProject?.writable && <button type="button" className="tb-button tb-primary" onClick={() => setPublishing({})}>新建工作项</button>}
+        {openInPlane && <button type="button" className="tb-button tb-quiet" onClick={openInPlane}>在 Plane 打开</button>}
         {configure && (planeTarget || legacy) && <button type="button" className="tb-button tb-primary" disabled={choosingWorkspace} onClick={() => onConfigure(false)}>返回工作项</button>}
-        {(!fallback && !legacy || !configure && legacy) && <button type="button" className="tb-button tb-quiet" onClick={() => void (legacy && !configure ? refresh() : loadConnection())}>刷新</button>}
+        {!fallback && <button type="button" className="tb-button tb-quiet" onClick={() => void (legacy && !configure ? refresh() : loadConnection())}>刷新</button>}
         {!configure && (fallback || legacy) && (
           <button type="button" className="tb-button" aria-label="团队连接设置" title="团队连接设置" onClick={() => onConfigure(true)}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
@@ -145,12 +160,11 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
     {error && <p className="tb-error" role="alert">{error}</p>}
     {originalProblem && <p className="tb-error" role="alert">{originalProblem}</p>}
     {!connection && !error && <p className="tb-empty" role="status">正在读取团队任务连接…</p>}
-    {connection && !connection.legacy && !fallback && <PlaneTeamBoardPicker link={link} connection={connection}
+    {connection && (!legacy || configure) && !fallback && <PlaneTeamBoardPicker link={link} connection={connection}
       onChange={(next) => { connectionRequest.current++; applyConnection(next); }} onDraft={setChoosingWorkspace} />}
-    {fallback && <PlaneWorkItems key={`${planeTarget.server}/${planeTarget.workspace}/${planeTarget.project}`} link={link} target={localTarget}
+    {fallback && <PlaneWorkItems key={nativeKey} link={link} target={localTarget} originalUrl={originalUrl}
       projects={scopeProject ? undefined : options} onProject={setProject} topicId={topicId} onNew={(state) => setPublishing({ state })}
       onLocalOpen={onOpen} publishVersion={publishVersion} />}
-    {legacy && configure && <p className="tb-empty">当前使用已有团队任务服务。</p>}
     {legacy && !configure && <>
       {!loaded && !error && <p className="tb-empty" role="status">正在读取任务…</p>}
       {loaded && !snapshot.name && !error && <p className="tb-empty">请先在 AMO 平台里登录，再点刷新。</p>}

@@ -7,7 +7,7 @@ import { PlaneWorkItemDialog } from "./PlaneWorkItemDialog.js";
 import { PLANE_PRIORITIES, PlaneWorkItemLayouts, planeAssignees, planeStateName, type WorkItemLayout } from "./PlaneWorkItemLayouts.js";
 import "./plane-work-items.css";
 
-export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocalOpen, onProject, publishVersion }: {
+export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocalOpen, onProject, publishVersion, originalUrl }: {
   link: HostLink;
   target?: Workspace;
   projects?: readonly Workspace[];
@@ -16,6 +16,7 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
   onLocalOpen(id: string): void;
   onProject(id: string): void;
   publishVersion: number;
+  originalUrl?: string;
 }) {
   const [board, setBoard] = useState<PlaneProjectBoard | null>(null);
   const [error, setError] = useState("");
@@ -27,7 +28,8 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
   const [display, setDisplay] = useState({ assignees: true, labels: true, priority: true, dates: false });
   const [analysis, setAnalysis] = useState(false);
   const [archived, setArchived] = useState(false);
-  const [selected, setSelected] = useState<PlaneWorkItem | null>(null);
+  const [selected, setSelected] = useState<Pick<PlaneWorkItem, "id" | "number" | "title"> | null>(null);
+  const [originalError, setOriginalError] = useState("");
   const [dragging, setDragging] = useState<PlaneWorkItem | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
@@ -49,6 +51,17 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
     window.addEventListener("focus", sync);
     return () => { request.current++; clearInterval(timer); window.removeEventListener("focus", sync); };
   }, [refresh, publishVersion]);
+
+  useEffect(() => {
+    if (!originalUrl) return;
+    let live = true;
+    setOriginalError("");
+    void call(link, "POST /api/team-board/plane/resolve-item", {}, { url: originalUrl }).then(
+      (item) => { if (live) setSelected(item); },
+      (err) => { if (live) setOriginalError(teamBoardMessage(err)); },
+    );
+    return () => { live = false; };
+  }, [link, originalUrl]);
 
   const source = board?.source;
   const viewerId = board?.viewerId;
@@ -172,7 +185,7 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13.5 3v4h-4m3.8-.2A5.4 5.4 0 1 0 13.5 10"/></svg>
       </button>
     </div>
-    {error && <p className="tb-error" role="alert">{error}</p>}
+    {(error || (originalUrl && originalError)) && <p className="tb-error" role="alert">{error || originalError}</p>}
     {analysis && <dl className="plane-analysis" aria-label="按状态统计">
       <div><dt>当前工作项</dt><dd>{visible.length}</dd></div>
       {lanes.map(({ state, items }) => <div key={state.id}><dt>{planeStateName(state.name)}</dt><dd>{items.length}</dd></div>)}

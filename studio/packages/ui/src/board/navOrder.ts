@@ -3,7 +3,7 @@ import { pinnedFirst } from "../lib/pins.js";
 import { readStoredJson, writeStoredJson } from "../lib/stored.js";
 
 /** Sidebar order is a local view preference, independent of a project's or topic's identity. */
-export function useNavOrder(kind: "project" | "topic" | "sections") {
+export function useNavOrder(kind: "project" | "topic" | "sections" | "bots") {
   const key = `amo.navOrder.${kind}`;
   const read = (): string[] => {
     const value = readStoredJson(key);

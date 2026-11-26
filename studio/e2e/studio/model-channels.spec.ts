@@ -87,7 +87,7 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
   await page.getByTestId("back").click();
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByTestId("all-models").click();
-  await expect(page.getByRole("group", { name: "模型" })).not.toContainText("中转 GPT");
+  await expect(page.getByRole("group", { name: "模型", exact: true })).not.toContainText("中转 GPT");
   await expect(page.getByTestId("model-drawer")).not.toContainText("中转 GPT");
 });
 

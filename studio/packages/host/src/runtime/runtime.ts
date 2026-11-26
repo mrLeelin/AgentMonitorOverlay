@@ -39,6 +39,8 @@ export interface SendOptions {
  */
 export interface InterruptOptions {
   person?: boolean;
+  /** Stop this Codex turn only. A later turn may already have taken its place. */
+  expectedTurnId?: Id;
 }
 
 export interface RuntimeEvents {
@@ -442,7 +444,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.forSession(sessionId).rename(sessionId, title);
   }
   interrupt(sessionId: Id, options?: InterruptOptions) {
-    this.cancelGoalPreparation(sessionId);
+    if (!options?.expectedTurnId) this.cancelGoalPreparation(sessionId);
     return this.forSession(sessionId).interrupt(sessionId, options);
   }
   fork(sessionId: Id, profileId?: Id, target?: ForkTarget) {

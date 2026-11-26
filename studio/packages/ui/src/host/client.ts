@@ -32,6 +32,7 @@ declare global {
       /** Opens an http(s) link in the system browser (Electron); absent in a plain browser. */
       openExternal?(url: string): Promise<void>;
       teamPlane?: {
+        checkSession?(target: PlaneTarget): Promise<boolean>;
         show(id: string, target: PlaneTarget, region: PlaneRegion, theme: PlaneTheme, visible: boolean): Promise<boolean>;
         position(id: string, region: PlaneRegion, visible: boolean, theme: PlaneTheme): void;
         hide(id: string): void;

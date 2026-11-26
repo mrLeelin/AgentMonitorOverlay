@@ -45,6 +45,8 @@
 .action-menu { min-width: 200px; }
 .action-group { display: flex; flex-direction: column; }
 .action-menu button { display: flex; align-items: center; gap: 24px; }
+.action-menu button:has(.menu-action-icon) { gap: 8px; }
+.menu-action-icon { flex: none; display: grid; place-items: center; }
 .action-menu .menu-key { margin-left: auto; min-width: 18px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text-faint); font-family: var(--font-code); font-size: 11px; line-height: 16px; text-align: center; }
 .action-menu button:disabled .menu-key { opacity: 0.5; }
 

@@ -11,7 +11,7 @@ import { readSetups, rememberSetups } from "./setups.js";
 import { newId } from "../../store/store.js";
 import type { ContextBreakdown, SessionContextUsage, SessionForkOptions, SessionForkRequest, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 import { createForkWorktree, forkGitOptions } from "./fork-worktree.js";
-import { isBotHome, isBotTask } from "../bots/data.js";
+import { assertBotTaskEnabled, isBotHome, isBotTask } from "../bots/data.js";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -55,7 +55,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   }
 
   setGoal(sessionId: Id, body: unknown): Promise<SessionGoalState> {
-    this.requireSession(sessionId);
+    const session = this.requireSession(sessionId);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new HostError("bad_request", "请填写 Goal 目标或状态。");
     const b = body as Record<string, unknown>, input: SessionGoalUpdate = {};
     if (Object.keys(b).some((key) => !["objective", "tokenBudget", "roundBudget", "status"].includes(key))) throw new HostError("bad_request", "Goal 参数包含不支持的字段。");
@@ -76,6 +76,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       input.status = b.status;
     }
     if (!Object.keys(input).length) throw new HostError("bad_request", "请填写 Goal 目标或状态。");
+    if (input.status !== "paused" || input.objective !== undefined) assertBotTaskEnabled(this.store, session.taskId);
     if (!this.runtime.setGoal) throw new HostError("bad_request", "这个 Agent 尚未接入原生 Goal。");
     return this.wrap(() => this.runtime.setGoal!(sessionId, input));
   }
@@ -132,6 +133,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    */
   async sendMessage(sessionId: Id, text: string, attachments: readonly Id[] = [], annotations: readonly Id[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const session = this.requireSession(sessionId);
+    assertBotTaskEnabled(this.store, session.taskId);
     this.f.tasks.leadPromotion.assertAvailable(session.taskId);
     if (options.afterTurn && session.writer === "terminal-handoff") throw new HostError("read_only", "会话已交给终端，工作台暂时只读。");
     const referenced = annotations.length ? this.f.review.referencedAnnotations(sessionId, annotations) : null;
@@ -195,7 +197,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
 
   /** 立即发送 a waiting message, crossing purpose boundaries only after the previous turn ends. */
   async sendNow(sessionId: Id, itemId: Id): Promise<void> {
-    this.requireSession(sessionId);
+    assertBotTaskEnabled(this.store, this.requireSession(sessionId).taskId);
     const item = this.store.getItem(itemId);
     // One held in the inbox (2026-11-04): it goes now, and the running turn gives way to it.
     if (item?.type === "user" && item.sessionId === sessionId && item.delivery === "held") return this.inbox.sendNow(sessionId, itemId);
@@ -206,7 +208,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
 
   /** 重新发送 a message its process never read, with the pictures it had (those still kept here). */
   async resend(sessionId: Id, itemId: Id): Promise<{ mode: SendMode }> {
-    this.requireSession(sessionId);
+    assertBotTaskEnabled(this.store, this.requireSession(sessionId).taskId);
     const item = this.store.getItem(itemId);
     if (item?.type !== "user" || item.sessionId !== sessionId) throw new HostError("not_found", `message ${itemId} not found`);
     this.inbox.checkSource(item);
@@ -297,6 +299,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
 
   async fork(sessionId: Id, profileId?: Id, target?: Pick<SessionForkRequest, "newWorktree" | "branch"> & { turnItemId: Id }): Promise<Session> {
     const s = this.requireSession(sessionId);
+    assertBotTaskEnabled(this.store, s.taskId);
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be forked");
     if (profileId) this.requireProfile(profileId);
     if (!target) return this.f.tasks.trackSessionStart(s.taskId, () => this.wrap(() => this.runtime.fork(sessionId, profileId)));

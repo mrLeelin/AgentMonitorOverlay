@@ -6,7 +6,7 @@
     "aliases": ["团队任务", "提单", "团队收件箱", "原单", "接单", "验收", "独立客户端", "Plane", "工作区选择"],
     "category": "host",
     "purpose": "Studio 在右侧工作区切换本地页面与 Plane 原生团队看板，标题栏和左侧项目栏照常使用。",
-    "steps": ["从左栏打开团队任务，通过看板右上角的齿轮配置 Plane 工作区和项目，并在右侧工作区登录 Plane。", "Plane 原生页面按项目权限读写工作项、状态、评论和附件。", "右键工作项或拖到左栏专题、项目，确认创建个人任务后保存原单信息，并在 Plane 添加当前执行人。"],
+    "steps": ["从左栏打开团队任务，直接填 Plane 地址和令牌，选择工作区和项目。通过看板右上角的齿轮更改连接。", "Studio 可直接使用令牌显示团队看板，已有同账号网页会话时复用原生页面。读写都由 Plane 项目权限控制。", "从团队工作项创建个人任务后保存原单信息，并在 Plane 添加当前执行人。"],
     "anchors": [
       { "label": "共享契约", "path": "studio/packages/protocol/src/team-board.ts", "anchor": "export type TeamBoardTicket" },
       { "label": "Plane 连接与选择", "path": "studio/packages/host/src/features/teamtasks/plane-settings.ts", "anchor": "export class PlaneBoardSettings" },

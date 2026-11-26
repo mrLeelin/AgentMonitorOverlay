@@ -4,7 +4,7 @@ import { call, HostApiError, type HostLink } from "../host/client.js";
 import { usePromptTemplates } from "./usePromptTemplates.js";
 import { Modal } from "../lib/Modal.js";
 
-// 提示词模板 (2026-10-31): from the composer's @ list (AMO 扩展功能 → 提示词模板…). Search on top, the templates on the
+// 提示词模板 (2026-10-31): from the composer's / menu (AMO 扩展功能 → 提示词模板…). Search on top, the templates on the
 // left (global ones and this project's), the picked one on the right; 粘进输入框 (or Enter) puts its text where @ was
 // typed, to be read over and sent by the person. Templates are written here too (新建, 编辑, 删除), or by an agent through
 // AMO's MCP when the person asks — those show「AI 写的」.

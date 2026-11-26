@@ -277,7 +277,7 @@ const SHORT: Record<string, string> = {
 };
 
 /** Larger permission tiles with a one-line description, for the session tray. */
-export function PermissionTiles({ choices, value, onChange, disabled }: { choices: ProfileChoices; value: string | null; onChange(id: string): void; disabled?: boolean }) {
+export function PermissionTiles({ choices, value, onChange, disabled, descriptions }: { choices: ProfileChoices; value: string | null; onChange(id: string): void; disabled?: boolean; descriptions?: Readonly<Record<string, string>> }) {
   const current = value ?? choices.defaultPermission;
   return (
     <div className="tray-row" role="group" aria-label="权限">
@@ -285,14 +285,14 @@ export function PermissionTiles({ choices, value, onChange, disabled }: { choice
         <button
           key={p.id}
           type="button"
-          className={RISKY_PERMISSIONS.has(p.id) ? "ptile risky" : "ptile"}
+          className={RISKY_PERMISSIONS.has(p.id) || p.id === "full-access" ? "ptile risky" : "ptile"}
           aria-pressed={p.id === current}
           disabled={disabled || !!p.unavailable}
-          title={p.unavailable ?? p.description}
+          title={p.unavailable ?? descriptions?.[p.id] ?? p.description}
           onClick={() => onChange(p.id)}
         >
           <b>{p.label}</b>
-          <span>{p.unavailable ?? SHORT[p.id] ?? p.description}</span>
+          <span>{p.unavailable ?? descriptions?.[p.id] ?? SHORT[p.id] ?? p.description}</span>
         </button>
       ))}
     </div>

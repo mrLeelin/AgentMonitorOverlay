@@ -99,23 +99,6 @@ describe("mentionSpans", () => {
 });
 
 describe("开子会话… (2026-10-26)", () => {
-  const input = { query: "", tasks: [], sessions: [], current: null, files: [] };
-  it("is offered under「AMO 扩展功能」, after 找文件…, only when the session may start sessions", () => {
-    const groups = mentionGroups({ ...input, subsession: true, commit: true });
-    expect(groups.map((g) => g.heading)).toEqual(["", "AMO 扩展功能"]);
-    expect(groups.at(-1)!.options.map((o) => o.kind)).toEqual(["subsession", "commit"]);
-    expect(mentionGroups({ ...input, commit: true }).at(-1)!.options.map((o) => o.kind)).toEqual(["commit"]);
-    expect(mentionGroups(input).map((g) => g.kind)).toEqual(["find"]);
-    // Typing narrows them too.
-    expect(mentionGroups({ ...input, query: "提交", subsession: true, commit: true }).at(-1)!.options.map((o) => o.name)).toEqual(["快速提交"]);
-  });
-
-  it("offers 提示词模板… last under「AMO 扩展功能」 (2026-10-31)", () => {
-    expect(mentionGroups({ ...input, subsession: true, commit: true, template: true }).at(-1)!.options.map((o) => o.kind)).toEqual(["subsession", "commit", "template"]);
-    expect(mentionGroups({ ...input, template: true }).at(-1)!.options.map((o) => o.name)).toEqual(["提示词模板…"]);
-    expect(mentionGroups({ ...input, query: "模板", commit: true, template: true }).at(-1)!.options.map((o) => o.kind)).toEqual(["template"]);
-  });
-
   const sonnet = { profileId: "claude", modelId: "claude-sonnet", model: "Claude/claude-sonnet", modelName: "Sonnet", effort: "high", fast: true, permission: "write" as const, extra: "只改 ui 包" };
   const deepseek = { profileId: "ds", modelId: null, model: "DeepSeek", modelName: "DeepSeek", note: "便宜，\n照计划做" };
 

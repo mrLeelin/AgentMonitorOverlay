@@ -251,10 +251,9 @@ test("@ offers tasks, sessions and recent files; 找文件… and Ctrl+P open th
   await expect(suggest).toContainText("最近改动的文件");
   await expect(suggest.getByRole("option", { name: /README\.md/ })).toBeVisible();
   await expect(suggest.getByRole("option", { name: /new_feature\.ts/ })).toBeVisible();
-  // 找文件… ends the files; 「AMO 扩展功能」 come last (10-26), 提示词模板… (10-31) at the end.
-  await expect(suggest.locator('[data-kind="find"] + .suggest-h')).toHaveText("AMO 扩展功能");
-  await expect(suggest.getByRole("option").last()).toContainText("提示词模板…");
-  await expect(suggest.locator('[data-kind="commit"]')).toContainText("快速提交");
+  await expect(suggest.getByRole("option").last()).toContainText("找文件…");
+  await expect(suggest.getByText("AMO 扩展功能")).toHaveCount(0);
+  await expect(suggest.getByRole("option", { name: /开子会话…|快速提交|提示词模板…/ })).toHaveCount(0);
   await screenshot(studio.app, "stage-11", "S11-B-05-at-menu", page);
 
   // A session keeps its name in the text; the message will say which session it is.
@@ -306,7 +305,7 @@ test("@ offers tasks, sessions and recent files; 找文件… and Ctrl+P open th
   await expect(bubble.getByTestId("msg-file").last()).toContainText("importer.py");
 });
 
-test("@ 开子会话…: the model's own options, its usage and this round's words; 「@子会话·模型·强度」 in the text; the setup goes to the Host (2026-11-05)", async () => {
+test("/ 开子会话…: the model's own options, its usage and this round's words; 「@子会话·模型·强度」 in the text; the setup goes to the Host", async () => {
   studio = await launchStudio();
   const { page } = studio;
   const dir = studio.workspace("alpha");
@@ -331,12 +330,11 @@ test("@ 开子会话…: the model's own options, its usage and this round's wor
   await expect.poll(async () => (await studio!.api<{ subsessionNotes: Array<{ permission?: string }> }>("GET", "/api/settings")).subsessionNotes.map((n) => n.permission)).toEqual(["full"]);
   await screenshot(studio.app, "studio", "subsession-settings", page);
   await settingsDialog.getByRole("button", { name: "关闭设置" }).click();
-  const suggest = page.getByTestId("suggest");
-  await composer(page).pressSequentially("接下来开子会话就用 @");
-  // Under「AMO 扩展功能」(10-26), after 找文件….
-  await expect(suggest.getByText("AMO 扩展功能")).toBeVisible();
-  await expect(suggest.getByRole("option").last()).toContainText("提示词模板…");
-  await suggest.getByRole("option", { name: /开子会话…/ }).click();
+  const menu = page.getByTestId("slash-menu");
+  await composer(page).pressSequentially("接下来开子会话就用 /");
+  await expect(menu.getByText("AMO 扩展功能")).toBeVisible();
+  await expect(menu.getByRole("option")).toHaveText([/开子会话…/, /快速提交/, /提示词模板…/]);
+  await menu.getByRole("option", { name: /开子会话…/ }).click();
   const dialog = page.getByTestId("subsession-dialog");
   await expect(dialog).toBeVisible();
   await expect(composer(page)).toHaveText("接下来开子会话就用 ");
@@ -380,14 +378,15 @@ test("@ 开子会话…: the model's own options, its usage and this round's wor
   await screenshot(studio.app, "studio", "subsession-sent", page);
 });
 
-test("快速提交 (10-26): from @ or Ctrl+Shift+P, a choice of pushing too; the message tells how to commit, pull and merge", async () => {
+test("快速提交: from / or Ctrl+Shift+P, a choice of pushing too; the message tells how to commit, pull and merge", async () => {
   studio = await launchStudio();
   const { page } = studio;
   const { session } = await openTask(studio, studio.workspace("alpha"));
-  const suggest = page.getByTestId("suggest");
   const dialog = page.getByTestId("quickcommit-dialog");
-  await composer(page).pressSequentially("改完了 @");
-  await suggest.getByRole("option", { name: /快速提交/ }).click();
+  await composer(page).pressSequentially("改完了 /");
+  await expect(page.getByTestId("slash-menu").getByRole("option")).toHaveCount(3);
+  await composer(page).press("ArrowDown");
+  await composer(page).press("Tab");
   await expect(dialog).toBeVisible();
   // The first choice (no push) is the default; Esc puts nothing in.
   await expect(dialog.getByRole("radio").first()).toBeChecked();

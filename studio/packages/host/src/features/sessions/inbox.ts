@@ -26,6 +26,7 @@ const PEER_QUEUE_KEY = "sessions.peer-queue";
 const TURN_SEEN_MS = 3000;
 
 interface InboxMessageOptions {
+  botLetter?: import("@amo-studio/protocol").BotLetter;
   purpose?: MessagePurpose;
   replacesItemId?: Id;
   rebaseOnContextUpgrade?: boolean;
@@ -156,6 +157,18 @@ export class SessionInbox extends Feature<"sharedContext"> {
     if (!edit.text.trim()) throw new HostError("bad_request", "消息不能为空。");
     if (item.images?.length || item.queuedSkillText || splitAnnotationRefs(own).refs.length || splitFileRefItems(own).refs.length || /\n\n(?:提到的(?:任务|会话|项目)：|子会话的(?:开法|设定)（|「@快速提交」)|\[AMO_SHARED_CONTEXT:/u.test(own) || !item.text.startsWith(own)) throw new HostError("bad_request", "含附件或特殊引用的排队消息暂不支持编辑。");
     this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, text: edit.text + item.text.slice(own.length) }) });
+  }
+
+  cancelBotRequest(sessionId: Id, itemId: Id): void {
+    const item = this.store.getItem(itemId);
+    if (!itemId.startsWith("bot-request:") || item?.type !== "user" || item.sessionId !== sessionId || item.delivery !== "held" || this.dispatchingItems.has(itemId)) {
+      throw new HostError("conflict", "这条消息正在发送，请稍后再试。");
+    }
+    this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, delivery: "expired", queueCancelled: true, deliveryReason: "已停止群组回复", deliveryEndedAt: new Date().toISOString() }) });
+  }
+
+  isDispatching(sessionId: Id): boolean {
+    return [...this.dispatchingItems].some((id) => this.store.getItem(id)?.sessionId === sessionId);
   }
 
   /** Watches sessions get free; sends what the last Host left held, and moves session_send's old queue in. */
@@ -394,7 +407,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
 
   private append(s: Session, text: string, relayFromSessionId?: Id, messageId?: Id, options: InboxMessageOptions = {}): SessionItem {
     const { images, replacesItemId, rebaseOnContextUpgrade, answersDecisionId, fromPerson, afterTurn, queuedSkillText, queuedFromDevice } = options;
-    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", images: images?.length ? images : undefined, replacesItemId, rebaseOnContextUpgrade, relayFromSessionId, answersDecisionId, fromPerson, afterTurn, queuedSkillText, queuedFromDevice }, "user/inbox");
+    const row = this.row(s, { type: "user", text, delivery: "held", messagePurpose: options.purpose ?? "work", images: images?.length ? images : undefined, replacesItemId, rebaseOnContextUpgrade, relayFromSessionId, answersDecisionId, fromPerson, afterTurn, queuedSkillText, queuedFromDevice, ...(options.botLetter ? { botLetter: options.botLetter } : {}) }, "user/inbox");
     const item = this.store.appendItem({ ...row, ...(messageId ? { id: messageId } : {}) });
     this.publish({ type: "item.appended", item });
     return item;

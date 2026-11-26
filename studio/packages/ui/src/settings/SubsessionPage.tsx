@@ -124,7 +124,7 @@ export function SubsessionPage({ link, settings }: { link: HostLink; settings: S
     <section className="settings-section subsession-page" aria-label="子会话">
       <SettingsPageActions>
         <details className="subsession-rules"><summary>ⓘ 生效规则</summary><div>
-          <p><b>什么时候用</b><br />在「@ 开子会话」里作为初始值；AI 自己开子会话、没有指定选项时也会使用。</p>
+          <p><b>什么时候用</b><br />在 / 菜单的「开子会话」里作为初始值。AI 自己开子会话时，如果没有指定选项，也会使用这些值。</p>
           <p><b>启动选项</b><br />型号单独设置优先；Fast 和权限未设置时沿用渠道。思考强度只适用于当前型号，渠道的强度只用于默认型号。</p>
           <p><b>用法说明</b><br />写给主模型看，帮助它选择模型和交代任务。型号单独填写用法时优先使用，否则沿用渠道通用说明。</p>
           <p><b>保存方式</b><br />每段最多 {SUBSESSION_NOTE_MAX} 字，离开输入框时保存；选项改了立即保存。</p>

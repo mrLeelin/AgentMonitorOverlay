@@ -28,6 +28,14 @@ function start() {
   return { host, store, root };
 }
 
+it("preserves model and effort on older clients' saves and supports returning to channel defaults", () => {
+  const { host } = start();
+  const bot = host.bots.save({ ...input, model: "mock-model", effort: "high" });
+  expect(host.bots.save(input, bot.id)).toMatchObject({ model: "mock-model", effort: "high" });
+  expect(host.bots.save({ ...input, model: "other" }, bot.id)).toMatchObject({ model: "other", effort: null });
+  expect(host.bots.save({ ...input, model: null, effort: null }, bot.id)).toMatchObject({ model: null, effort: null });
+});
+
 it("stores a square PNG avatar, preserves it on older input and resets it with null", () => {
   const { host } = start();
   const avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYToAAAAASUVORK5CYII=";
@@ -49,6 +57,8 @@ it("routes a request to the home once, ties the result to its own turn, and keep
   expect(first.sessionId).not.toBe(source!.id);
   expect(host.bots.list()[0]?.homeSessionId).toBe(first.sessionId);
   await vi.waitFor(() => expect(host.bots.requests(source!.id)[0]).toMatchObject({ status: "completed", result: expect.any(String) }));
+  expect(host.snapshot().tasks.find((task) => task.id === first.taskId)?.botId).toBe(bot.id);
+  expect(host.bots.sidebar().previews[bot.id]).toBeTruthy();
   expect(store.findItems(first.sessionId!, "user")).toHaveLength(1);
   expect(store.findItems(source!.id, "turn")).toHaveLength(0);
   await expect(host.sessions.archive(first.sessionId!)).rejects.toThrow("主聊天");
@@ -61,6 +71,87 @@ it("routes a request to the home once, ties the result to its own turn, and keep
   const previous = await host.bots.request(bot.id, { id: "review-2", destination: { sessionId: first.sessionId }, text: "Follow up on the fixture" });
   expect(previous.sessionId).toBe(first.sessionId);
   await vi.waitFor(() => expect(host.bots.requests(null).find((r) => r.id === "review-2")?.status).toBe("completed"));
+});
+
+it("keeps saved chats and blocks new Bot work while Bots is disabled", async () => {
+  const { host } = start();
+  const bot = host.bots.save(input);
+  const home = await host.bots.home(bot.id);
+  expect(host.config.settings().botsEnabled).toBe(true);
+  expect(host.config.settings().confirmBotHomeReset).toBe(true);
+  host.config.updateSettings({ botsEnabled: false, confirmBotHomeReset: false });
+  expect(host.config.settings()).toMatchObject({ botsEnabled: false, confirmBotHomeReset: false });
+  await expect(host.bots.home(bot.id)).rejects.toThrow("Bots 已关闭");
+  await expect(host.sessions.sendMessage(home.id, "请继续")).rejects.toThrow("Bots 已关闭");
+  await expect(host.bots.request(bot.id, { id: "disabled-request", text: "请核对" })).rejects.toThrow("Bots 已关闭");
+  expect(host.bots.requests(null)).toHaveLength(0);
+  expect(host.bots.chats(bot.id).map((chat) => chat.id)).toEqual([home.id]);
+  host.config.updateSettings({ botsEnabled: true });
+  expect((await host.bots.home(bot.id)).id).toBe(home.id);
+});
+
+it("lets only the originating agent dispatch a mention and delivers one reply back to its inbox", async () => {
+  const { host, store } = start();
+  const bot = host.bots.save(input);
+  const { session } = await host.tasks.createTask({ title: "来源任务", firstSession: { profileId: "mock" } });
+  const source = session!.id;
+  const mention = { id: "picked-review", sourceSessionId: source, text: "@审核员 请看第二个方案" };
+  await host.bots.mention(bot.id, mention);
+  await host.bots.mention(bot.id, mention);
+  expect(host.bots.requests(source)).toHaveLength(0);
+  await expect(host.bots.ask("other", mention.id, "wrong")).rejects.toThrow("本会话");
+  const question = "第二个方案是复用已有会话，请核对它的恢复逻辑。";
+  const request = await host.bots.ask(source, mention.id, question);
+  expect(store.getItem(`bot-request:${request.id}`)).toMatchObject({ text: expect.stringContaining("来源任务") });
+  await vi.waitFor(() => expect(store.getItem(`bot-reply:${request.id}`)).toMatchObject({ sessionId: source, text: expect.stringContaining(question) }));
+  await host.bots.ask(source, mention.id, question);
+  expect(store.findItems(request.sessionId!, "user")).toHaveLength(1);
+  await vi.waitFor(() => expect(store.findItems(source, "turn")).toHaveLength(2));
+  expect(host.bots.requests(source)).toHaveLength(1);
+});
+
+it("binds every recipient to one mention without duplicating a delivery on retry", async () => {
+  const { host, store } = start();
+  const a = host.bots.save(input);
+  const b = host.bots.save({ ...input, name: "审核员2" });
+  const { session } = await host.tasks.createTask({ title: "双人审核", firstSession: { profileId: "mock" } });
+  const origin = session!.id;
+  const mention = { id: "pair", sourceSessionId: origin, recipients: [{ botId: a.id, destination: "home" }, { botId: b.id, destination: "new" }], text: "@审核员 @审核员2 你们是谁？" };
+  await host.bots.mentionMany(mention);
+  await host.bots.mentionMany(mention);
+  expect(store.findItems(origin, "user")).toHaveLength(1);
+  await expect(host.bots.mentionMany({ ...mention, recipients: [...mention.recipients].reverse() })).rejects.toThrow("另一条消息");
+  await expect(host.bots.ask(origin, "pair", "介绍自己")).rejects.toThrow("对应 Bot");
+  await expect(host.bots.ask(origin, "pair:3", "介绍自己")).rejects.toThrow("对应 Bot");
+  const first = await host.bots.ask(origin, "pair:1", "介绍自己");
+  const second = await host.bots.ask(origin, "pair:2", "介绍自己");
+  expect(first.botId).toBe(a.id);
+  expect(second.botId).toBe(b.id);
+  await host.bots.ask(origin, "pair:2", "介绍自己");
+  expect(store.findItems(second.sessionId!, "user")).toHaveLength(1);
+  await vi.waitFor(() => expect(host.bots.requests(origin).filter((r) => r.reported)).toHaveLength(2));
+});
+
+it("recovers a completed review if the Host stopped before the reply reached the source inbox", async () => {
+  const { host, root } = start();
+  const bot = host.bots.save(input);
+  const { session } = await host.tasks.createTask({ title: "Recovery source", firstSession: { profileId: "mock" } });
+  const source = session!.id;
+  const put = host.sessions.inbox.put.bind(host.sessions.inbox);
+  vi.spyOn(host.sessions.inbox, "put").mockImplementation((...args) => {
+    if (args[3]?.startsWith("bot-reply:")) return Promise.reject(new Error("simulated offline inbox"));
+    return put(...args);
+  });
+  await host.bots.mention(bot.id, { id: "recover-mention", sourceSessionId: source, text: "@审核员 检查重试" });
+  const request = await host.bots.ask(source, "recover-mention", "检查重试");
+  await vi.waitFor(() => expect(host.bots.requests(source)[0]?.status).toBe("completed"));
+  const recoveredStore = new Store(join(root, "studio.db"));
+  const servers = new FakeServers(profiles);
+  const recovered = new HostService(recoveredStore, new CodexRuntime({ store: recoveredStore, servers, profiles }), profiles, { commonDir: join(root, "common") });
+  cleanup.push(async () => { recovered.duty.stop(); recovered.bots.webhooks.stop(); recovered.teamLink.stop(); await servers.close(); recoveredStore.close(); });
+  await vi.waitFor(() => expect(recovered.bots.requests(source)[0]?.reported).toBe(true));
+  expect(recoveredStore.getItem(`bot-reply:${request.id}`)).toMatchObject({ sessionId: source });
+  expect(recoveredStore.findItems(source, "user")).toHaveLength(2);
 });
 
 it("starts a separate worktree-scoped chat and rejects an unrelated chat destination", async () => {
@@ -125,6 +216,63 @@ it("fans out to group members, keeps separate conversations and does not repeat 
   expect(next.replies[0]?.sessionId).toBe(first.replies.find((r) => r.botId === alpha.id)?.sessionId);
   await host.bots.post(group.id, { id: "post-2", text: "Second opinion", targetIds: [alpha.id] });
   expect(store.findItems(next.replies[0]!.sessionId!, "user")).toHaveLength(2);
+});
+
+it("stops only the group reply requested, including a message held behind a different turn", async () => {
+  const { host, store } = start();
+  const alpha = host.bots.save(input);
+  const beta = host.bots.save({ ...input, name: "回归审核员" });
+  const group = host.bots.saveGroup({ name: "复核组", memberIds: [alpha.id, beta.id] });
+  const post = (id: string, text: string) => host.bots.post(group.id, { id, text, targetIds: [alpha.id] });
+  const status = (id: string) => host.bots.posts(group.id).find((item) => item.id === id)?.replies[0]?.status;
+  const first = await post("slow", "[[slow]]");
+  await vi.waitFor(() => expect(status("slow")).toBe("running"));
+  const queued = await post("in-queue", "Skip this");
+  const later = await post("next", "Continue with this one");
+  expect(queued.replies[0]?.status).toBe("queued");
+  expect(later.replies[0]?.sessionId).toBe(first.replies[0]?.sessionId);
+  await expect(host.bots.removeGroup(group.id)).rejects.toThrow("运行或排队");
+  await expect(host.bots.remove(alpha.id)).rejects.toThrow("运行或排队");
+  await host.bots.stopGroupReply(group.id, queued.id, alpha.id);
+  expect(status(queued.id)).toBe("stopped");
+  expect(status(first.id)).toBe("running");
+  expect(status(later.id)).toBe("queued");
+  await host.bots.stopGroupReply(group.id, first.id, alpha.id);
+  await vi.waitFor(() => expect(status(first.id)).toBe("stopped"));
+  await host.bots.stopGroupReply(group.id, first.id, alpha.id);
+  await vi.waitFor(() => expect(status(later.id)).toBe("completed"));
+  const turns = store.findItems(first.replies[0]!.sessionId!, "turn");
+  expect(turns).toHaveLength(2);
+});
+
+it("preserves ordinary group messages, update fields independently and retain historical replies when deleting members", async () => {
+  const { host, store } = start();
+  const alpha = host.bots.save(input);
+  const beta = host.bots.save({ ...input, name: "回归审核员" });
+  const gamma = host.bots.save({ ...input, name: "测试员" });
+  const group = host.bots.saveGroup({ name: "复核组", memberIds: [alpha.id, beta.id] });
+  const none = { id: "note", text: "只记录一条消息", targetIds: [] };
+  expect(await host.bots.post(group.id, none)).toMatchObject({ ...none, replies: [], dispatchComplete: true });
+  expect(await host.bots.post(group.id, none)).toMatchObject({ ...none, replies: [] });
+  await expect(host.bots.post(group.id, { ...none, text: "另一个内容" })).rejects.toThrow("编号已用于");
+  await expect(host.bots.post(group.id, { id: "non-member", text: "发给外部", targetIds: [gamma.id] })).rejects.toThrow("已启用的群组成员");
+  const { replies: [reply] } = await host.bots.post(group.id, { id: "historic", text: "确认结果", targetIds: [alpha.id] });
+  await vi.waitFor(() => expect(host.bots.posts(group.id)[0]?.replies[0]?.status).toBe("completed"));
+  expect(host.bots.patch(alpha.id, { name: "首席审核员" })).toMatchObject({ name: "首席审核员", purpose: input.purpose, memory: input.memory });
+  expect(store.getTask(reply!.taskId!)?.title).toBe("首席审核员");
+  expect(host.bots.patchGroup(group.id, { name: "审核小组" })).toMatchObject({ name: "审核小组", memberIds: [alpha.id, beta.id] });
+  expect(host.bots.patchGroup(group.id, { memberIds: [alpha.id, gamma.id] })).toMatchObject({ name: "审核小组", memberIds: [alpha.id, gamma.id] });
+  await host.bots.remove(alpha.id);
+  expect(host.bots.list().map((bot) => bot.id)).not.toContain(alpha.id);
+  expect(host.bots.groups()[0]?.memberIds).toEqual([gamma.id]);
+  expect(host.bots.posts(group.id)[0]?.replies[0]).toMatchObject({ status: "completed", botName: input.name });
+  await expect(host.bots.home(alpha.id)).rejects.toThrow("找不到");
+  expect(host.bots.save({ ...input, name: "首席审核员" }).id).not.toBe(alpha.id);
+  await host.bots.removeGroup(group.id);
+  expect(host.bots.groups()).toEqual([]);
+  expect(() => host.bots.posts(group.id)).toThrow("找不到");
+  expect(store.getSession(reply!.sessionId!)?.options.permission).toBe("read-only");
+  expect(store.findItems(reply!.sessionId!, "turn")).toHaveLength(1);
 });
 
 it("accepts a scoped webhook event over Relay, deduplicates delivery, and keeps results private by default", async () => {

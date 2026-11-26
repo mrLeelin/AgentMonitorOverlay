@@ -53,7 +53,7 @@
 .studio-workbench .btn-primary { background: var(--action-fill); color: #1a2414; border-color: var(--action-fill); }
 .studio-workbench .btn-primary:hover:not(:disabled) { background: var(--action-fill-hover); }
 .studio-workbench :is(.topbar, .column-head) { border-bottom-color: var(--border); }
-.studio-workbench :is(.nav-row[aria-current="true"], .view-tab[aria-current="page"], .settings-tab[aria-selected="true"]) { color: var(--primary); }
+.studio-workbench :is(.view-tab[aria-current="page"], .settings-tab[aria-selected="true"]) { color: var(--primary); }
 .studio-workbench .column-count { color: var(--text-dim); }
 .studio-workbench [data-column="doing"] .column-name { color: var(--primary); }
 .studio-workbench [data-column="review"] .column-name { color: var(--attention); }
@@ -66,12 +66,8 @@
 .studio-workbench .brand:has(.wb-brand-mark) { padding-inline: 6px; gap: 11px; }
 .studio-workbench :is(.brand:has(.wb-brand-mark) .brand-name, .wb-nav-link, .wb-search-tools button, .wb-search-tools input, .board-toggle, .wb-shortcuts) { font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
 .wb-brand-mark { width: 31px; height: 31px; padding: 6px; border-radius: 9px; background: var(--action-fill); }
-.studio-workbench .nav-top { display: grid; gap: 4px; padding: 0 14px 8px; }
 .wb-nav-link { width: 100%; height: 38px; display: flex; align-items: center; gap: 11px; padding: 0 11px; border: 0; border-radius: 9px; background: transparent; color: var(--text-dim); font-size: 13px; text-align: left; cursor: pointer; }
 .wb-nav-link:hover, .wb-bell:hover, .wb-theme:hover { background: var(--selected); }
-.wb-nav-link[aria-current="true"], .wb-nav-link[aria-expanded="true"], .wb-nav-team[aria-pressed="true"] { background: var(--selected); color: var(--primary); font-weight: 650; }
-.scope-nav.collapsed .wb-nav-team { width: 30px; height: 30px; justify-content: center; padding: 0; }
-.wb-count { margin-left: auto; font-size: 11px; font-weight: 500; }
 .wb-nav-link svg, .wb-bell svg, .studio-workbench .board-toggle svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 .wb-search-tools { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .wb-search-tools .search-box { width: 220px; min-width: 115px; background: light-dark(#fff, #20201f); border-color: var(--border); border-radius: 8px; }

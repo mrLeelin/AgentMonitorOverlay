@@ -73,6 +73,9 @@ export function EffortPicker({ efforts, value, fallback, modelLabel, fastControl
       <Bolt /><span data-testid="effort-label">{labelOf(level)}</span><IconChevronDown />
     </button>
     <div ref={panel} id={id} popover="auto" role="dialog" aria-label="选择推理强度" className="effort-picker" data-highest={highest} style={tint}
+      onKeyDown={e => {
+        if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); panel.current?.hidePopover(); trigger.current?.focus(); }
+      }}
       onToggle={e => {
         setOpen(e.newState === "open");
         if (e.newState === "open") { onOpen(); slider.current?.focus({ preventScroll: true }); }

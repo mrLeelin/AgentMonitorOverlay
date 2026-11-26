@@ -4,10 +4,10 @@ import { backTo, type ViewDef } from "../shell/views.js";
 /** One task: its sessions and conversation, notes, mail, decisions and checklist. "←" returns where it was opened from. */
 export const taskView: ViewDef<"task"> = {
   kind: "task",
-  render: (view, { link, state, data, setView, teamTasksEnabled }) => {
+  render: (view, { link, state, data, setView, teamTasksEnabled, botsEnabled }) => {
     const task = state.tasks.find((t) => t.id === view.taskId);
     if (!task) return <div className="placeholder">任务不存在或已被删除。</div>;
-    const back = backTo(view.back, teamTasksEnabled);
+    const back = backTo(view.back, teamTasksEnabled, botsEnabled);
     return (
       <TaskPage
         key={`${task.id}:${view.nav ?? 0}`}

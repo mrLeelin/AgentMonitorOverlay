@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useInWindow, useMenuDismiss } from "./ContextMenu.js";
 
 // A right-click menu of actions in groups (2026-10-28, first for files): a rule between groups, each action's key on
@@ -13,11 +13,13 @@ export interface MenuAction {
   run(): void;
   disabled?: boolean;
   title?: string;
+  icon?: ReactNode;
+  danger?: boolean;
 }
 
 type Slot = MenuAction | false | null | undefined;
 
-export function ActionMenu({ label, at, groups, onClose, testId }: { label: string; at: { x: number; y: number }; groups: ReadonlyArray<readonly Slot[]>; onClose(): void; testId?: string }) {
+export function ActionMenu({ label, at, groups, onClose, testId, focus = false }: { label: string; at: { x: number; y: number }; groups: ReadonlyArray<readonly Slot[]>; onClose(): void; testId?: string; focus?: boolean }) {
   const shown = groups.map((g) => g.filter((a): a is MenuAction => !!a)).filter((g) => g.length);
   const box = useRef<HTMLDivElement>(null);
   const pos = useInWindow(box, at);
@@ -27,8 +29,8 @@ export function ActionMenu({ label, at, groups, onClose, testId }: { label: stri
 
   useLayoutEffect(() => {
     // Opened from a page in a frame (位置批注): the keys would go to the frame, so the menu takes the focus.
-    if (document.activeElement?.tagName === "IFRAME") box.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
-  }, [at.x, at.y]);
+    if (focus || document.activeElement?.tagName === "IFRAME") box.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+  }, [at.x, at.y, focus]);
 
   useEffect(() => {
     const close = () => latest.current.onClose();
@@ -47,7 +49,15 @@ export function ActionMenu({ label, at, groups, onClose, testId }: { label: stri
   }, []);
 
   return (
-    <div className="ctx-menu action-menu" role="menu" aria-label={label} style={{ left: pos.x, top: pos.y }} ref={box} data-testid={testId}>
+    <div className="ctx-menu action-menu" role="menu" aria-label={label} style={{ left: pos.x, top: pos.y }} ref={box} data-testid={testId} onKeyDown={(event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      if (!buttons.length) return;
+      event.preventDefault();
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      buttons[(index + delta + buttons.length) % buttons.length]?.focus();
+    }}>
       {shown.map((group, i) => (
         <div key={i} role="group" className="action-group">
           {i > 0 && <hr className="menu-rule" />}
@@ -57,6 +67,7 @@ export function ActionMenu({ label, at, groups, onClose, testId }: { label: stri
               type="button"
               role="menuitem"
               disabled={a.disabled}
+              className={a.danger ? "menu-danger" : undefined}
               title={a.title}
               aria-keyshortcuts={a.key}
               onClick={() => {
@@ -64,6 +75,7 @@ export function ActionMenu({ label, at, groups, onClose, testId }: { label: stri
                 a.run();
               }}
             >
+              {a.icon && <span className="menu-action-icon" aria-hidden="true">{a.icon}</span>}
               <span>{a.label}</span>
               {a.key && (
                 <kbd className="menu-key" aria-hidden="true">

@@ -2,11 +2,9 @@ import { lineSuffix, RUNTIME_LABELS, type FileMark, type ProjectFile, type Sessi
 import { baseName, dirName } from "./refs.js";
 
 // "@" in a session's composer (stage 11): grouped suggestions — tasks, sessions of the same project or topic, recently
-// changed files and the file selector — and last「AMO 扩展功能」(10-26): sub-session setups, 快速提交 and (10-31)
-// 提示词模板. Pure logic;
-// the hook and the list live beside it.
+// changed files and the file selector. The hook and the list live beside it.
 
-export type MentionKind = "bot" | "task" | "session" | "project" | "mark" | "file" | "find" | "subsession" | "commit" | "template";
+export type MentionKind = "bot" | "task" | "session" | "project" | "mark" | "file" | "find";
 
 export interface MentionOption {
   kind: MentionKind;
@@ -20,7 +18,7 @@ export interface MentionOption {
 }
 
 export interface MentionGroup {
-  kind: MentionKind | "ext";
+  kind: MentionKind;
   heading: string;
   options: MentionOption[];
 }
@@ -49,7 +47,7 @@ export interface SubSessionSpec {
   extra?: string;
 }
 
-/** A task, session, sub-session setup or 快速提交 picked with @: the text keeps "@name", the message says what it is. */
+/** A reference or AMO action that keeps "@name" in the text and adds its details to the message. */
 export type MentionPick =
   | { kind: "task" | "bot"; id: string }
   | { kind: "session"; id: string; taskId: string | null }
@@ -112,12 +110,6 @@ export function mentionGroups(input: {
   files: readonly ProjectFile[];
   /** The project's file marks (S12-D), matched against their path and note. */
   marks?: readonly FileMark[];
-  /** 开子会话… is offered (the session may start sessions: a main or forked session of a task). */
-  subsession?: boolean;
-  /** 快速提交 is offered (a live session). */
-  commit?: boolean;
-  /** 提示词模板… is offered (2026-10-31: a composer with room for several lines). */
-  template?: boolean;
   /** Projects to offer (2026-10-29: the new-task page, and the composer once something is typed). */
   projects?: readonly Workspace[];
   /**
@@ -168,15 +160,9 @@ export function mentionGroups(input: {
     { kind: "mark", heading: "书签里的文件", options: marks },
     { kind: "file", heading: input.query ? "文件" : "最近改动的文件", options: files },
   ];
-  const ext: MentionOption[] = [
-    ...(input.subsession ? [{ kind: "subsession" as const, id: "subsession", name: "开子会话…", hint: "选模型、强度，补充这轮的话" }] : []),
-    ...(input.commit ? [{ kind: "commit" as const, id: "commit", name: QUICK_COMMIT, hint: "分条提交、拉取合并，可选推送　Ctrl+Shift+P" }] : []),
-    ...(input.template ? [{ kind: "template" as const, id: "template", name: "提示词模板…", hint: "选一条存好的提示词，粘进输入框" }] : []),
-  ].filter((o) => !q || contains(o.name, q));
   return [
     ...groups.filter((g) => g.options.length),
     ...(input.find === false ? [] : [{ kind: "find" as const, heading: "", options: [{ kind: "find" as const, id: "find", name: "找文件…", hint: "Ctrl+P" }] }]),
-    ...(ext.length ? [{ kind: "ext" as const, heading: "AMO 扩展功能", options: ext }] : []),
   ];
 }
 

@@ -32,6 +32,13 @@ describe("slash menu", () => {
     expect(slashAt("/usr/bin", 8)).toBeNull();
   });
 
+  it("finds an inline AMO action at the caret and leaves paths alone", () => {
+    expect(commandAt("先检查 /模板 再运行", 7, true)).toEqual({ query: "模板", start: 4, end: 7, trigger: "/" });
+    expect(commandAt("先检查 /模板 再运行", 5)).toBeNull();
+    expect(commandAt("检查 /usr/bin", 7, true)).toBeNull();
+    expect(commandAt("检查/usr", 5, true)).toBeNull();
+  });
+
   it("ranks prefix, alias, substring, letters in order, then description", () => {
     expect(matchScore(COMMANDS[0]!, "comp")).toBe(0);
     expect(matchScore(COMMANDS[4]!, "cost")).toBe(1);

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { SLASH_GROUP_LABEL, type Session, type SlashCommand, type SlashCommandList } from "@amo-studio/protocol";
+import { SLASH_GROUP_LABEL, type Session, type SlashCommand, type SlashCommandGroup, type SlashCommandList } from "@amo-studio/protocol";
 import { call, type HostLink } from "../../host/client.js";
-import { commandAt, matchSlash, slashGroups } from "./slash.js";
+import { commandAt, matchSlash, slashGroups, type SlashAction } from "./slash.js";
 import { viewFile, viewRemoteFile } from "../../files/FileLinks.js";
 import { showToast } from "../../lib/toast.js";
 import { enterKey } from "../inputPrefs.js";
@@ -9,6 +9,7 @@ import { enterKey } from "../inputPrefs.js";
 // `/` lists commands and skills; `$` inserts a skill mention within a request. Both use the session's actual list.
 
 const STALE_MS = 60_000;
+type SlashOption = SlashCommand | SlashAction;
 
 export function useSlashCommands(input: {
   link: HostLink;
@@ -20,6 +21,8 @@ export function useSlashCommands(input: {
   onComplete?(caret: number): void;
   /** A command was picked that runs without arguments (or the person pressed Enter on it). */
   onRun?(command: SlashCommand, args: string): void;
+  /** AMO dialogs use the same menu and insert content at the selection. */
+  actions?: readonly SlashAction[];
   /** Goal objectives insert commands without executing them while the person is still writing. */
   completionOnly?: boolean;
 }) {
@@ -29,7 +32,7 @@ export function useSlashCommands(input: {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [list, setList] = useState<{ key: string; at: number; commands: SlashCommand[]; note?: string } | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const typing = caret === null ? null : commandAt(text, caret);
+  const typing = caret === null ? null : commandAt(text, caret, !!input.actions?.length);
   const sessionId = session?.id ?? null;
   const profileId = input.draft?.profileId;
   const workspaceId = input.draft?.workspaceId ?? null;
@@ -37,7 +40,9 @@ export function useSlashCommands(input: {
   const activeKey = useRef(key);
   activeKey.current = key;
   const tokenKey = typing ? JSON.stringify([text, typing.start, typing.end, typing.trigger]) : null;
-  const query = key && typing && dismissed !== tokenKey ? typing.query : null;
+  const query = typing && dismissed !== tokenKey ? typing.query : null;
+  const trigger = typing?.trigger ?? "/";
+  const discover = !!key && !!typing && (trigger === "$" || !text.slice(0, typing.start).trim());
   const fresh = !!list && list.key === key && Date.now() - list.at < STALE_MS;
   const loading = key !== null && loadingKey === key;
 
@@ -61,8 +66,8 @@ export function useSlashCommands(input: {
 
   useEffect(() => {
     // A restored draft already containing a skill needs its list even when the caret is after the name.
-    if ((query !== null || /(^|\s)\$[\w:.-]+/.test(text) || /^\s*\/[\w:.-]+/.test(text)) && !fresh && !loading) void load();
-  }, [query, text, fresh, loading, load]);
+    if (key && ((query !== null && discover) || /(^|\s)\$[\w:.-]+/.test(text) || /^\s*\/[\w:.-]+/.test(text)) && !fresh && !loading) void load();
+  }, [key, query, discover, text, fresh, loading, load]);
   useEffect(() => {
     setDismissed(null);
     setHighlight(0);
@@ -70,11 +75,18 @@ export function useSlashCommands(input: {
 
   const commands = list?.key === key ? list.commands : [];
   const skills = useMemo(() => commands.filter((command) => command.group === "skill"), [commands]);
-  const trigger = typing?.trigger ?? "/";
   const completionOnly = input.completionOnly || !sessionId || trigger === "$";
-  const groups = useMemo(() => (query === null ? [] : slashGroups(trigger === "$" ? commands.filter((c) => c.group === "skill") : commands, query)), [commands, query, trigger]);
+  const groups: Array<{ group: SlashCommandGroup | "amo"; commands: SlashOption[] }> = query !== null && discover
+    ? slashGroups(trigger === "$" ? skills : commands, query)
+    : [];
+  if (query !== null && trigger === "/") {
+    const matches = input.actions?.filter((action) => action.name.includes(query));
+    if (matches?.length) groups.unshift({ group: "amo", commands: matches });
+  }
   const flat = groups.flatMap((g) => g.commands);
   const hl = Math.min(highlight, Math.max(flat.length - 1, 0));
+  const selected = flat[hl];
+  const open = query !== null && (flat.length > 0 || (discover && (loading || fresh)));
   useEffect(() => setHighlight(0), [query, trigger, typing?.start]);
 
   /** Tab, or Enter on a command that needs arguments ("<…>"): complete the name and let the person type them. */
@@ -86,7 +98,16 @@ export function useSlashCommands(input: {
     setCaret(prefix.length);
     input.onComplete?.(prefix.length);
   };
-  const choose = (c: SlashCommand, how: "enter" | "tab" | "click") => {
+  const choose = (c: SlashOption, how: "enter" | "tab" | "click") => {
+    if ("select" in c) {
+      if (!typing) return;
+      const before = text.slice(0, typing.start);
+      const after = text.slice(typing.end);
+      setText(before + (before.endsWith(" ") && after.startsWith(" ") ? after.slice(1) : after));
+      setCaret(null);
+      c.select(typing.start);
+      return;
+    }
     if (completionOnly || how === "tab" || (c.argumentHint?.trim().startsWith("<") && !c.local)) return complete(c);
     setText("");
     setCaret(null);
@@ -104,8 +125,9 @@ export function useSlashCommands(input: {
     },
     trigger,
     completionOnly,
-    open: query !== null && (flat.length > 0 || loading || (!!list && fresh)),
-    loading: loading && !commands.length,
+    actionSelected: !!selected && "select" in selected,
+    open,
+    loading: discover && loading && !commands.length,
     note: list?.key === key ? list.note : undefined,
     groups,
     highlight: hl,
@@ -118,7 +140,7 @@ export function useSlashCommands(input: {
       return matchSlash(message.trimStart(), known);
     },
     onKeyDown(e: KeyboardEvent): boolean {
-      if (query === null) return false;
+      if (!open) return false;
       if (e.key === "Escape") {
         e.preventDefault();
         setDismissed(tokenKey);
@@ -157,7 +179,7 @@ export function SlashMenu({ slash, inline = false }: { slash: SlashCommands; inl
       {!slash.loading && !slash.groups.length && <div className="slash-empty">没有匹配的{slash.trigger === "$" ? "技能" : "命令或技能"}{slash.note ? `（${slash.note}）` : ""}</div>}
       {slash.groups.map((g) => (
         <Fragment key={g.group}>
-          <div className="suggest-h">{SLASH_GROUP_LABEL[g.group]}</div>
+          <div className="suggest-h">{g.group === "amo" ? "AMO 扩展功能" : SLASH_GROUP_LABEL[g.group]}</div>
           {g.commands.map((c) => {
             const i = index++;
             return (
@@ -177,7 +199,7 @@ export function SlashMenu({ slash, inline = false }: { slash: SlashCommands; inl
               >
                 <span className="slash-main">
                   <span className="slash-name">{slash.trigger}{c.name}</span>
-                  {c.argumentHint && <span className="slash-args">{c.argumentHint}</span>}
+                  {"argumentHint" in c && c.argumentHint && <span className="slash-args">{c.argumentHint}</span>}
                 </span>
                 <span className="slash-desc">{c.description}</span>
               </button>
@@ -186,7 +208,7 @@ export function SlashMenu({ slash, inline = false }: { slash: SlashCommands; inl
         </Fragment>
       ))}
       <div className="slash-keys" aria-hidden="true">
-        ↑↓ 选择 · 回车 {slash.completionOnly ? "插入" : "运行"} · Tab 补全 · Esc 关闭
+        ↑↓ 选择 · {slash.actionSelected ? "回车或 Tab 打开" : `回车 ${slash.completionOnly ? "插入" : "运行"} · Tab 补全`} · Esc 关闭
       </div>
     </div>
   );

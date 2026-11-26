@@ -83,11 +83,11 @@ test("Goal / 与 $ 菜单只补全目标，技能高亮、撤销与 Esc 保留�
   expect(sent).toHaveLength(0);
 });
 
-test("Goal @ 引用与模板、找文件弹窗可用，失败重试保留真实引用", async () => {
+test("Goal / 模板、@ 引用与找文件弹窗可用，失败重试保留真实引用", async () => {
   const { page, app, input, sent, target, ws, dir } = await openGoal();
   await studio!.api("POST", "/api/prompt-templates", { title: "Goal 检查模板", body: "检查实现并提供完成证据。", workspaceId: ws.id });
-  await input.fill("@提示词模板");
-  await page.getByTestId("goal-tray").getByRole("option", { name: /提示词模板/ }).click();
+  await input.fill("/提示词模板");
+  await page.getByTestId("goal-tray").getByTestId("slash-menu").getByRole("option", { name: /提示词模板/ }).click();
   const dialog = page.getByTestId("prompt-dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByTestId("prompt-item").filter({ hasText: "Goal 检查模板" }).click();

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { QUICK_COMMIT } from "./mentions.js";
 import { Modal } from "../lib/Modal.js";
 
-// 快速提交 (2026-10-26): from the composer's @ list or Ctrl+Shift+P, the person confirms what the model is to do with
+// 快速提交 (2026-10-26): from the composer's / menu or Ctrl+Shift+P, the person confirms what the model is to do with
 // the local changes — commit them split by content and pull with a merge, and with the second choice push after. It
 // starts on the first each time. Confirmed, the composer gets「@快速提交」 and the message says what it means.
 

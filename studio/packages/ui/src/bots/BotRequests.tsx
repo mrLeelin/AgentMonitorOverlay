@@ -1,27 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import type { BotRequest, StudioBot } from "@amo-studio/protocol";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import type { BotRequest, SessionItem, StudioBot } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
-import { BotAvatar } from "./BotAvatar.js";
+import { BotAvatar, TranscriptBots } from "./BotAvatar.js";
+import { Markdown } from "../lib/markdown.js";
 
-const BOTS_CHANGED = "amo:bots-changed";
-const NO_BOTS: readonly StudioBot[] = [];
-
-export function botsChanged() { window.dispatchEvent(new Event(BOTS_CHANGED)); }
-
-export function useBots(link: HostLink, active = true): readonly StudioBot[] {
-  const [bots, setBots] = useState<readonly StudioBot[]>(NO_BOTS);
-  useEffect(() => {
-    if (!active) return;
-    let current = true;
-    const load = () => { void call(link, "GET /api/bots").then((value) => { if (current) setBots(value); }).catch(() => {}); };
-    load();
-    window.addEventListener(BOTS_CHANGED, load);
-    return () => { current = false; window.removeEventListener(BOTS_CHANGED, load); };
-  }, [link, active]);
-  return active ? bots : NO_BOTS;
-}
-
-export function useBotRequests(link: HostLink, sessionId: string | null) {
+export function useBotRequests(link: HostLink, sessionId: string | null, lastReplyId?: string) {
   const [stored, setStored] = useState<{ source: string; rows: BotRequest[] }>();
   const [revision, refresh] = useState(0);
   const rows = stored?.source === sessionId ? stored?.rows ?? [] : [];
@@ -33,13 +16,65 @@ export function useBotRequests(link: HostLink, sessionId: string | null) {
     load();
     const interval = pending ? setInterval(load, 1500) : undefined;
     return () => { current = false; clearInterval(interval); };
-  }, [link, sessionId, pending, revision]);
+  }, [link, sessionId, pending, revision, lastReplyId]);
   return { rows, refresh: () => refresh((n) => n + 1) };
 }
 
-const BOT_REQUEST_STATUS: Record<BotRequest["status"], string> = { queued: "排队中", running: "处理中", waiting: "等待你的回复", completed: "已完成", stopped: "已停止", failed: "失败" };
+export const BOT_REQUEST_STATUS: Record<BotRequest["status"], string> = { queued: "排队中", running: "处理中", waiting: "等待你的回复", completed: "已完成", stopped: "已停止", failed: "失败" };
 
 type FollowUp = (row: BotRequest, text: string, id: string) => Promise<void>;
+
+export const BotConversation = createContext<{ rows: readonly BotRequest[]; onFollowUp?: FollowUp }>({ rows: [] });
+
+/** Agent-dispatched replies already have an inbox item. Direct sends only have a request record. */
+export function withBotReplies(items: readonly SessionItem[], rows: readonly BotRequest[]): readonly SessionItem[] {
+  const ids = new Set(items.map((item) => item.id));
+  const notices: SessionItem[] = [];
+  for (const row of rows) {
+    const id = `bot-reply:${row.id}`;
+    if (!row.sourceSessionId || ids.has(id) || row.reported) continue;
+    notices.push({ type: "notice", id, sessionId: row.sourceSessionId, seq: 0, createdAt: row.settledAt ?? row.createdAt, level: "info", message: row.text });
+  }
+  if (!notices.length) return items;
+  notices.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const merged: SessionItem[] = [];
+  let i = 0;
+  for (const item of items) {
+    while (i < notices.length && notices[i]!.createdAt < item.createdAt) merged.push(notices[i++]!);
+    merged.push(item);
+  }
+  return merged.concat(notices.slice(i));
+}
+
+export function BotReply({ item }: { item: SessionItem }) {
+  const { rows, onFollowUp } = useContext(BotConversation);
+  const bots = useContext(TranscriptBots);
+  const row = rows.find((r) => item.id === `bot-reply:${r.id}`);
+  const letter = item.type === "user" && item.botLetter?.kind === "reply" ? item.botLetter : undefined;
+  // Older letters outlive the request list's 100-row window. Their first line includes the original subject.
+  let subject = row?.text;
+  if (!subject && letter && item.type === "user" && item.text.startsWith("【Bot 回信】")) {
+    try {
+      const payload = JSON.parse(item.text.split("\n", 1)[0]!.slice("【Bot 回信】".length));
+      if (typeof payload.question === "string") subject = payload.question;
+    } catch { /* The saved letter alone still supplies its sender and answer. */ }
+  }
+  const name = row?.botName ?? letter?.heading.replace(/ · [^·]+$/, "") ?? "Bot";
+  const bot = bots.find((b) => row ? b.id === row.botId : b.name === name);
+  const result = row?.result ?? letter?.text;
+  const status = row ? BOT_REQUEST_STATUS[row.status] : "回信";
+  return <details className="bot-inline-reply" data-testid="bot-request">
+    <summary><BotAvatar name={name} avatar={bot?.avatar} size={18} /><strong>{name}</strong>
+      <span className="bot-reply-subject">{row?.status === "completed" ? "回复" : status}{subject ? ` · ${subject}` : ""}</span>
+      <span className="bot-reply-chevron" aria-hidden="true">›</span></summary>
+    <div className="bot-reply-body">
+      {row && <div className="settings-hint">{status} · {row.text}</div>}
+      {result && <Markdown source={result} />}
+      {row?.sessionId && row.status === "completed" && bot?.enabled && onFollowUp && <BotFollowUp row={row} send={onFollowUp} />}
+      {row?.taskId && row.sessionId && <button type="button" className="btn-ghost small" onClick={() => void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! })}>打开 Bot 会话 ↗</button>}
+    </div>
+  </details>;
+}
 
 function BotFollowUp({ row, send }: { row: BotRequest; send: FollowUp }) {
   const [open, setOpen] = useState(false);
@@ -68,7 +103,7 @@ function BotFollowUp({ row, send }: { row: BotRequest; send: FollowUp }) {
   </form>;
 }
 
-export function BotRequestList({ rows, bots, onOpen, onWorker, onFollowUp }: { rows: readonly BotRequest[]; bots: readonly StudioBot[]; onOpen?: (taskId: string, sessionId: string) => void; onWorker?: (id: string) => void; onFollowUp?: FollowUp }) {
+export function BotRequestList({ rows, bots, onOpen, onWorker }: { rows: readonly BotRequest[]; bots: readonly StudioBot[]; onOpen?: (taskId: string, sessionId: string) => void; onWorker?: (id: string) => void }) {
   if (!rows.length) return null;
   const avatars = new Map(bots.map((bot) => [bot.id, bot.avatar]));
   return <section className="bot-requests" aria-label="Bot 请求">
@@ -76,7 +111,6 @@ export function BotRequestList({ rows, bots, onOpen, onWorker, onFollowUp }: { r
       <div className="bot-request-heading"><strong className="bot-identity"><BotAvatar name={row.botName} avatar={avatars.get(row.botId)} />@{row.botName}</strong><span className="settings-hint" role="status">{BOT_REQUEST_STATUS[row.status]}</span></div>
       <div>{row.text}</div>
       {row.result && <details><summary>{row.status === "failed" ? "失败原因" : "查看结论"}</summary><div className="bot-request-result">{row.result}</div></details>}
-      {row.status === "completed" && row.sessionId && bots.some((bot) => bot.id === row.botId && bot.enabled) && onFollowUp && <BotFollowUp row={row} send={onFollowUp} />}
       {row.taskId && row.sessionId && <button type="button" className="btn-ghost small" onClick={() => {
         if (onOpen) onOpen(row.taskId!, row.sessionId!);
         else void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! });

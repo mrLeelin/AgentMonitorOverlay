@@ -54,7 +54,7 @@ const PAGES = [
   { id: "stats", group: "models", label: "用量统计", keywords: "用量 token 费用 花费 消耗" },
   { id: "mcp", group: "tools", label: "MCP", keywords: "服务 工具 stdio HTTP" },
   { id: "skills", group: "tools", label: "技能展览", keywords: "技能 Skills Agent 全局 项目 发现 来源 目录 Codex Claude ClawHub skills.sh" },
-  { id: "bots", group: "tools", label: "Bots", keywords: "Bot 机器人 审核员 主聊天 记忆" },
+  { id: "bots", group: "tools", label: "Bots", keywords: "Bot 机器人 审核员 主聊天 记忆 启用 群组 模板 链接 Webhook" },
   { id: "git-editor", group: "tools", label: "Git 编辑器", keywords: "程序 路径 自动 检测 打开方式" },
   { id: "duty", group: "tools", label: "值守", keywords: "调度 定时 任务 自动" },
   { id: "network", group: "advanced", label: "网络", keywords: "连接 代理 proxy HTTP SOCKS 连通性" },
@@ -69,10 +69,11 @@ export type SettingsPage = (typeof PAGES)[number]["id"];
 const INTROS: Partial<Record<SettingsPage, string>> = {
   scratchpad: "便签是独立的小程序，跟 Studio 一起安装。Studio 重启不会关掉它，它的设置也在它自己那里（托盘图标右键 → 设置…）。",
   subsession: "设置 AI 开子会话时的默认选项，以及如何使用每个模型。",
-  "prompt-templates": "管理全局和各项目的常用提示词。在输入框中输入 @，选择「提示词模板…」即可粘入。",
+  "prompt-templates": "管理全局和各项目的常用提示词。在输入框中输入 /，选择「提示词模板…」即可粘入。",
   quota: "Studio 能跟踪的额度：GPT、Claude 订阅的用量，和设置了余额查询的渠道（在 设置 → 模型 里给渠道选查询方式）。左下角点开能看每个窗口剩多少、什么时候重置。",
   mcp: "会话除了 Studio 自带的 amo，还能用哪些 MCP。这里是全局的默认；某个项目可以在「编辑项目」里另外开关，某个会话可以在输入框上方的「MCP」按钮里开关。改了以后，正在运行的 Claude 会话下一次调用工具就能用上 Studio 里加的；换掉本机配置的那几个，要等这一轮回复结束后从下一条消息起生效。DeepSeek 会话从下一条消息起生效。Codex 只用 Studio 里加的、全局开着的，要等 Codex 下次启动（比如重启 Studio）才生效，也不能按项目或会话开关。",
   skills: "集中浏览本机与项目中的技能，找到需要的工作方法。",
+  bots: "管理本机的 Bot、模型配置和聊天历史。",
   "git-editor": "点击任务标题下的分支名，用这里选的 Git 编辑器打开该项目的仓库。",
   duty: "到点了就做一件事：开一个会话、跑一条命令，或者 Studio 自带的任务。等待和计时不用模型，只有动作是开会话时才用额度；同一项上一次还没结束，这次就跳过。Studio 退出时值守也停。",
   experimental: "还在试的新功能，默认都关着。打开后入口才出现；用着别扭、出错可以随时关掉，关掉不影响任务和会话的数据。",
@@ -85,7 +86,7 @@ let lastGroup: SettingsGroup | null = "general";
 const groupFor = (page: SettingsPage): SettingsGroup => PAGES.find((p) => p.id === page)!.group;
 
 /** Settings keeps one category expanded; search temporarily previews matching pages across all categories. */
-export function SettingsDialog({ link, state, settings, page: startPage, onClose, onOpenRemote, onOpenBotChat }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void; onOpenBotChat?: (session: Session) => void }) {
+export function SettingsDialog({ link, state, settings, page: startPage, startBotId, onClose, onOpenRemote, onOpenBotChat }: { link: HostLink; /** The window's live snapshot (值守's forms offer its tasks, projects and models). */ state: StateSnapshot; settings: StudioSettings | null; /** Opens on this page. */ page?: SettingsPage; startBotId?: string; onClose(): void; /** 远程 left 设置 for a page of its own (2026-10-29): the line on 界面 opens it. */ onOpenRemote?: () => void; onOpenBotChat?: (session: Session) => void }) {
   const [selectedPage, setPage] = useState<SettingsPage>(startPage ?? lastPage);
   const [expanded, setExpanded] = useState<SettingsGroup | null>(startPage ? groupFor(startPage) : lastGroup);
   const [search, setSearch] = useState("");
@@ -259,7 +260,7 @@ export function SettingsDialog({ link, state, settings, page: startPage, onClose
                   </div>
                 )}
                 {page === "network" && <NetworkPage link={link} value={settings?.network} />}
-                {page === "bots" && <BotsPage link={link} state={state} onOpenChat={onOpenBotChat} />}
+                {page === "bots" && <BotsPage link={link} state={state} settings={settings} startBotId={startBotId} onOpenChat={onOpenBotChat} />}
                 {page === "ui" && <UiPage link={link} onOpenRemote={onOpenRemote} />}
 
                 {page === "models" && <ModelsPage link={link} settings={settings} />}

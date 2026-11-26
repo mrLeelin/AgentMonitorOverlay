@@ -5,13 +5,13 @@
 .settings-row .field { flex: 1; min-width: 0; }
 .settings-label { font-size: 13px; color: var(--text-dim); min-width: 48px; }
 .settings-hint { font-size: 12.5px; color: var(--text-dim); }
-.bots-chooser { margin-bottom: 16px; }
 .bot-avatar { display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 50%; background: hsl(var(--avatar-hue) 39% 87%); color: hsl(var(--avatar-hue) 51% 22%); font-weight: 700; line-height: 1; vertical-align: middle; }
 .bot-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.bot-avatar > svg { width: 78%; height: 78%; }
-.bot-nav-roster { margin-inline-start: 16px; padding-inline-start: 5px; border-inline-start: 1px solid var(--border); max-height: min(22vh, 200px); overflow-y: auto; }
-.bot-nav-roster .wb-nav-link span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-avatar-face { width: 78%; height: 78%; background: currentColor; mask: url("../bots/bot-face.svg") center / contain no-repeat; }
 .bot-followup { display: grid; gap: 6px; }
+.bot-letter-heading { display: block; margin-bottom: 6px; color: var(--primary); }
+.msg-user-row[data-bot-letter] { align-items: flex-start; }
+.msg-user-row[data-bot-letter] .msg-user { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
 .bot-followup textarea { width: 100%; resize: vertical; }
 .bot-identity { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .bots-settings textarea.field { width: min(100%, 540px); min-height: 64px; resize: vertical; }
@@ -19,25 +19,32 @@
 .bot-import:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
 .bot-import input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .bot-history-row { align-self: flex-start; }
-.bot-destination { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.bot-destination select { max-width: min(320px, 50%); }
+.bot-mention-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; padding: 1px 8px 1px 2px; border-radius: 20px; background: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); font-size: 13px; line-height: 20px; }
+.bot-mention-chip[role="button"] { cursor: pointer; }
+.bot-mention-chip .bot-avatar { width: 18px; height: 18px; }
+.bot-send-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; }
+.bot-send-menu select { max-width: 220px; }
 .bot-requests { display: grid; gap: 8px; margin: 12px 0; }
 .bot-request { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--panel-raised); padding: 12px; overflow-wrap: anywhere; }
 .bot-request-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .bot-request-result { margin-top: 6px; white-space: pre-wrap; }
+.bot-inline-reply { margin: 8px 0; min-width: 0; }
+.bot-inline-reply > summary { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 3px 0; cursor: pointer; list-style: none; font-size: 13px; }
+.bot-inline-reply > summary::-webkit-details-marker { display: none; }
+.bot-inline-reply > summary strong { flex: none; }
+.bot-reply-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.bot-reply-chevron { color: var(--text-dim); }
+.bot-inline-reply[open] > summary .bot-reply-chevron { transform: rotate(90deg); }
+.bot-reply-body { display: grid; gap: 8px; margin: 5px 0 0 24px; border-left: 2px solid var(--border); padding: 4px 12px; overflow-wrap: anywhere; }
+.bot-reply-body > button { justify-self: start; }
 .bot-request > button { justify-self: start; }
 .bot-hook-url { overflow-wrap: anywhere; }
-.bots-settings > details { margin-top: 16px; }
 .bots-workbench { padding: 20px 24px; }
 .bots-workbench-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .bots-workbench-header :is(h2, h3, p) { margin-block: 0 6px; }
 .bots-workbench-grid { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
 .bots-roster .wb-nav-link[aria-pressed="true"] { background: var(--selected); color: var(--primary); }
 .bots-workbench-detail { display: grid; gap: 12px; max-width: 760px; }
-.bot-group-posts { display: grid; gap: 10px; }
-.bot-group-post { margin-top: 8px; padding: 10px; background: var(--panel); border-radius: var(--r-m); }
-.bot-group-post > p { margin-block: 0; white-space: pre-wrap; }
-.bot-group-post + .settings-section textarea.field { min-height: 64px; }
 @media (max-width: 680px) { .bots-workbench-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* 设置行 (2026-11-23 设置整理, SettingField.tsx): the label in a 120px column, so every control on a page starts at the

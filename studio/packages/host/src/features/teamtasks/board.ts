@@ -21,15 +21,32 @@ export class TeamBoardHost {
   configured(): boolean {
     return !!this.plane.current || !!process.env.AMO_TEAM_BOARD_URL;
   }
-  connection() { return this.request(() => this.plane.connection()); }
+  async connection() {
+    const connection = await this.request(() => this.plane.connection());
+    if (connection.catalog) this.adoptLegacyDraft();
+    return connection;
+  }
   connect(server: unknown, token: unknown) { return this.request(() => this.plane.connect(server, token)); }
   select(workspace: unknown, project: unknown) { return this.request(() => this.plane.select(workspace, project)); }
   disconnect() { return this.plane.disconnect(); }
 
   private draftKey(): string {
-    const account = this.host.teamLink.account;
-    if (!account) throw new HostError("bad_request", "请先在 AMO 平台里登录");
-    return createHash("sha256").update(JSON.stringify([account.server, account.name])).digest("hex");
+    const connection = this.plane.current;
+    if (!connection?.identityId) throw new HostError("bad_request", "请先连接 Plane");
+    return createHash("sha256").update(JSON.stringify(["plane", connection.server, connection.identityId])).digest("hex");
+  }
+
+  private adoptLegacyDraft(): void {
+    const connection = this.plane.current;
+    if (!connection?.identityId || !connection.legacyOwner) return;
+    const key = this.draftKey();
+    const legacyKey = createHash("sha256").update(connection.legacyOwner).digest("hex");
+    const drafts = this.drafts();
+    const draft = drafts[legacyKey];
+    if (drafts[key] || !draft || (draft.publishing && (draft.publishing.viewerId !== connection.identityId || !draft.publishing.source.startsWith(connection.server + PLANE_BOARD_API + "/")))) return;
+    drafts[key] = draft;
+    delete drafts[legacyKey];
+    this.host.store.setKv(PLANE_DRAFTS_KEY, JSON.stringify(drafts));
   }
 
   private drafts(): Record<string, PlaneTaskDraft> {
@@ -79,7 +96,7 @@ export class TeamBoardHost {
       const snapshot = await this.request(() => client.projectBoard());
       if (!snapshot.writable || !snapshot.viewerId) throw new HostError("bad_request", "草稿已保留。请选择可发布任务的 Plane 项目。");
       const publishing = draft.publishing ?? { requestId: randomUUID(), source: client.source, viewerId: snapshot.viewerId };
-      if (publishing.viewerId !== snapshot.viewerId || key !== this.draftKey() || (await this.plane.client(client.source))?.key !== client.key) {
+      if (publishing.viewerId !== snapshot.viewerId || snapshot.viewerId !== this.plane.current?.identityId || key !== this.draftKey() || (await this.plane.client(client.source))?.key !== client.key) {
         throw new HostError("conflict", "请用发起发布时的账号重试这份草稿");
       }
       // A response can be lost after Plane created the work item. Retrying this draft keeps the same identity and content.

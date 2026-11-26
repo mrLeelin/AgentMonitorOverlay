@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ModelProfile } from "@amo-studio/protocol";
+import type { ModelProfile, ProfileChoices } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { useChoicesFor } from "../lib/choices.js";
 import { commonPicks, isHiddenPick, normalPick, samePick, tileCount, type ModelPick } from "../lib/recents.js";
@@ -78,36 +78,49 @@ export function ModelRow({
           onClose={() => setMenu(null)}
         />
       )}
-      {drawer && (
-        <div className="model-drawer" data-testid="model-drawer">
-          {pickable(profiles, pick.profileId).map((p) => {
-            const c = choices.get(p.id);
-            return (
-              <div className="drawer-row" key={p.id} role="group" aria-label={p.label}>
-                <span className="drawer-acct">
-                  <Mark profile={p} small />
-                  {p.label}
-                </span>
-                {c === undefined && <span className="drawer-note">正在读取…</span>}
-                {c === null && (
-                  <button type="button" className="chip small" aria-pressed={samePick(pick, { profileId: p.id, model: null })} onClick={() => onPick({ profileId: p.id, model: null })}>
-                    默认
-                  </button>
-                )}
-                {c?.models.map((m) => {
-                  const pressed = pick.profileId === p.id && (pick.model === m.id || (pick.model === null && !!m.isDefault));
-                  return (
-                    <button key={m.id} type="button" className="chip small" aria-pressed={pressed} title={m.description} onClick={() => onPick({ profileId: p.id, model: m.isDefault ? null : m.id })}>
-                      {m.label}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-          <span className="drawer-note">常用的四个按最近用过的排在最前；在 设置 → 常用预设 里可以存下整套组合。</span>
-        </div>
-      )}
+      {drawer && <ModelDrawer profiles={pickable(profiles, pick.profileId)} choices={choices} pick={pick}
+        onPick={(next, isDefault) => onPick(isDefault ? { ...next, model: null } : next)}
+        note="常用的四个按最近用过的排在最前；在 设置 → 常用预设 里可以存下整套组合。" />}
     </>
+  );
+}
+
+/** The same grouped catalog for new sessions and Bot settings. Callers decide whether to pin the default model. */
+export function ModelDrawer({ profiles, choices, pick, onPick, note }: {
+  profiles: readonly ModelProfile[];
+  choices: ReadonlyMap<string, ProfileChoices | null>;
+  pick: ModelPick;
+  onPick(pick: ModelPick, isDefault: boolean): void;
+  note?: string;
+}) {
+  return (
+    <div className="model-drawer" data-testid="model-drawer">
+      {profiles.map((p) => {
+        const c = choices.get(p.id);
+        return (
+          <div className="drawer-row" key={p.id} role="group" aria-label={p.label}>
+            <span className="drawer-acct">
+              <Mark profile={p} small />
+              {p.label}
+            </span>
+            {c === undefined && <span className="drawer-note">正在读取…</span>}
+            {(c === null || c?.models.length === 0) && (
+              <button type="button" className="chip small" aria-pressed={samePick(pick, { profileId: p.id, model: null })} onClick={() => onPick({ profileId: p.id, model: null }, true)}>
+                默认
+              </button>
+            )}
+            {c?.models.map((m) => {
+              const pressed = pick.profileId === p.id && (pick.model === m.id || (pick.model === null && !!m.isDefault));
+              return (
+                <button key={m.id} type="button" className="chip small" aria-pressed={pressed} title={m.description} onClick={() => onPick({ profileId: p.id, model: m.id }, !!m.isDefault)}>
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })}
+      {note && <span className="drawer-note">{note}</span>}
+    </div>
   );
 }

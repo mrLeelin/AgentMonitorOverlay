@@ -24,6 +24,7 @@ export function toWorkspace(r: Row): Workspace {
 export function toTask(r: Row): Task {
   return {
     id: str(r.id),
+    ...(typeof r.bot_id === "string" ? { botId: r.bot_id } : {}),
     title: str(r.title),
     // NULL only for tasks of the old cross-workspace area until the Host resolves them at start-up.
     workspaceId: strOrNull(r.workspace_id) ?? "",

@@ -9,10 +9,16 @@ const PLACE_KEY = "amo.lastPlace";
 const SESSIONS_KEY = "amo.lastSessions";
 const MAX_SESSIONS = 100;
 
-type Back = { kind: "board" | "team" | "canvas" | "panorama" };
+type Back = Extract<View, { kind: "bots" }> | { kind: "board" | "team" | "canvas" | "panorama" };
 type SavedView = Back | { kind: "new" } | { kind: "task"; taskId: string; back?: Back };
 
-const isBack = (v: unknown): v is Back => !!v && typeof v === "object" && ["board", "team", "canvas", "panorama"].includes((v as Back).kind);
+function backPlace(value: unknown): Back | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Back;
+  if (v.kind === "bots") return { kind: "bots", ...(typeof v.botId === "string" ? { botId: v.botId } : {}), ...(typeof v.groupId === "string" ? { groupId: v.groupId } : {}) };
+  if (v.kind === "board" || v.kind === "team" || v.kind === "canvas" || v.kind === "panorama") return { kind: v.kind };
+  return undefined;
+}
 
 const readJson = readStoredJson;
 const writeJson = writeStoredJson;
@@ -35,20 +41,19 @@ export function readPlace(): { view: View; scope: Scope } {
   const v = p?.view;
   if (v?.kind === "task" && typeof v.taskId === "string") {
     const sessionId = lastSessions()[v.taskId];
-    return { view: { kind: "task", taskId: v.taskId, ...(typeof sessionId === "string" ? { sessionId } : {}), ...(isBack(v.back) ? { back: v.back } : {}) }, scope };
+    const back = backPlace(v.back);
+    return { view: { kind: "task", taskId: v.taskId, ...(typeof sessionId === "string" ? { sessionId } : {}), ...(back ? { back } : {}) }, scope };
   }
-  if (isBack(v) || v?.kind === "new") return { view: { kind: v.kind }, scope };
-  return { view: { kind: "board" }, scope };
+  return { view: v?.kind === "new" ? { kind: "new" } : backPlace(v) ?? { kind: "board" }, scope };
 }
 
 /** Keeps the page and scope in front (other pages come back as the board). */
 export function savePlace(view: View, scope: Scope): void {
+  const back = view.kind === "task" ? backPlace(view.back) : undefined;
   const saved: SavedView =
     view.kind === "task"
-      ? { kind: "task", taskId: view.taskId, ...(isBack(view.back) ? { back: { kind: view.back.kind } } : {}) }
-      : isBack(view) || view.kind === "new"
-        ? { kind: view.kind }
-        : { kind: "board" };
+      ? { kind: "task", taskId: view.taskId, ...(back ? { back } : {}) }
+      : view.kind === "new" ? { kind: "new" } : backPlace(view) ?? { kind: "board" };
   writeJson(PLACE_KEY, { view: saved, scope });
 }
 

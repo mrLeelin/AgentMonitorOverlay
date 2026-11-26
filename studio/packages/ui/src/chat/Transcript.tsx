@@ -14,6 +14,8 @@ import { mentionSpans, splitMentionRefs } from "../attach/mentions.js";
 import { inlineMessage } from "../attach/InlineMessage.js";
 import { copySentMessage } from "../attach/messageClipboard.js";
 import { useFileLinks } from "../files/FileLinks.js";
+import { BotAvatar, TranscriptBots } from "../bots/BotAvatar.js";
+import { BotReply } from "../bots/BotRequests.js";
 
 /** The line under a message whose @ names were explained to the model (2026-11-05: sub-session setups named too). */
 function mentionBrief(blocks: string): string {
@@ -248,7 +250,9 @@ function TurnView({
       {/* What the person answered stays in sight when the turn's work folds away (like their messages). */}
       {folded &&
         seg.rows.map((row) =>
-          row.kind === "item" && row.item.type === "question" ? (
+          row.kind === "item" && row.item.id.startsWith("bot-reply:") ? (
+            <StandaloneItem key={row.key} item={row.item} busy={busy} highlights={highlights} onApprove={onApprove} />
+          ) : row.kind === "item" && row.item.type === "question" ? (
             <QuestionRecord key={row.key} item={row.item} />
           ) : row.kind === "item" && row.item.type === "compaction" ? (
             <CompactionRow key={row.key} item={row.item} />
@@ -321,7 +325,7 @@ function StandaloneItem({ item, busy, highlights, onApprove }: { item: SessionIt
         </div>
       );
     case "notice":
-      return <NoticeRow item={item} />;
+      return item.id.startsWith("bot-reply:") ? <BotReply item={item} /> : <NoticeRow item={item} />;
     case "compaction":
       return <CompactionRow item={item} />;
     case "command":
@@ -343,16 +347,31 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
   const { text: own, refs: annotations } = splitAnnotationRefs(sent);
   const { text: withRefs, refs } = splitFileRefItems(own);
   // Its @ names (快速提交 among them) coloured as in the composer; what the message told the model of them on hover.
-  const { text, names, commit, blocks } = splitMentionRefs(withRefs);
-  const inline = inlineMessage(text, item.images ?? [], refs, (part) => names.size
-    ? mentionSpans(part, [...names.keys()]).map((p, i) => p.mention
-      ? <span key={i} className="mention-token" title={names.get(p.text.slice(1))} data-testid="msg-mention">{p.text}</span>
-      : p.text)
+  const letter = item.botLetter;
+  const roster = useContext(TranscriptBots);
+  if (letter?.kind === "reply" || item.id.startsWith("bot-reply:")) return <>
+    <BotReply item={item} />
+    {item.delivery && <DeliveryLine item={item} />}
+  </>;
+  const recipients = letter?.kind === "mention" ? [letter, ...(letter.others ?? [])] : [];
+  const botNames = new Map(roster.filter((b) => recipients.some((r) => r.botId === b.id)).map((b) => [b.name, b]));
+  const heading = letter && letter.kind !== "mention" ? letter.heading : undefined;
+  const { text, names, commit, blocks } = splitMentionRefs(letter?.text ?? withRefs);
+  const mentionNames = [...names.keys(), ...botNames.keys()];
+  const inline = inlineMessage(text, item.images ?? [], refs, (part) => mentionNames.length
+    ? mentionSpans(part, mentionNames).map((p, i) => {
+      if (!p.mention) return p.text;
+      const name = p.text.slice(1);
+      const bot = botNames.get(name);
+      return bot ? <span key={i} className="bot-mention-chip"><BotAvatar name={name} avatar={bot.avatar} size={18} />{name}</span>
+        : <span key={i} className="mention-token" title={names.get(name)} data-testid="msg-mention">{p.text}</span>;
+    })
     : part);
   const copyable = !!(text.trim() || item.images?.length || refs.length || annotations.length);
   return (
-    <div className="msg-user-row">
+    <div className="msg-user-row" data-bot-letter={heading ? true : undefined}>
       <div className="msg-user" data-testid="msg-user" data-copyable={copyable ? "" : undefined}>
+        {heading && <strong className="bot-letter-heading">{heading}</strong>}
         {inline.images.length ? <MessageImages images={inline.images} /> : null}
         {annotations.length > 0 && (
           <span className="msg-anno-refs">

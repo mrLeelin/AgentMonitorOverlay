@@ -37,7 +37,7 @@ export function GoalObjectiveInput({ link, session, tasks, sessions, projects, v
     onFile: (path) => input.current?.insert(`${fileToken({ path })} `),
     onFind: setFinding,
   });
-  const slash = useSlashCommands({ link, session, text: value, setText: onChange, completionOnly: true, onComplete: focus });
+  const slash = useSlashCommands({ link, session, text: value, setText: onChange, actions: mentions.actions, completionOnly: true, onComplete: focus });
   const resources = resourceSpans(value).flatMap(({ token, resource }) => resource.kind === "file"
     ? [{ token, kind: "file" as const, label: baseName(resource.ref.path), title: resource.ref.path }]
     : []);

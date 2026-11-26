@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AMO Studio · Bots 界面草图</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { color-scheme: dark; --background:#101319; --panel:#171c25; --raised:#1d2430; --border:#303949; --muted:#a1acbd; --text:#e9edf4; --accent:#a9c4ff; --accent-bg:#233651; --green:#a3dfbf; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#0d1015; color:var(--text); font:14px/1.55 'Segoe UI','Microsoft YaHei',sans-serif; }
+    button,input,textarea,select { font:inherit; color:inherit; }
+    button { cursor:pointer; border:1px solid var(--border); background:var(--raised); border-radius:7px; padding:7px 12px; }
+    button:hover { border-color:#798eaa; background:#293648; }
+    button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    button[hidden],[hidden] { display:none !important; }
+    .primary { background:#aac4fa; border-color:#aac4fa; color:#12213a; font-weight:700; }
+    .primary:hover { background:#c4d5fa; color:#12213a; }
+    .muted { color:var(--muted); }
+    h1,h2,p { margin:0; }
+    h1 { font-size:22px; line-height:1.35; }
+    h2 { font-size:16px; }
+    .frame { max-width:1240px; margin:24px auto 70px; background:var(--background); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+    .top { display:flex; align-items:center; gap:10px; padding:12px 18px; border-bottom:1px solid var(--border); background:var(--panel); }
+    .brand { font-weight:700; white-space:nowrap; margin-right:auto; }
+    .brand small { margin-left:10px; font-weight:400; color:var(--muted); }
+    .tab[aria-selected=true],.active { background:var(--accent-bg); border-color:#40567a; color:var(--accent); }
+    .view { display:grid; grid-template-columns:200px minmax(0,1fr); min-height:570px; }
+    .nav { padding:20px 12px; background:var(--panel); border-right:1px solid var(--border); }
+    .nav p { margin:0 8px 8px; font-size:12px; }
+    .nav-item { padding:7px 9px; border-radius:6px; margin-bottom:5px; }
+    .nav .group { margin-top:22px; }
+    .task { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; }
+    .conversation { display:flex; flex-direction:column; min-width:0; }
+    .task-head { padding:17px 24px; border-bottom:1px solid var(--border); }
+    .task-head p { font-size:12px; margin-top:5px; }
+    .history { padding:20px 24px 12px; display:grid; gap:11px; align-content:start; }
+    .bubble { justify-self:end; background:#24314a; border-radius:9px 9px 2px 9px; padding:9px 13px; max-width:90%; }
+    .mention { color:var(--accent); font-weight:650; }
+    .result { background:var(--panel); border:1px solid var(--border); border-radius:9px; padding:14px; }
+    .result-head,.line { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+    .result-head .status { margin-left:auto; }
+    .mark { display:grid; place-items:center; width:26px; height:26px; border-radius:7px; background:var(--accent-bg); color:var(--accent); font-size:12px; }
+    .status { font-size:12px; color:var(--green); }
+    .result p { margin-top:9px; }
+    .result .open { margin-top:11px; }
+    .result .path + .open { margin-left:8px; }
+    .path { color:var(--accent); font:12px Consolas,monospace; overflow-wrap:anywhere; }
+    .composer { position:relative; margin:auto 24px 20px; border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--panel); }
+    .composer textarea { display:block; width:100%; resize:vertical; min-height:48px; padding:6px 7px; border:0; background:transparent; }
+    .composer .line { justify-content:space-between; }
+    .picker { position:absolute; bottom:calc(100% + 6px); left:0; min-width:230px; padding:7px; background:var(--raised); border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 24px #0008; z-index:2; }
+    .picker button { width:100%; margin-top:4px; text-align:left; }
+    .picker p { padding:6px 3px; }
+    .review { padding:16px; background:#141923; border-left:1px solid var(--border); min-width:0; }
+    .review-title { margin-bottom:14px; }
+    .review .result { padding:12px; }
+    .review-answer { margin-top:12px; }
+    dialog { width:min(560px,calc(100vw - 28px)); background:var(--panel); border:1px solid var(--border); border-radius:12px; color:var(--text); padding:22px; }
+    dialog::backdrop { background:#090c11b0; }
+    dialog .line { justify-content:space-between; margin-bottom:12px; }
+    dialog p { margin:8px 0; }
+    .config { padding:22px 26px 26px; }
+    .config-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+    .config-head p { margin-top:3px; }
+    .config-body { margin-top:14px; display:grid; gap:16px; }
+    .bot-list { display:flex; gap:9px; flex-wrap:wrap; align-content:start; }
+    .bot-list button { text-align:left; }
+    .form { display:grid; gap:12px; max-width:650px; }
+    .field { display:grid; grid-template-columns:102px minmax(0,1fr); align-items:baseline; gap:10px; }
+    .field input:not([type=checkbox]),.field textarea,.field select { width:100%; border:1px solid var(--border); border-radius:6px; background:#111721; padding:7px 9px; }
+    .field textarea { min-height:55px; resize:vertical; }
+    .field select { max-width:250px; }
+    .field .muted { font-size:12px; }
+    .fixed { padding:5px 0; }
+    .form-actions { margin-left:112px; }
+    .variant { position:fixed; z-index:3; bottom:13px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:12px; white-space:nowrap; padding:5px; border:1px solid #516482; border-radius:24px; background:#1c2b42; box-shadow:0 7px 23px #0008; }
+    .variant button { padding:3px 11px; border-radius:19px; }
+    .workbench-entry { display:none; }
+    .workbench { display:grid; grid-template-columns:170px minmax(0,1fr); gap:14px; }
+    .workbench aside { padding-right:12px; border-right:1px solid var(--border); }
+    .workbench aside .nav-item { margin-top:8px; }
+    body[data-variant=B] .task { grid-template-columns:minmax(0,1fr) minmax(265px,34%); }
+    body[data-variant=B] .config-body { grid-template-columns:145px minmax(0,1fr); }
+    body[data-variant=B] .bot-list { flex-direction:column; border-right:1px solid var(--border); padding-right:13px; }
+    body[data-variant=C] .workbench-entry { display:block; width:100%; text-align:left; }
+    body[data-variant=C] .config-body { gap:18px; }
+    body[data-variant=C] dialog { width:min(760px,calc(100vw - 28px)); }
+    body[data-variant=C] .bot-list button { min-width:170px; padding:15px; }
+    body[data-variant=C] .form { background:var(--panel); border:1px solid var(--border); padding:16px; border-radius:9px; }
+    @media(max-width:850px) { .frame { margin:10px 10px 62px; } .view { grid-template-columns:150px minmax(0,1fr); } }
+    @media(max-width:690px) { .view { grid-template-columns:minmax(0,1fr); } .nav { display:none; } .task-head,.history { padding-inline:14px; } .composer { margin-inline:14px; } .config { padding:16px; } body[data-variant=B] .task,body[data-variant=B] .config-body { grid-template-columns:minmax(0,1fr); } .review { border-left:0; border-top:1px solid var(--border); } .config-head .muted { max-width:26ch; } .field { grid-template-columns:minmax(0,1fr); gap:4px; } .form-actions { margin-left:0; } }
+  </style>
+</head>
+<body data-variant="A">
+  <!-- 界面原型。用 ?variant=A/B/C 比较会话内嵌、会话侧栏、独立工作台三个方案。 -->
+  <main class="frame">
+    <header class="top">
+      <span class="brand">AMO Studio <small>界面草图</small></span>
+      <button type="button" class="tab" data-view="chat" aria-selected="true">任务会话</button>
+      <button type="button" class="tab" data-view="settings" aria-selected="false">设置</button>
+    </header>
+    <section id="chat" class="view" aria-label="任务会话">
+      <aside class="nav">
+        <p class="muted">当前项目</p>
+        <div class="nav-item">AmoStudio</div>
+        <p class="group muted">会话</p>
+        <div class="nav-item active">主会话</div>
+        <button class="workbench-entry" type="button" data-open>审核员工作台</button>
+      </aside>
+      <div class="task">
+        <section class="conversation" aria-label="主会话">
+          <header class="task-head"><h1>修复设置页的加载状态</h1><p class="muted">AmoStudio / codex/settings-loading</p></header>
+          <div class="history">
+            <p class="bubble"><span class="mention" id="sent-bot">@审核员</span> <span id="sent-text">看一下当前未提交的改动，重点找功能回归。</span></p>
+            <div id="inline-result"></div>
+          </div>
+          <form id="compose" class="composer">
+            <div id="picker" class="picker" hidden><span class="muted">Bots</span><div id="choices"></div></div>
+            <textarea aria-label="审核请求" id="request" placeholder="输入 @ 选择审核员"></textarea>
+            <div class="line"><button type="button" id="mention" aria-expanded="false">@ <span class="muted">提及</span></button><button type="submit" class="primary">发送</button></div>
+          </form>
+        </section>
+        <aside class="review" id="side-review" hidden aria-label="审核侧栏"><h2 class="review-title">审核详情</h2><div id="side-result"></div></aside>
+      </div>
+    </section>
+    <section id="settings" class="view" hidden aria-label="Bots 设置">
+      <aside class="nav">
+        <p class="muted">设置</p><div class="nav-item muted">通用</div><div class="nav-item muted">模型与会话</div>
+        <p class="group muted">工具与自动化</p><div class="nav-item">MCP</div><div class="nav-item">技能展览</div><div class="nav-item active">Bots</div><div class="nav-item">值守</div>
+      </aside>
+      <section class="config">
+        <header class="config-head"><div><h1>Bots</h1><p class="muted">在任务会话中用 @ 调用已启用的 Bot。</p></div><button type="button" id="new-bot">＋ 新建 Bot</button></header>
+        <div class="config-body">
+          <div class="bot-list" id="bot-list" aria-label="Bot 列表"></div>
+          <form class="form" id="bot-form">
+            <label class="field"><span>名称</span><input name="name" required maxlength="24"></label>
+            <label class="field"><span>模型</span><select name="model"><option>Codex · 默认模型</option><option>Codex · 审查模型</option></select></label>
+            <label class="field"><span>审核职责</span><textarea name="purpose" required></textarea></label>
+            <label class="field"><span>记忆</span><textarea name="memory" placeholder="跨任务复用的审查规则"></textarea></label>
+            <div class="field"><span>权限</span><p class="fixed">只读 <span class="muted">· 查看项目文件和 Git 差异</span></p></div>
+            <label class="field"><span>启用</span><span><input type="checkbox" name="enabled"> 出现在 @ 列表</span></label>
+            <div class="form-actions line"><button class="primary" type="submit">保存</button><span role="status" class="muted" id="saved"></span></div>
+          </form>
+        </div>
+      </section>
+    </section>
+  </main>
+  <dialog id="detail" aria-labelledby="detail-title">
+    <header class="line"><h2 id="detail-title">审查会话</h2><button type="button" id="close-detail">关闭</button></header>
+    <div id="detail-layout">
+      <aside id="review-runs" hidden><strong>审核记录</strong><div class="nav-item active">审查设置页改动</div></aside>
+      <section>
+        <p class="muted">AmoStudio / codex/settings-loading</p><div id="detail-result"></div>
+        <form id="follow-up" class="line review-answer">
+          <label for="follow">追问</label><input id="follow" placeholder="例如：还有哪些情况没覆盖？" required>
+          <button class="primary" type="submit">发送追问</button>
+        </form>
+        <p id="follow-answer" class="muted" role="status"></p>
+      </section>
+    </div>
+  </dialog>
+  <nav class="variant" aria-label="界面方案"><button type="button" id="previous" aria-label="上一个方案">←</button><span id="variant-text"></span><button type="button" id="next" aria-label="下一个方案">→</button></nav>
+  <script>
+    const byId = id => document.getElementById(id);
+    const variants = { A: 'A · 会话内卡片（推荐）', B: 'B · 右侧审核面板', C: 'C · 审核工作台' };
+    const bots = [{ name: '审核员', model: 'Codex · 默认模型', purpose: '检查代码改动，优先报告功能回归。每条结论附文件、行号和触发条件。', memory: '区分编译通过和实际运行验证。审查未提交改动时包含暂存区。', enabled: true }];
+    const botForm = byId('bot-form');
+    const request = byId('request');
+    const detail = byId('detail');
+    let selectedBot = 0;
+    let mentionBot = null;
+    let pending = false;
+    let sentRequest = '看一下当前未提交的改动，重点找功能回归。';
+    let sentBotName = '审核员';
+
+    function resultCard(compact = false, inDetail = false) {
+      const card = document.createElement('article');
+      card.className = 'result';
+      card.innerHTML = `<div class="result-head"><span class="mark" aria-hidden="true">审</span><strong class="result-name"></strong><span class="status" aria-live="polite">${pending ? '审查中…' : '已完成 · 1 项发现'}</span></div>
+        ${compact ? '' : pending ? '<p class="muted">正在读取工作区差异。</p>' : '<p>加载失败后，重试按钮一直处于禁用状态。</p><a class="path" href="#detail">SettingsPage.tsx:84</a>'}
+        ${inDetail ? '<p class="muted">已检查暂存和未暂存差异。运行验证未覆盖。</p>' : '<button type="button" class="open">'+ (compact ? '打开审核工作台 ↗' : '打开审查会话 ↗') +'</button>'}`;
+      card.querySelector('.result-name').textContent = sentBotName;
+      card.querySelector('.open')?.addEventListener('click', openDetail);
+      card.querySelector('a')?.addEventListener('click', event => {
+        event.preventDefault();
+        openDetail();
+        byId('follow-answer').textContent = '示例文件位置 · SettingsPage.tsx 第 84 行';
+      });
+      return card;
+    }
+
+    function renderReview() {
+      const mode = document.body.dataset.variant;
+      byId('sent-bot').textContent = '@' + sentBotName;
+      byId('sent-text').textContent = sentRequest;
+      byId('side-review').hidden = mode !== 'B';
+      byId('side-result').replaceChildren(...(mode === 'B' ? [resultCard()] : []));
+      byId('inline-result').replaceChildren(...(mode === 'B' ? [] : [resultCard(mode === 'C')]));
+      byId('review-runs').hidden = mode !== 'C';
+      byId('detail-layout').classList.toggle('workbench', mode === 'C');
+      byId('detail-result').replaceChildren(resultCard(false, true));
+    }
+
+    function setVariant(mode) {
+      document.body.dataset.variant = mode;
+      byId('variant-text').textContent = variants[mode];
+      if (location.protocol === 'file:') {
+        location.hash = 'variant=' + mode;
+      } else {
+        const url = new URL(location.href);
+        url.searchParams.set('variant', mode);
+        history.replaceState(null, '', url);
+      }
+      renderReview();
+    }
+
+    function cycleVariant(step) {
+      const keys = Object.keys(variants);
+      setVariant(keys[(keys.indexOf(document.body.dataset.variant) + step + keys.length) % keys.length]);
+    }
+
+    function openDetail() {
+      byId('detail-title').textContent = sentBotName + (document.body.dataset.variant === 'C' ? ' · 审核工作台' : ' · 审查会话');
+      if (!detail.open) detail.showModal();
+    }
+
+    function showPicker(show) {
+      byId('picker').hidden = !show;
+      byId('mention').setAttribute('aria-expanded', String(show));
+      if (!show) return;
+      const buttons = bots.filter(bot => bot.enabled).map(bot => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = '@' + bot.name + ' · 只读代码审查';
+        button.addEventListener('click', () => {
+          mentionBot = bot;
+          const current = request.value.trimEnd().replace(/@$/, '').trimEnd();
+          request.value = (current ? current + ' ' : '') + '@' + bot.name + ' ';
+          showPicker(false);
+          request.focus();
+        });
+        return button;
+      });
+      const empty = document.createElement('p');
+      empty.textContent = '没有已启用的 Bot';
+      byId('choices').replaceChildren(...(buttons.length ? buttons : [empty]));
+    }
+
+    function showBot(index) {
+      selectedBot = index;
+      const draft = bots[index] ?? { name:'', model:'Codex · 默认模型', purpose:'', memory:'', enabled:true };
+      for (const field of ['name', 'model', 'purpose', 'memory']) botForm.elements.namedItem(field).value = draft[field];
+      botForm.elements.enabled.checked = draft.enabled;
+      byId('saved').textContent = '';
+      byId('bot-list').replaceChildren(...bots.map((bot, position) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.classList.toggle('active', index === position);
+        button.textContent = bot.name + (bot.enabled ? '' : ' · 已停用');
+        button.addEventListener('click', () => showBot(position));
+        return button;
+      }));
+    }
+
+    for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => {
+      for (const tab of document.querySelectorAll('[data-view]')) {
+        const active = tab === button;
+        tab.setAttribute('aria-selected', String(active));
+        byId(tab.dataset.view).hidden = !active;
+      }
+    });
+    document.querySelector('[data-open]').addEventListener('click', openDetail);
+    byId('mention').addEventListener('click', () => showPicker(byId('picker').hidden));
+    request.addEventListener('input', () => showPicker(/(?:^|\s)@$/.test(request.value)));
+    byId('compose').addEventListener('submit', event => {
+      event.preventDefault();
+      if (!mentionBot?.enabled || !request.value.includes('@' + mentionBot.name)) {
+        showPicker(true);
+        return;
+      }
+      const text = request.value.replace('@' + mentionBot.name, '').trim();
+      if (!text) { request.focus(); return; }
+      sentRequest = text;
+      sentBotName = mentionBot.name;
+      request.value = '';
+      mentionBot = null;
+      pending = true;
+      renderReview();
+      clearTimeout(window.demoReview);
+      window.demoReview = setTimeout(() => { pending = false; renderReview(); }, 700);
+    });
+    byId('close-detail').addEventListener('click', () => detail.close());
+    byId('follow-up').addEventListener('submit', event => {
+      event.preventDefault();
+      byId('follow-answer').textContent = '示例回复 · 还需要复核连续点击重试的情况。';
+      byId('follow').value = '';
+    });
+    byId('new-bot').addEventListener('click', () => { showBot(-1); botForm.elements.namedItem('name').focus(); });
+    botForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const data = new FormData(botForm);
+      const name = String(data.get('name')).trim();
+      if (!name || bots.some((bot, index) => index !== selectedBot && bot.name === name)) {
+        byId('saved').textContent = '请输入未使用的名称。';
+        return;
+      }
+      const bot = { name, model:data.get('model'), purpose:data.get('purpose'), memory:data.get('memory'), enabled:data.has('enabled') };
+      if (selectedBot < 0) selectedBot = bots.push(bot) - 1;
+      else Object.assign(bots[selectedBot], bot);
+      showBot(selectedBot);
+      byId('saved').textContent = '已应用到本次预览。';
+    });
+    byId('previous').addEventListener('click', () => cycleVariant(-1));
+    byId('next').addEventListener('click', () => cycleVariant(1));
+    document.addEventListener('keydown', event => {
+      if (event.target.closest('input,textarea,select,[contenteditable]') || detail.open) return;
+      if (event.key === 'ArrowLeft') cycleVariant(-1);
+      if (event.key === 'ArrowRight') cycleVariant(1);
+    });
+    const initialParams = location.protocol === 'file:' ? location.hash.slice(1) : location.search;
+    const initialMode = new URLSearchParams(initialParams).get('variant');
+    setVariant(Object.hasOwn(variants, initialMode) ? initialMode : 'A');
+    showBot(0);
+  </script>
+</body>
+</html>

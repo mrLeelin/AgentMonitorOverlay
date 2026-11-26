@@ -8,7 +8,8 @@ import { useAttachments } from "../attach/useAttachments.js";
 import { AttachmentInput } from "../attach/AttachmentInput.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
-import { MentionList, useComposerMentions } from "../attach/useMentions.js";
+import { useComposerMentions } from "../attach/useMentions.js";
+import { SlashMenu, useSlashCommands } from "../chat/cli/SlashMenu.js";
 import { PromptTemplateDialog } from "../attach/PromptTemplateDialog.js";
 import { topicProject } from "./choices.js";
 import { ChoiceRow } from "./ChoiceRow.js";
@@ -20,7 +21,7 @@ import { PRIMARY_ENTER_LABELS, useTaskEnter } from "../chat/inputPrefs.js";
 // 新任务页的「在别的设备上」 (plans/done/remote-page-and-new-task.md 4.1, 2026-10-29): 设备 first (paired devices that allowed
 // this computer; offline ones greyed), then 专题 / 项目 / 第一句话 / 模型 as on this computer, but from what that device
 // allows (its catalog, fetched when it is picked). Enter creates the task there: it is granted to this computer and its
-// session starts there; the page opens its copy here once the copy has come. @ offers only 提示词模板…, listing that
+// session starts there; the page opens its copy here once the copy has come. / offers 提示词模板…, listing that
 // device's templates (问题 #1, 2026-10-31, the user: 只列被控端的): tasks, sessions and files here are not there.
 
 const LAST_DEVICE = "amo.remoteDraftDevice";
@@ -167,7 +168,7 @@ export function RemoteDraft({
   const problem = catalog ? catalogProblem(catalog) : null;
   const noCommon = catalog && !catalog.allowCommon ? `${catalog.name} 不允许不选项目（公共文件夹）：选一个项目` : undefined;
 
-  // @: only 提示词模板… (no tasks, sessions or files of this computer), once the device's catalog is here.
+  // Offer 提示词模板… once the remote device's catalog is available.
   const mentions = useComposerMentions({
     link,
     text: draft.text,
@@ -180,6 +181,7 @@ export function RemoteDraft({
     onFind: () => undefined,
     templates: !!catalog && !problem,
   });
+  const slash = useSlashCommands({ link, session: null, text: draft.text, setText: (text) => update({ text }), actions: mentions.actions });
 
   async function submit() {
     if (busy) return;
@@ -315,12 +317,11 @@ export function RemoteDraft({
           value={draft.text}
           rows={3}
           aria-label="第一句话"
-          placeholder={target ? `比如：把掉落表的说明整理一遍。会作为第一句话发给 ${target.name} 上新开的会话。打 @ 用那台电脑上的提示词模板。` : "第一句话"}
+          placeholder={target ? `比如：把掉落表的说明整理一遍。会作为第一句话发给 ${target.name} 上新开的会话。打 / 用那台电脑上的提示词模板。` : "第一句话"}
           onChange={(text) => update({ text })}
-          onSelect={mentions.track}
-          mentions={mentions.names}
+          onSelect={slash.track}
           onKeyDown={(e) => {
-            if (mentions.onKeyDown(e)) return;
+            if (!e.nativeEvent.isComposing && slash.onKeyDown(e)) return;
             if (taskEnter.action(e) === "start") {
               e.preventDefault();
               if (!e.repeat) void submit();
@@ -328,7 +329,7 @@ export function RemoteDraft({
           }}
           data-testid="remote-draft-text"
         />
-        <MentionList mentions={mentions} />
+        <SlashMenu slash={slash} />
         <div className="cbar">
           <button type="button" className="round-btn attach" aria-label="添加图片或文件" title="添加图片或文件（也可以粘贴截图或拖进来）：开始时一起传到那台电脑" onClick={() => picker.current?.click()} data-testid="remote-draft-attach">
             <IconPaperclip />

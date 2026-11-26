@@ -53,6 +53,7 @@ export function App() {
   useTaskbarBadge(host);
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const teamTasksEnabled = settings?.teamTasksEnabled === true;
+  const botsEnabled = settings?.botsEnabled !== false;
   // Where the workbench was left, again after a restart or reload (2026-10-15; shell/lastPlace).
   const [scope, setScope] = useState<Scope>(() => readPlace().scope);
   const [view, setShownView] = useState<View>(() => readPlace().view);
@@ -65,6 +66,9 @@ export function App() {
     discardNativePlaneView();
     if (view.kind === "team") setShownView(lastLocalView.current);
   }, [settings?.teamTasksEnabled, view.kind]);
+  useEffect(() => {
+    if (!botsEnabled && view.kind === "bots") setShownView({ kind: "board" });
+  }, [botsEnabled, view.kind]);
   useEffect(() => savePlace(view, scope), [view, scope]);
   // 后退 / 前进 (2026-10-19): every place shown is a step, except the one a step back or forward just restored.
   const restoring = useRef(false);
@@ -78,7 +82,7 @@ export function App() {
   const nav = useNavHistory();
   const go = (dir: -1 | 1) => {
     const tasks = host.kind === "ready" ? host.state.tasks : [];
-    const place = navHistory.step(dir, (p) => (p.view.kind !== "team" || teamTasksEnabled) && (p.view.kind !== "task" || tasks.some((t) => t.id === (p.view as { taskId: string }).taskId)));
+    const place = navHistory.step(dir, (p) => (p.view.kind !== "team" || teamTasksEnabled) && (p.view.kind !== "bots" || botsEnabled) && (p.view.kind !== "task" || tasks.some((t) => t.id === (p.view as { taskId: string }).taskId)));
     if (!place) return;
     restoring.current = true;
     setScope(place.scope);
@@ -108,7 +112,7 @@ export function App() {
   }, []);
   // A task or new-task page remembers where it was opened from (stage 14), whoever opens it: its "←" goes back there.
   const setView = (next: View) => {
-    if (next.kind !== "team" || teamTasksEnabled) setShownView((current) => withOrigin(next, current));
+    if ((next.kind !== "team" || teamTasksEnabled) && (next.kind !== "bots" || botsEnabled)) setShownView((current) => withOrigin(next, current));
   };
   const focus = useFocusToggle();
   const unreadMail = useUnreadMail(host.kind === "ready" ? host.link : NO_LINK);
@@ -127,7 +131,7 @@ export function App() {
     return () => setDutyOpener(null);
   }, []);
   // Open, and on which page when something asked for one; `at` remounts it there.
-  const [settingsOpen, setSettingsOpen] = useState<false | { page?: SettingsPage; at: number }>(false);
+  const [settingsOpen, setSettingsOpen] = useState<false | { page?: SettingsPage; botId?: string; at: number }>(false);
   // 设置 on a page asked for from deep inside (the composer's MCP tray: 管理 MCP…).
   useEffect(() => {
     const open = (e: Event) => setSettingsOpen({ page: (e as CustomEvent<SettingsPage>).detail, at: Date.now() });
@@ -273,7 +277,7 @@ export function App() {
   setModelPickerSettings(settings);
   // 测试功能 (2026-11-01): their tabs and pages are there only while turned on; until the settings arrive, none are.
   const experimental = settings?.experimentalFeatures ?? [];
-  const views = VIEWS.filter((d) => (d.kind !== "team" || teamTasksEnabled) && featureOn(disabled, d.feature) && experimentalOn(experimental, d.experimental));
+  const views = VIEWS.filter((d) => (d.kind !== "team" || teamTasksEnabled) && (d.kind !== "bots" || botsEnabled) && featureOn(disabled, d.feature) && experimentalOn(experimental, d.experimental));
   const planning = featureOn(disabled, "planning");
   const decisionsByTask = new Map<string, number>();
   for (const d of openDecisions) if (d.taskId) decisionsByTask.set(d.taskId, (decisionsByTask.get(d.taskId) ?? 0) + 1);
@@ -287,6 +291,7 @@ export function App() {
     disabled,
     experimental,
     teamTasksEnabled,
+    botsEnabled,
     setView,
   };
   // A page of a feature that was just turned off falls back to the board.
@@ -299,11 +304,12 @@ export function App() {
       card.scrollIntoView({ block: "nearest", inline: "nearest" });
     } else setView({ kind: "task", taskId, ...(sessionId ? { sessionId } : {}), nav: Date.now() });
   };
-  const waiting = pendingItems(state, openDecisions, planning ? proposals : [], locateTask, id => {
+  const navState = botsEnabled ? state : { ...state, tasks: state.tasks.filter((task) => !task.botId) };
+  const waiting = pendingItems(navState, openDecisions, planning ? proposals : [], locateTask, id => {
     setView({ kind: "board" });
     requestAnimationFrame(() => document.getElementById(`proposal-${id}`)?.focus());
   });
-  const recent = () => recentSessions(state, session => {
+  const recent = () => recentSessions(navState, session => {
     if (session.taskId) locateTask(session.taskId, session.id);
     else if (session.topicId) {
       setScope({ kind: "topic", id: session.topicId });
@@ -347,10 +353,18 @@ export function App() {
           topics={state.topics}
           tasks={state.tasks}
           sessions={state.sessions}
+          profiles={state.profiles}
           scope={scope}
           live={live}
           teamBoard={teamTasksEnabled ? { open: !!team, toggle: () => setView(team ? lastLocalView.current : { kind: "team" }) } : undefined}
-          bots={{ current: shown.kind === "bots", ...(shown.kind === "task" ? { taskId: shown.taskId } : {}), open: () => setView({ kind: "bots" }), openChat: (taskId, sessionId) => setView({ kind: "task", taskId, sessionId, back: { kind: "bots" }, nav: Date.now() }) }}
+          bots={botsEnabled ? {
+            current: shown.kind === "bots" || (shown.kind === "task" && (shown.back?.kind === "bots" || state.tasks.some((task) => task.id === shown.taskId && task.botId))),
+            ...(shown.kind === "bots" ? { botId: shown.botId, groupId: shown.groupId } : {}),
+            ...(shown.kind === "task" ? { taskId: shown.taskId, sessionId: shown.sessionId } : {}),
+            open: (pick) => setView({ kind: "bots", ...pick }),
+            openChat: (taskId, sessionId, botId) => setView({ kind: "task", taskId, sessionId, back: { kind: "bots", botId }, nav: Date.now() }),
+            openSettings: (botId) => setSettingsOpen({ page: "bots", botId, at: Date.now() }),
+          } : undefined}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
             <ShortcutMenu label="待你处理" icon={<NeedsGlyph />} items={() => waiting} count={waiting.length} empty="当前没有待处理事项" />
@@ -372,7 +386,7 @@ export function App() {
             onView={setView}
             onNew={() => setView(canvasTopic ? { kind: "new", topicId: canvasTopic.id, back: { kind: "canvas" } } : { kind: "new" })}
             search={<div className="wb-search-tools">
-              <SearchBox state={state} onOpen={openHit} />
+              <SearchBox state={navState} onOpen={openHit} />
               <ShortcutMenu label="待处理通知" icon={<BellGlyph />} items={() => waiting} empty="当前没有待处理事项" toolbar />
               <ThemeShortcut />
             </div>}
@@ -391,11 +405,13 @@ export function App() {
           state={state}
           settings={settings}
           {...(settingsOpen.page ? { page: settingsOpen.page } : {})}
+          startBotId={settingsOpen.botId}
           onClose={() => setSettingsOpen(false)}
           onOpenBotChat={(session) => {
             if (!session.taskId) return;
             setSettingsOpen(false);
-            setView({ kind: "task", taskId: session.taskId, sessionId: session.id, nav: Date.now() });
+            const owner = state.tasks.find((task) => task.id === session.taskId)?.botId;
+            setView({ kind: "task", taskId: session.taskId, sessionId: session.id, back: botsEnabled ? { kind: "bots", botId: owner } : { kind: "board" }, nav: Date.now() });
           }}
           onOpenRemote={() => {
             setSettingsOpen(false);

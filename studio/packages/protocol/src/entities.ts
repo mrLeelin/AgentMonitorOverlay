@@ -33,6 +33,8 @@ export type TaskColumn = (typeof TASK_COLUMNS)[number];
  */
 export interface Task {
   id: Id;
+  /** Owner of a Bot's conversations. These records back its chats in the Bots area. */
+  botId?: Id;
   /** Empty until named; the UI falls back to the first user message. */
   title: string;
   /** Project on the board and default for new sessions. Existing sessions keep their own workspace. */
@@ -401,7 +403,7 @@ export type SessionItem =
    * ran and not read by the model yet (Claude reads it after the next tool call or at the turn's end, Codex at its next
    * step); `unsent` — its process went before it was read (it can be sent again). Absent: it reached the model.
    */
-  | (ItemBase & { type: "user"; text: string; images?: MessageImage[]; delivery?: UserDelivery; deliveryReason?: string; deliveryEndedAt?: Timestamp; queueCancelled?: boolean; replacesItemId?: Id; messagePurpose?: MessagePurpose; rebaseOnContextUpgrade?: boolean; relayFromSessionId?: Id; /** The direct manager's answer to this session's decision (2026-11-17: it may join a running turn). */ answersDecisionId?: Id; /** The person's own message the inbox holds (2026-11-17). */ fromPerson?: boolean; /** Starts a separate turn unless the person chooses 立即发送. */ afterTurn?: boolean; queuedSkillText?: string; queuedFromDevice?: { account: string; device: string } })
+  | (ItemBase & { type: "user"; text: string; botLetter?: import("./bots.js").BotLetter; images?: MessageImage[]; delivery?: UserDelivery; deliveryReason?: string; deliveryEndedAt?: Timestamp; queueCancelled?: boolean; replacesItemId?: Id; messagePurpose?: MessagePurpose; rebaseOnContextUpgrade?: boolean; relayFromSessionId?: Id; /** The direct manager's answer to this session's decision (2026-11-17: it may join a running turn). */ answersDecisionId?: Id; /** The person's own message the inbox holds (2026-11-17). */ fromPerson?: boolean; /** Starts a separate turn unless the person chooses 立即发送. */ afterTurn?: boolean; queuedSkillText?: string; queuedFromDevice?: { account: string; device: string } })
   | (ItemBase & { type: "agent"; markdown: string; streaming: boolean })
   /** The model's thinking before or between steps. */
   | (ItemBase & { type: "reasoning"; text: string; streaming: boolean; durationMs?: number })

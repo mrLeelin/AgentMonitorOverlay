@@ -10,7 +10,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
  * scroll outside it too (the file menu: its line scrolls away under it). Not by default: a running turn scrolls the
  * conversation by itself, and the task head's menus would close under the pointer.
  */
-export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () => void, { scroll = false }: { scroll?: boolean } = {}): void {
+export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () => void, { scroll = false, trigger }: { scroll?: boolean; trigger?: HTMLElement } = {}): void {
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
@@ -26,7 +26,7 @@ export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () =
       e.stopPropagation();
       close.current();
     };
-    const onDown = (e: MouseEvent) => outside(e) && close.current();
+    const onDown = (e: MouseEvent) => outside(e) && !(e.target instanceof Node && trigger?.contains(e.target)) && close.current();
     const onWheel = (e: Event) => outside(e) && close.current();
     const onBlur = () => close.current();
     window.addEventListener("keydown", onKey, true);
@@ -41,7 +41,7 @@ export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () =
       window.removeEventListener("scroll", onWheel, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [box, scroll]);
+  }, [box, scroll, trigger]);
 }
 
 /** Where a menu opened at `at` goes so that it stays inside the window (near the right or bottom edge: leftwards or upwards). */
@@ -65,6 +65,7 @@ export function ContextMenu({
   testId,
   onKeyDown,
   boxRef,
+  trigger,
   children,
 }: {
   at: { x: number; y: number };
@@ -75,11 +76,12 @@ export function ContextMenu({
   testId?: string;
   onKeyDown?: (e: ReactKeyboardEvent<HTMLDivElement>) => void;
   boxRef?: RefObject<HTMLDivElement | null>;
+  trigger?: HTMLElement;
   children: ReactNode;
 }) {
   const own = useRef<HTMLDivElement>(null);
   const box = boxRef ?? own;
-  useMenuDismiss(box, onClose);
+  useMenuDismiss(box, onClose, { trigger });
   const pos = useInWindow(box, at);
   return (
     <div className={`ctx-menu${className ? ` ${className}` : ""}`} role="menu" aria-label={label} style={{ left: pos.x, top: pos.y }} ref={box} onContextMenu={(e) => e.preventDefault()} onKeyDown={onKeyDown} data-testid={testId}>

@@ -19,10 +19,10 @@ export function discardNativePlaneView() {
   if (nativePlaneSession) window.amo?.teamPlane?.discard?.(nativePlaneSession.id);
 }
 
-export function NativePlaneWorkItems({ link, target, accountName, localProjects, localProject, topics, tasks, sessions, profiles, topicId, onOpen, onSettings }: {
+export function NativePlaneWorkItems({ link, target, accountName, localProjects, localProject, topics, tasks, sessions, profiles, topicId, onOpen, onSettings, onUnavailable }: {
   link: HostLink; target: PlaneTarget; accountName: string; localProjects: readonly Workspace[]; localProject: string; topicId?: string;
   topics: readonly Topic[]; tasks: readonly Task[]; sessions: readonly Session[]; profiles: readonly ModelProfile[];
-  onOpen(id: string, sessionId?: string): void; onSettings(): void;
+  onOpen(id: string, sessionId?: string): void; onSettings(): void; onUnavailable(): void;
 }) {
   const api = window.amo?.teamPlane;
   const region = useRef<HTMLDivElement>(null);
@@ -31,13 +31,13 @@ export function NativePlaneWorkItems({ link, target, accountName, localProjects,
     if (nativePlaneSession?.key !== key) nativePlaneSession = { key, id: crypto.randomUUID() };
     return nativePlaneSession.id;
   });
-  const [attempt, retry] = useState(0);
-  const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState<PlaneTarget | null>(null);
   const [copying, setCopying] = useState<CopyRequest | null>(null);
   const blocked = useRef(false);
   const settings = useRef(onSettings);
   settings.current = onSettings;
+  const unavailable = useRef(onUnavailable);
+  unavailable.current = onUnavailable;
 
   useLayoutEffect(() => {
     const node = region.current;
@@ -82,7 +82,7 @@ export function NativePlaneWorkItems({ link, target, accountName, localProjects,
       if (!live) return;
       blocked.current = true;
       position();
-      setError(true);
+      unavailable.current();
     };
     const offError = api.onError((reported) => { if (reported === id) fail(); });
     const offSettings = api.onSettings((reported) => {
@@ -154,7 +154,7 @@ export function NativePlaneWorkItems({ link, target, accountName, localProjects,
       offScale?.();
       offError(); offSettings(); offCopy();
     };
-  }, [api, attempt, id, target]);
+  }, [api, id, target]);
 
   const destination = copying?.destination;
   const selectedTopicId = destination?.kind === "topic" ? destination.id : destination ? undefined : topicId;
@@ -163,11 +163,7 @@ export function NativePlaneWorkItems({ link, target, accountName, localProjects,
   const initialProject = destination?.kind === "workspace" ? destination.id : preferred ?? (destination ? "" : localProject);
   return <div className="plane-native-region" ref={region}>
     <div className="plane-native-status">
-      {error ? <>
-        <p role="alert">Plane 页面未能打开。请检查连接后重试。</p>
-      <div className="tb-row"><button className="btn-primary small" type="button" onClick={() => { api?.discard?.(id); blocked.current = false; setLoaded(null); setError(false); retry((value) => value + 1); }}>重试</button>
-        <button className="btn-ghost small" type="button" onClick={onSettings}>团队连接设置</button></div>
-      </> : loaded !== target && <p role="status">正在打开 Plane …</p>}
+      {loaded !== target && <p role="status">正在打开 Plane …</p>}
     </div>
     {copying && <CopyPlaneWorkItem link={link} target={target} accountName={accountName} item={copying.item} projects={localProjects}
       projectId={initialProject || (localProjects.length === 1 ? localProjects[0]!.id : null)}

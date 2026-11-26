@@ -274,6 +274,8 @@ export interface StudioSettings {
   disabledFeatures: OptionalFeature[];
   /** This installation shows the team board and allows its Host routes and MCP tools. */
   teamTasksEnabled?: boolean;
+  botsEnabled?: boolean;
+  confirmBotHomeReset?: boolean;
   /** Features still being tried out that the person turned on (设置 → 测试功能); off by default. */
   experimentalFeatures: ExperimentalFeature[];
   /**
@@ -714,7 +716,7 @@ export interface HostRoutes
   /** The file itself; also accepts `?token=` so an <img> can load it. */
   "GET /api/attachments/:id": { req: void; res: Blob };
   /** `commonDir`: moves the common space to this folder (created if missing; it must not be a registered project). */
-  "PUT /api/settings": { req: { network?: NetworkSettings; commonDir?: string; devUiDir?: string | null; presets?: SessionPreset[]; disabledFeatures?: OptionalFeature[]; experimentalFeatures?: ExperimentalFeature[]; teamTasksEnabled?: boolean; teamAutoSend?: boolean; shellHelp?: boolean; scratchpadShortcut?: string; modelPrefs?: Record<string, ModelPrefs | null>; scratchpadSafeNewlines?: boolean; quotaDisplay?: Record<string, QuotaDisplay | null>; quickModels?: QuickModel[]; autoCompactTokens?: number | null; autoCompactProfiles?: Record<string, AutoCompactChoice | null>; projectGroups?: Array<Omit<ProjectGroup, "id"> & { id?: Id }>; topicGroups?: Array<Omit<TopicGroup, "id"> & { id?: Id }>; subsessionNotes?: SubsessionNote[] }; res: StudioSettings };
+  "PUT /api/settings": { req: { network?: NetworkSettings; commonDir?: string; devUiDir?: string | null; presets?: SessionPreset[]; disabledFeatures?: OptionalFeature[]; experimentalFeatures?: ExperimentalFeature[]; teamTasksEnabled?: boolean; botsEnabled?: boolean; confirmBotHomeReset?: boolean; teamAutoSend?: boolean; shellHelp?: boolean; scratchpadShortcut?: string; modelPrefs?: Record<string, ModelPrefs | null>; scratchpadSafeNewlines?: boolean; quotaDisplay?: Record<string, QuotaDisplay | null>; quickModels?: QuickModel[]; autoCompactTokens?: number | null; autoCompactProfiles?: Record<string, AutoCompactChoice | null>; projectGroups?: Array<Omit<ProjectGroup, "id"> & { id?: Id }>; topicGroups?: Array<Omit<TopicGroup, "id"> & { id?: Id }>; subsessionNotes?: SubsessionNote[] }; res: StudioSettings };
   /** Models (with reasoning efforts) and permission settings of a profile, asked from its CLI. */
   "GET /api/profiles/:id/choices": { req: void; res: ProfileChoices };
   "GET /api/credentials": { req: void; res: CredentialStatus[] };
@@ -898,6 +900,9 @@ export type HostErrorCode = "bad_request" | "not_found" | "conflict" | "read_onl
 
 /** Events on `ws://127.0.0.1:<port>/api/events?since=<eventSeq>`. `seq` is global and monotonic. */
 export type HostEvent = { seq: number } & (
+  | { type: "bots.changed" }
+  | { type: "bot-groups.changed" }
+  | { type: "bot-group-posts.changed"; groupId: Id }
   | { type: "workspace.upserted"; workspace: Workspace }
   | { type: "workspace.removed"; workspaceId: Id }
   | { type: "task.upserted"; task: Task }

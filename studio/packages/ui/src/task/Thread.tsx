@@ -18,7 +18,7 @@ import { AttachmentInput } from "../attach/AttachmentInput.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage } from "../attach/inlineResources.js";
 import { splitFileRefItems } from "../attach/refs.js";
-import { splitMentionRefs } from "../attach/mentions.js";
+import { mentionSpans, splitMentionRefs } from "../attach/mentions.js";
 import { AttachLink } from "../attach/MessageAttachments.js";
 import { IconPaperclip } from "../attach/icons.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
@@ -50,7 +50,9 @@ import { cameFromFocus, forgetFocusJump } from "../lib/focusJump.js";
 import { TurnStartHint, useTurnStartHint } from "./TurnStartHint.js";
 import { useAnnotationMarks } from "./annotationMarks.js";
 import { AnnotationRefChips, ComposerStats, composerPlaceholder } from "./ThreadParts.js";
-import { BotRequestList, useBotRequests } from "../bots/BotRequests.js";
+import { BotConversation, useBotRequests, withBotReplies } from "../bots/BotRequests.js";
+import { TranscriptBots } from "../bots/BotAvatar.js";
+import { ContextMenu } from "../lib/ContextMenu.js";
 import type { StudioBot } from "@amo-studio/protocol";
 
 /** Studio's /compact, as the 压缩 button runs it. */
@@ -64,12 +66,14 @@ const SEND_GIVE_UP_MS = 30_000;
 interface ThreadProps {
   link: HostLink;
   bots: readonly StudioBot[];
+  botsEnabled: boolean;
+  botBlock?: string;
   session: Session | null;
   /** The task was filed with this sentence (放进待办): shown while it has no session; its first session starts with it. */
   firstMessage?: string;
   /** The session's model profile (its account mark and models). */
   profile?: ModelProfile;
-  /** Every model profile: 开子会话… in the @ list picks one. */
+  /** Every model profile: 开子会话… in the / menu picks one. */
   profiles?: readonly ModelProfile[];
   /** 设置 → 子会话: the person's notes on models as sub-sessions. */
   subsessionNotes?: readonly SubsessionNote[];
@@ -118,7 +122,7 @@ interface ThreadProps {
 
 
 /** Conversation of one session plus its composer. */
-export function Thread({ link, bots, presets, session, firstMessage, profile, profiles = [], subsessionNotes = [], tasks = [], sessions = [], projects, items, annotations, annotationRefs, model, busy, onApprove, onJump, onSend, onInterrupt, onDelivery, onSaveAnnotation, onEditAnnotation, onDeleteAnnotation, onBookmark, initialScroll, atPassage = false, onError, decisions = [], remote }: ThreadProps) {
+export function Thread({ link, bots, botsEnabled, botBlock, presets, session, firstMessage, profile, profiles = [], subsessionNotes = [], tasks = [], sessions = [], projects, items, annotations, annotationRefs, model, busy, onApprove, onJump, onSend, onInterrupt, onDelivery, onSaveAnnotation, onEditAnnotation, onDeleteAnnotation, onBookmark, initialScroll, atPassage = false, onError, decisions = [], remote }: ThreadProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
@@ -159,12 +163,17 @@ export function Thread({ link, bots, presets, session, firstMessage, profile, pr
   const attach = useAttachments(link, { text: draft, insert: (text) => input.current?.insert(text) });
   // 找文件: the selector, opened with Ctrl+P or from the @ list (with what was typed after @).
   const [finding, setFinding] = useState<{ query: string } | null>(null);
-  const canMentionBot = !!session && !remote && !session.archivedAt;
+  const canMentionBot = botsEnabled && !botBlock && !!session && !remote && !session.archivedAt;
   const availableBots = useMemo(() => canMentionBot ? bots.filter((bot) => bot.enabled && (bot.taskId === null || bot.taskId !== session?.taskId)) : [], [bots, canMentionBot, session?.taskId]);
-  const botRequests = useBotRequests(link, remote ? null : sessionId);
+  const lastBotReply = items.findLast((item) => item.id.startsWith("bot-reply:"))?.id;
+  const botRequests = useBotRequests(link, remote ? null : sessionId, lastBotReply);
+  const conversationItems = useMemo(() => withBotReplies(items, botRequests.rows), [items, botRequests.rows]);
   const botSend = useRef<{ key: string; id: string } | undefined>(undefined);
   const [sendingBot, setSendingBot] = useState(false);
-  const [botDestination, setBotDestination] = useState("home");
+  const [botDestinations, setBotDestinations] = useState<Record<string, string>>({});
+  const [botMenu, setBotMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [delegateBot, setDelegateBot] = useState(true);
+  const canDelegateBot = session?.kind === "main" && !bots.some((bot) => bot.taskId && bot.taskId === session.taskId);
   const [botChats, setBotChats] = useState<Session[]>([]);
   const mentions = useComposerMentions({
     link,
@@ -180,9 +189,17 @@ export function Thread({ link, bots, presets, session, firstMessage, profile, pr
     inlineFiles: true,
     ...(projects ? { projects } : {}),
   });
-  const selectedBotId = mentions.bots(draft)[0]?.id;
+  const pickedBots = mentions.bots(draft);
+  const pickedIds = new Set(pickedBots.map((bot) => bot.id));
+  const selectedBots = availableBots.filter((bot) => pickedIds.has(bot.id));
+  const selectedBot = selectedBots.find((bot) => bot.id === botMenu?.id);
+  const selectedBotId = selectedBot?.id;
   useEffect(() => {
-    setBotDestination("home");
+    setBotMenu(null);
+    setBotDestinations({});
+    setDelegateBot(true);
+  }, [sessionId, pickedBots.length === 0]);
+  useEffect(() => {
     setBotChats([]);
     if (!selectedBotId) return;
     let current = true;
@@ -190,7 +207,7 @@ export function Thread({ link, bots, presets, session, firstMessage, profile, pr
     return () => { current = false; };
   }, [link, selectedBotId, sessionId]);
   // `/` opens commands and skills; `$` completes skill mentions at the caret.
-  const slash = useSlashCommands({ link, session, text: draft, setText: setDraft, onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)), onRun: (command, args) => void runCommand(command, args) });
+  const slash = useSlashCommands({ link, session, text: draft, setText: setDraft, actions: mentions.actions, onComplete: (caret) => requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret)), onRun: (command, args) => void runCommand(command, args) });
   const chat = useChatSettings(link);
   const suggestion = useMemo(() => latestSuggestion(items), [items]);
   const compacting = useMemo(() => items.some((i) => i.type === "compaction" && i.state === "running"), [items]);
@@ -338,7 +355,7 @@ export function Thread({ link, bots, presets, session, firstMessage, profile, pr
   // only read, and while that computer is away nothing goes out (what is typed stays).
   const isRemote = session?.runtime === "remote";
   const remoteSub = isRemote && session.kind === "sub";
-  const blocked = isRemote ? (remote?.blocked ?? null) : null;
+  const blocked = isRemote ? (remote?.blocked ?? null) : botBlock ?? null;
   const readOnly = !session || claudeSub || remoteSub || !!remote?.revoked || session.writer === "archived" || session.writer === "terminal-handoff";
   // An archived session has no composer (stage 14): the task page's banner says so and restores it.
   const archived = !!session && (session.writer === "archived" || !!session.archivedAt);
@@ -451,19 +468,30 @@ export function Thread({ link, bots, presets, session, firstMessage, profile, pr
     const bots = mentions.bots(text);
     if (bots.length && sessionId && !remote) {
       if (sendingBot) return;
-      if (bots.length > 1 || !attach.empty || mentions.setups(text).length) {
-        onError?.("请单独发一条文字消息给一个 Bot。");
+      if (!attach.empty || mentions.setups(text).length) {
+        onError?.("Bot 提及目前只支持文字，请将附件或子会话设置另发。");
         return;
       }
-      const bot = bots[0]!;
-      const request = text.replace(`@${bot.name}`, "").trim();
+      const request = mentionSpans(text, bots.map((bot) => bot.name)).filter((p) => !p.mention).map((p) => p.text).join("").trim();
       if (!request) { onError?.("请输入要交给 Bot 的事。"); return; }
-      const destination: BotDestination = botDestination === "home" || botDestination === "new" ? botDestination : { sessionId: botDestination };
-      const key = JSON.stringify([sessionId, bot.id, request, destination]);
+      const recipients = bots.map((bot) => {
+        const target = botDestinations[bot.id] ?? "home";
+        const destination: BotDestination = target === "home" || target === "new" ? target : { sessionId: target };
+        return { botId: bot.id, destination };
+      });
+      const delegated = canDelegateBot && delegateBot;
+      const key = JSON.stringify([sessionId, text, recipients, delegated]);
       if (botSend.current?.key !== key) botSend.current = { key, id: crypto.randomUUID() };
       setSendingBot(true);
       try {
-        await call(link, "POST /api/bots/:id/requests", { id: bot.id }, { id: botSend.current.id, sourceSessionId: sessionId, text: request, destination });
+        const id = botSend.current.id;
+        if (delegated && recipients.length > 1) await call(link, "POST /api/bot-mentions", {}, { id, sourceSessionId: sessionId, text, recipients });
+        else if (delegated) await call(link, "POST /api/bots/:id/mentions", { id: recipients[0]!.botId }, { id, sourceSessionId: sessionId, text, destination: recipients[0]!.destination });
+        else {
+          for (const [i, target] of recipients.entries()) {
+            await call(link, "POST /api/bots/:id/requests", { id: target.botId }, { id: `${id}-${i}`, sourceSessionId: sessionId, text: recipients.length > 1 ? text : request, destination: target.destination });
+          }
+        }
         botSend.current = undefined;
         setDraft((current) => current.trim() === text ? "" : current);
         botRequests.refresh();
@@ -545,7 +573,8 @@ ${d}` : restored));
     if (readOnly || isRemote) return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "p") return;
-      if (document.querySelector('[role="dialog"]')) return;
+      // The effort picker keeps its native popover mounted even when closed.
+      if (document.querySelector('[role="dialog"]:not([popover]), [role="dialog"]:popover-open')) return;
       e.preventDefault();
       if (!e.shiftKey) return setFinding({ query: "" });
       askCommit(input.current?.selectionStart ?? draft.length);
@@ -657,17 +686,24 @@ ${d}` : restored));
                 <div className="thread-empty">这个任务还没有会话。在左侧新建一个会话即可开始。</div>
               ))}
             <AttachLink.Provider value={link}>
+              <TranscriptBots.Provider value={bots}>
               <QuestionSeatContext.Provider value={seat}>
                 {/* A remote session's approvals grey while its computer is away (or the grant is gone): they are checked again there. */}
                 <SubagentStatusContext.Provider value={subagentStatus}>
-                  <Transcript session={session} items={items.filter((item) => !(item.type === "user" && (item.queueCancelled || (onDelivery && !readOnly && !blocked && !archived && item.fromPerson && item.afterTurn && item.delivery === "held"))))} annotations={annotations} model={model} busy={busy || !!blocked} view={view} onApprove={onApprove} onJump={onJump} keepTurn={initialScroll?.key} {...(onDelivery && !readOnly && !blocked ? { onDelivery: deliver } : {})} givingWay={halting === "now"} waitsForSubagents={waitsForSubagents} />
-                  <BotRequestList rows={botRequests.rows} bots={bots} onFollowUp={canMentionBot && !readOnly && sessionId ? async (row, text, id) => {
+                  <BotConversation.Provider value={{ rows: botRequests.rows, onFollowUp: canMentionBot && !readOnly && sessionId ? async (row, text, id) => {
                     if (!row.sessionId) throw new Error("找不到这次请求的 Bot 会话。");
-                    await call(link, "POST /api/bots/:id/requests", { id: row.botId }, { id, sourceSessionId: sessionId, destination: { sessionId: row.sessionId }, text });
+                    if (row.reportToSource) {
+                      await call(link, "POST /api/bots/:id/mentions", { id: row.botId }, { id, sourceSessionId: sessionId, destination: { sessionId: row.sessionId }, text: `请向 @${row.botName} 追问：${text}` });
+                    } else {
+                      await call(link, "POST /api/bots/:id/requests", { id: row.botId }, { id, sourceSessionId: sessionId, destination: { sessionId: row.sessionId }, text });
+                    }
                     botRequests.refresh();
-                  } : undefined} />
+                  } : undefined }}>
+                    <Transcript session={session} items={conversationItems.filter((item) => !(item.type === "user" && (item.queueCancelled || (onDelivery && !readOnly && !blocked && !archived && item.fromPerson && item.afterTurn && item.delivery === "held"))))} annotations={annotations} model={model} busy={busy || !!blocked} view={view} onApprove={onApprove} onJump={onJump} keepTurn={initialScroll?.key} {...(onDelivery && !readOnly && !blocked ? { onDelivery: deliver } : {})} givingWay={halting === "now"} waitsForSubagents={waitsForSubagents} />
+                  </BotConversation.Provider>
                 </SubagentStatusContext.Provider>
               </QuestionSeatContext.Provider>
+              </TranscriptBots.Provider>
             </AttachLink.Provider>
           </div>
           {bar && !bubble && (
@@ -779,13 +815,14 @@ ${d}` : restored));
           <div className={`composer-card${readOnly ? " disabled" : ""}${dragging ? " dropping" : ""}`}>
             {annotationRefs && annotationRefs.list.length > 0 && !isRevising && <AnnotationRefChips refs={annotationRefs} annotations={annotations} />}
             <div className="chat-input">
-              {selectedBotId && <label className="bot-destination">
-                <span>发送给 Bot</span>
-                <select className="field" value={botDestination} onChange={(e) => setBotDestination(e.target.value)} disabled={sendingBot}>
+              {botMenu && selectedBot && <ContextMenu at={botMenu} label="Bot 发送设置" className="bot-send-menu" onClose={() => setBotMenu(null)}>
+                {canDelegateBot && <label><input autoFocus type="checkbox" checked={delegateBot} onChange={(e) => setDelegateBot(e.target.checked)} disabled={sendingBot} />由当前 AI 转交</label>}
+                <label><span>目标聊天</span>
+                <select className="field" value={botDestinations[selectedBot.id] ?? "home"} onChange={(e) => setBotDestinations({ ...botDestinations, [selectedBot.id]: e.target.value })} disabled={sendingBot}>
                   <option value="home">主聊天</option><option value="new">新建聊天</option>
-                  {botChats.filter((chat) => chat.id !== availableBots.find((bot) => bot.id === selectedBotId)?.homeSessionId).map((chat) => <option key={chat.id} value={chat.id}>{chat.title || "未命名聊天"}</option>)}
+                  {botChats.filter((chat) => chat.id !== selectedBot.homeSessionId).map((chat) => <option key={chat.id} value={chat.id}>{chat.title || "未命名聊天"}</option>)}
                 </select>
-              </label>}
+                </label></ContextMenu>}
               <AttachmentInput
                 key={sessionId ?? "empty"}
                 ref={input}
@@ -798,6 +835,8 @@ ${d}` : restored));
                   slash.track(selection);
                 }}
                 mentions={mentions.names}
+                botMentions={selectedBots.map(({ id, name, avatar }) => ({ id, name, avatar }))}
+                onBotSettings={setBotMenu}
                 skills={slash.skills}
                 onOpenSkill={slash.openSkill}
                 disabled={readOnly}
