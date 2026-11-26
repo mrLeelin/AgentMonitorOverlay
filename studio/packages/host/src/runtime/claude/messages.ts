@@ -255,7 +255,10 @@ export class ClaudeMessages {
       const errors = (m as { errors?: string[] }).errors;
       // A refusal has said so already (its notices and the CLI's own message).
       const refused = (m as { stop_reason?: string | null }).stop_reason === "refusal";
-      if (!refused || errors?.length) this.core.appendItem(sessionId, { type: "error", message: errors?.join("\n") || `回合出错（${m.subtype}）` }, { method: "result" });
+      // An error the CLI reports as subtype "success" (e.g. "Not logged in · Please run /login") carries its words in
+      // `result`: say those, not 回合出错（success） (2026-11-26).
+      const said = m.subtype === "success" ? (m as { result?: string }).result?.trim() : "";
+      if (!refused || errors?.length) this.core.appendItem(sessionId, { type: "error", message: errors?.join("\n") || said || `回合出错（${m.subtype}）` }, { method: "result" });
       this.core.setStatus(sessionId, "error");
     } else {
       this.core.setStatus(sessionId, "idle");

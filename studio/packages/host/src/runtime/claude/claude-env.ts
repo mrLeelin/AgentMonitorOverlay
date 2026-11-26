@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ClaudeLogin, ModelOption, ModelProfile } from "@amo-studio/protocol";
 import { GLM_MODELS } from "../choices.js";
 import type { CredentialReader } from "../credentials.js";
@@ -42,6 +44,24 @@ export const BUILTIN_CLAUDE_PROVIDERS: Record<string, ClaudeProviderDef> = {
 };
 
 export class ClaudeProfileError extends Error {}
+
+/**
+ * The `env` block of Claude Code's user settings in `dir` (string values only; none when the file is missing or broken).
+ * A Bot runs with no setting sources, so its CLI never reads that file; with the local login it still needs what the
+ * person's terminal gets from there: their sign-in and routing when it is a token plus a relay address (2026-11-26, the
+ * user: a Bot's main chat said "Not logged in"). Only `env`: their hooks, plugins, CLAUDE.md and permissions stay out.
+ */
+export function claudeSettingsEnv(dir: string): Record<string, string> {
+  const file = join(dir, "settings.json");
+  if (!existsSync(file)) return {};
+  try {
+    const json = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")) as { env?: unknown };
+    const env = json && typeof json.env === "object" && json.env ? (json.env as Record<string, unknown>) : {};
+    return Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
 
 /**
  * The config dir a Claude process runs with. "token": Studio's own dir. "local" (only for a subscription provider): the

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ModelProfile } from "@amo-studio/protocol";
 import { StaticCredentialReader } from "../credentials.js";
-import { BUILTIN_CLAUDE_PROVIDERS, ClaudeProfileError, claudeEnv, type ClaudeHome } from "./claude-env.js";
+import { BUILTIN_CLAUDE_PROVIDERS, ClaudeProfileError, claudeEnv, claudeSettingsEnv, type ClaudeHome } from "./claude-env.js";
 import { bundledClaudeExe } from "./transcripts.js";
 
 const studio = (dir: string): ClaudeHome => ({ dir, login: "token" });
@@ -104,6 +104,21 @@ describe("claudeEnv", () => {
         rmSync(join(dir, ".credentials.json"));
         expect(() => claudeEnv(sub, BUILTIN_CLAUDE_PROVIDERS, token, { dir, login: "local" }, base)).toThrow(/没找到本机 Claude Code 的登录/);
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("claudeSettingsEnv", () => {
+  it("reads the string values of settings.json's env, and nothing from a missing or broken file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amo-studio-test-claude-settings-"));
+    try {
+      expect(claudeSettingsEnv(dir)).toEqual({});
+      writeFileSync(join(dir, "settings.json"), "\uFEFF" + JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "relay-key", ANTHROPIC_BASE_URL: "https://relay.example", N: 1 }, hooks: {} }));
+      expect(claudeSettingsEnv(dir)).toEqual({ ANTHROPIC_AUTH_TOKEN: "relay-key", ANTHROPIC_BASE_URL: "https://relay.example" });
+      writeFileSync(join(dir, "settings.json"), "{ not json");
+      expect(claudeSettingsEnv(dir)).toEqual({});
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

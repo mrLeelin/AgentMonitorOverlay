@@ -9,7 +9,7 @@ import type { Store } from "../../store/store.js";
 import type { CredentialReader } from "../credentials.js";
 import { RuntimeBase, STOP_GRACE_MS, type NewItemBody, type SendMode, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
 import { withDelivery } from "../items.js";
-import { claudeEnv, type ClaudeHome, type ClaudeProviderDef } from "./claude-env.js";
+import { claudeEnv, claudeSettingsEnv, type ClaudeHome, type ClaudeProviderDef } from "./claude-env.js";
 import { claudeAutoCompactEnv } from "../compact.js";
 import { spawnClaudeProcess } from "../priority.js";
 import { localClaudeHome, readClaudeLogin, rememberSessionLogin, sessionClaudeLogin } from "./claude-login.js";
@@ -802,8 +802,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       prompt: input(),
       options: {
         cwd,
-        // 自动压缩点 (设置 → 模型) over the provider's own window; 命令行适配 (agent-env.ts) under everything.
-        env: agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv), ...claudeAutoCompactEnv(this.store, profile.id) }),
+        // 自动压缩点 (设置 → 模型) over the provider's own window; 命令行适配 (agent-env.ts) under everything. A Bot on the
+        // local login also gets the person's settings.json env (claudeSettingsEnv), after Studio's as the CLI applies it.
+        env: agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv), ...(bot && home.login === "local" && this.isSubscription(profile) ? claudeSettingsEnv(home.dir) : {}), ...claudeAutoCompactEnv(this.store, profile.id) }),
         // As in a terminal: CLAUDE.md, settings, hooks, commands and skills of the project and of the config dir (Studio's
         // own with the token, the person's with the local login).
         settingSources: bot ? [] : CLI_SETTING_SOURCES,

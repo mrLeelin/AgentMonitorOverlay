@@ -392,6 +392,40 @@ describe("ClaudeRuntime", () => {
     }
   }, 180_000);
 
+  it("signs a Bot in with the person's settings.json env on the local login (2026-11-26: its chat said Not logged in)", async () => {
+    // A ~/.claude whose sign-in is a token and a relay address in settings.json's env, as ccswitch-style setups leave it.
+    const mine = join(root, "my-claude-relay");
+    mkdirSync(mine, { recursive: true });
+    writeFileSync(join(mine, ".credentials.json"), "{}");
+    const sub: ModelProfile = { id: "claude-sub", label: "Claude", runtime: "claude", provider: "mock-oauth", model: MOCK_CLAUDE_MODEL, credentialId: "claude-subscription" };
+    const local = new ClaudeRuntime({
+      accounts: new ClaudeAccounts(store, { defaultDir: mine, defaultExplicit: true, root: join(root, "accounts-relay") }),
+      store,
+      profiles: [...PROFILES, sub],
+      providers: { mock: mockClaudeProvider(mock.baseUrl), "mock-oauth": mockClaudeProvider(mock.baseUrl, { auth: "oauth" }) },
+      credentials: new StaticCredentialReader({ mock: "mock-key" }),
+      claudeHome,
+      localClaudeHome: mine,
+    });
+    const botTask = store.createTask({ title: "bot", workspaceId: workspace.id });
+    store.db.prepare("INSERT INTO studio_bots (id, name_key, data, task_id) VALUES (?, ?, ?, ?)").run("bot-relay", "relay", JSON.stringify({ name: "Relay", purpose: "测试", profileId: "claude-sub", enabled: true }), botTask.id);
+    try {
+      // No token anywhere: the CLI's own words, not 回合出错（success）.
+      const before = await local.startSession({ taskId: botTask.id, topicId: null, profileId: "claude-sub", workspace, text: "no login yet" });
+      await until(() => status(before.id) === "error", "not signed in");
+      const error = items(before.id).find((i): i is Extract<SessionItem, { type: "error" }> => i.type === "error");
+      expect(error?.message).toMatch(/Not logged in/);
+      // The token in settings.json's env reaches the Bot, though it reads no setting sources.
+      writeFileSync(join(mine, "settings.json"), JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "relay-key", ANTHROPIC_BASE_URL: mock.baseUrl }, hooks: { Stop: [] } }));
+      const s = await local.startSession({ taskId: botTask.id, topicId: null, profileId: "claude-sub", workspace, text: "from the relay" });
+      await until(() => agentTexts(s.id).includes("MOCK: from the relay") && status(s.id) === "idle", "bot reply");
+      expect(mock.requests.at(-1)!.authorization).toContain("relay-key");
+    } finally {
+      writeClaudeLogin(store, "token");
+      await local.closeAll();
+    }
+  }, 180_000);
+
   it("groups a subagent's work in a child session under the Agent call", async () => {
     const s = await runtime.startSession({ taskId: task.id, topicId: null, profileId: "claude-mock", workspace, text: "[[spawn: helper: say hi]]" });
     await until(() => status(s.id) === "idle" && agentTexts(s.id).includes("MOCK-DONE"), "spawn done");

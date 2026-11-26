@@ -4,6 +4,8 @@
 
 ## 下一版
 
+- 修复 Claude Code 用 `~/.claude/settings.json` 里的 token 和中转地址登录时，Bot 主聊天报「Not logged in」的问题：Bot 会话现在也会带上那里的 `env`，你的 hooks、插件和 CLAUDE.md 仍然不会带进 Bot。Claude 这类出错不再只显示「回合出错（success）」，改为显示 Claude Code 返回的原话。
+
 - 统一工作台左栏的快捷入口、Bots、专题和项目样式，展开按钮、选中状态和右侧操作对齐。Bot 消息预览显示更多内容。
 
 - 创建或编辑 Bot 时可按渠道选型号，拖动滑杆设置推理强度，并从权限卡片中选择新聊天的执行权限。支持 Fast 的型号还可在滑杆面板开启加速。已有 Bot 默认只读。
