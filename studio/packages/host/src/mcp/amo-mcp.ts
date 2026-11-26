@@ -2,8 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { HostService } from "../service.js";
-import { MCP_SESSION_HEADER, type McpIdentities } from "./identity.js";
-import { AMO_MCP_NAME, amoInstructions, amoToolsFor, type McpCaller } from "./tools.js";
+import { MCP_SESSION_HEADER, McpIdentities } from "./identity.js";
+import { AMO_MCP_NAME, BOT_MCP_INSTRUCTIONS, amoInstructions, amoToolsFor, isBotCaller, type McpCaller } from "./tools.js";
 import { PROMPTED_WRITE_TOOLS } from "./names.js";
 import { recordRole, roleCard } from "../features/guide/role.js";
 
@@ -14,13 +14,14 @@ import { recordRole, roleCard } from "../features/guide/role.js";
 // tools without asking, so writes requiring approval stay hidden unless a lead may manage them directly.
 
 /** `connecting`: the request is the client's `initialize`, the one that reads the instructions. */
-export function createAmoMcpServer(service: HostService, caller: McpCaller | null = null, connecting = false): McpServer {
+export function createAmoMcpServer(service: HostService, caller: McpCaller | null = null, connecting = false, botOnly = false): McpServer {
   const session = caller ? service.store.getSession(caller.sessionId) : null;
   const dsh = session?.runtime === "dsh";
   const lead = !!session?.taskId && service.store.getTask(session.taskId)?.lead === true;
-  const server = new McpServer({ name: AMO_MCP_NAME, version: "0.5.0" }, { instructions: dsh && caller ? dshInstructions(service, caller.sessionId, connecting) : amoInstructions(service) });
+  const instructions = botOnly || isBotCaller(service, caller) ? BOT_MCP_INSTRUCTIONS : dsh && caller ? dshInstructions(service, caller.sessionId, connecting) : amoInstructions(service);
+  const server = new McpServer({ name: AMO_MCP_NAME, version: "0.5.0" }, { instructions });
   const prompted = new Set<string>(PROMPTED_WRITE_TOOLS);
-  for (const t of amoToolsFor(service, caller)) {
+  for (const t of amoToolsFor(service, caller, botOnly)) {
     if (dsh && prompted.has(t.name) && !(lead && t.autoApprove)) continue;
     const annotations = { readOnlyHint: t.readOnly, destructiveHint: false, openWorldHint: false };
     server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.inputSchema, annotations }, (args: Record<string, unknown>) => t.run(args));
@@ -45,9 +46,10 @@ ${card}`;
 /** Handles one /mcp request (already authenticated). */
 export async function handleMcpRequest(service: HostService, req: IncomingMessage, res: ServerResponse, body: unknown, identities?: McpIdentities): Promise<void> {
   const header = req.headers[MCP_SESSION_HEADER.toLowerCase()];
-  const sessionId = identities?.sessionFor(Array.isArray(header) ? header[0] : header) ?? null;
+  const token = Array.isArray(header) ? header[0] : header;
+  const sessionId = identities?.sessionFor(token) ?? null;
   const connecting = !!body && typeof body === "object" && (body as { method?: unknown }).method === "initialize";
-  const server = createAmoMcpServer(service, sessionId ? { sessionId } : null, connecting);
+  const server = createAmoMcpServer(service, sessionId ? { sessionId } : null, connecting, McpIdentities.isBotToken(token));
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => {
     void transport.close();

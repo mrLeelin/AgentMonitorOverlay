@@ -27,7 +27,7 @@ import { useWindowShape } from "./windowShape.js";
 import { useRemote } from "../remote/remote.js";
 import { FocusPairRequest } from "./FocusPairRequest.js";
 import { FocusTaskRequest } from "./FocusTaskRequest.js";
-import { decisionNeedsPerson, replyNeedsPerson } from "./managedAttention.js";
+import { decisionNeedsPerson, isBotConversation, replyNeedsPerson } from "./managedAttention.js";
 import "./focus.css";
 
 export { isToReview, latestSnippet, summary } from "./FocusEntry.js";
@@ -258,7 +258,7 @@ export function FocusApp() {
 
   const { state, link } = host;
   const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length;
-  const running = state.sessions.filter((s) => !s.archivedAt && s.status === "running" && mine(s)).length;
+  const running = state.sessions.filter((s) => !s.archivedAt && s.status === "running" && mine(s) && !isBotConversation(s, state.tasks)).length;
   // 置顶 (2026-10-21): one session of each pinned task, on top; listed nowhere else. Its task's other sessions do not
   // show under 进行中 either (10-22).
   const pinned = pins.ids.flatMap((id) => {
@@ -272,7 +272,7 @@ export function FocusApp() {
   // waiting for subagents of its own (2026-10-21).
   const under = hangsUnderOf(state.sessions);
   const working = state.sessions
-    .filter((s) => !s.archivedAt && s.kind !== "sub" && !under(s) && (s.status === "running" || runningSubs(s.id, subs).length > 0) && !needsPerson(s.status) && !pinnedTask(s) && mine(s))
+    .filter((s) => !s.archivedAt && s.kind !== "sub" && !under(s) && (s.status === "running" || runningSubs(s.id, subs).length > 0) && !needsPerson(s.status) && !pinnedTask(s) && mine(s) && !isBotConversation(s, state.tasks))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const shown = list.filter((s) => !isPinned(s));
   const openId = open && shown.some((s) => s.id === open) ? open : shown[0] && shown[0].id !== folded ? shown[0].id : null;

@@ -384,7 +384,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    */
   async terminal(sessionId: Id, launch: boolean): Promise<TerminalAttach> {
     const s = this.requireSession(sessionId);
-    if (isBotTask(this.store, s.taskId)) throw new HostError("read_only", "只读 Bot 会话不能交给终端。");
+    if (isBotTask(this.store, s.taskId)) throw new HostError("read_only", "Bot 聊天由 Studio 管理，不能交给终端。");
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be opened in a terminal");
     if (s.runtime === "claude") return this.handToTerminal(s, launch);
     const info = await this.wrap(() => this.runtime.attachInfo(sessionId));

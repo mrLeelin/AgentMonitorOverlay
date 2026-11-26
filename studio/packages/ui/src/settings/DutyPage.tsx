@@ -50,7 +50,7 @@ function checkLabel(c: DutyCheckOne, ctx: DutyCtx): string {
 export function actionText(a: DutyAction, ctx: DutyCtx): string {
   const profile = (id?: string | null) => ctx.profiles.find((p) => p.id === id)?.label ?? id ?? "";
   if (a.kind === "builtin") return `Studio：${ctx.builtins.find((b) => b.name === a.name)?.label ?? a.name}`;
-  if (a.kind === "bot") return `发送给 Bot · ${a.prompt}`;
+  if (a.kind === "bot") return a.job === "memory" ? "整理 Bot 记忆" : `发送给 Bot · ${a.prompt}`;
   if (a.kind === "command") {
     const ws = ctx.snapshot?.workspaces.find((w) => w.id === a.workspaceId);
     return `命令：${a.command}${ws ? `（在「${ws.name}」里）` : ""}`;
@@ -191,7 +191,7 @@ function DutyForm({ link, ctx, items, item, onDone }: { link: HostLink; ctx: Dut
         ? { kind, profileId, prompt, taskId: taskId || null, workspaceId: workspaceId || null, taskTitle, options: { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(permission ? { permission } : {}) }, fallbackProfileId: fallback || null, check: checkKind === "command" ? { kind: "command", command: checkCommand, workspaceId: checkWorkspace || null } : checkKind === "builtin" ? { kind: "builtin", name: checkName } : checkKind === "all" && check?.kind === "all" ? check : null, untilDone }
         : kind === "command"
           ? { kind, command, workspaceId: workspaceId || null, timeoutSec: Math.round(Number(timeoutMin) * 60) }
-          : kind === "bot" ? { kind, botId, prompt } : { kind, name };
+          : kind === "bot" ? { kind, botId, prompt, ...(a?.kind === "bot" && a.job ? { job: a.job } : {}) } : { kind, name };
     return { title, schedule, action, parentId: parentId || null };
   }
 

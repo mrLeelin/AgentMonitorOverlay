@@ -65,7 +65,7 @@ function BotGroupChat({ link, group, bots, onOpen }: { link: HostLink; group: Bo
   async function send(payload: { id: string; text: string; targetIds: string[] }) {
     const post = await call(link, "POST /api/bot-groups/:id/posts", { id: group.id }, payload);
     stickToBottom.current = true;
-    setPosts((current) => [post, ...(current ?? []).filter((item) => item.id !== post.id)]);
+    setPosts((current) => current?.some((item) => item.id === post.id) ? current : [post, ...(current ?? [])]);
     reload();
   }
 
@@ -93,8 +93,13 @@ function BotGroupChat({ link, group, bots, onOpen }: { link: HostLink; group: Bo
             {[...posts].reverse().map((post) => {
               const mentions = groupMentionNames(post.text, members);
               const byBot = new Map(post.replies.map((reply) => [reply.botId, reply]));
+              const author = post.author;
+              const target = post.targetIds[0];
+              const targetName = target && (byBot.get(target)?.botName ?? bots.find((bot) => bot.id === target)?.name);
               return <article key={post.id} className="bot-group-message" data-testid="bot-group-post">
-                <div className="bot-group-user">
+                <div className={author ? "bot-group-user bot-group-forward" : "bot-group-user"}>
+                  {author && <span className="bot-group-forward-label"><BotAvatar name={author.botName} avatar={bots.find((bot) => bot.id === author.botId)?.avatar} size={18} />
+                    {targetName ? `${author.botName} 向 ${targetName} 提问` : `${author.botName} 发出提问`}</span>}
                   <div className="bot-group-bubble">{mentionSpans(post.text, mentions).map((span, i) => span.mention ? <mark key={i}>{span.text}</mark> : span.text)}</div>
                   <time dateTime={post.createdAt} title={new Date(post.createdAt).toLocaleString()}>{hours.format(new Date(post.createdAt))}</time>
                 </div>

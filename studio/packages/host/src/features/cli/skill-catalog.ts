@@ -86,17 +86,19 @@ export async function scanSkillSource(id: string, name: string, root: string): P
       const info = await stat(path);
       found = true;
       const actual = await realpath(path);
+      const entryPath = join(dir, "SKILL.md");
+      const location = { path: actual, ...(actual !== entryPath ? { entryPath } : {}) };
       if (files.has(actual)) return;
       files.add(actual);
       if (!info.isFile() || info.size > MAX_SKILL_BYTES) {
-        source.skills.push({ name: basename(dir), description: "", path: actual, diagnostics: [!info.isFile() ? "SKILL.md 不是普通文件" : "SKILL.md 超过 256 KB，未读取"] });
+        source.skills.push({ name: basename(dir), description: "", ...location, diagnostics: [!info.isFile() ? "SKILL.md 不是普通文件" : "SKILL.md 超过 256 KB，未读取"] });
         return;
       }
       const file = await open(path, "r");
       try {
         // Read a bounded buffer even if another process grows the file after stat.
         const result = await file.read(bytes, 0, bytes.length, 0);
-        source.skills.push({ path: actual, ...skillMetadata(bytes.subarray(0, result.bytesRead).toString("utf8"), basename(dir)), ...(result.bytesRead > MAX_SKILL_BYTES ? { diagnostics: ["SKILL.md 超过 256 KB，内容已截断"] } : {}) });
+        source.skills.push({ ...location, ...skillMetadata(bytes.subarray(0, result.bytesRead).toString("utf8"), basename(dir)), ...(result.bytesRead > MAX_SKILL_BYTES ? { diagnostics: ["SKILL.md 超过 256 KB，内容已截断"] } : {}) });
       } finally { await file.close(); }
     } catch (error) {
       if (!missing(error)) { found = true; source.diagnostics.push(`${path}：${reason(error)}`); }

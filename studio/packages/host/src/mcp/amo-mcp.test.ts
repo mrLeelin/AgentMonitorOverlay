@@ -99,6 +99,23 @@ describe("AMO MCP", () => {
     await client.close();
   });
 
+  it("limits Bot identities to the group question tool before and after binding", async () => {
+    const token = identities.issue(true);
+    const client = await connect(MCP_TOKEN, token);
+    const args = { requestId: "a".repeat(64), botId: "peer", text: "你在吗？" };
+    try {
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["bot_group_ask"]);
+      expect(await call(client, "bot_group_ask", args)).toMatchObject({ isError: true });
+      const bot = service.bots.save({ name: "群组工具测试", purpose: "检查工具作用域", profileId: "p-ds", memory: "", enabled: true, workspaceId: null });
+      const chat = await service.bots.home(bot.id);
+      try {
+        identities.bind(token, chat.id);
+        expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["bot_group_ask"]);
+        expect((await call(client, "bot_group_ask", args)).content[0]?.text).toContain("找不到本会话的群组请求");
+      } finally { await service.tasks.archiveTask(chat.taskId!); }
+    } finally { await client.close(); }
+  });
+
   it("turns off only features that exist; 扩展包 (removed 2026-10-31) left in the settings is ignored", async () => {
     expect(() => service.config.updateSettings({ disabledFeatures: ["nope"] })).toThrow(/disabledFeatures/);
     expect(() => service.config.updateSettings({ disabledFeatures: ["packs"] })).toThrow(/disabledFeatures/);

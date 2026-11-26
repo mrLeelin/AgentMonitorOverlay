@@ -3,8 +3,9 @@ import { FEATURES } from "../features/index.js";
 import type { Task } from "@amo-studio/protocol";
 import { isRemoteCopy } from "../core/shared.js";
 import { fail, toolContext, type AmoTool, type McpCaller } from "./tool-kit.js";
-import { LEAD_MANAGEMENT_TOOLS } from "./names.js";
+import { BOT_GROUP_ASK_TOOL, LEAD_MANAGEMENT_TOOLS } from "./names.js";
 import { currentMessagePurpose } from "../runtime/message-purpose.js";
+import { isBotTask } from "../features/bots/data.js";
 
 // The AMO MCP tools, defined once: the Host serves them over HTTP at /mcp (Codex sessions), and Claude sessions get the
 // same tools in-process through the SDK, so no token has to reach the Claude CLI.
@@ -15,6 +16,7 @@ import { currentMessagePurpose } from "../runtime/message-purpose.js";
 export type { AmoTool, McpCaller, ToolResult } from "./tool-kit.js";
 
 export const AMO_MCP_NAME = "amo";
+export const BOT_MCP_INSTRUCTIONS = "Use bot_group_ask only when the person asks you to contact a peer in the current Bot group message. Reply directly to questions forwarded by a Bot.";
 /**
  * What every agent is told about AMO (stage 16, the stage 15 design): the server's instructions, which both CLIs hand
  * to the model. The role card is per session: Claude gets it appended here (each Claude session has its own server),
@@ -50,13 +52,19 @@ export function amoInstructions(service: HostService): string {
 }
 
 /** Every AMO tool for one caller (null: reading only): the features' tools, reading ones first; none of a feature turned off. */
-export function amoToolsFor(service: HostService, caller: McpCaller | null): AmoTool[] {
+export function amoToolsFor(service: HostService, caller: McpCaller | null, botOnly = false): AmoTool[] {
   const ctx = toolContext(service, caller);
   const off = new Set<string>(service.config.disabledFeatures());
-  const tools = FEATURES.filter((f) => !off.has(f.name)).flatMap((f) => f.tools?.(ctx) ?? [])
+  const bot = botOnly || isBotCaller(service, caller);
+  const tools = FEATURES.filter((f) => !off.has(f.name) && (!bot || f.name === "bots")).flatMap((f) => f.tools?.(ctx) ?? [])
+    .filter((t) => (t.name === BOT_GROUP_ASK_TOOL) === bot)
     .filter((t) => !isLeadCaller(service, caller) || leadMayUse(t))
     .map((t) => keepLeadReadOnly(service, caller, keepOffRemoteCopies(service, t)));
   return [...tools.filter((t) => t.readOnly), ...tools.filter((t) => !t.readOnly)];
+}
+
+export function isBotCaller(service: HostService, caller: McpCaller | null): boolean {
+  return !!caller && isBotTask(service.store, service.store.getSession(caller.sessionId)?.taskId ?? null);
 }
 
 // 2026-11-07, the person: 主控 assigns implementation and may manage tasks/canvas; task.lead includes forks/subagents.

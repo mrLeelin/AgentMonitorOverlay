@@ -1,11 +1,21 @@
-import { defaultBotPermission, type Id, type Session, type SessionOptions } from "@amo-studio/protocol";
+import { defaultBotPermission, type BotInput, type Id, type Session, type SessionOptions } from "@amo-studio/protocol";
 import type { Store } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
+import { claudePermissions, codexPermissions, DSH_PERMISSIONS } from "../../runtime/choices.js";
+import { readBotFiles } from "./files.js";
 
 export const BOTS_ENABLED_KEY = "bots.enabled";
 export const CONFIRM_BOT_HOME_RESET_KEY = "bots.confirmHomeReset";
 
 export const botsEnabled = (store: Store): boolean => store.getKv(BOTS_ENABLED_KEY)?.value !== "0";
+
+export function botPermission(value: unknown, runtime: Session["runtime"], claudeBaseUrl?: string): string {
+  if (value == null) return defaultBotPermission(runtime);
+  const choices = runtime === "claude" ? claudePermissions(claudeBaseUrl) : runtime === "dsh" ? DSH_PERMISSIONS : codexPermissions(null);
+  const option = choices.find((item) => item.id === value);
+  if (!option || option.unavailable) throw new HostError("bad_request", option?.unavailable ?? "请选择该 Bot 模型渠道支持的权限。");
+  return option.id;
+}
 
 export function assertBotsEnabled(store: Store): void {
   if (!botsEnabled(store)) throw new HostError("read_only", "Bots 已关闭，可在「设置 → 工具与自动化 → Bots」开启。");
@@ -54,6 +64,14 @@ export function botInstructions(bot: { name: string; purpose: string; memory?: s
 }
 
 export function botTaskInstructions(store: Store, taskId: Id | null): string | undefined {
-  const row = taskId && store.db.prepare("SELECT data FROM studio_bots WHERE task_id = ?").get(taskId) as { data: string } | undefined;
-  return row ? botInstructions(JSON.parse(row.data)) : undefined;
+  const row = taskId && store.db.prepare("SELECT id, data FROM studio_bots WHERE task_id = ?").get(taskId) as { id: string; data: string } | undefined;
+  if (!row) return;
+  const data = JSON.parse(row.data) as BotInput & { deletedAt?: string };
+  return data.deletedAt ? undefined : botInstructions(readBotFiles(store, row.id, data));
+}
+
+export const botSessionPromptKey = (id: Id): string => `bots.sessionPrompt:${id}`;
+
+export function botSessionPrompt(store: Store, id: Id): string | undefined {
+  return store.getKv(botSessionPromptKey(id))?.value;
 }

@@ -1,0 +1,369 @@
+<div class="viz-dotted-background">
+  <article id="amo-bot-skills-preview" aria-label="AMO Studio 的 Bot 技能设置">
+    <aside class="amo-settings" aria-label="设置分类">
+      <strong class="amo-settings-title">设置</strong>
+      <span>通用</span>
+      <span>模型与会话</span>
+      <strong class="amo-settings-group">工具与自动化</strong>
+      <span class="amo-setting-sub">MCP</span>
+      <span class="amo-setting-sub">技能展览</span>
+      <span class="amo-setting-sub amo-setting-active">Bots</span>
+      <span class="amo-setting-sub">Git 编辑器</span>
+      <span>高级设置</span>
+      <span>数据与维护</span>
+    </aside>
+    <header class="amo-title"><span class="amo-compact-path">设置 <span aria-hidden="true">›</span> 工具与自动化 <span aria-hidden="true">›</span></span><strong>Bots</strong></header>
+    <nav class="amo-bot-nav" aria-label="Bot 设置">
+      <span class="amo-device"><i data-lucide="monitor" aria-hidden="true"></i> 本地 Windows</span>
+      <button type="button" class="amo-nav-choice" data-page="reviewer" aria-current="page">
+        <span class="amo-avatar amo-reviewer" aria-hidden="true">审</span>
+        <span><strong>审核员</strong><small>Codex · 已启用</small></span>
+      </button>
+      <button type="button" class="amo-nav-choice" data-page="assistant" aria-current="false">
+        <span class="amo-avatar amo-assistant" aria-hidden="true">助</span>
+        <span><strong>项目助手</strong><small>Claude · 已启用</small></span>
+      </button>
+      <button type="button" class="amo-nav-choice amo-general-link" data-page="general" aria-current="false">
+        <i data-lucide="settings-2" aria-hidden="true"></i><strong>通用设置</strong>
+      </button>
+    </nav>
+    <main class="amo-detail">
+      <section data-view="general" hidden>
+        <h2>通用设置</h2>
+        <label class="amo-preference">
+          <span><strong>启用 Bots</strong><small>在本机接收新消息并运行值守和 Webhook。</small></span>
+          <input type="checkbox" role="switch" checked>
+        </label>
+        <label class="amo-preference">
+          <span><strong>开始新的主聊天前询问</strong><small>旧聊天仍可在历史中打开。</small></span>
+          <input type="checkbox" role="switch" checked>
+        </label>
+        <section class="amo-section">
+          <div class="amo-section-head">
+            <div><h3>共有技能</h3><p>本机现有和以后新建的 Bot 都会继承。</p></div>
+            <button type="button" class="amo-secondary" data-add="general"><i data-lucide="plus" aria-hidden="true"></i>添加技能</button>
+          </div>
+          <ul class="amo-skill-list" data-list="general"></ul>
+        </section>
+        <footer class="amo-actions">
+          <p role="status" data-notice="general"></p>
+          <button type="button" class="amo-primary" data-save="general">保存共有技能</button>
+        </footer>
+      </section>
+      <section data-view="bot">
+        <h2 data-bot-name>审核员</h2>
+        <div class="amo-context">
+          <h3>运行配置</h3>
+          <span data-bot-runtime>Codex · 只读 · AmoStudio</span>
+        </div>
+        <section class="amo-section">
+          <h3>技能</h3>
+          <div class="amo-section-head amo-skill-heading">
+            <h4>继承的共有技能 <span class="amo-count" data-count="inherited"></span></h4>
+            <button type="button" class="amo-text-button" data-manage>管理共有技能 <span aria-hidden="true">↗</span></button>
+          </div>
+          <ul class="amo-skill-list amo-inherited" data-list="inherited"></ul>
+          <div class="amo-section-head amo-skill-heading">
+            <h4>此 Bot 专用技能 <span class="amo-count" data-count="bot"></span></h4>
+            <button type="button" class="amo-secondary" data-add="bot"><i data-lucide="plus" aria-hidden="true"></i>添加技能</button>
+          </div>
+          <ul class="amo-skill-list" data-list="bot"></ul>
+          <p class="amo-hint">保存后，新建聊天使用更新后的技能。</p>
+        </section>
+        <div class="amo-context amo-purpose">
+          <h3>职责与记忆</h3>
+          <span data-purpose>检查改动并报告需要处理的问题。</span>
+        </div>
+        <footer class="amo-actions">
+          <p role="status" data-notice="bot"></p>
+          <button type="button" class="amo-primary" data-save="bot">保存</button>
+        </footer>
+      </section>
+    </main>
+    <dialog class="amo-picker" aria-labelledby="amo-skill-picker-title">
+      <header><h2 id="amo-skill-picker-title">添加技能</h2><button type="button" class="amo-text-button" data-close aria-label="关闭">关闭</button></header>
+      <p data-scope></p>
+      <label class="amo-search">搜索技能<input type="search" placeholder="搜索名称、简介或来源"></label>
+      <div class="amo-results" data-results aria-label="候选技能"></div>
+      <footer class="amo-actions">
+        <button type="button" class="amo-secondary" data-close>取消</button>
+        <button type="button" class="amo-primary" data-confirm>添加</button>
+      </footer>
+    </dialog>
+  </article>
+</div>
+<style>
+  #amo-bot-skills-preview {
+    color-scheme: light dark;
+    --amo-panel: light-dark(#fdfefb, #20251d);
+    --amo-rail: light-dark(#f0f3e8, #262d22);
+    --amo-subtle: light-dark(#f5f7ef, #282f25);
+    --amo-ink: light-dark(#262e23, #e8eee2);
+    --amo-muted: light-dark(#58654e, #b2bdaa);
+    --amo-line: light-dark(#d0d8c4, #424e3d);
+    --amo-soft-green: light-dark(#e1ebce, #354a2c);
+    --amo-green-ink: light-dark(#37551f, #d2ebb3);
+    --amo-accent: light-dark(#c9e99c, #add779);
+    --amo-accent-ink: #22351b;
+    --amo-panel-shadow: light-dark(#30382c22, #0b0f0ab0);
+    display: grid;
+    grid-template: "settings title title" 56px "settings nav detail" minmax(532px, auto) / 160px 166px minmax(0, 1fr);
+    max-width: 1000px;
+    margin: 10px auto;
+    overflow: clip;
+    border: 1px solid var(--amo-line);
+    border-radius: 12px;
+    background: var(--amo-panel);
+    color: var(--amo-ink);
+    box-shadow: 0 8px 24px var(--amo-panel-shadow);
+    font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  #amo-bot-skills-preview * { box-sizing: border-box; }
+  #amo-bot-skills-preview [hidden] { display: none !important; }
+  #amo-bot-skills-preview h2, #amo-bot-skills-preview h3, #amo-bot-skills-preview h4, #amo-bot-skills-preview p { margin: 0; }
+  #amo-bot-skills-preview h2 { font-size: 19px; line-height: 1.3; }
+  #amo-bot-skills-preview h3 { font-size: 15px; }
+  #amo-bot-skills-preview h4 { font-size: 13px; }
+  #amo-bot-skills-preview button, #amo-bot-skills-preview input { font: inherit; }
+  #amo-bot-skills-preview button { cursor: var(--cursor-interaction, pointer); color: inherit; }
+  #amo-bot-skills-preview button:focus-visible, #amo-bot-skills-preview input:focus-visible { outline: 2px solid var(--amo-green-ink); outline-offset: 3px; }
+  #amo-bot-skills-preview svg { width: 14px; height: 14px; flex: none; }
+  #amo-bot-skills-preview i[data-lucide="file-text"]::before { content: "▤"; font-style: normal; }
+  #amo-bot-skills-preview i[data-lucide="plus"]::before { content: "+"; font-style: normal; }
+  #amo-bot-skills-preview small { font-size: 12px; color: var(--amo-muted); }
+  #amo-bot-skills-preview .amo-settings { grid-area: settings; display: flex; flex-direction: column; gap: 5px; padding: 18px 12px; background: var(--amo-rail); border-right: 1px solid var(--amo-line); color: var(--amo-muted); }
+  #amo-bot-skills-preview .amo-settings > * { padding: 7px 8px; }
+  #amo-bot-skills-preview .amo-settings .amo-settings-title { color: var(--amo-ink); padding-top: 0; margin-bottom: 9px; }
+  #amo-bot-skills-preview .amo-settings-group { color: var(--amo-ink); }
+  #amo-bot-skills-preview .amo-settings .amo-setting-sub { margin-left: 10px; }
+  #amo-bot-skills-preview .amo-setting-active, #amo-bot-skills-preview .amo-nav-choice[aria-current="page"] { background: var(--amo-soft-green); color: var(--amo-green-ink); border-radius: 6px; }
+  #amo-bot-skills-preview .amo-title { grid-area: title; display: flex; align-items: center; gap: 8px; padding: 0 22px; border-bottom: 1px solid var(--amo-line); font-size: 22px; }
+  #amo-bot-skills-preview .amo-compact-path { display: none; }
+  #amo-bot-skills-preview .amo-bot-nav { grid-area: nav; display: flex; flex-direction: column; gap: 5px; min-width: 0; border-right: 1px solid var(--amo-line); padding: 13px 11px; }
+  #amo-bot-skills-preview .amo-device { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; padding: 5px 8px 9px; color: var(--amo-muted); border-bottom: 1px solid var(--amo-line); font-size: 12px; font-weight: 600; }
+  #amo-bot-skills-preview .amo-nav-choice { display: flex; gap: 8px; align-items: center; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; }
+  #amo-bot-skills-preview .amo-nav-choice:hover, #amo-bot-skills-preview .amo-text-button:hover { background: var(--amo-subtle); }
+  #amo-bot-skills-preview .amo-nav-choice small { display: block; white-space: nowrap; }
+  #amo-bot-skills-preview .amo-general-link { margin-top: auto; }
+  #amo-bot-skills-preview .amo-avatar, #amo-bot-skills-preview .amo-skill-icon { width: 29px; height: 29px; flex: none; display: grid; place-items: center; border-radius: 7px; font-weight: 700; }
+  #amo-bot-skills-preview .amo-reviewer { background: light-dark(#ebdced, #4b3454); color: light-dark(#5d3768, #efcffa); }
+  #amo-bot-skills-preview .amo-assistant { background: light-dark(#e7e5f2, #353751); color: light-dark(#4e4972, #d7d5fb); }
+  #amo-bot-skills-preview .amo-detail { grid-area: detail; min-width: 0; }
+  #amo-bot-skills-preview .amo-detail > section { display: flex; flex-direction: column; min-height: 100%; padding: 17px 22px 0; }
+  #amo-bot-skills-preview .amo-detail h2 { margin-bottom: 12px; }
+  #amo-bot-skills-preview .amo-context, #amo-bot-skills-preview .amo-preference { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--amo-line); padding: 10px 0; }
+  #amo-bot-skills-preview .amo-context span, #amo-bot-skills-preview .amo-hint, #amo-bot-skills-preview .amo-section-head p, #amo-bot-skills-preview .amo-picker > p { color: var(--amo-muted); font-size: 12px; }
+  #amo-bot-skills-preview .amo-preference small { display: block; margin-top: 3px; }
+  #amo-bot-skills-preview .amo-preference input { appearance: none; width: 34px; height: 20px; flex: none; border: 1px solid var(--amo-green-ink); margin: 0; border-radius: 12px; background: var(--amo-subtle); position: relative; cursor: var(--cursor-interaction, pointer); }
+  #amo-bot-skills-preview .amo-preference input::before { content: ""; position: absolute; width: 12px; height: 12px; left: 3px; top: 3px; border-radius: 50%; background: var(--amo-green-ink); }
+  #amo-bot-skills-preview .amo-preference input:checked { background: var(--amo-accent); }
+  #amo-bot-skills-preview .amo-preference input:checked::before { left: 17px; background: var(--amo-accent-ink); }
+  #amo-bot-skills-preview .amo-section { padding: 12px 0; border-top: 1px solid var(--amo-line); }
+  #amo-bot-skills-preview .amo-section-head { display: flex; justify-content: space-between; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-bottom: 7px; }
+  #amo-bot-skills-preview .amo-section-head p { margin-top: 3px; }
+  #amo-bot-skills-preview .amo-skill-heading { margin-top: 10px; }
+  #amo-bot-skills-preview .amo-skill-heading h4 { display: flex; align-items: center; gap: 6px; }
+  #amo-bot-skills-preview .amo-count { font-size: 11px; min-width: 20px; padding: 0 4px; text-align: center; border-radius: 8px; color: var(--amo-muted); background: var(--amo-subtle); }
+  #amo-bot-skills-preview .amo-skill-list { margin: 0; padding: 0; overflow: clip; list-style: none; border: 1px solid var(--amo-line); border-radius: 7px; }
+  #amo-bot-skills-preview .amo-inherited { background: var(--amo-subtle); }
+  #amo-bot-skills-preview .amo-skill { display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 7px 9px; }
+  #amo-bot-skills-preview .amo-skill + .amo-skill { border-top: 1px solid var(--amo-line); }
+  #amo-bot-skills-preview .amo-skill-icon { background: var(--amo-soft-green); color: var(--amo-green-ink); }
+  #amo-bot-skills-preview .amo-skill-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #amo-bot-skills-preview .amo-skill-label strong, #amo-bot-skills-preview .amo-skill-label small { display: block; }
+  #amo-bot-skills-preview .amo-empty { padding: 11px; color: var(--amo-muted); }
+  #amo-bot-skills-preview .amo-section .amo-hint { margin-top: 8px; }
+  #amo-bot-skills-preview .amo-primary, #amo-bot-skills-preview .amo-secondary, #amo-bot-skills-preview .amo-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 9px; border: 1px solid transparent; border-radius: 6px; white-space: nowrap; }
+  #amo-bot-skills-preview .amo-primary { color: var(--amo-accent-ink); background: var(--amo-accent); min-width: 68px; font-weight: 600; }
+  #amo-bot-skills-preview .amo-secondary { background: var(--amo-panel); border-color: var(--amo-line); }
+  #amo-bot-skills-preview .amo-text-button { background: transparent; color: var(--amo-green-ink); }
+  #amo-bot-skills-preview .amo-skill .amo-text-button { color: var(--amo-muted); }
+  #amo-bot-skills-preview .amo-primary:disabled { opacity: .55; cursor: default; }
+  #amo-bot-skills-preview .amo-actions { display: flex; align-items: center; justify-content: end; gap: 8px; padding: 10px 0; margin-top: auto; border-top: 1px solid var(--amo-line); }
+  #amo-bot-skills-preview .amo-actions p { margin-right: auto; color: var(--amo-muted); font-size: 12px; }
+  #amo-bot-skills-preview .amo-picker { width: min(485px, calc(100% - 24px)); max-height: calc(100% - 20px); border: 1px solid var(--amo-line); border-radius: 10px; background: var(--amo-panel); color: var(--amo-ink); padding: 15px; box-shadow: 0 8px 28px var(--amo-panel-shadow); }
+  #amo-bot-skills-preview .amo-picker[open] { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; overflow: hidden; }
+  #amo-bot-skills-preview .amo-picker::backdrop { background: light-dark(#22301955, #0008); }
+  #amo-bot-skills-preview .amo-picker header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #amo-bot-skills-preview .amo-search { display: grid; gap: 4px; margin-top: 9px; }
+  #amo-bot-skills-preview .amo-search input { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--amo-line); border-radius: 6px; background: var(--amo-panel); color: var(--amo-ink); }
+  #amo-bot-skills-preview .amo-results { display: flex; flex-direction: column; gap: 8px; min-height: 0; margin: 10px 0; overflow-y: auto; }
+  #amo-bot-skills-preview .amo-result-group { border: 1px solid var(--amo-line); border-radius: 6px; overflow: clip; }
+  #amo-bot-skills-preview .amo-result-group { flex: none; }
+  #amo-bot-skills-preview .amo-result-group h3 { padding: 5px 9px; background: var(--amo-subtle); color: var(--amo-muted); font-size: 12px; }
+  #amo-bot-skills-preview .amo-results label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; }
+  #amo-bot-skills-preview .amo-results label + label { border-top: 1px solid var(--amo-line); }
+  #amo-bot-skills-preview .amo-results input { accent-color: var(--amo-green-ink); }
+  #amo-bot-skills-preview .amo-results small { display: block; }
+  #amo-bot-skills-preview .amo-unavailable strong { color: var(--amo-muted); }
+  #amo-bot-skills-preview .amo-skill-state { align-self: center; color: var(--amo-muted); font-size: 11px; white-space: nowrap; }
+  @media (max-width: 760px) {
+    #amo-bot-skills-preview { grid-template: "title title" 48px "nav detail" minmax(510px, auto) / 150px minmax(0, 1fr); }
+    #amo-bot-skills-preview .amo-settings { display: none; }
+    #amo-bot-skills-preview .amo-compact-path { display: inline; font-size: 12px; color: var(--amo-muted); }
+    #amo-bot-skills-preview .amo-title { padding-inline: 14px; font-size: 17px; }
+    #amo-bot-skills-preview .amo-detail > section { padding-inline: 14px; }
+  }
+  @media (max-width: 480px) {
+    #amo-bot-skills-preview { grid-template: "title" 45px "nav" auto "detail" auto / minmax(0, 1fr); }
+    #amo-bot-skills-preview .amo-device, #amo-bot-skills-preview .amo-nav-choice small { display: none; }
+    #amo-bot-skills-preview .amo-bot-nav { flex-flow: row wrap; border-right: 0; border-bottom: 1px solid var(--amo-line); padding: 6px 8px; }
+    #amo-bot-skills-preview .amo-nav-choice { gap: 4px; padding: 6px; }
+    #amo-bot-skills-preview .amo-general-link { margin-top: 0; }
+    #amo-bot-skills-preview .amo-avatar { width: 22px; height: 22px; }
+    #amo-bot-skills-preview .amo-context { align-items: start; flex-direction: column; gap: 3px; }
+    #amo-bot-skills-preview .amo-results label { grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; }
+    #amo-bot-skills-preview .amo-skill-state { grid-column: 2; }
+  }
+  @media (pointer: coarse) {
+    #amo-bot-skills-preview button, #amo-bot-skills-preview .amo-results label { min-height: 44px; }
+  }
+</style>
+<script>
+  (() => {
+    const root = document.getElementById("amo-bot-skills-preview");
+    const get = (selector) => root.querySelector(selector);
+    const catalog = {
+      docs: { name: "文档检索", group: "本机全局", summary: "查找项目文档和技术参考" },
+      summary: { name: "进度汇报", group: "本机全局", summary: "整理任务进度和待办" },
+      review: { name: "代码审查", group: "本机全局", summary: "按风险级别整理改动中的问题" },
+      changelog: { name: "更新日志", group: "本机全局", summary: "从改动生成发布说明" },
+      rules: { name: "项目提交规范", group: "项目技能", source: "AmoStudio", summary: "核对仓库约定与改动范围" },
+      onboarding: { name: "项目导航", group: "项目技能", source: "AmoStudio", summary: "定位模块入口和维护文档" },
+      diff: { name: "变更审查", group: "插件内置", source: "评审工具箱", runtime: "Codex", summary: "核对变更范围及影响" },
+      coverage: { name: "测试覆盖分析", group: "插件内置", source: "测试助手", runtime: "Codex", enabled: false, summary: "识别未覆盖的代码路径" },
+      retro: { name: "故障复盘", group: "插件内置", source: "工程助手", runtime: "Claude", summary: "整理故障经过和行动项" }
+    };
+    const bots = {
+      reviewer: { name: "审核员", runtime: "Codex", permission: "只读", purpose: "检查改动并报告需要处理的问题。" },
+      assistant: { name: "项目助手", runtime: "Claude", permission: "工作区可写", purpose: "梳理项目文档并整理维护事项。" }
+    };
+    const drafts = { general: ["docs", "summary"], reviewer: ["review"], assistant: ["onboarding"] };
+    const saved = Object.fromEntries(Object.entries(drafts).map(([key, ids]) => [key, [...ids]]));
+    const notices = {};
+    const picker = get("dialog");
+    const search = get('input[type="search"]');
+    const confirm = get("[data-confirm]");
+    let page = "reviewer";
+    let pickerScope = "general";
+    let chosen = new Set();
+
+    function skillSource(skill) {
+      return [skill.source || skill.group, skill.runtime].filter(Boolean).join(" · ");
+    }
+
+    function renderList(name, ids, editKey) {
+      const list = get('[data-list="' + name + '"]');
+      list.innerHTML = ids.map((id) => {
+        const skill = catalog[id];
+        const remove = editKey
+          ? '<button type="button" class="amo-text-button" data-remove="' + id + '" data-key="' + editKey + '" aria-label="移除' + skill.name + '">移除</button>'
+          : '';
+        return '<li class="amo-skill"><span class="amo-skill-icon" aria-hidden="true"><i data-lucide="file-text"></i></span><span class="amo-skill-label"><strong>' +
+          skill.name + '</strong><small>' + skillSource(skill) + '</small></span>' + remove + '</li>';
+      }).join("") || '<li class="amo-empty">还没有技能</li>';
+      const count = get('[data-count="' + name + '"]');
+      if (count) count.textContent = ids.length;
+    }
+
+    function render() {
+      const isGeneral = page === "general";
+      get('[data-view="general"]').hidden = !isGeneral;
+      get('[data-view="bot"]').hidden = isGeneral;
+      root.querySelectorAll("[data-page]").forEach((button) => button.setAttribute("aria-current", button.dataset.page === page ? "page" : "false"));
+      if (isGeneral) {
+        renderList("general", drafts.general, "general");
+        get('[data-notice="general"]').textContent = notices.general || "";
+      } else {
+        const bot = bots[page];
+        get("[data-bot-name]").textContent = bot.name;
+        get("[data-bot-runtime]").textContent = bot.runtime + " · " + bot.permission + " · AmoStudio";
+        get("[data-purpose]").textContent = bot.purpose;
+        renderList("inherited", saved.general);
+        renderList("bot", drafts[page].filter((id) => !saved.general.includes(id)), page);
+        get('[data-notice="bot"]').textContent = notices[page] || "";
+      }
+      if (globalThis.lucide) lucide.createIcons({ attrs: { width: 14, height: 14 } });
+    }
+
+    function unavailableReason(skill) {
+      if (!skill.runtime) return "";
+      if (pickerScope === "general") return "请在单个 Bot 中添加";
+      if (bots[pickerScope].runtime !== skill.runtime) return "当前渠道不可用";
+      if (skill.enabled === false) return "插件未启用";
+      return "";
+    }
+
+    function renderPicker() {
+      const terms = search.value.trim().toLowerCase();
+      const candidates = Object.entries(catalog).filter(([id, skill]) => {
+        if (drafts[pickerScope].includes(id)) return false;
+        if (pickerScope === "general" && skill.group === "项目技能") return false;
+        if (pickerScope !== "general" && saved.general.includes(id)) return false;
+        return [skill.name, skillSource(skill), skill.summary].some((field) => field.toLowerCase().includes(terms));
+      });
+      get("[data-results]").innerHTML = ["本机全局", "项目技能", "插件内置"].map((group) => {
+        const rows = candidates.filter(([, skill]) => skill.group === group).map(([id, skill]) => {
+          const reason = unavailableReason(skill);
+          const details = group === "本机全局" ? skill.summary : skillSource(skill) + " · " + skill.summary;
+          const state = reason ? '<span class="amo-skill-state">' + reason + '</span>' : '';
+          return '<label' + (reason ? ' class="amo-unavailable"' : '') + '><input type="checkbox" value="' + id + '"' +
+            (chosen.has(id) ? ' checked' : '') + (reason ? ' disabled' : '') + '><span><strong>' +
+            skill.name + '</strong><small>' + details + '</small></span>' + state + '</label>';
+        }).join("");
+        return rows ? '<section class="amo-result-group"><h3>' + group + '</h3>' + rows + '</section>' : '';
+      }).join("") || '<p class="amo-empty">没有匹配的技能</p>';
+      confirm.disabled = !chosen.size;
+      confirm.textContent = chosen.size ? "添加（" + chosen.size + "）" : "添加";
+    }
+
+    function openPicker() {
+      pickerScope = page;
+      search.value = "";
+      chosen = new Set();
+      get("[data-scope]").textContent = pickerScope === "general" ? "添加到所有 Bot 的共有技能" : "添加到「" + bots[page].name + "」的专用技能";
+      renderPicker();
+      picker.showModal();
+      search.focus({ preventScroll: true });
+    }
+
+    root.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button || !root.contains(button)) return;
+      if (button.dataset.page || button.hasAttribute("data-manage")) {
+        page = button.dataset.page || "general";
+        render();
+        if (!button.dataset.page) get('[data-page="general"]').focus();
+      } else if (button.dataset.add) {
+        openPicker();
+      } else if (button.hasAttribute("data-close")) {
+        picker.close();
+      } else if (button.hasAttribute("data-confirm")) {
+        drafts[pickerScope].push(...chosen);
+        notices[pickerScope] = "技能已添加，保存后生效。";
+        picker.close();
+        render();
+      } else if (button.dataset.remove) {
+        const key = button.dataset.key;
+        drafts[key] = drafts[key].filter((id) => id !== button.dataset.remove);
+        notices[key] = "技能已移除，保存后生效。";
+        render();
+        get('[data-add="' + (key === "general" ? "general" : "bot") + '"]').focus();
+      } else if (button.dataset.save) {
+        saved[page] = [...drafts[page]];
+        notices[page] = "已保存，新建聊天时生效。";
+        render();
+      }
+    });
+    search.addEventListener("input", renderPicker);
+    get("[data-results]").addEventListener("change", (event) => {
+      const input = event.target;
+      if (input.checked) chosen.add(input.value);
+      else chosen.delete(input.value);
+      confirm.disabled = !chosen.size;
+      confirm.textContent = chosen.size ? "添加（" + chosen.size + "）" : "添加";
+    });
+    render();
+    openPicker();
+  })();
+</script>

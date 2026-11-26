@@ -2,7 +2,7 @@ import { useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type
 import "./resourceInput.css";
 import { replaceResources } from "./inlineResources.js";
 import { skillTokens } from "./skillTokens.js";
-import { botAvatarHue } from "../bots/BotAvatar.js";
+import { botAvatarHue, botAvatarSrc } from "../bots/BotAvatar.js";
 import { enterKey, useNewlineShortcut } from "../chat/inputPrefs.js";
 
 export const RESOURCE_CLIPBOARD_MIME = "application/x-amo-composer-text";
@@ -195,12 +195,13 @@ export function ResourceInput(props: ResourceInputProps) {
             const face = document.createElement("span");
             face.className = "bot-avatar-face";
             avatar.append(face);
-            if (bot.avatar) {
+            const src = botAvatarSrc(bot.avatar);
+            if (src) {
               const image = document.createElement("img");
               image.alt = "";
               image.draggable = false;
               image.onerror = () => image.replaceWith(face);
-              image.src = bot.avatar;
+              image.src = src;
               avatar.replaceChildren(image);
             }
             span.replaceChildren(avatar, document.createTextNode(name));

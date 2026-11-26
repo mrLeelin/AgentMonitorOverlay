@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { programLaunch } from "./packed.js";
-import { fakeAcpAgent, MOCK_MODEL_CATALOG, removeTempDir, startMockAnthropic, startMockModel, type ClaudeMockServer, type MockModelServer, type MockScript } from "@amo-studio/testkit";
+import { fakeAcpAgent, MOCK_MODEL_CATALOG, removeTempDir, startMockAnthropic, startMockModel, type ClaudeMockScript, type ClaudeMockServer, type MockModelServer, type MockScript } from "@amo-studio/testkit";
 
 // Launch helper for Studio end-to-end tests: temp data dir, hidden window, attached Host on an ephemeral port, and by
 // default the mock model as the only model (no budget, no real Codex home).
@@ -33,6 +33,7 @@ export async function launchStudio(
   options: {
     mockModel?: boolean;
     mockScript?: MockScript;
+    claudeMockScript?: ClaudeMockScript;
     env?: Record<string, string>;
     root?: string;
     /** Behave as the portable build in this folder, with its saved data dir. */
@@ -59,7 +60,7 @@ export async function launchStudio(
   // timeout. The same switch as server-manager.test.ts.
   writeFileSync(join(codexHome, "config.toml"), "[features]\nplugins = false\n");
   const mock = options.mockModel === false ? null : await startMockModel({ script: options.mockScript });
-  const claudeMock = options.mockModel === false ? null : await startMockAnthropic();
+  const claudeMock = options.mockModel === false ? null : await startMockAnthropic({ script: options.claudeMockScript });
   const mockEnv: Record<string, string> = mock
     ? {
         AMO_STUDIO_TEST_PROVIDER_URL: mock.baseUrl,

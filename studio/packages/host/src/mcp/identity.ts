@@ -9,6 +9,7 @@ import { MCP_SESSION_PREFIX, MCP_TOKEN_PREFIX } from "../store/kv-keys.js";
 // adopted after a Host restart, whose threads still carry the old headers, is still recognised.
 
 export const MCP_SESSION_HEADER = "X-AMO-Session-Token";
+const botTokenPrefix = "bot-";
 
 const byToken = (token: string) => MCP_TOKEN_PREFIX + token;
 const bySession = (sessionId: Id) => MCP_SESSION_PREFIX + sessionId;
@@ -17,8 +18,8 @@ export class McpIdentities {
   constructor(private readonly store: Store) {}
 
   /** A new token, not yet tied to a session (a thread is started before Studio knows its session id). */
-  issue(): string {
-    return randomBytes(24).toString("hex");
+  issue(bot = false): string {
+    return `${bot ? botTokenPrefix : ""}${randomBytes(24).toString("hex")}`;
   }
 
   bind(token: string, sessionId: Id): void {
@@ -27,12 +28,17 @@ export class McpIdentities {
   }
 
   /** The session's token, created on first use (sessions from before stage 5 have none yet). */
-  tokenFor(sessionId: Id): string {
+  tokenFor(sessionId: Id, bot = false): string {
     const known = this.store.getKv(bySession(sessionId))?.value;
-    if (known) return known;
-    const token = this.issue();
+    if (known && (!bot || McpIdentities.isBotToken(known))) return known;
+    const token = this.issue(bot);
     this.bind(token, sessionId);
     return token;
+  }
+
+  /** Tool discovery may happen before the new runtime session is bound to the token. */
+  static isBotToken(token: string | undefined): boolean {
+    return token?.startsWith(botTokenPrefix) ?? false;
   }
 
   sessionFor(token: string | null | undefined): Id | null {

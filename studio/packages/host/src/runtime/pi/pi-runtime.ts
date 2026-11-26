@@ -8,7 +8,7 @@ import { RuntimeBase, STOP_GRACE_MS, type SendMode, type SendOptions, type Sessi
 import { shellHelpEnv, withoutHostEnv } from "../agent-env.js";
 import { agentNetworkEnv } from "../network.js";
 import { withDelivery } from "../items.js";
-import { currentMessagePurpose, queueMessagePurpose } from "../message-purpose.js";
+import { currentMessagePurpose, isBotConversationInput, queueMessagePurpose } from "../message-purpose.js";
 import type { McpSource } from "../mcp-launch.js";
 import { piMcpExtension, PI_MCP_SERVERS_ENV, resolvePiCommand } from "./launch.js";
 import { PiRpc, type PiCommand } from "./rpc.js";
@@ -445,7 +445,7 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     queued.beforeDispatch?.();
     this.assertCurrentMessage(sessionId, queued.itemId);
     this.checkAccess(session.taskId, this.writable(sessionId).options, item?.type === "user" ? item.messagePurpose : undefined);
-    queueMessagePurpose(this.store, sessionId, item?.type === "user" ? item.messagePurpose ?? "work" : "work", false);
+    queueMessagePurpose(this.store, sessionId, item?.type === "user" ? item.messagePurpose ?? "work" : "work", false, isBotConversationInput(item));
     live.transcript.openTurn();
     live.inflight = true;
     live.seenStart = false;

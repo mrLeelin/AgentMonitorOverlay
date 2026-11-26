@@ -4,6 +4,8 @@ export interface CatalogSkill {
   description: string;
   /** Absolute, resolved SKILL.md path; suitable for opening in the file viewer. */
   path: string;
+  /** Discovered path when a linked source resolves to a different path on disk. */
+  entryPath?: string;
   diagnostics: string[];
 }
 

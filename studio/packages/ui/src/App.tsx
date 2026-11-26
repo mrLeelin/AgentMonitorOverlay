@@ -41,6 +41,7 @@ import { remoteButton, useRemote } from "./remote/remote.js";
 import { RemoteDialog } from "./remote/RemoteDialog.js";
 import { useTaskbarBadge } from "./focus/useTaskbarBadge.js";
 import { discardNativePlaneView } from "./teamtasks/NativePlaneWorkItems.js";
+import { showToast } from "./lib/toast.js";
 
 // The shell: the Host connection, the scope and the view in front, the top bar and the left column. Pages come from
 // the features (features.ts); the data several of them share is loaded here once.
@@ -54,6 +55,11 @@ export function App() {
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const teamTasksEnabled = settings?.teamTasksEnabled === true;
   const botsEnabled = settings?.botsEnabled !== false;
+  useEffect(() => onHostEvent((event) => {
+    if (event.type !== "bot.notification") return;
+    const label = { approval: "需要授权", completed: "已完成任务", failed: "未能完成任务" }[event.notice];
+    showToast({ text: `${event.botName} · ${label}`, error: event.notice === "failed" });
+  }), []);
   // Where the workbench was left, again after a restart or reload (2026-10-15; shell/lastPlace).
   const [scope, setScope] = useState<Scope>(() => readPlace().scope);
   const [view, setShownView] = useState<View>(() => readPlace().view);

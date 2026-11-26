@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>审核员 · Bot 设置设计预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #101419;
+      --side: #14191f;
+      --panel: #181e25;
+      --raised: #202931;
+      --line: #2b3540;
+      --ink: #edf3f5;
+      --muted: #a2afbb;
+      --accent: #8fe5cd;
+      --accent-bg: #193331;
+      --danger: #f4a5a5;
+      font: 14px/1.55 "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      background: var(--page);
+      color: var(--ink);
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select, textarea { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    button:disabled { cursor: default; opacity: .45; }
+    h1, h2, h3, p { margin: 0; }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 59px; padding: 0 30px; border-bottom: 1px solid var(--line); background: #13181e; }
+    .crumb { display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: 13px; }
+    .brand { color: var(--ink); font: 700 14px/1 "Bahnschrift", "Segoe UI", sans-serif; letter-spacing: .065em; }
+    .brand-mark { width: 18px; height: 18px; position: relative; border: 1px solid #547972; border-radius: 5px; transform: rotate(-11deg); }
+    .brand-mark::before { content: ""; position: absolute; inset: 4px; background: var(--accent); border-radius: 2px; }
+    .divider { color: #768391; }
+    .preview { flex: none; color: var(--muted); font-size: 12px; }
+    .layout { display: grid; grid-template-columns: 225px minmax(0, 1fr); min-height: calc(100vh - 59px); }
+    .sidebar { background: var(--side); border-right: 1px solid var(--line); padding: 31px 14px 20px; }
+    .identity { display: flex; gap: 12px; align-items: center; padding: 0 8px 24px; margin-bottom: 13px; border-bottom: 1px solid var(--line); }
+    .avatar { display: grid; place-items: center; flex: 0 0 44px; height: 44px; border: 1px solid #658f89; border-radius: 12px; background: #294e4b; color: #c8f8e9; font-size: 19px; font-weight: 650; }
+    .identity strong { display: block; font-size: 16px; }
+    .identity small { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    nav { display: grid; gap: 4px; }
+    .nav-button { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 0 12px; text-align: left; width: 100%; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); }
+    .nav-button:hover { background: var(--raised); color: var(--ink); }
+    .nav-button[aria-current="page"] { background: var(--accent-bg); color: var(--accent); border-color: #31534d; font-weight: 650; }
+    .nav-button.danger { margin-top: 12px; color: var(--danger); }
+    .icon { display: inline-grid; place-items: center; flex: 0 0 24px; height: 24px; border: 1px solid currentColor; border-radius: 6px; font-size: 13px; font-family: "Segoe UI Symbol", sans-serif; line-height: 1; }
+    nav .icon { flex-basis: 19px; height: 19px; border: 0; border-radius: 0; font-size: 15px; }
+    .workspace { display: flex; flex-direction: column; min-width: 0; }
+    .content { width: min(100%, 1038px); margin: 0 auto; padding: 27px 36px 22px; flex: 1; }
+    .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+    h1 { font-size: 30px; line-height: 1.25; font-weight: 700; letter-spacing: -.035em; }
+    .heading p { color: var(--muted); margin-top: 5px; }
+    .status { display: flex; align-items: center; gap: 9px; color: var(--muted); }
+    .status span { white-space: nowrap; }
+    .switch { position: relative; appearance: none; flex: 0 0 auto; height: 22px; width: 39px; margin: 0; border: 1px solid #5c6b77; border-radius: 99px; background: #343e48; vertical-align: middle; cursor: pointer; }
+    .switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #cfdae0; transition: transform .16s ease; }
+    .switch:checked { background: var(--accent); border-color: var(--accent); }
+    .switch:checked::before { background: #193331; transform: translateX(17px); }
+    .panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+    .card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 15px 16px 5px; }
+    .card-memory { border-color: #416a61; background: linear-gradient(112deg, #1a292c, #192128 72%); }
+    .notifications-card { grid-column: 1 / -1; padding-bottom: 12px; }
+    .notification-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px; }
+    .notification-summary .row { border: 0; }
+    .notification-summary .row + .row { border-left: 1px solid var(--line); padding-left: 17px; }
+    .card-title { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+    .card-title .icon { color: #b5c9d4; }
+    .card-memory .icon { color: var(--accent); }
+    .card h2 { font-size: 15px; font-weight: 700; }
+    .row { display: flex; min-height: 35px; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 1px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; }
+    button.row:hover { color: var(--accent); }
+    .row:last-child { border-bottom: 0; }
+    .value { display: flex; align-items: center; justify-content: flex-end; gap: 8px; text-align: right; color: var(--muted); font-size: 13px; }
+    .chevron { display: inline-block; color: var(--muted); font-family: "Segoe UI Symbol", sans-serif; font-size: 18px; line-height: 1; }
+    code { font: 12px/1.5 "Cascadia Mono", Consolas, monospace; color: var(--accent); }
+    .foot { display: flex; align-items: center; justify-content: space-between; gap: 15px; border-top: 1px solid var(--line); background: var(--side); padding: 12px max(36px, calc((100% - 966px) / 2)); }
+    .foot p { font-size: 12px; color: var(--muted); }
+    .actions { display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 13px; border: 1px solid #42505e; border-radius: 7px; background: var(--raised); text-decoration: none; }
+    .button:hover:not(:disabled) { border-color: var(--accent); }
+    .primary { color: #102822; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .button.danger { color: var(--danger); border-color: #745354; background: #39292e; }
+    .details { max-width: 780px; display: grid; gap: 15px; }
+    .detail-card { padding: 16px 18px; }
+    .detail-card h2 { font-size: 16px; margin-bottom: 5px; }
+    .detail-card > p, .field small { color: var(--muted); font-size: 13px; }
+    .detail-card .row { min-height: 44px; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
+    .field { display: grid; gap: 5px; }
+    .field span { font-weight: 650; }
+    .field input, .field select, .field textarea { display: block; width: 100%; border-radius: 7px; border: 1px solid #475462; background: #12181e; color: var(--ink); padding: 8px 10px; }
+    .field textarea { resize: vertical; min-height: 79px; }
+    .file-browser { display: grid; grid-template-columns: 170px minmax(0, 1fr); overflow: hidden; padding: 0; }
+    .file-nav { display: grid; gap: 3px; align-content: start; padding: 12px 9px; border-right: 1px solid var(--line); background: #151c22; }
+    .file-nav summary, .file-nav button { width: 100%; min-height: 30px; padding: 5px 8px; text-align: left; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+    .file-nav button:hover { background: var(--raised); color: var(--ink); }
+    .file-nav button[aria-pressed="true"] { color: var(--accent); border-color: #31534d; background: var(--accent-bg); }
+    .file-nav details button { padding-left: 16px; }
+    .file-body { padding: 14px; min-width: 0; }
+    .file-body textarea { font-family: "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace; min-height: 185px; }
+    dialog { max-width: min(400px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 22px; }
+    dialog::backdrop { background: #070b10bb; }
+    dialog p { color: var(--muted); margin: 8px 0 16px; }
+    dialog .actions { justify-content: flex-end; }
+    @media (max-width: 920px) { .layout { grid-template-columns: 185px minmax(0, 1fr); } .content { padding-inline: 23px; } .foot { padding-inline: 23px; } }
+    @media (max-width: 749px) {
+      .top { height: 49px; padding-inline: 14px; }
+      .layout { display: block; min-height: calc(100vh - 49px); }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 14px; }
+      .identity { display: none; }
+      nav { display: flex; gap: 5px; overflow-x: auto; padding: 3px; }
+      .nav-button, .nav-button.danger { width: max-content; min-height: 35px; padding-inline: 8px; margin: 0; flex: 0 0 auto; gap: 5px; }
+      .content { padding: 19px 15px; }
+      .foot { padding-inline: 15px; }
+      .heading { margin-bottom: 16px; }
+      h1 { font-size: 25px; }
+      .panels { gap: 10px; }
+    }
+    @media (max-width: 525px) {
+      .panels, .field-grid, .notification-summary { grid-template-columns: 1fr; }
+      .notification-summary { gap: 0; }
+      .notification-summary .row + .row { border-left: 0; border-top: 1px solid var(--line); padding-left: 1px; }
+      .status { gap: 5px; font-size: 12px; }
+      .file-browser { grid-template-columns: 120px minmax(0, 1fr); }
+      .file-nav { padding-inline: 5px; }
+      .foot { flex-wrap: wrap; }
+    }
+    @media (prefers-reduced-motion: reduce) { .switch::before { transition: none; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="crumb"><span class="brand-mark" aria-hidden="true"></span><span class="brand">AMO STUDIO</span><span class="divider" aria-hidden="true">/</span><span>Bots</span><span class="divider" aria-hidden="true">/</span><span>设置</span></div>
+    <span class="preview">设计预览</span>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="identity"><span class="avatar" aria-hidden="true">审</span><div><strong id="bot-name-label">审核员</strong><small>本地 Windows</small></div></div>
+      <nav aria-label="Bot 设置分类">
+        <button class="nav-button" data-page="overview" aria-current="page"><span class="icon" aria-hidden="true">⊞</span>概览</button>
+        <button class="nav-button" data-page="runtime"><span class="icon" aria-hidden="true">⌘</span>运行配置</button>
+        <button class="nav-button" data-page="memory"><span class="icon" aria-hidden="true">▤</span>角色与记忆</button>
+        <button class="nav-button" data-page="schedule"><span class="icon" aria-hidden="true">◷</span>自动化</button>
+        <button class="nav-button" data-page="access"><span class="icon" aria-hidden="true">◇</span>访问与技能</button>
+        <button class="nav-button" data-page="notifications"><span class="icon" aria-hidden="true">♧</span>通知</button>
+        <button class="nav-button danger" id="delete-bot"><span class="icon" aria-hidden="true">×</span>删除 Bot</button>
+      </nav>
+    </aside>
+    <div class="workspace">
+      <main class="content">
+        <div class="heading">
+          <div><h1 id="page-title" tabindex="-1">Bot 设置</h1><p id="page-subtitle">审核员的运行方式、长期记忆和访问范围。</p></div>
+          <label class="status"><span>接收消息</span><input class="switch" id="enabled" type="checkbox" role="switch" checked></label>
+        </div>
+        <section class="panels" data-panel="overview" aria-label="设置概览">
+          <article class="card">
+            <div class="card-title"><span class="icon" aria-hidden="true">⌘</span><h2>运行配置</h2></div>
+            <button class="row" data-page="runtime" data-focus="model">模型<span class="value"><span id="model-summary">Codex · GPT</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="runtime" data-focus="permission">执行权限<span class="value"><span id="permission-summary">只读</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="runtime" data-focus="project">默认项目<span class="value"><span id="project-summary">公共目录</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <div class="row">运行位置<span class="value">本地 Windows</span></div>
+          </article>
+          <article class="card card-memory">
+            <div class="card-title"><span class="icon" aria-hidden="true">▤</span><h2>角色与记忆</h2></div>
+            <button class="row" data-page="memory" data-file="SOUL.md">角色职责<span class="value"><code>SOUL.md</code><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="memory" data-file="MEMORY.md">长期记忆<span class="value"><code>MEMORY.md</code><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="memory" data-file="memory/reviews.md">记忆文件夹<span class="value"><code>memory/</code><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="memory" data-focus="memory-editor">浏览资料<span class="value">查看与编辑文件<i class="chevron" aria-hidden="true">›</i></span></button>
+          </article>
+          <article class="card">
+            <div class="card-title"><span class="icon" aria-hidden="true">◷</span><h2>自动化</h2></div>
+            <button class="row" data-page="schedule" data-focus="patrol">巡视<span class="value"><span id="patrol-summary">每 4 小时</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="schedule" data-focus="memory-schedule">记忆整理<span class="value"><span id="memory-schedule-summary">每天 23:00</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="schedule" data-focus="idle">标记长期未活动<span class="value"><span id="idle-summary">5 天</span><i class="chevron" aria-hidden="true">›</i></span></button>
+          </article>
+          <article class="card">
+            <div class="card-title"><span class="icon" aria-hidden="true">◇</span><h2>访问与技能</h2></div>
+            <button class="row" data-page="access" data-focus="askers">谁可以提问<span class="value"><span id="askers-summary">仅自己</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="access" data-focus="tools">工具和连接器<span class="value"><span id="connectors-summary">6 项工具 · 0 个连接器</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="access" data-focus="skills">技能<span class="value"><span id="skills-summary">2 项共有 · 1 项专用</span><i class="chevron" aria-hidden="true">›</i></span></button>
+            <button class="row" data-page="access" data-focus="sharing">分享<span class="value"><span id="sharing-summary">已关闭</span><i class="chevron" aria-hidden="true">›</i></span></button>
+          </article>
+          <article class="card notifications-card">
+            <div class="card-title"><span class="icon" aria-hidden="true">♧</span><h2>通知</h2></div>
+            <div class="notification-summary">
+              <label class="row">需要授权<input class="switch" type="checkbox" role="switch" data-notify="approval" checked></label>
+              <label class="row">任务完成<input class="switch" type="checkbox" role="switch" data-notify="done" checked></label>
+              <label class="row">任务无法完成<input class="switch" type="checkbox" role="switch" data-notify="failed" checked></label>
+            </div>
+          </article>
+        </section>
+
+        <section class="details" data-panel="runtime" hidden>
+          <div class="card detail-card field-grid">
+            <label class="field"><span>名称</span><input id="bot-name" value="审核员" maxlength="40"></label>
+            <label class="field"><span>模型</span><select id="model"><option>Codex · GPT</option><option>Claude Code · Sonnet</option><option>DeepSeek</option></select></label>
+            <label class="field"><span>推理强度</span><select id="effort"><option>默认</option><option>中等</option><option>高</option></select></label>
+            <label class="field"><span>执行权限</span><select id="permission"><option>只读</option><option>允许写入工作目录</option><option>完全访问</option></select></label>
+            <label class="field"><span>默认项目</span><select id="project"><option>公共目录</option><option>AmoStudio</option></select><small>新开的主聊天使用这里的目录。</small></label>
+            <div class="field"><span>运行位置</span><p>本地 Windows</p></div>
+          </div>
+        </section>
+
+        <section class="details" data-panel="memory" hidden>
+          <div class="card detail-card"><h2>Bot 资料目录</h2><p>职责和长期记忆随审核员保留。项目任务仍在各自的目录运行。</p></div>
+          <div class="card file-browser">
+            <aside aria-label="Bot 资料文件" class="file-nav">
+              <button data-file-select="SOUL.md" aria-pressed="true">SOUL.md</button>
+              <button data-file-select="MEMORY.md" aria-pressed="false">MEMORY.md</button>
+              <details open><summary>memory/</summary><button data-file-select="memory/reviews.md" aria-pressed="false">reviews.md</button></details>
+            </aside>
+            <div class="file-body">
+              <label class="field"><span id="file-path">SOUL.md</span><textarea id="memory-editor" spellcheck="false"></textarea></label>
+            </div>
+          </div>
+        </section>
+
+        <section class="details" data-panel="schedule" hidden>
+          <div class="card detail-card field-grid">
+            <label class="field"><span>巡视</span><select id="patrol"><option>每 4 小时</option><option>每 8 小时</option><option>每天</option><option>已关闭</option></select></label>
+            <label class="field"><span>记忆整理</span><select id="memory-schedule"><option>每天 23:00</option><option>每周一次</option><option>已关闭</option></select></label>
+            <label class="field"><span>标记长期未活动</span><select id="idle"><option>5 天</option><option>7 天</option><option>14 天</option></select></label>
+          </div>
+        </section>
+
+        <section class="details" data-panel="access" hidden>
+          <div class="card detail-card field-grid">
+            <label class="field"><span>谁可以提问</span><select id="askers"><option>仅自己</option><option>我的 Bot</option><option>指定成员</option></select></label>
+            <label class="field"><span>分享</span><select id="sharing"><option>已关闭</option><option>已开启</option></select></label>
+          </div>
+          <div class="card detail-card"><h2 id="tools" tabindex="-1">工具和连接器</h2><div class="row">允许的工具<span class="value">6 项</span></div><div class="row">Webhook<span class="value">未配置</span></div><div class="row">第三方连接器<span class="value">0 个</span></div></div>
+          <div class="card detail-card"><h2 id="skills" tabindex="-1">技能</h2><div class="row">共有技能<span class="value">代码审查、检查清单</span></div><div class="row">此 Bot 专用<span class="value">Unity 风险审查</span></div></div>
+        </section>
+
+        <section class="details" data-panel="notifications" hidden>
+          <div class="card detail-card">
+            <label class="row">需要授权<input class="switch" type="checkbox" role="switch" data-notify="approval" checked></label>
+            <label class="row">任务完成<input class="switch" type="checkbox" role="switch" data-notify="done" checked></label>
+            <label class="row">任务无法完成<input class="switch" type="checkbox" role="switch" data-notify="failed" checked></label>
+          </div>
+        </section>
+      </main>
+
+      <footer class="foot">
+        <p id="feedback" role="status">示例数据 · 修改仅在本页预览</p>
+        <div class="actions"><button class="button" id="reset" disabled>撤销修改</button><button class="button primary" id="save" disabled>保存设置</button></div>
+      </footer>
+    </div>
+  </div>
+
+  <dialog id="delete-dialog" aria-labelledby="delete-title">
+    <h2 id="delete-title">删除审核员？</h2><p>正式版在这里确认删除 Bot。此设计预览只演示确认界面。</p>
+    <form method="dialog" class="actions"><button class="button" autofocus>取消</button><button class="button danger">确认演示</button></form>
+  </dialog>
+
+  <script>
+    const byId = id => document.getElementById(id);
+    const pageTitles = {
+      overview: ["Bot 设置", "运行方式、长期记忆和访问范围。"],
+      runtime: ["运行配置", "设置 Bot 新建聊天时使用的模型和执行权限。"],
+      memory: ["角色与记忆", "查看和编辑这个 Bot 自己保存的资料。"],
+      schedule: ["自动化", "设置巡视、记忆整理和长期未活动的判定。"],
+      access: ["访问与技能", "管理谁可以提问，以及 Bot 可以使用的能力。"],
+      notifications: ["通知", "选择哪些事件需要提醒。"]
+    };
+    const fields = ["bot-name", "enabled", "model", "effort", "permission", "project", "patrol", "memory-schedule", "idle", "askers", "sharing"];
+    const summaries = ["model", "permission", "project", "patrol", "memory-schedule", "idle", "askers", "sharing"];
+    const files = {
+      "SOUL.md": "# 审核员\n\n审查改动中的功能回归，核对影响范围。\n有证据时给出文件、行号和复现条件。",
+      "MEMORY.md": "# 长期记忆\n\n- 优先核对接口的实际调用链。\n- 汇报时区分编译通过和实际运行验证。",
+      "memory/reviews.md": "# 审查笔记\n\n- 检查旧数据能否继续加载。\n- 检查失败后的重试是否会重复执行。"
+    };
+    const feedback = byId("feedback");
+    let page = "overview";
+    let file = "SOUL.md";
+    let saved;
+
+    function selectFile(path) {
+      file = path;
+      byId("file-path").textContent = path;
+      byId("memory-editor").value = files[path];
+      document.querySelectorAll("[data-file-select]").forEach(button => {
+        const active = button.dataset.fileSelect === path;
+        button.setAttribute("aria-pressed", String(active));
+        if (active && button.closest("details")) button.closest("details").open = true;
+      });
+    }
+
+    function selectPage(next, path, target) {
+      page = next;
+      document.querySelectorAll("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== page; });
+      document.querySelectorAll("nav [data-page]").forEach(button => {
+        if (button.dataset.page === page) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      });
+      updateIdentity();
+      if (path) selectFile(path);
+      window.scrollTo(0, 0);
+      (target ? byId(target) : byId("page-title")).focus();
+    }
+
+    function updateIdentity() {
+      const name = byId("bot-name").value.trim() || "审核员";
+      const [title, description] = pageTitles[page];
+      byId("bot-name-label").textContent = name;
+      byId("page-title").textContent = title;
+      byId("page-subtitle").textContent = page === "overview" ? `${name}的${description}` : description;
+      byId("delete-title").textContent = `删除${name}？`;
+    }
+
+    function snapshot() {
+      const values = Object.fromEntries(fields.map(id => {
+        const input = byId(id);
+        return [id, input.type === "checkbox" ? input.checked : input.value];
+      }));
+      const notifications = Object.fromEntries([...document.querySelectorAll('[data-panel="overview"] [data-notify]')].map(input => [input.dataset.notify, input.checked]));
+      return JSON.stringify({ values, notifications, files });
+    }
+
+    function setChangedState(message) {
+      const changed = snapshot() !== saved;
+      const hasName = !!byId("bot-name").value.trim();
+      byId("save").disabled = !changed || !hasName;
+      byId("reset").disabled = !changed;
+      feedback.textContent = message || (changed ? (hasName ? "有未保存的预览修改" : "请填写 Bot 名称") : "示例数据 · 修改仅在本页预览");
+    }
+
+    function syncInputs() {
+      for (const id of summaries) byId(`${id}-summary`).textContent = byId(id).value;
+      updateIdentity();
+      setChangedState();
+    }
+
+    function setNotification(key, checked) {
+      document.querySelectorAll("[data-notify]").forEach(input => {
+        if (input.dataset.notify === key) input.checked = checked;
+      });
+    }
+
+    document.querySelectorAll("[data-page]").forEach(button => button.addEventListener("click", () => selectPage(button.dataset.page, button.dataset.file, button.dataset.focus)));
+    document.querySelectorAll("[data-file-select]").forEach(button => button.addEventListener("click", () => selectFile(button.dataset.fileSelect)));
+    for (const id of fields) byId(id).addEventListener("input", syncInputs);
+    document.querySelectorAll("[data-notify]").forEach(input => input.addEventListener("change", () => {
+      setNotification(input.dataset.notify, input.checked);
+      setChangedState();
+    }));
+    byId("memory-editor").addEventListener("input", event => {
+      files[file] = event.target.value;
+      setChangedState();
+    });
+    byId("save").addEventListener("click", () => {
+      saved = snapshot();
+      setChangedState("已保存本页预览修改");
+    });
+    byId("reset").addEventListener("click", () => {
+      const previous = JSON.parse(saved);
+      for (const [id, value] of Object.entries(previous.values)) {
+        const input = byId(id);
+        if (input.type === "checkbox") input.checked = value;
+        else input.value = value;
+      }
+      for (const [key, checked] of Object.entries(previous.notifications)) setNotification(key, checked);
+      Object.assign(files, previous.files);
+      selectFile(file);
+      syncInputs();
+      setChangedState("已撤销本页未保存的修改");
+    });
+    byId("delete-bot").addEventListener("click", () => byId("delete-dialog").showModal());
+    saved = snapshot();
+    selectFile(file);
+  </script>
+</body>
+</html>

@@ -88,6 +88,7 @@ export function toSession(r: Row): Session {
     ...(r.cwd ? { cwd: str(r.cwd) } : {}),
     title: str(r.title),
     status: str(r.status) as Session["status"],
+    ...(r.bot_conversation === 1 ? { botConversation: true } : {}),
     writer: str(r.writer) as Session["writer"],
     runtimeRef: strOrNull(r.runtime_ref),
     options: parseOptions(r.options),

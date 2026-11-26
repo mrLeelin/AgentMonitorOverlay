@@ -4,6 +4,9 @@ import { importOrcaBot } from "./import-link.js";
 
 export function botsRoutes(host: HostService): Route[] {
   return [
+    route("GET /api/bot-skills/shared", () => host.bots.sharedSkills()),
+    route("PUT /api/bot-skills/shared", ({ body }) => host.bots.saveSharedSkills(obj(body).skills)),
+    route("POST /api/bot-skills/catalog", ({ body }) => host.bots.skillCatalog(obj(body))),
     route("POST /api/bot-mentions", ({ body }) => host.bots.mentionMany(obj(body))),
     route("POST /api/bots/:id/mentions", ({ params, body }) => host.bots.mention(params.id!, obj(body))),
     route("GET /api/bots", () => host.bots.list()),
@@ -14,6 +17,9 @@ export function botsRoutes(host: HostService): Route[] {
     route("PATCH /api/bots/:id", ({ params, body }) => host.bots.patch(params.id!, obj(body))),
     route("DELETE /api/bots/:id", ({ params }) => host.bots.remove(params.id!)),
     route("GET /api/bots/:id/chats", ({ params }) => host.bots.chats(params.id!)),
+    route("GET /api/bots/:id/files", ({ params }) => host.bots.files(params.id!)),
+    route("GET /api/bots/:id/notes/:name", ({ params }) => host.bots.note(params.id!, params.name!)),
+    route("PUT /api/bots/:id/notes/:name", ({ params, body }) => host.bots.saveNote(params.id!, params.name!, obj(body))),
     route("POST /api/bots/:id/home", ({ params, body }) => host.bots.home(params.id!, obj(body).reset === true)),
     route("POST /api/bots/:id/requests", ({ params, body }) => host.bots.request(params.id!, obj(body))),
     route("GET /api/bot-requests", ({ query }) => host.bots.requests(query.get("sourceSessionId"))),

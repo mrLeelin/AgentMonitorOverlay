@@ -29,6 +29,13 @@ for (const profileId of ["claude-mock", "dsh-mock"]) {
     const changed = await studio.api<Session>("PATCH", `/api/sessions/${chat!.id}/options`, { permission: profileId === "claude-mock" ? "bypassPermissions" : "full-access" });
     expect(changed.options.permission).toBe(chat!.options.permission);
     expect((await studio.api<BotRequest[]>("GET", "/api/bot-requests"))[0]?.result).toBeTruthy();
+    const permission = profileId === "claude-mock" ? "acceptEdits" : "workspace-write";
+    await studio.api("PUT", `/api/bots/${bot.id}`, { ...bot, permission });
+    await studio.api("POST", `/api/bots/${bot.id}/requests`, { id: "verify-permission", destination: "new", text: "介绍你的职责" });
+    await expect.poll(async () => (await studio!.api<BotRequest[]>("GET", "/api/bot-requests")).find((r) => r.id === "verify-permission")?.status, { timeout: 45_000 }).toBe("completed");
+    const chats = await studio.api<Session[]>("GET", `/api/bots/${bot.id}/chats`);
+    expect(chats.find((s) => s.id === chat!.id)?.options.permission).toBe(chat!.options.permission);
+    expect(chats.find((s) => s.id !== chat!.id)?.options.permission).toBe(permission);
   });
 }
 
@@ -38,6 +45,77 @@ async function creationMenu(page: Page) {
   await menu.getByRole("menuitem", { name: "新建 Bot", exact: true }).click();
   return page.getByRole("menu", { name: "新建 Bot", exact: true });
 }
+
+test("keeps Bot configuration and save in reach across settings sizes", async () => {
+  studio = await launchStudio();
+  const { page, app } = studio;
+  const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "审核员", purpose: "检查改动并报告需要处理的问题。", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
+  await studio.api("POST", "/api/bots", { name: "审核员2", purpose: "复核改动。", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
+  await openBotsWorkbench(page);
+  await page.getByRole("button", { name: "管理 Bots", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  const settings = dialog.getByTestId("studio-bots-settings");
+  const roster = settings.getByRole("group", { name: "Bot 列表" });
+  const tabs = settings.getByRole("navigation", { name: "Bot 设置分区" });
+  await roster.getByRole("button", { name: "审核员", exact: true }).click();
+  await expect(settings.getByRole("button", { name: "执行权限 只读" })).toBeVisible();
+  await expect(roster.getByRole("button", { name: "审核员2", exact: true })).toBeInViewport();
+  await screenshot(app, "studio", "bots-settings-layout-light", page);
+  await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
+  const memory = settings.getByLabel("记忆", { exact: true });
+  await memory.scrollIntoViewIfNeeded();
+  await memory.fill("先核对用户能感知的功能回归。");
+  const save = settings.getByRole("button", { name: "保存", exact: true });
+  await expect(save).toBeInViewport({ ratio: 1 });
+  await save.click();
+  await expect(settings.getByRole("status")).toHaveText("已保存。");
+  expect((await studio.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.memory).toBe("先核对用户能感知的功能回归。");
+  await settings.getByRole("button", { name: "新建记忆文件" }).click();
+  await settings.getByLabel("文件名").fill("审查笔记.md");
+  await settings.getByLabel("记忆文件内容").fill("只为这个 Bot 保存。");
+  await settings.getByRole("button", { name: "保存文件", exact: true }).click();
+  await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toBeVisible();
+  await tabs.getByRole("button", { name: "通知", exact: true }).click();
+  await settings.getByRole("switch", { name: "任务完成", exact: true }).check();
+  await save.click();
+  await expect.poll(async () => (await studio!.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.preferences?.notifications.completed).toBe(true);
+  await tabs.getByRole("button", { name: "自动化", exact: true }).click();
+  await settings.getByRole("button", { name: "新建记忆整理" }).click();
+  await settings.getByRole("button", { name: "保存计划" }).click();
+  await expect(settings.getByRole("switch", { name: "启用审核员 · 整理记忆", exact: true })).toBeChecked();
+  await dialog.getByRole("button", { name: "关闭设置" }).click();
+
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "管理 Bots", exact: true }).click();
+  const first = roster.getByRole("button", { name: "审核员", exact: true });
+  await first.click();
+  await expect(settings.getByRole("button", { name: "执行权限 只读" })).toBeVisible();
+  await screenshot(app, "studio", "bots-settings-layout-dark", page);
+  await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
+  await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toBeVisible();
+  await screenshot(app, "studio", "bots-settings-memory-dark", page);
+  await tabs.getByRole("button", { name: "概览", exact: true }).click();
+
+  const grip = (await dialog.getByTestId("settings-grip").boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 194, grip.y - 190, { steps: 8 });
+  await page.mouse.up();
+  const back = settings.getByRole("button", { name: "返回 Bot 列表" });
+  await expect(back).toBeInViewport();
+  await expect(roster).toBeHidden();
+  await expect(save).toBeInViewport({ ratio: 1 });
+  await screenshot(app, "studio", "bots-settings-layout-narrow", page);
+  await back.click();
+  await first.press("Enter");
+  await expect(back).toBeFocused();
+  await back.press("Enter");
+  await expect(first).toBeFocused();
+  await roster.getByRole("button", { name: "审核员2", exact: true }).click();
+  await expect(settings.getByRole("form", { name: "配置 审核员2" })).toBeVisible();
+  await tabs.getByRole("button", { name: "角色与记忆", exact: true }).click();
+  await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toHaveCount(0);
+});
 
 test("creates a Bot from settings and routes a task mention to its own main chat", async () => {
   studio = await launchStudio({ taskSidebar: false, dsh: true });
@@ -51,7 +129,19 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   await page.getByRole("dialog", { name: "Bot 模板" }).getByRole("button", { name: "使用模板" }).click();
   const create = page.getByRole("dialog", { name: "新建 Bot" });
   const avatarPreview = create.getByTestId("bot-avatar-preview");
-  await expect(avatarPreview.locator(".bot-avatar-face")).toBeVisible();
+  // 新建时预填一个 Orca 形象；点头像展开形象网格。
+  await expect(avatarPreview.locator(".bot-avatar img")).toHaveAttribute("src", /\.svg/);
+  await avatarPreview.getByRole("button", { name: "选择形象" }).click();
+  const mascots = create.getByRole("radiogroup", { name: "形象" });
+  await expect(mascots.getByRole("radio")).toHaveCount(19);
+  await mascots.getByRole("radio", { name: "形象 B1" }).click();
+  await expect(mascots.getByRole("radio", { name: "形象 B1" })).toHaveAttribute("aria-checked", "true");
+  await expect(avatarPreview.locator(".bot-avatar img")).toHaveAttribute("src", /B1.*\.svg/);
+  await expect.poll(() => avatarPreview.locator(".bot-avatar img").evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+  await screenshot(app, "studio", "bot-mascot-picker", page);
+  await avatarPreview.getByRole("button", { name: "换一个" }).click();
+  await expect(mascots.getByRole("radio", { name: "形象 B1" })).toHaveAttribute("aria-checked", "false");
+  await expect(mascots.getByRole("radio", { checked: true })).toHaveCount(1);
   const picture = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 160;
@@ -69,7 +159,7 @@ test("creates a Bot from settings and routes a task mention to its own main chat
     context.stroke();
     return canvas.toDataURL("image/png").split(",")[1]!;
   });
-  await create.getByLabel("选择头像").setInputFiles({ name: "avatar.png", mimeType: "image/png", buffer: Buffer.from(picture, "base64") });
+  await create.getByLabel("上传头像图片").setInputFiles({ name: "avatar.png", mimeType: "image/png", buffer: Buffer.from(picture, "base64") });
   await expect.poll(() => avatarPreview.locator("img").evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(128);
   await pickMockModel(create);
   await create.getByTestId("effort").click();
@@ -80,7 +170,10 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   await slider.press("Escape");
   await expect(create.getByRole("group", { name: "权限", exact: true }).getByRole("button", { name: /^只读/ })).toHaveAttribute("aria-pressed", "true");
   await create.getByRole("button", { name: "创建", exact: true }).click();
+  const tabs = settings.getByRole("navigation", { name: "Bot 设置分区" });
+  await tabs.getByRole("button", { name: "角色与记忆", exact: true }).click();
   await settings.getByLabel("记忆", { exact: true }).fill("优先验证用户能感知的功能回归。");
+  await tabs.getByRole("button", { name: "运行配置", exact: true }).click();
   const modelTrigger = settings.getByRole("button", { name: "选择模型：Mock Model", exact: true });
   await modelTrigger.click();
   const drawer = settings.getByTestId("model-drawer");
@@ -95,7 +188,7 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   await permissions.getByRole("button", { name: /^工作区可写/ }).click();
   await modelTrigger.click();
   await drawer.getByRole("group", { name: "Mock Claude", exact: true }).getByRole("button", { name: "mock-claude-b", exact: true }).click();
-  await expect(permissions.getByRole("button", { name: /^计划|^只读/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(permissions.getByRole("button", { name: /^只做计划/ })).toHaveAttribute("aria-pressed", "true");
   await pickMockModel(settings);
   await expect(permissions.getByRole("button", { name: /^只读/ })).toHaveAttribute("aria-pressed", "true");
   await settings.getByTestId("effort").click();
@@ -332,6 +425,7 @@ test("group chat routes its default, explicit mentions and all-member replies in
   await send.click();
   const latest = posts.nth(3);
   await expect(latest.getByTestId("bot-request")).toHaveCount(2);
+  await expect(latest.getByRole("region", { name: `${code.name}的回复` })).toHaveAttribute("data-status", "running");
   await latest.getByRole("button", { name: `停止 ${code.name} 的回复` }).click();
   await expect(latest.getByRole("region", { name: `${code.name}的回复` })).toHaveAttribute("data-status", "stopped", { timeout: 15_000 });
   await expect(latest.getByRole("region", { name: `${regression.name}的回复` })).toHaveAttribute("data-status", "completed", { timeout: 30_000 });
@@ -343,6 +437,74 @@ test("group chat routes its default, explicit mentions and all-member replies in
   expect(shared.replies.map((item) => item.botId).sort()).toEqual([code.id, regression.id].sort());
   expect(new Set(shared.replies.map((item) => item.sessionId)).size).toBe(2);
   expect(shared.replies.find((item) => item.botId === regression.id)?.sessionId).toBe(history.at(-1)?.replies[0]?.sessionId);
+});
+
+test("group Bots see peer replies and ask another runtime to answer in the same group", async () => {
+  const question = "你在吗？看到的话在群里回一声。";
+  const earlier = "我是 Claude，可以帮忙复核。";
+  const asked = "你问问他";
+  const peek = "你能看到另一位吗？";
+  const askBack = "请问审核员是否收到你的回复。";
+  const returnQuestion = "审核员，收到我的回复了吗？";
+  const current = "【本条用户消息】\n";
+  const forwarded = "【来自 审核员 的群内提问】\n";
+  let peerId = "";
+  let reviewerId = "";
+  studio = await launchStudio({ taskSidebar: false, mockScript: (req) => {
+    if (req.lastUserText.includes(`${current}${peek}`)) {
+      const knowsPeer = req.lastUserText.includes(JSON.stringify({ from: "Claude", text: earlier }));
+      return { kind: "text", text: knowsPeer ? "能看到 Claude 刚才在群里发过消息。" : "看不到群聊记录。" };
+    }
+    if (req.lastUserText.includes(`${current}${asked}`)) {
+      if (req.afterToolOutput) return { kind: "text", text: "已经问过 Claude，他会在群里回复。" };
+      const requestId = /requestId 为 ([\da-f]{64})/.exec(req.lastUserText)?.[1];
+      if (requestId && req.lastUserText.includes(JSON.stringify({ botId: peerId, name: "Claude" }))) {
+        return defaultScript({ ...req, lastUserText: `[[mcp: bot_group_ask ${JSON.stringify({ requestId, botId: peerId, text: question })}]]` });
+      }
+    }
+    if (req.lastUserText.includes(`【来自 Claude 的群内提问】\n${returnQuestion}`)) return { kind: "text", text: "收到了，谢谢。" };
+    return { kind: "text", text: "已收到群消息。" };
+  }, claudeMockScript: (req) => {
+    if (req.lastUserText.includes(`${current}${askBack}`)) {
+      if (req.afterToolOutput) return { kind: "text", text: "我已经询问审核员。" };
+      const name = "mcp__amo__bot_group_ask";
+      const requestId = /requestId 为 ([\da-f]{64})/.exec(req.lastUserText)?.[1];
+      if (requestId && req.tools.includes(name)) return { kind: "tool_use", name, input: { requestId, botId: reviewerId, text: returnQuestion } };
+    }
+    return { kind: "text", text: req.lastUserText.includes(`${forwarded}${question}`) ? "我在，收到审核员的消息了。" : earlier };
+  } });
+  const { page, app } = studio;
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  const base = { memory: "", workspaceId: null, enabled: true };
+  const reviewer = await studio.api<StudioBot>("POST", "/api/bots", { ...base, profileId: "codex-mock", name: "审核员", purpose: "审核并回答群组问题。" });
+  const peer = await studio.api<StudioBot>("POST", "/api/bots", { ...base, profileId: "claude-mock", name: "Claude", purpose: "复核并回答群组问题。" });
+  peerId = peer.id;
+  reviewerId = reviewer.id;
+  const group = await studio.api<BotGroup>("POST", "/api/bot-groups", { name: "审核", memberIds: [reviewer.id, peer.id] });
+  const url = `/api/bot-groups/${group.id}/posts`;
+  const first = await studio.api<BotGroupPost>("POST", url, { id: "introduce", text: "请介绍一下你自己。", targetIds: [peer.id] });
+  await page.getByTestId("bots-nav").getByRole("button", { name: "审核", exact: true }).click();
+  const chat = page.getByRole("region", { name: "Bot 群组" });
+  await expect(chat.getByText(earlier, { exact: true })).toBeVisible({ timeout: 45_000 });
+  const input = chat.getByRole("textbox", { name: "群组消息" });
+  for (const [text, reply] of [[peek, "能看到 Claude 刚才在群里发过消息。"], [asked, "已经问过 Claude，他会在群里回复。"]] as const) {
+    await input.fill(text);
+    await chat.getByRole("button", { name: "发送群组消息" }).click();
+    await expect(chat.getByText(reply, { exact: true })).toBeVisible({ timeout: 45_000 });
+  }
+  const post = chat.getByTestId("bot-group-post").filter({ hasText: "审核员 向 Claude 提问" });
+  await expect(post).toHaveCount(1);
+  await expect(post.getByText(question, { exact: true })).toBeVisible();
+  await expect(post.getByText("我在，收到审核员的消息了。", { exact: true })).toBeVisible({ timeout: 45_000 });
+  const [latest] = await studio.api<BotGroupPost[]>("GET", url);
+  expect(latest).toMatchObject({ author: { botId: reviewer.id, botName: reviewer.name }, targetIds: [peer.id] });
+  expect(latest?.replies[0]?.sessionId).toBe(first.replies[0]?.sessionId);
+  await screenshot(app, "studio", "bots-group-peer-question", page);
+
+  await studio.api<BotGroupPost>("POST", url, { id: "ask-in-return", text: askBack, targetIds: [peer.id] });
+  const returned = chat.getByTestId("bot-group-post").filter({ hasText: "Claude 向 审核员 提问" });
+  await expect(returned.getByText(returnQuestion, { exact: true })).toBeVisible({ timeout: 25_000 });
+  await expect(returned.getByText("收到了，谢谢。", { exact: true })).toBeVisible({ timeout: 25_000 });
 });
 
 test("the group and Bot context menus apply their actions in the sidebar and settings", async () => {
@@ -486,10 +648,12 @@ test("the Bots section folds independently and remembers sorting and filters", a
   await expect(confirm).toBeVisible();
   await confirm.getByRole("button", { name: "取消" }).click();
   expect((await studio.api<StudioBot[]>("GET", "/api/bots")).find((bot) => bot.id === live.id)?.homeSessionId).toBe(home.id);
+  await settings.getByRole("button", { name: "通用设置", exact: true }).click();
   const askBeforeReset = settings.getByRole("switch", { name: "开始新的主聊天前询问" });
   await askBeforeReset.click();
   await expect(askBeforeReset).not.toBeChecked();
   await expect(askBeforeReset).toBeEnabled();
+  await settings.getByRole("button", { name: "Alpha" }).click();
   await settings.getByRole("button", { name: "新建主聊天" }).click();
   await expect(confirm).toHaveCount(0);
   await expect(settings).toHaveCount(0);

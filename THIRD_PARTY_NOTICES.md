@@ -16,6 +16,7 @@ This file summarizes the principal components used by the current Windows applic
 | Rust `windows` / `windows-sys` crates | <https://github.com/microsoft/windows-rs> | Apache-2.0 OR MIT |
 | Tauri Notification plugin | <https://github.com/tauri-apps/plugins-workspace> | Apache-2.0 OR MIT |
 | Tauri Global Shortcut plugin | <https://github.com/tauri-apps/plugins-workspace> | Apache-2.0 OR MIT |
+| Orca Bot mascot artwork (`studio/packages/ui/src/bots/mascots/`) | <https://github.com/stablyai/orca> | MIT |
 
 The Portable package includes a pinned Node.js executable for the bundled AMO Broker. The Node.js upstream license is copied as `runtime/NODE-LICENSE.txt`. DeepSeek Harness global installation and updates use the user's system npm and are not bundled into AMO.
 

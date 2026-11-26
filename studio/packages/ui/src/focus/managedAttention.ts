@@ -1,5 +1,9 @@
 import { isManagedBy, managementRoot, type DecisionRequest, type Session, type Task } from "@amo-studio/protocol";
 
+export function isBotConversation(session: Session, tasks: readonly Task[]): boolean {
+  return !!session.botConversation || tasks.some((task) => task.id === session.taskId && !!task.botId);
+}
+
 /** Only an explicitly routed business decision belongs to the manager; legacy and runtime questions stay visible. */
 export function decisionNeedsPerson(decision: DecisionRequest, tasks: readonly Task[]): boolean {
   const manager = tasks.find((t) => t.id === decision.routedToTaskId);
@@ -8,7 +12,9 @@ export function decisionNeedsPerson(decision: DecisionRequest, tasks: readonly T
 
 /** A normal managed reply is reviewed by its lead. Failures and blocking runtime requests remain visible. */
 export function replyNeedsPerson(session: Session, tasks: readonly Task[], sessions: readonly Session[]): boolean {
-  if (!session.taskId || (session.status !== "idle" && session.status !== "completed")) return true;
+  if (session.status !== "idle" && session.status !== "completed") return true;
+  if (isBotConversation(session, tasks)) return false;
+  if (!session.taskId) return true;
   const root = managementRoot(tasks, session.taskId);
   if (!root) return true;
   // A coordinator ending a planning/review turn is still waiting for delivery, not asking the person to review it.

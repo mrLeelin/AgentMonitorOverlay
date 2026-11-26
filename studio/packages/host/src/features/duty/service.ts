@@ -328,7 +328,8 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
       const prompt = typeof a.prompt === "string" ? a.prompt.trim() : "";
       if (!botId || !prompt || prompt.length > 20_000 || !this.botJob) throw new HostError("bad_request", "请选择 Bot 并填写运行内容。");
       this.botJob.check(botId);
-      return { kind: "bot", botId, prompt };
+      if (a.job !== undefined && a.job !== "memory") throw new HostError("bad_request", "未知的 Bot 自动化类型。");
+      return { kind: "bot", botId, prompt, ...(a.job === "memory" ? { job: a.job } : {}) };
     }
     if (a.kind === "builtin") {
       if (typeof a.name !== "string" || !this.jobs.has(a.name)) throw new HostError("bad_request", `没有这个 Studio 任务：${String(a.name)}`);

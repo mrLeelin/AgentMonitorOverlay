@@ -192,6 +192,8 @@ export interface Session {
   cwd?: string;
   title: string;
   status: SessionStatus;
+  /** The current or last native turn handles an @Bot message or its reply. */
+  botConversation?: true;
   writer: WriterState;
   /** Codex thread id or Claude session id; null until the runtime has created it. */
   runtimeRef: string | null;

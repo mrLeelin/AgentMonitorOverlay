@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotRequest, type BotSidebarData, type Id, type Session, type StudioBot } from "@amo-studio/protocol";
+import { DEFAULT_BOT_PREFERENCES, inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotPreferences, type BotRequest, type BotSidebarData, type Id, type Session, type SessionItem, type StudioBot } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { boundedText, HostError, isRemoteCopy } from "../../core/shared.js";
 import type { DutyFeature } from "../duty/service.js";
 import { BotWebhookBridge } from "./webhooks.js";
-import { assertBotsEnabled, botsEnabled, botInstructions, isBotTask } from "./data.js";
-import { supportsBotRuntime } from "@amo-studio/protocol";
+import { assertBotsEnabled, botsEnabled, botInstructions, botPermission, isBotTask } from "./data.js";
+import { botMascotId, supportsBotRuntime } from "@amo-studio/protocol";
+import { botSkillPrompt, botSkillRefs, readBotSkills, saveSharedBotSkills, sharedBotSkills } from "./skills.js";
+import { BOT_MEMORY_SUMMARY, ensureBotFiles, listBotNotes, readBotFiles, readBotNote, removeBotFiles, updateBotFiles, writeBotNote } from "./files.js";
 
 interface BotRow {
   id: Id;
@@ -14,18 +16,17 @@ interface BotRow {
   home_session_id: Id | null;
 }
 
+type GroupRequest = { groupId: Id; postId: Id };
+type SavedRequest = BotRequest & { group?: GroupRequest };
+
 interface RequestRow {
   data: string;
   session_id: Id | null;
   delivered: number;
 }
 
-function readBot(row: BotRow): StudioBot {
-  return { ...(JSON.parse(row.data) as BotInput), id: row.id, taskId: row.task_id, homeSessionId: row.home_session_id };
-}
-
-function readRequest(row: RequestRow): BotRequest {
-  return { ...(JSON.parse(row.data) as BotRequest), sessionId: row.session_id };
+function readRequest(row: RequestRow): SavedRequest {
+  return { ...(JSON.parse(row.data) as SavedRequest), sessionId: row.session_id };
 }
 
 const inboxId = (id: Id) => `bot-request:${id}`;
@@ -34,6 +35,7 @@ const PNG_HEADER = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 
 function botAvatar(value: unknown): string | null {
   if (value === null) return null;
+  if (typeof value === "string" && botMascotId(value)) return value;
   if (typeof value === "string" && value.startsWith(AVATAR_PREFIX) && value.length <= 96_000) {
     const payload = value.slice(AVATAR_PREFIX.length);
     const bytes = Buffer.from(payload, "base64");
@@ -45,7 +47,7 @@ function botAvatar(value: unknown): string | null {
   }
   throw new HostError("bad_request", "头像格式无效，请重新选择图片。");
 }
-type SavedPost = Pick<BotGroupPost, "id" | "text" | "targetIds" | "createdAt">;
+type SavedPost = Pick<BotGroupPost, "id" | "text" | "targetIds" | "createdAt" | "author">;
 type PostRow = { group_id: Id; data: string; dispatched: number };
 const groupAskId = (group: Id, post: Id, bot: Id) => createHash("sha256").update(JSON.stringify([group, post, bot])).digest("hex");
 const activeBot = "json_extract(data, '$.deletedAt') IS NULL";
@@ -56,15 +58,44 @@ function botName(value: unknown): string {
   return name;
 }
 
+function botPreferences(value: unknown, previous?: BotPreferences): BotPreferences | undefined {
+  if (value === undefined) return previous;
+  const data = value as Partial<BotPreferences> | null;
+  if (!data || typeof data.allowGroupAsk !== "boolean" || (data.inactiveDays !== 5 && data.inactiveDays !== 7 && data.inactiveDays !== 14)
+      || !data.notifications || typeof data.notifications.approval !== "boolean" || typeof data.notifications.completed !== "boolean" || typeof data.notifications.failed !== "boolean") {
+    throw new HostError("bad_request", "请检查 Bot 的访问、自动化和通知设置。");
+  }
+  return { allowGroupAsk: data.allowGroupAsk, inactiveDays: data.inactiveDays, notifications: {
+    approval: data.notifications.approval, completed: data.notifications.completed, failed: data.notifications.failed,
+  } };
+}
+
 export class BotsFeature extends Feature<"tasks" | "sessions"> {
   private readonly operations = new Map<Id, Promise<unknown>>();
+  private readonly notified = new Set<Id>();
   private hookBridge?: BotWebhookBridge;
   get webhooks(): BotWebhookBridge {
     return this.hookBridge ??= new BotWebhookBridge(this.teamLink, this.store, (botId, id, text) => this.request(botId, { id, text, destination: "new" }));
   }
 
   list(): StudioBot[] {
-    return (this.store.db.prepare(`SELECT * FROM studio_bots WHERE ${activeBot} ORDER BY name_key`).all() as unknown as BotRow[]).map(readBot);
+    return this.botRows().map((row) => this.readBot(row, true));
+  }
+
+  private botRows(): BotRow[] {
+    return this.store.db.prepare(`SELECT * FROM studio_bots WHERE ${activeBot} ORDER BY name_key`).all() as unknown as BotRow[];
+  }
+
+  private readBot(row: BotRow, listOnly = false): StudioBot {
+    const data = JSON.parse(row.data) as BotInput;
+    let content: BotInput;
+    try { content = readBotFiles(this.store, row.id, data); }
+    catch (error) {
+      // Keep the roster accessible if one Bot has a broken local file. Opening or saving it still reports the file error.
+      if (!listOnly) throw error;
+      content = data;
+    }
+    return { ...content, id: row.id, taskId: row.task_id, homeSessionId: row.home_session_id };
   }
 
   sidebar(): BotSidebarData {
@@ -87,7 +118,22 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
 
   private findBot(id: Id): StudioBot | undefined {
     const row = this.store.db.prepare(`SELECT * FROM studio_bots WHERE id = ? AND ${activeBot}`).get(id) as unknown as BotRow | undefined;
-    return row && readBot(row);
+    return row && this.readBot(row);
+  }
+
+  files(id: Id) {
+    const folder = ensureBotFiles(this.store, id, this.bot(id));
+    return { folder, notes: listBotNotes(folder) };
+  }
+
+  note(id: Id, name: string) { return { text: readBotNote(this.files(id).folder, name) }; }
+
+  saveNote(id: Id, name: string, raw: Record<string, unknown>) {
+    if (typeof raw.expected !== "string" && raw.expected !== null) throw new HostError("bad_request", "请先打开记忆文件再保存。");
+    if (name === BOT_MEMORY_SUMMARY) throw new HostError("read_only", "这份文件由记忆整理更新。请把要保留的内容复制到长期记忆或新笔记。");
+    writeBotNote(this.files(id).folder, name, raw.text, raw.expected);
+    this.publish({ type: "bot-files.changed", botId: id });
+    return this.files(id);
   }
 
   listWebhooks(id: Id) { this.bot(id); return this.webhooks.list(id); }
@@ -102,6 +148,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
         const bot = this.findBot(action.botId);
         if (!bot) return { ok: true, skipped: true, summary: "Bot 已删除。" };
         if (!bot.enabled) return { ok: true, skipped: true, summary: "Bot 已停用。" };
+        if (action.job === "memory") return this.organizeMemory(bot);
         const id = createHash("sha256").update(`${run.itemId}:${run.startedAt}`).digest("hex");
         const request = await this.request(bot.id, { id, destination: "new", text: action.prompt });
         if (request.status === "failed" || !request.sessionId) return { ok: false, summary: request.result ?? "未能启动 Bot。" };
@@ -110,24 +157,86 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     };
   }
 
+  private organizeMemory(bot: StudioBot) {
+    const rows = this.store.db.prepare(`SELECT * FROM studio_bot_requests WHERE bot_id = ? AND json_extract(data, '$.status') = 'completed'
+      AND length(json_extract(data, '$.result')) > 0 ORDER BY created_at DESC, id DESC LIMIT 12`).all(bot.id) as unknown as RequestRow[];
+    if (!rows.length) return { ok: true, skipped: true, summary: "暂无可整理的已完成请求。" };
+    const folder = ensureBotFiles(this.store, bot.id, bot);
+    const sections = rows.map((row) => {
+      const request = readRequest(row);
+      return `## ${request.settledAt ?? request.createdAt}\n\n${request.text.slice(0, 500)}\n\n${request.result!.slice(0, 1700)}`;
+    });
+    writeBotNote(folder, BOT_MEMORY_SUMMARY, ["# 近期已完成的 Bot 请求", ...sections].join("\n\n"), undefined);
+    this.publish({ type: "bot-files.changed", botId: bot.id });
+    return { ok: true, summary: `已整理 ${rows.length} 条请求到 memory/${BOT_MEMORY_SUMMARY}。` };
+  }
+
   save(raw: Record<string, unknown>, id?: Id): StudioBot {
     if (!id) assertBotsEnabled(this.store);
     const previous = id ? this.bot(id) : undefined;
+    const expected = raw.expectedFiles as Partial<Pick<BotInput, "purpose" | "memory">> | null | undefined;
+    if (expected !== undefined && (!expected || !previous || expected.purpose !== previous.purpose || expected.memory !== previous.memory)) {
+      throw new HostError("conflict", "Bot 的职责或长期记忆已变化，请重新打开设置后再保存。");
+    }
     const name = botName(raw.name);
     const profileId = boundedText(raw.profileId, "模型配置", 200);
     const profile = this.requireProfile(profileId);
-    if (!supportsBotRuntime(profile.runtime) || profile.unavailable) throw new HostError("bad_request", "请选择可运行只读 Bot 的 AMO 模型渠道。");
+    if (!supportsBotRuntime(profile.runtime) || profile.unavailable) throw new HostError("bad_request", "请选择可运行 Bot 的 AMO 模型渠道。");
     const sameProfile = previous?.profileId === profileId;
     const model = raw.model === undefined ? (sameProfile ? previous?.model : null) : raw.model === null ? null : boundedText(raw.model, "模型", 256);
-    const effort = raw.effort === undefined ? (sameProfile && previous?.model === model ? previous?.effort : null) : raw.effort === null ? null : boundedText(raw.effort, "推理强度", 50);
+    const sameModel = sameProfile && previous?.model === model;
+    const effort = raw.effort === undefined ? (sameModel ? previous?.effort : null) : raw.effort === null ? null : boundedText(raw.effort, "推理强度", 50);
+    const fast = raw.fast === undefined ? (sameModel ? previous?.fast : null) : raw.fast;
+    if (fast != null && (typeof fast !== "boolean" || profile.runtime === "dsh")) throw new HostError("bad_request", "请检查模型的快速模式设置。");
+    const claudeBaseUrl = profile.provider ? this.options.channels?.claudeProviders[profile.provider]?.baseUrl : undefined;
+    const permission = botPermission(raw.permission === undefined && sameProfile ? previous?.permission : raw.permission, profile.runtime, claudeBaseUrl);
     const workspaceId = raw.workspaceId === null ? null : boundedText(raw.workspaceId, "项目", 200);
     if (workspaceId) this.requireLiveWorkspace(workspaceId);
     if (typeof raw.enabled !== "boolean" || typeof raw.memory !== "string" || raw.memory.length > 32_000) {
       throw new HostError("bad_request", "请检查 Bot 的启用状态和记忆长度。");
     }
     const avatar = raw.avatar === undefined ? previous?.avatar ?? null : botAvatar(raw.avatar);
-    const data: BotInput = { name, avatar, profileId, model: model ?? null, effort: effort ?? null, workspaceId, enabled: raw.enabled, purpose: boundedText(raw.purpose, "职责", 8000), memory: raw.memory.trim() };
+    const skills = raw.skills === undefined ? previous?.skills : botSkillRefs(raw.skills);
+    const preferences = botPreferences(raw.preferences, previous?.preferences);
+    const data: BotInput = { name, avatar, profileId, model: model ?? null, effort: effort ?? null, fast: fast ?? null, permission, workspaceId, enabled: raw.enabled, purpose: boundedText(raw.purpose, "职责", 8000), memory: raw.memory.trim(), ...(skills ? { skills } : {}), ...(preferences ? { preferences } : {}) };
     return this.writeBot(data, previous);
+  }
+
+  sharedSkills() {
+    return sharedBotSkills(this.store);
+  }
+
+  async saveSharedSkills(raw: unknown) {
+    const skills = botSkillRefs(raw, true);
+    const previous = new Set(this.sharedSkills().map((skill) => skill.id));
+    if (skills.some((skill) => !previous.has(skill.id))) {
+      const known = new Set((await readBotSkills(this.store.path, this.options, this.runtime)).skills.map((skill) => skill.id));
+      if (skills.some((skill) => !previous.has(skill.id) && !known.has(skill.id))) throw new HostError("bad_request", "共有技能请选择本机公共 Agent 技能。");
+    }
+    saveSharedBotSkills(this.store, skills);
+    this.publish({ type: "bots.changed" });
+    return skills;
+  }
+
+  async skillCatalog(raw: Record<string, unknown>) {
+    const profile = raw.profileId === undefined ? undefined : this.requireProfile(boundedText(raw.profileId, "模型配置", 200));
+    if (profile && !supportsBotRuntime(profile.runtime)) throw new HostError("bad_request", "请选择可运行 Bot 的 AMO 模型渠道。");
+    const workspaceId = profile ? this.optionalWorkspace(raw.workspaceId) : null;
+    const workspace = profile ? (workspaceId ? this.requireLiveWorkspace(workspaceId) : this.commonWorkspace()) : undefined;
+    return readBotSkills(this.store.path, this.options, this.runtime, profile, workspace, { project: !!workspaceId, includeCache: true });
+  }
+
+  async chatSkillContext(input: Parameters<BotsFeature["runtime"]["startSession"]>[0]) {
+    if (!input.taskId || input.resumeFrom) return undefined;
+    const row = this.store.db.prepare("SELECT data FROM studio_bots WHERE task_id = ?").get(input.taskId) as { data: string } | undefined;
+    if (!row) return undefined;
+    const bot = JSON.parse(row.data) as BotInput;
+    const assigned = [...new Map([...this.sharedSkills(), ...(bot.skills ?? [])].map((skill) => [skill.id, skill])).values()];
+    if (!assigned.length) return undefined;
+    const profile = this.requireProfile(input.profileId);
+    const workspace = input.cwd ? { ...input.workspace, path: input.cwd } : input.workspace;
+    const catalog = await readBotSkills(this.store.path, this.options, this.runtime, profile, workspace, { project: !isCommon(workspace) });
+    return botSkillPrompt(assigned, catalog);
   }
 
   patch(id: Id, raw: Record<string, unknown>): StudioBot {
@@ -140,13 +249,13 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   private writeBot(data: BotInput, previous?: StudioBot): StudioBot {
     const nameKey = data.name.normalize("NFKC").toLowerCase();
     const botId = previous?.id ?? randomUUID();
-    const renamed = this.store.transaction(() => {
-      const used = this.store.db.prepare("SELECT id FROM studio_bots WHERE name_key = ? AND id <> ?").get(nameKey, botId);
-      if (used) throw new HostError("conflict", "已有同名 Bot。");
+    const used = this.store.db.prepare("SELECT id FROM studio_bots WHERE name_key = ? AND id <> ?").get(nameKey, botId);
+    if (used) throw new HostError("conflict", "已有同名 Bot。");
+    const renamed = updateBotFiles(this.store, botId, data, previous, () => this.store.transaction(() => {
       this.store.db.prepare(`INSERT INTO studio_bots (id, name_key, data) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET name_key = excluded.name_key, data = excluded.data`).run(botId, nameKey, JSON.stringify(data));
       return previous?.taskId && previous.name !== data.name ? this.store.updateTask(previous.taskId, { title: data.name }) : undefined;
-    });
+    }));
     if (renamed) this.publish({ type: "task.upserted", task: renamed });
     this.publish({ type: "bots.changed" });
     return this.bot(botId);
@@ -159,14 +268,14 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const sessions = bot.taskId ? this.store.listSessions({ taskId: bot.taskId }) : [];
       if (sessions.some((session) => this.chatHasWork(session))) throw new HostError("conflict", "这个 Bot 还有运行或排队的消息，请处理完再删除。");
       const groups = this.groups().filter((group) => group.memberIds.includes(id));
-      this.store.transaction(() => {
+      removeBotFiles(this.store, id, () => this.store.transaction(() => {
         // Keep the identity required by persisted replies and the read-only ownership of its historical chats.
         this.store.db.prepare("UPDATE studio_bots SET name_key = ?, data = ?, home_session_id = NULL WHERE id = ?")
           .run(`\u0000${id}`, JSON.stringify({ name: bot.name, enabled: false, deletedAt: new Date().toISOString() }), id);
         this.store.db.prepare("DELETE FROM studio_bot_group_chats WHERE bot_id = ?").run(id);
         const update = this.store.db.prepare("UPDATE studio_bot_groups SET data = ? WHERE id = ?");
         for (const group of groups) update.run(JSON.stringify({ ...group, memberIds: group.memberIds.filter((member) => member !== id) }), group.id);
-      });
+      }));
       this.publish({ type: "bots.changed" });
       if (groups.length) this.publish({ type: "bot-groups.changed" });
       return { ok: true };
@@ -270,18 +379,62 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const targetIds = this.botIds(raw.targetIds, 0).sort();
       const old = this.store.db.prepare("SELECT group_id, data, dispatched FROM studio_bot_group_posts WHERE id = ?").get(id) as PostRow | undefined;
       const previous = old ? JSON.parse(old.data) as SavedPost : undefined;
-      if (previous && (old?.group_id !== groupId || previous.text !== text || JSON.stringify(previous.targetIds) !== JSON.stringify(targetIds))) throw new HostError("conflict", "消息编号已用于另一条群消息。");
+      if (previous && (previous.author || old?.group_id !== groupId || previous.text !== text || JSON.stringify(previous.targetIds) !== JSON.stringify(targetIds))) throw new HostError("conflict", "消息编号已用于另一条群消息。");
       if (previous && old?.dispatched) return this.readPost(groupId, previous, true);
       const record = previous ?? { id, text, targetIds, createdAt: new Date().toISOString() };
       if (!previous) {
         assertBotsEnabled(this.store);
         if (targetIds.some((target) => !group.memberIds.includes(target) || !this.findBot(target)?.enabled)) throw new HostError("bad_request", "请选择已启用的群组成员。");
-        this.store.db.prepare("INSERT INTO studio_bot_group_posts (id, group_id, created_at, data) VALUES (?, ?, ?, ?)").run(id, groupId, record.createdAt, JSON.stringify(record));
-        this.publish({ type: "bot-group-posts.changed", groupId });
+        this.insertGroupPost(groupId, record);
       }
       await this.dispatchPost(group, record);
       return this.readPost(groupId, record, true);
     });
+  }
+
+  private insertGroupPost(groupId: Id, post: SavedPost): void {
+    this.store.db.prepare("INSERT INTO studio_bot_group_posts (id, group_id, created_at, data) VALUES (?, ?, ?, ?)").run(post.id, groupId, post.createdAt, JSON.stringify(post));
+    this.publish({ type: "bot-group-posts.changed", groupId });
+  }
+
+  async askGroupMember(sessionId: Id, requestId: Id, botId: Id, rawText: string): Promise<BotGroupPost> {
+    const request = this.getRequest(requestId);
+    if (!request?.group || request.sessionId !== sessionId) throw new HostError("bad_request", "找不到本会话的群组请求。");
+    const { groupId, postId } = request.group;
+    const questionId = createHash("sha256").update(JSON.stringify(["bot-group-question", requestId, botId])).digest("hex");
+    const text = boundedText(rawText, "问题", 20_000);
+    return this.serial(`group:${groupId}`, async () => {
+      assertBotsEnabled(this.store);
+      const group = this.group(groupId);
+      const session = this.requireSession(sessionId);
+      const message = this.store.getItem(inboxId(requestId));
+      const [turn] = this.store.findItems(sessionId, "turn", {}, { newest: true, limit: 1 });
+      if (session.archivedAt || !inTurn(session.status) || message?.type !== "user" || message.delivery !== undefined || !message.raw?.itemId
+        || turn?.type !== "turn" || turn.state !== "running" || turn.turnId !== message.raw.turnId) {
+        throw new HostError("bad_request", "只能在处理当前群组消息时向成员提问。");
+      }
+      const sourcePost = this.groupPost(groupId, postId);
+      if (!sourcePost || sourcePost.author) throw new HostError("bad_request", "请直接回复这条 Bot 提问。收到用户的新消息后可以继续转问。");
+      if (botId === request.botId || !group.memberIds.includes(botId) || !group.memberIds.includes(request.botId)
+        || !this.findBot(botId)?.enabled || !this.findBot(request.botId)?.enabled) {
+        throw new HostError("bad_request", "请选择这个群里另一位已启用的成员。");
+      }
+      if (this.findBot(botId)?.preferences?.allowGroupAsk === false) throw new HostError("read_only", "这个 Bot 不接收其他 Bot 的提问。");
+      const old = this.store.db.prepare("SELECT group_id, data, dispatched FROM studio_bot_group_posts WHERE id = ?").get(questionId) as PostRow | undefined;
+      const previous = old && JSON.parse(old.data) as SavedPost;
+      if (old && (!previous?.author || previous.author.botId !== request.botId || old.group_id !== groupId || previous.text !== text)) {
+        throw new HostError("conflict", "这条消息已经向该成员提过问。");
+      }
+      const post = previous ?? { id: questionId, text, targetIds: [botId], createdAt: new Date().toISOString(), author: { botId: request.botId, botName: request.botName } };
+      if (!previous) this.insertGroupPost(groupId, post);
+      if (!old?.dispatched) await this.dispatchPost(group, post);
+      return this.readPost(groupId, post, true);
+    });
+  }
+
+  private groupPost(groupId: Id, postId: Id): SavedPost | undefined {
+    const row = this.store.db.prepare("SELECT data FROM studio_bot_group_posts WHERE group_id = ? AND id = ?").get(groupId, postId) as { data: string } | undefined;
+    return row && JSON.parse(row.data) as SavedPost;
   }
 
   private async dispatchPost(group: BotGroup, record: SavedPost): Promise<void> {
@@ -289,13 +442,14 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const id = groupAskId(group.id, record.id, botId);
       if (!this.group(group.id).memberIds.includes(botId)) return;
       const prior = this.getRequest(id);
-      if (!this.findBot(botId)?.enabled || !botsEnabled(this.store)) return;
+      const bot = this.findBot(botId);
+      if (!bot?.enabled || !botsEnabled(this.store) || (record.author && bot.preferences?.allowGroupAsk === false && !prior)) return;
       const chat = this.store.db.prepare("SELECT session_id FROM studio_bot_group_chats WHERE group_id = ? AND bot_id = ?").get(group.id, botId) as { session_id: Id | null } | undefined;
       const session = chat?.session_id ? this.store.getSession(chat.session_id) : undefined;
       const destination: BotDestination = prior?.destination ?? (session && !session.archivedAt ? { sessionId: session.id } : "new");
       let result: BotRequest;
       try {
-        result = await this.request(botId, { id, text: prior?.text ?? `【群组 ${group.name}】\n${record.text}`.slice(0, 20_000), destination });
+        result = await this.request(botId, { id, text: prior?.text ?? record.text, destination }, false, { groupId: group.id, postId: record.id });
       } catch (error) {
         // A Bot can be paused or removed while its earlier dispatch holds its lock.
         if (!this.findBot(botId)?.enabled || !botsEnabled(this.store)) return;
@@ -387,7 +541,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     return this.request(recipient.botId, { id, text, sourceSessionId: sourceId, destination: recipient.destination }, true);
   }
 
-  async request(id: Id, raw: Record<string, unknown>, reportToSource = false): Promise<BotRequest> {
+  async request(id: Id, raw: Record<string, unknown>, reportToSource = false, group?: GroupRequest): Promise<BotRequest> {
     const requestId = boundedText(raw.id, "请求编号", 80);
     if (!/^[\w-]+$/u.test(requestId)) throw new HostError("bad_request", "请求编号有误。");
     return this.serial(id, async () => {
@@ -398,7 +552,8 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const destination = this.destination(raw.destination);
       const previous = this.getRequest(requestId);
       if (previous) {
-        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination)) {
+        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination)
+          || (previous.group && (previous.group.groupId !== group?.groupId || previous.group.postId !== group?.postId))) {
           throw new HostError("conflict", "请求编号已用于另一条 Bot 消息。");
         }
         return this.deliver(previous);
@@ -406,7 +561,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       if (source?.taskId && source.taskId === bot.taskId) throw new HostError("bad_request", "请在当前 Bot 会话直接发送消息。");
-      const queued: BotRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}) };
+      const queued: SavedRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}), ...(group ? { group } : {}) };
       this.store.db.prepare("INSERT INTO studio_bot_requests (id, bot_id, source_session_id, created_at, data) VALUES (?, ?, ?, ?, ?)").run(requestId, id, queued.sourceSessionId, queued.createdAt, JSON.stringify(queued));
       return this.deliver(queued);
     });
@@ -429,7 +584,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       const title = `处理${bot.name}的结论 · ${request.text}`.slice(0, 80);
       const description = `【原请求】\n${request.text}\n\n【Bot 结论】\n${request.result}`;
       return this.f.tasks.createTask({ title, workspaceId: workspace.id, worktree: {}, description,
-        firstSession: { profileId: bot.profileId, options: { model: bot.model ?? undefined, effort: bot.effort ?? undefined, permission: this.requireProfile(bot.profileId).runtime === "claude" ? "acceptEdits" : "workspace-write" }, text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。\n\n${description.slice(0, 12_000)}` },
+        firstSession: { profileId: bot.profileId, options: { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission: this.requireProfile(bot.profileId).runtime === "claude" ? "acceptEdits" : "workspace-write" }, text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。\n\n${description.slice(0, 12_000)}` },
       }, (task) => {
         this.store.db.prepare("INSERT INTO studio_bot_workers (request_id, task_id) VALUES (?, ?)").run(id, task.id);
       });
@@ -443,7 +598,12 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   recover(): void {
+    for (const row of this.botRows()) {
+      try { ensureBotFiles(this.store, row.id, JSON.parse(row.data)); }
+      catch (error) { this.log(`Bot data folder migration failed for ${row.id}: ${String(error)}`); }
+    }
     this.host.on("event", (event) => {
+      if (event.type === "item.appended" || event.type === "item.updated") this.notifyForItem(event.item);
       if (event.type !== "session.upserted") return;
       const rows = this.store.db.prepare("SELECT * FROM studio_bot_requests WHERE session_id = ? AND json_extract(data, '$.status') = 'queued'").all(event.session.id) as unknown as RequestRow[];
       for (const row of rows) this.status(readRequest(row));
@@ -466,12 +626,28 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     }
   }
 
-  private getRequest(id: Id): BotRequest | undefined {
+  private notifyForItem(item: SessionItem) {
+    const notice = item.type === "approval" && item.state === "pending" ? "approval"
+      : item.type === "turn" && item.state === "completed" ? "completed"
+        : item.type === "turn" && item.state === "failed" ? "failed" : undefined;
+    if (!notice || this.notified.has(item.id)) return;
+    const session = this.store.getSession(item.sessionId);
+    if (!session?.taskId || session.archivedAt) return;
+    const row = this.store.db.prepare(`SELECT id, data FROM studio_bots WHERE task_id = ? AND ${activeBot}`).get(session.taskId) as { id: Id; data: string } | undefined;
+    if (!row) return;
+    this.notified.add(item.id);
+    if (this.notified.size > 512) this.notified.delete(this.notified.values().next().value!);
+    const bot = JSON.parse(row.data) as BotInput;
+    if (!(bot.preferences ?? DEFAULT_BOT_PREFERENCES).notifications[notice]) return;
+    this.host.emit("event", { type: "bot.notification", botId: row.id, botName: bot.name, notice, seq: this.store.lastEventSeq() });
+  }
+
+  private getRequest(id: Id): SavedRequest | undefined {
     const row = this.store.db.prepare("SELECT * FROM studio_bot_requests WHERE id = ?").get(id) as unknown as RequestRow | undefined;
     return row ? this.fromRequestRow(row) : undefined;
   }
 
-  private fromRequestRow(row: RequestRow): BotRequest {
+  private fromRequestRow(row: RequestRow): SavedRequest {
     const request = readRequest(row);
     if (row.delivered && !row.session_id && request.status === "queued") return this.settled({ ...request, status: "stopped", result: "Bot 聊天已删除。" });
     return request;
@@ -514,11 +690,11 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     if (!bot.taskId) this.publish({ type: "bots.changed" });
     if (task.archivedAt) throw new HostError("conflict", "请先恢复 Bot 的任务。");
     const selected = source ? this.requireLiveWorkspace(source.workspaceId) : workspace;
-    const options = await this.f.tasks.withDefaults(bot.profileId, { ...(bot.model ? { model: bot.model } : {}), ...(bot.effort ? { effort: bot.effort } : {}), permission: this.requireProfile(bot.profileId).runtime === "claude" ? "plan" : "read-only" });
+    const options = await this.f.tasks.withDefaults(bot.profileId, { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission: bot.permission ?? undefined });
     return this.f.tasks.trackSessionStart(task.id, () => this.wrap(() => this.runtime.startSession({ taskId: task.id, topicId: null, profileId: bot.profileId, workspace: selected, ...(source?.cwd ? { cwd: source.cwd } : {}), title, developerInstructions: botInstructions(bot), options })));
   }
 
-  private async deliver(request: BotRequest): Promise<BotRequest> {
+  private async deliver(request: SavedRequest): Promise<BotRequest> {
     if (request.status !== "queued" || this.store.getItem(inboxId(request.id))) return this.status(request);
     try {
       const bot = this.bot(request.botId);
@@ -540,7 +716,8 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       this.store.db.prepare("UPDATE studio_bot_requests SET session_id = ? WHERE id = ?").run(session.id, request.id);
       request = { ...request, sessionId: session.id };
       const cwd = source && (source.cwd ?? this.store.getWorkspace(source.workspaceId)?.path);
-      const text = [`你是 ${bot.name}。`, `【职责】\n${bot.purpose}`, ...(bot.memory ? [`【记忆】\n${bot.memory}`] : []), ...(cwd ? [`【本次任务的工作目录】\n${cwd}`] : []), `【本次请求】\n${request.text}`].join("\n\n");
+      const input = request.group ? this.groupInput(request, request.group) : `【本次请求】\n${request.text}`;
+      const text = [`你是 ${bot.name}。`, `【职责】\n${bot.purpose}`, ...(bot.memory ? [`【记忆】\n${bot.memory}`] : []), ...(cwd ? [`【本次任务的工作目录】\n${cwd}`] : []), input].join("\n\n");
       const origin = source ? (source.taskId && this.store.getTask(source.taskId)?.title) || source.title || "项目会话" : null;
       const heading = `来自「${origin}」的请求`;
       // Requests need their own turns so stopping or attributing a reply affects only that request.
@@ -549,9 +726,43 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
       this.store.db.prepare("UPDATE studio_bot_requests SET delivered = 1 WHERE id = ?").run(request.id);
       return this.status(request);
     } catch (error) {
-      const failed: BotRequest = { ...request, status: "failed", result: error instanceof Error ? error.message : String(error) };
+      const failed: SavedRequest = { ...request, status: "failed", result: error instanceof Error ? error.message : String(error) };
       return this.settled(failed);
     }
+  }
+
+  private groupInput(request: BotRequest, { groupId, postId }: GroupRequest): string {
+    const group = this.group(groupId);
+    const post = this.groupPost(groupId, postId);
+    if (!post || !group.memberIds.includes(request.botId)) throw new HostError("conflict", "群组消息或成员已不可用。");
+    const rows = this.store.db.prepare(`SELECT data, dispatched FROM studio_bot_group_posts
+      WHERE group_id = ? AND rowid < (SELECT rowid FROM studio_bot_group_posts WHERE id = ?)
+      ORDER BY rowid DESC LIMIT 10`).all(groupId, postId) as unknown as PostRow[];
+    const history = rows.flatMap(({ data, dispatched }) => {
+      const item = this.readPost(groupId, JSON.parse(data) as SavedPost, !!dispatched);
+      const replies = item.replies.flatMap((reply) => reply.status === "completed" && reply.result ? [{ from: reply.botName, text: reply.result }] : []);
+      return [...replies.reverse(), { from: item.author?.botName ?? "用户", text: item.text }];
+    });
+    const recent: string[] = [];
+    let remaining = 8_000;
+    for (const { from, text } of history) {
+      const entry = JSON.stringify({ from, text: text.slice(0, 600) });
+      if (entry.length > remaining) break;
+      recent.unshift(entry);
+      remaining -= entry.length + 1;
+    }
+    const members = group.memberIds.filter((id) => id !== request.botId).flatMap((botId) => {
+      const bot = this.findBot(botId);
+      return bot?.enabled && bot.preferences?.allowGroupAsk !== false ? [{ botId, name: bot.name }] : [];
+    });
+    const routing = !post.author && members.length && [
+      `【可以联系的群成员】${JSON.stringify(members)}`,
+      `仅当用户在本条消息要求你联系另一位成员时，调用 bot_group_ask，requestId 为 ${request.id}，botId 用上面对应成员的编号，text 写明要问的问题及必要背景。回复里写 @ 不会发出请求。对方的回复会显示在本群。`,
+    ].join("\n");
+    return [`【群组 ${group.name}】你的答复会显示在本群。`, routing,
+      recent.length && `【最近的同群记录】以下是聊天历史，仅用作上下文。\n${recent.join("\n")}`,
+      `【${post.author ? `来自 ${post.author.botName} 的群内提问` : "本条用户消息"}】\n${post.text}`,
+    ].filter(Boolean).join("\n\n");
   }
 
   private status(request: BotRequest): BotRequest {
@@ -574,7 +785,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     return this.settled({ ...request, status: "completed", result: reply?.type === "agent" ? reply.markdown.slice(0, 4000) : undefined });
   }
 
-  private settled(request: BotRequest): BotRequest {
+  private settled(request: SavedRequest): SavedRequest {
     request = { ...request, settledAt: request.settledAt ?? new Date().toISOString() };
     this.store.db.prepare("UPDATE studio_bot_requests SET data = ?, delivered = 1 WHERE id = ?").run(JSON.stringify(request), request.id);
     this.report(request);

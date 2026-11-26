@@ -509,7 +509,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
 
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
     assertBotTaskEnabled(this.store, owner.taskId);
-    if (isBotTask(this.store, owner.taskId) && !supportsBotRuntime(this.requireProfile(input.profileId).runtime)) throw new HostError("bad_request", "请选择支持只读 Bot 的模型渠道。");
+    if (isBotTask(this.store, owner.taskId) && !supportsBotRuntime(this.requireProfile(input.profileId).runtime)) throw new HostError("bad_request", "请选择支持 Bot 的模型渠道。");
     return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
   }
 

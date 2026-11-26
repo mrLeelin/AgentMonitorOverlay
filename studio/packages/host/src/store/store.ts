@@ -6,7 +6,10 @@ import { collectSubtreeIds, ENDED_STATUSES, pruneLinks, type CanvasDoc, type Hos
 import { DocumentStore } from "./documents.js";
 import { ATTACHMENT_ID, str, strOrNull, toItem, toSession, toTask, toTopic, toWorkspace, type Row } from "./rows.js";
 import { MIGRATIONS } from "./migrations.js";
-import { kvPrefixes, MCP_SESSION_PREFIX, MCP_TOKEN_PREFIX } from "./kv-keys.js";
+import { kvPrefixes, MCP_SESSION_PREFIX, MCP_TOKEN_PREFIX, MESSAGE_PURPOSE_PREFIX } from "./kv-keys.js";
+
+const SESSION_SELECT = `SELECT sessions.*, CASE WHEN json_valid(kv.value) THEN json_extract(kv.value, '$.botConversation') END AS bot_conversation
+  FROM sessions LEFT JOIN kv ON kv.key = '${MESSAGE_PURPOSE_PREFIX}' || sessions.id`;
 
 /** A HostEvent before the store assigns its sequence number. */
 export type HostEventInput = HostEvent extends infer E ? (E extends HostEvent ? Omit<E, "seq"> : never) : never;
@@ -262,22 +265,22 @@ export class Store extends DocumentStore {
   }
 
   getSession(id: Id): Session | undefined {
-    const r = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
+    const r = this.db.prepare(`${SESSION_SELECT} WHERE sessions.id = ?`).get(id) as Row | undefined;
     return r && toSession(r);
   }
 
   findSessionByRuntimeRef(runtime: Session["runtime"], runtimeRef: string): Session | undefined {
-    const r = this.db.prepare("SELECT * FROM sessions WHERE runtime = ? AND runtime_ref = ?").get(runtime, runtimeRef) as Row | undefined;
+    const r = this.db.prepare(`${SESSION_SELECT} WHERE runtime = ? AND runtime_ref = ?`).get(runtime, runtimeRef) as Row | undefined;
     return r && toSession(r);
   }
 
   /** All sessions, or one owner's (a task's or a topic's). */
   listSessions(filter: { taskId?: Id; topicId?: Id } = {}): Session[] {
     const rows = filter.taskId
-      ? this.db.prepare("SELECT * FROM sessions WHERE task_id = ? ORDER BY created_at, id").all(filter.taskId)
+      ? this.db.prepare(`${SESSION_SELECT} WHERE task_id = ? ORDER BY created_at, sessions.id`).all(filter.taskId)
       : filter.topicId
-        ? this.db.prepare("SELECT * FROM sessions WHERE topic_id = ? ORDER BY created_at, id").all(filter.topicId)
-        : this.db.prepare("SELECT * FROM sessions ORDER BY created_at, id").all();
+        ? this.db.prepare(`${SESSION_SELECT} WHERE topic_id = ? ORDER BY created_at, sessions.id`).all(filter.topicId)
+        : this.db.prepare(`${SESSION_SELECT} ORDER BY created_at, sessions.id`).all();
     return (rows as Row[]).map(toSession);
   }
 

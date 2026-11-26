@@ -4,7 +4,8 @@ import { inTurn, parseRemoteProfileId, type MessagePurpose } from "@amo-studio/p
 import { newId, type HostEventInput, type SessionItemInput, type Store } from "../store/store.js";
 import { unreadDelivery, withDelivery } from "./items.js";
 import { profileGone } from "./profiles.js";
-import { consumeMessagePurpose, currentMessagePurpose, joinsPurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
+import { consumeMessagePurpose, currentMessagePurpose, isBotConversationInput, joinsPurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
+import { botSessionPromptKey } from "../features/bots/data.js";
 import type { SessionGoalState, SessionGoalUpdate, ContextBreakdown } from "@amo-studio/protocol";
 
 // What HostService needs from a runtime, and a router that sends each call to the runtime a session (or profile)
@@ -58,7 +59,7 @@ export interface SessionRuntimeApi {
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
-  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void; developerInstructions?: string }): Promise<Session>;
+  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void; developerInstructions?: string; botSkillPrompt?: string }): Promise<Session>;
   /** Claude only (接续已有会话, 2026-11-05): sessions started outside Studio that a new task can go on from. */
   outsideSessions?(): Promise<OutsideSessionList>;
   /** Claude only: the end of one of those, to recognise it; null when it has no conversation. */
@@ -123,7 +124,7 @@ export interface SessionRuntimeApi {
   /** The runtime's own `/` commands and skills for the session (stage 12, S12-E); Studio's are added by the Host. */
   listCommands?(sessionId: Id): Promise<SlashCommandList>;
   /** First-message discovery in the selected project; no persisted session or model prompt. */
-  listProfileCommands?(profileId: Id, workspace: Workspace): Promise<SlashCommandList>;
+  listProfileCommands?(profileId: Id, workspace: Workspace, botSkills?: boolean): Promise<SlashCommandList>;
   /** Runs one (`compact` included); see `POST /api/sessions/:id/commands`. */
   runCommand?(sessionId: Id, name: string, args: string): Promise<SlashCommandResult>;
   /** Stops a background command (Claude only). */
@@ -167,6 +168,12 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   setMessageContext(context: NonNullable<RuntimeRouter["context"]>): void {
     this.context = context;
     for (const runtime of [...Object.values(this.runtimes), ...(this.fallback ? [this.fallback] : [])]) runtime.setDispatchValidation?.(context.validate);
+  }
+
+  private botSkills?: (input: Parameters<SessionRuntimeApi["startSession"]>[0]) => Promise<{ prompt?: string; unavailable: string[] } | undefined>;
+
+  setBotSkillContext(resolve: NonNullable<RuntimeRouter["botSkills"]>): void {
+    this.botSkills = resolve;
   }
 
   private withContext(text: string, context: string): string {
@@ -276,7 +283,18 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const startup = input.text && input.taskId ? this.context?.startup?.(input.taskId) ?? "" : "";
     const text = input.text ? this.withContext(this.withContext(input.text, startup), context) : input.text;
     const beforeDispatch = this.frozenInputGuard(text ?? "", context, () => input.taskId ? this.context?.task(input.taskId) ?? "" : "", () => { if (input.taskId) this.context?.checkStart?.(input.taskId, false); }, input.beforeDispatch);
-    return this.requireProfileRuntime(input.profileId).startSession({ ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch });
+    const runtime = this.requireProfileRuntime(input.profileId);
+    const launch = { ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch };
+    if (!input.taskId || !this.botSkills) return runtime.startSession(launch);
+    return this.botSkills(input).then(async (skills) => {
+      const session = await runtime.startSession({ ...launch, ...(skills?.prompt ? { botSkillPrompt: skills.prompt } : {}) });
+      if (skills?.unavailable.length) {
+        const message = `这个聊天未加载以下 Bot 技能，请检查当前工作目录、渠道或插件状态：${skills.unavailable.join("、")}`;
+        const item = this.store.appendItem({ id: newId("i-bot-skills"), sessionId: session.id, type: "notice", level: "warning", message, createdAt: new Date().toISOString() });
+        this.emit("event", this.store.appendEvent({ type: "item.appended", item }));
+      }
+      return session;
+    });
   }
   sendMessage(sessionId: Id, text: string, images: readonly Attachment[] = [], options: SendOptions = {}) {
     const goalSession = this.store.getSession(sessionId);
@@ -487,9 +505,9 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const r = this.forSession(sessionId);
     return r.listCommands ? r.listCommands(sessionId) : { commands: [] };
   }
-  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
+  async listProfileCommands(profileId: Id, workspace: Workspace, botSkills?: boolean): Promise<SlashCommandList> {
     const r = this.requireProfileRuntime(profileId);
-    return r.listProfileCommands ? r.listProfileCommands(profileId, workspace) : { commands: [], note: "这个模型的技能列表需在会话启动后读取" };
+    return r.listProfileCommands ? r.listProfileCommands(profileId, workspace, botSkills) : { commands: [], note: "这个模型的技能列表需在会话启动后读取" };
   }
   runCommand(sessionId: Id, name: string, args: string): Promise<SlashCommandResult> {
     const r = this.forSession(sessionId);
@@ -798,8 +816,13 @@ export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
     return s;
   }
 
-  protected createSession(input: NewSessionInput): Session {
-    const s = this.store.createSession({ ...input, runtime: this.runtimeName, status: "idle", writer: "workbench" });
+  protected createSession(input: NewSessionInput, botPrompt?: string): Session {
+    const create = () => this.store.createSession({ ...input, runtime: this.runtimeName, status: "idle", writer: "workbench" });
+    const s = botPrompt ? this.store.transaction(() => {
+      const session = create();
+      this.store.setKv(botSessionPromptKey(session.id), botPrompt);
+      return session;
+    }) : create();
     this.publish({ type: "session.upserted", session: s });
     return s;
   }
@@ -838,11 +861,12 @@ export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
   }
 
   protected messagePurposeConsumed(sessionId: Id, itemId: Id, running = true): void {
-    const row = this.store.getItem(itemId), session = this.store.getSession(sessionId);
+    const row = this.store.getItem(itemId);
     if (row?.type !== "user" || row.delivery === "expired" || row.sessionId !== sessionId) return;
-    const purpose = consumeMessagePurpose(this.store, sessionId, row.messagePurpose ?? "work", running);
     const [turn] = this.store.findItems(sessionId, "turn", { state: "running" }, { newest: true, limit: 1 });
+    const purpose = consumeMessagePurpose(this.store, sessionId, row.messagePurpose ?? "work", running, !!turn && !isBotConversationInput(row));
     if (turn?.type === "turn" && turn.messagePurpose !== purpose) this.publish({ type: "item.updated", item: this.store.replaceItem({ ...turn, messagePurpose: purpose }) });
+    const session = this.store.getSession(sessionId);
     if (session && inTurn(session.status)) this.publish({ type: "session.upserted", session });
   }
 

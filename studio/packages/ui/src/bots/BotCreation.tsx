@@ -5,6 +5,7 @@ import { Modal } from "../lib/Modal.js";
 import { BotDialogHeader } from "./BotDialogHeader.js";
 import { BotGroupDialog } from "./BotGroupDialog.js";
 import { BotAvatarPicker, BotLocalFields, BotModelField, readBotMarkdown, type BotMarkdownField } from "./BotProfileFields.js";
+import { randomBotMascot } from "./BotAvatar.js";
 import { BotTemplatesDialog } from "./BotTemplatesDialog.js";
 import { newBotDraft } from "./roster.js";
 
@@ -15,7 +16,7 @@ export function BotCreation({ entry, link, bots, profiles, workspaces, onBot, on
   onBot(bot: StudioBot): void; onGroup?(group: BotGroup): void; onClose(): void;
 }) {
   const [page, setPage] = useState(entry);
-  const [draft, setDraft] = useState(() => newBotDraft(profiles));
+  const [draft, setDraft] = useState<BotInput>(() => ({ ...newBotDraft(profiles), avatar: randomBotMascot() }));
   const [source, setSource] = useState("");
   const [share, setShare] = useState("");
   const [imported, setImported] = useState<Partial<Record<BotMarkdownField, string>>>({});
@@ -51,7 +52,7 @@ export function BotCreation({ entry, link, bots, profiles, workspaces, onBot, on
   const problem = error && <p className="form-error" role="alert">{error}</p>;
 
   if (page === "group") return <BotGroupDialog link={link} bots={bots} onSaved={(group) => { onGroup?.(group); onClose(); }} onClose={onClose} />;
-  if (page === "templates") return <BotTemplatesDialog onUse={(template) => useContent({ name: template.name, purpose: template.purpose, memory: "", avatar: null }, template.title)} onBlank={() => open("blank")} onLink={() => open("link")} onClose={onClose} />;
+  if (page === "templates") return <BotTemplatesDialog onUse={(template) => useContent({ name: template.name, purpose: template.purpose, memory: "" }, template.title)} onBlank={() => open("blank")} onLink={() => open("link")} onClose={onClose} />;
   if (page === "link") return <Modal portal label="从链接创建" className="bot-dialog bot-link-dialog" backdropClassName="bot-backdrop" busy={busy} onClose={onClose} onSubmit={(event) => {
     event.preventDefault();
     if (share.trim()) void run(async () => useContent(await call(link, "POST /api/bots/import-link", {}, { url: share.trim() }), "Orca 分享"));

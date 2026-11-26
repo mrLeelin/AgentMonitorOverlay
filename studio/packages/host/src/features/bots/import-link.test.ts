@@ -8,7 +8,7 @@ const downloadUrl = "https://storage.googleapis.com/test-bot/archive";
 
 function fixtureArchive() {
   const files = {
-    "dev.orca.bot-sharing/bot.json": JSON.stringify({ schemaVersion: 1, name: "分享审核员", purpose: "概述", memory: [{ topic: "review" }], tools: [{ url: "https://tool.invalid" }] }),
+    "dev.orca.bot-sharing/bot.json": JSON.stringify({ schemaVersion: 1, name: "分享审核员", purpose: "概述", memory: [{ topic: "review" }], tools: [{ url: "https://tool.invalid" }], permission: "full-auto", fast: true }),
     "SOUL.md": "阅读改动并报告证据。",
     "memory/review.md": "先检查项目约定。",
     "skills/example/SKILL.md": "不属于 Bot 草稿的内容",

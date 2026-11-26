@@ -24,6 +24,10 @@ export interface SlashCommand {
   group: SlashCommandGroup;
   /** Absolute source SKILL.md path when the runtime or a verified local source identifies it. */
   skillPath?: string;
+  skillPluginId?: string;
+  skillScope?: "global" | "project";
+  /** Present only in the Bot skill inventory when the runtime confirms the skill is disabled. */
+  skillDisabled?: boolean;
   /** Other names that run the same command. */
   aliases?: string[];
   /** Handled by the UI itself instead of the Host: `open-review` opens the project's Git Review window. */

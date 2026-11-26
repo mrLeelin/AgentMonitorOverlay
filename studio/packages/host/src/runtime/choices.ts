@@ -91,6 +91,11 @@ export function claudePermissionMode(id: string | undefined): ClaudePermissionMo
   return CLAUDE_PERMISSIONS.some((p) => p.id === id) ? (id as ClaudePermissionMode) : CLAUDE_DEFAULT_PERMISSION;
 }
 
+/** Alternate Claude endpoints do not provide Anthropic's automatic approval classifier. */
+export function claudePermissions(baseUrl?: string): PermissionOption[] {
+  return baseUrl ? CLAUDE_PERMISSIONS.map((p) => p.id === "auto" ? { ...p, unavailable: "只有 Anthropic 的 Claude 能用（第三方模型没有这个分类器）" } : p) : CLAUDE_PERMISSIONS;
+}
+
 /** Claude Code's effort levels (/effort). */
 export const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 

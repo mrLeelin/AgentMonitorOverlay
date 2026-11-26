@@ -45,6 +45,8 @@ export interface CodexSkill {
   shortDescription?: string;
   path: string;
   enabled?: boolean;
+  pluginId?: string | null;
+  scope?: codex.v2.SkillScope;
 }
 
 /** `/code-review` arguments: nothing (uncommitted changes), `base <branch>`, `commit <sha>`, or review instructions. */

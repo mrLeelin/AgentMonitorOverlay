@@ -1,6 +1,7 @@
 import { selectSettingsPage } from "../support/settings.js";
 import { expect, test } from "@playwright/test";
-import type { Session, SessionItem, StateSnapshot, Task, Workspace } from "@amo-studio/protocol";
+import type { BotRequest, Session, SessionItem, StateSnapshot, StudioBot, Task, Workspace } from "@amo-studio/protocol";
+import { defaultScript } from "@amo-studio/testkit";
 import { launchStudio, screenshot, windowState, type Studio } from "../support/studio.js";
 
 let studio: Studio | undefined;
@@ -11,6 +12,50 @@ test.afterEach(async () => {
 });
 
 const focusIgnore = (s: Studio) => s.app.evaluate(() => (globalThis as { __amoFocusIgnore?: boolean }).__amoFocusIgnore);
+
+test("Bot mentions and replies stay in chat while Focus still shows ordinary work", async () => {
+  studio = await launchStudio({ mockScript: (req) => {
+    if (req.afterToolOutput && req.lastTool?.name.includes("bot_ask")) return { kind: "text", text: "已发给小鲸鱼。" };
+    const mention = /mentionId 为 ([\w-]+)/.exec(req.lastUserText);
+    if (mention) return defaultScript({ ...req, lastUserText: `[[mcp: bot_ask ${JSON.stringify({ mentionId: mention[1], text: "你现在在做什么？" })}]]` });
+    if (req.lastUserText.includes("【Bot 来信】")) return { kind: "text", text: "我现在空闲。", waitMs: 3500 };
+    if (req.lastUserText.includes("【Bot 回信】")) return { kind: "text", text: "小鲸鱼说它现在空闲。", waitMs: 3500 };
+    return defaultScript(req);
+  } });
+  const { page, app, api } = studio;
+  const opened = app.waitForEvent("window");
+  await page.getByRole("button", { name: /^Focus/ }).click();
+  const focus = await opened;
+  const panel = focus.getByTestId("focus-panel");
+  const needs = focus.getByTestId("focus-needs");
+  const badge = () => app.evaluate(() => (globalThis as { __amoTaskbarBadge?: { count: number } }).__amoTaskbarBadge?.count);
+  await expect(needs).toHaveText("没有待处理");
+  const bot = await api<StudioBot>("POST", "/api/bots", { name: "小鲸鱼", purpose: "回答问题", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
+  const { session } = await api<{ session: Session }>("POST", "/api/tasks", { title: "和小鲸鱼聊天", firstSession: { profileId: "codex-mock" } });
+  const source = async () => (await api<StateSnapshot>("GET", "/api/state")).sessions.find((s) => s.id === session.id);
+  await api("POST", `/api/bots/${bot.id}/mentions`, { id: "focus-bot-mention", text: "你在干嘛？", sourceSessionId: session.id, destination: "home" });
+  await expect.poll(async () => (await api<BotRequest[]>("GET", "/api/bot-requests"))[0]?.status, { timeout: 15_000 }).toBe("running");
+  await expect.poll(source).toMatchObject({ status: "idle", botConversation: true });
+  await expect(panel).toContainText("运行中 0");
+  await expect(focus.getByTestId("focus-working")).toHaveCount(0);
+  await expect(needs).toHaveText("没有待处理");
+  await expect.poll(source).toMatchObject({ status: "running", botConversation: true });
+  await expect(panel).toContainText("运行中 0");
+  await expect.poll(source).toMatchObject({ status: "idle", botConversation: true });
+  await expect.poll(async () => (await api<SessionItem[]>("GET", `/api/sessions/${session.id}/items`)).some((item) => item.type === "agent" && item.markdown === "小鲸鱼说它现在空闲。")).toBe(true);
+  await focus.reload();
+  await expect(needs).toHaveText("没有待处理");
+  await expect(focus.getByTestId("focus-history-toggle")).toHaveCount(0);
+  await expect.poll(badge).toBe(0);
+  await screenshot(app, "studio", "focus-bot-chats", focus, "focus");
+
+  await api("POST", `/api/sessions/${session.id}/messages`, { text: "继续检查普通任务 [[wait]]" });
+  await expect(panel).toContainText("运行中 1");
+  await expect(focus.getByTestId("focus-working")).toContainText("和小鲸鱼聊天");
+  await expect(needs).toHaveText("需要你 1", { timeout: 15_000 });
+  await expect(focus.getByTestId("focus-entry")).toHaveAttribute("data-review", "true");
+  await expect.poll(badge).toBe(1);
+});
 
 test("Focus: the sun switches light and dark themes; settings stay on right-click", async () => {
   studio = await launchStudio();

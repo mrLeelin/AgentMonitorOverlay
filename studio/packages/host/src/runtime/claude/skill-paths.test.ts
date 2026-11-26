@@ -38,6 +38,18 @@ describe("Claude native skill source lookup", () => {
     expect(await claudeSkillPaths([skill("my-plugin:review")], cwd, home)).toEqual([{ ...skill("my-plugin:review"), skillPath: file }]);
   });
 
+  it("reports a plugin's identity from a custom skill directory in the Bot catalog", async () => {
+    const plugin = join(root, "plugin");
+    const file = writeSkill(join(plugin, "workflows", "review"), "review");
+    mkdirSync(join(plugin, ".claude-plugin"));
+    writeFileSync(join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "my-plugin", skills: ["./workflows"] }));
+    mkdirSync(join(home, "plugins"));
+    writeFileSync(join(home, "plugins", "installed_plugins.json"), JSON.stringify({ plugins: { "my-plugin@market": [{ installPath: plugin, projectPath: join(root, "project") }] } }));
+    expect(await claudeSkillPaths([skill("my-plugin:review")], cwd, home, true)).toEqual([
+      { ...skill("my-plugin:review"), skillPath: file, skillScope: "project", skillPluginId: "my-plugin@market" },
+    ]);
+  });
+
   it("omits ambiguous, missing and unrelated custom command paths", async () => {
     writeSkill(join(root, "project", ".claude", "skills", "review"), "review");
     writeSkill(join(home, "skills", "review"), "review");

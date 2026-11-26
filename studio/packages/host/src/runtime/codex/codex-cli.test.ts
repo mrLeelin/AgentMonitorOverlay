@@ -145,6 +145,13 @@ describe("Codex CLI features", () => {
     await expect(runtime.runCommand(s.id, "nope", "")).rejects.toThrow(/没有 \/nope/);
   });
 
+  it("asks for fresh enabled and disabled skill metadata for Bot settings without changing the chat menu", async () => {
+    const catalog = await runtime.listProfileCommands("p-ds", workspace, true);
+    expect(catalog.commands).toMatchObject([{ name: "release-notes", skillScope: "project" }, { name: "disabled-skill", skillDisabled: true }]);
+    expect(servers.fakes.get("p-ds")!.calls.find((call) => call.method === "skills/list")?.params).toEqual({ cwds: [workspace.path], forceReload: true });
+    expect((await runtime.listProfileCommands("p-ds", workspace)).commands.map((command) => command.name)).toEqual(["release-notes"]);
+  });
+
   it("shows retries on the turn, not as rows, and clears them once the model answers", async () => {
     const seen: unknown[] = [];
     runtime.on("event", (e) => {

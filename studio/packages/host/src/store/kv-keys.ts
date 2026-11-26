@@ -73,6 +73,10 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "duty.found", scope: "global", owner: "features/duty/service.ts", what: "值守检查上次找到的" },
   { key: "duty.sessions", scope: "global", owner: "features/duty/service.ts", what: "值守开的会话 → 值守项（留最近 300 个）" },
   { key: "bots.webhooks-device", scope: "global", owner: "features/bots/webhooks.ts", what: "启用了 Bot Webhook 的中转账号和设备" },
+  { key: "bots.enabled", scope: "global", owner: "features/bots/data.ts", what: "是否启用本机 Bots" },
+  { key: "bots.confirmHomeReset", scope: "global", owner: "features/bots/data.ts", what: "新建主聊天之前是否询问" },
+  { key: "bots.sharedSkills", scope: "global", owner: "features/bots/skills.ts", what: "本机 Bot 共有技能" },
+  { key: "bots.sessionPrompt:", scope: "session", owner: "features/bots/data.ts", what: "Bot 聊天启动时解析的技能引用" },
   { key: "issues.sessions", scope: "global", owner: "features/issues/service.ts", what: "问题页：每个问题最后写它的会话（留最近 300 个）" },
   { key: "sessions.inbox", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱里有待送消息的会话" },
   { key: "sessions.inbox.paused", scope: "global", owner: "features/sessions/inbox.ts", what: "用户停止会话后暂停自动投递，重启仍保持" },
@@ -96,7 +100,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "remote.images", scope: "global", owner: "features/remote/copy-images.ts", what: "远程会话里的图片 → 本机的附件" },
   // Per session, task, project: deleted with it (Store.purge)
   { key: "role-stamp:", scope: "session", owner: "core/role.ts", what: "会话上次看到的角色卡" },
-  { key: "message-purpose:", scope: "session", owner: "runtime/message-purpose.ts", what: "结构化消息用途和实际回合用途，旧消息默认继续工作" },
+  { key: "message-purpose:", scope: "session", owner: "runtime/message-purpose.ts", what: "结构化消息用途、实际回合用途和 Bot 对话标记" },
   { key: "codex-lead-readonly:", scope: "session", owner: "runtime/codex/codex-runtime.ts", what: "Codex 主控只读会话的运行时标识" },
   { key: "dsh-lead-readonly:", scope: "session", owner: "runtime/dsh/dsh-runtime.ts", what: "DSH 主控只读会话的运行时标识" },
   { key: "dsh-session-readonly:", scope: "session", owner: "runtime/dsh/dsh-runtime.ts", what: "DSH 创建时只读权限的可核验标识，询问不能仅依赖后改设置" },
@@ -119,3 +123,4 @@ export const kvPrefixes = (scope: "session" | "task" | "workspace"): string[] =>
 /** The session's key that holds its MCP token; the token's own key is `MCP_TOKEN_PREFIX + token`. */
 export const MCP_SESSION_PREFIX = "mcp-identity:session:";
 export const MCP_TOKEN_PREFIX = "mcp-identity:token:";
+export const MESSAGE_PURPOSE_PREFIX = "message-purpose:";

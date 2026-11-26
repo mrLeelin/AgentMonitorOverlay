@@ -44,7 +44,7 @@ export type DutyAction =
   /** A command line, run in project `workspaceId`'s folder (the common folder without one), below normal priority. */
   | { kind: "command"; command: string; workspaceId?: Id | null; timeoutSec?: number }
   /** A fresh conversation of a Bot for each scheduled run. */
-  | { kind: "bot"; botId: Id; prompt: string }
+  | { kind: "bot"; botId: Id; prompt: string; job?: "memory" }
   /** One of Studio's own jobs, by name (DutyState.builtins lists them). */
   | { kind: "builtin"; name: string };
 

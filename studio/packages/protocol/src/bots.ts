@@ -2,18 +2,69 @@ import type { Id, Session, Task, Timestamp } from "./entities.js";
 
 export interface BotInput {
   name: string;
-  /** A compact square PNG data URL. Null selects the default avatar. */
+  /** A compact square PNG data URL or `mascot:<id>`. Null selects the default avatar. */
   avatar?: string | null;
   purpose: string;
   memory: string;
   profileId: Id;
   model?: string | null;
   effort?: string | null;
+  fast?: boolean | null;
+  /** A permission id from this profile. Older records and null use the Bot's read-only default. */
+  permission?: string | null;
   workspaceId: Id | null;
   enabled: boolean;
+  /** Saved assignments for chats created from this Bot. */
+  skills?: BotSkillRef[];
+  preferences?: BotPreferences;
+}
+
+export interface BotPreferences {
+  allowGroupAsk: boolean;
+  inactiveDays: 5 | 7 | 14;
+  notifications: { approval: boolean; completed: boolean; failed: boolean };
+}
+
+export const DEFAULT_BOT_PREFERENCES: BotPreferences = {
+  allowGroupAsk: true, inactiveDays: 5, notifications: { approval: false, completed: false, failed: false },
+};
+
+export interface BotFiles { folder: string; notes: string[] }
+
+export const BOT_SKILL_LIMIT = 40;
+export type BotSkillSource = "global" | "project" | "plugin";
+
+export interface BotSkillRef {
+  id: string;
+  name: string;
+  source: BotSkillSource;
+  label: string;
+}
+
+export interface BotSkillChoice extends BotSkillRef {
+  description: string;
+  path: string;
+  unavailable?: string;
+}
+
+export interface BotSkillCatalog {
+  skills: BotSkillChoice[];
+  note?: string;
+}
+
+/** Orca v1.4.274's mascots, stored as `mascot:<id>` like Orca does; ids are never renamed. */
+export const BOT_MASCOT_IDS = ["A1", "B1", "D1", "E1", "F1", "G1", "H1", "H2", "I1", "J1", "K2", "L2", "M1", "N1", "O1", "P3", "Q1", "R3", "S2", "T1"] as const;
+export type BotMascotId = typeof BOT_MASCOT_IDS[number];
+/** Orca retired S2 from its picker; a Bot that already wears it keeps it. */
+export const PICKABLE_BOT_MASCOT_IDS: readonly BotMascotId[] = BOT_MASCOT_IDS.filter((id) => id !== "S2");
+export const botMascotAvatar = (id: BotMascotId): string => `mascot:${id}`;
+export function botMascotId(avatar: string | null | undefined): BotMascotId | null {
+  const id = avatar?.startsWith("mascot:") ? avatar.slice(7) : null;
+  return BOT_MASCOT_IDS.find((known) => known === id) ?? null;
 }
 
 export const supportsBotRuntime = (runtime: string): boolean => ["codex", "claude", "dsh"].includes(runtime);
+export const defaultBotPermission = (runtime: string): string => runtime === "claude" ? "plan" : "read-only";
 
 export interface StudioBot extends BotInput {
   id: Id;
@@ -72,6 +123,8 @@ export interface BotGroupPost {
   text: string;
   targetIds: Id[];
   createdAt: Timestamp;
+  /** Absent for messages sent by the person, including older group history. */
+  author?: { botId: Id; botName: string };
   replies: BotRequest[];
   dispatchComplete?: boolean;
 }
@@ -93,16 +146,22 @@ export interface BotWebhookEvent {
 }
 
 export interface BotRoutes {
+  "GET /api/bot-skills/shared": { req: void; res: BotSkillRef[] };
+  "PUT /api/bot-skills/shared": { req: { skills: BotSkillRef[] }; res: BotSkillRef[] };
+  "POST /api/bot-skills/catalog": { req: { profileId?: Id; workspaceId?: Id | null }; res: BotSkillCatalog };
   "POST /api/bot-mentions": { req: { id: Id; sourceSessionId: Id; text: string; recipients: BotRecipient[] }; res: { ok: true } };
   "POST /api/bots/:id/mentions": { req: BotRouteInput & { sourceSessionId: Id }; res: { ok: true } };
   "GET /api/bots": { req: void; res: StudioBot[] };
   "GET /api/bots/sidebar": { req: void; res: BotSidebarData };
   "POST /api/bots/import-link": { req: { url: string }; res: BotDraftContent };
   "POST /api/bots": { req: BotInput; res: StudioBot };
-  "PUT /api/bots/:id": { req: BotInput; res: StudioBot };
+  "PUT /api/bots/:id": { req: BotInput & { expectedFiles?: Pick<BotInput, "purpose" | "memory"> }; res: StudioBot };
   "PATCH /api/bots/:id": { req: Partial<Pick<BotInput, "name" | "enabled">>; res: StudioBot };
   "DELETE /api/bots/:id": { req: void; res: { ok: true } };
   "GET /api/bots/:id/chats": { req: void; res: Session[] };
+  "GET /api/bots/:id/files": { req: void; res: BotFiles };
+  "GET /api/bots/:id/notes/:name": { req: void; res: { text: string } };
+  "PUT /api/bots/:id/notes/:name": { req: { text: string; expected: string | null }; res: BotFiles };
   "POST /api/bots/:id/home": { req: { reset?: boolean }; res: Session };
   "POST /api/bots/:id/requests": { req: BotRouteInput; res: BotRequest };
   "GET /api/bot-requests": { req: void; res: BotRequest[] };

@@ -1,10 +1,10 @@
-import { defaultBotPermission, projectWorkspaces, type BotInput, type ModelProfile, type Workspace } from "@amo-studio/protocol";
+import { botMascotAvatar, botMascotId, defaultBotPermission, PICKABLE_BOT_MASCOT_IDS, projectWorkspaces, type BotInput, type ModelProfile, type Workspace } from "@amo-studio/protocol";
 import { useId, useRef, useState } from "react";
 import { IconChevronDown, IconChevronRight, IconEnvironment } from "../chat/icons.js";
 import { EffortPicker } from "../chat/EffortPicker.js";
 import { FastToggle, Mark, PermissionTiles } from "../chat/pickers.js";
 import { ModelDrawer } from "../newtask/ModelRow.js";
-import { BotAvatar, encodeBotAvatar } from "./BotAvatar.js";
+import { BotAvatar, botMascotUrl, encodeBotAvatar, randomBotMascot } from "./BotAvatar.js";
 import { botProfiles } from "./roster.js";
 import type { HostLink } from "../host/client.js";
 import { activeModel, effortLabel, modelName, useChoicesFor, useProfileChoices } from "../lib/choices.js";
@@ -21,15 +21,29 @@ export async function readBotMarkdown(field: BotMarkdownField, file: File): Prom
 }
 
 export function BotAvatarPicker({ draft, busy, change, run }: { draft: Pick<BotInput, "name" | "avatar">; busy: boolean; change: ChangeBotDraft; run(action: () => Promise<void>): Promise<void> }) {
-  return <div className="bot-avatar-picker" data-testid="bot-avatar-preview">
-    <BotAvatar name={draft.name} avatar={draft.avatar} size={54} />
-    <label className="btn-ghost small bot-import">选择头像<input type="file" accept="image/png,image/jpeg,image/webp" aria-label="选择头像" disabled={busy} onChange={(event) => {
-      const file = event.currentTarget.files?.[0];
-      event.currentTarget.value = "";
-      if (file) void run(async () => change("avatar", await encodeBotAvatar(file)));
-    }} /></label>
-    {draft.avatar && <button className="link-btn" type="button" onClick={() => change("avatar", null)} disabled={busy}>恢复默认头像</button>}
-  </div>;
+  const [open, setOpen] = useState(false);
+  const gridId = useId();
+  const current = botMascotId(draft.avatar);
+  // 形象网格作为同级元素放在名称后面，由外层的 flex-wrap 换到下一整行，窄的头像列放不下它。
+  return <>
+    <div className="bot-avatar-picker" data-testid="bot-avatar-preview">
+      <button type="button" className="bot-avatar-trigger" aria-expanded={open} aria-controls={gridId} aria-label="选择形象" title="选择形象" disabled={busy} onClick={() => setOpen((value) => !value)}>
+        <BotAvatar name={draft.name} avatar={draft.avatar} size={54} />
+      </button>
+      <button className="link-btn" type="button" onClick={() => change("avatar", randomBotMascot(draft.avatar))} disabled={busy}>换一个</button>
+      <label className="btn-ghost small bot-import">上传图片<input type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传头像图片" disabled={busy} onChange={(event) => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = "";
+        if (file) void run(async () => change("avatar", await encodeBotAvatar(file)));
+      }} /></label>
+      {draft.avatar && <button className="link-btn" type="button" onClick={() => change("avatar", null)} disabled={busy}>恢复默认头像</button>}
+    </div>
+    {open && <div className="bot-mascot-grid" id={gridId} role="radiogroup" aria-label="形象">
+      {PICKABLE_BOT_MASCOT_IDS.map((id) => <button key={id} type="button" role="radio" aria-checked={current === id} aria-label={`形象 ${id}`} disabled={busy} onClick={() => change("avatar", botMascotAvatar(id))}>
+        <img src={botMascotUrl(id)} alt="" draggable={false} />
+      </button>)}
+    </div>}
+  </>;
 }
 
 export function BotModelField({ link, profiles, draft, change, disabled }: { link: HostLink; profiles: readonly ModelProfile[]; draft: BotInput; change: ChangeBotDraft; disabled: boolean }) {
@@ -43,7 +57,9 @@ export function BotModelField({ link, profiles, draft, change, disabled }: { lin
   const catalogs = useChoicesFor(link, open ? choices.map((p) => p.id) : []);
   const close = () => { setOpen(false); trigger.current?.focus(); };
   const title = modelName(model) ?? draft.model ?? current?.label ?? "选择模型";
-  const permission = draft.permission ?? defaultBotPermission(current?.runtime ?? "");
+  const readOnlyPermission = defaultBotPermission(current?.runtime ?? "");
+  const loadingCatalog = !!current && !catalog && !error;
+  const effortHint = draft.effort ? `${effortLabel(draft.effort)} · 已保存` : loadingCatalog ? "正在读取…" : "此型号不提供强度设置";
   const fastProps = { fast: model?.fast, value: draft.fast ?? undefined, onChange: (fast: boolean) => change("fast", fast), disabled };
   const pickModel = (profileId: string, modelId: string | null) => {
     if (draft.profileId !== profileId || (draft.model ?? null) !== modelId) {
@@ -78,13 +94,13 @@ export function BotModelField({ link, profiles, draft, change, disabled }: { lin
       {model?.efforts.length ? <EffortPicker key={draft.profileId + "/" + model.id} efforts={model.efforts} value={draft.effort ?? null}
         fallback={model.defaultEffort} modelLabel={title} fastControl={<FastToggle {...fastProps} iconOnly />} disabled={disabled}
         onChange={(effort) => change("effort", effort)} onOpen={() => setOpen(false)} onModel={() => { setOpen(true); trigger.current?.focus(); }} />
-        : <><small className="settings-hint">{draft.effort ? `${effortLabel(draft.effort)} · 已保存` : model ? "此型号不提供强度设置" : catalog || error || !current ? "暂无可选档位" : "正在读取…"}</small><FastToggle {...fastProps} small /></>}
+        : <><small className="settings-hint">{effortHint}</small><FastToggle {...fastProps} small /></>}
     </div>
     <div className="bot-permission-panel">
       <div className="tray-h">权限 <span className="tray-note">新聊天生效</span></div>
-      {catalog?.permissions.length ? <PermissionTiles choices={catalog} value={permission} onChange={(id) => change("permission", id)} disabled={disabled}
-        descriptions={{ [defaultBotPermission(current?.runtime ?? "")]: "只读项目文件，不能写入" }} />
-        : <small className="settings-hint">{catalog || error || !current ? "暂无可选权限" : "正在读取…"}</small>}
+      {catalog?.permissions.length ? <PermissionTiles choices={catalog} value={draft.permission ?? readOnlyPermission} onChange={(id) => change("permission", id)} disabled={disabled}
+        descriptions={{ [readOnlyPermission]: "只读项目文件，不能写入" }} />
+        : <small className="settings-hint">{loadingCatalog ? "正在读取…" : "暂无可选权限"}</small>}
     </div>
     {error && <small className="form-error">{error}</small>}
   </>;

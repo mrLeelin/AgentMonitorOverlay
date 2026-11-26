@@ -28,7 +28,7 @@
 
 ## 还开着的事
 
-- Orca Bots 迁移在 `feat/studio-bots`。本机 Bot、头像、主聊天与 `@` 路由、群组、值守、独立工作树和通用 Webhook 已接入。第三方连接器、移动端和跨设备 Bot 尚待补齐。见 `plans/studio-bots.md`。
+- Orca Bots 迁移在 `feat/studio-bots`。本机 Bot、头像、主聊天与 `@` 路由、群组、值守、独立工作树和通用 Webhook 已接入。单个 Bot 的分区设置、独立资料目录、巡视和记忆整理已接入。群聊支持近期同群记录及 Bot 代用户向群成员提问。第三方连接器、移动端和跨设备 Bot 尚待补齐。见 `plans/studio-bots.md`。
 
 - Plane 团队任务在 Studio 右侧工作区加载原生看板，支持创建个人任务和只读 MCP 核对原单。「高级设置 → 功能开关」可在本机隐藏入口并停用接口，保留既有连接和原单关联。待团队部署 Plane 覆盖层和 Studio Host。方案 `plans/done/plane-team-tasks.md`。
 - Studio 接入 Unity 方案待确认：首版在会话点击 `@Prefab`，打开对应工程并选中资源。方案见 `plans/studio-unity-connection.md`。

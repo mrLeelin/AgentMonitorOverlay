@@ -4,13 +4,13 @@ import { inTurn, type ApprovalDecision, type Attachment, type Id, type ModelOpti
 import type { Store } from "../../store/store.js";
 import { codexThreadParams, profileGone, type CodexConfig } from "../profiles.js";
 import { McpIdentities } from "../../mcp/identity.js";
-import { isBotTask, isReadOnlyTask, newChatOptions, updatedChatOptions } from "../../features/bots/data.js";
+import { botSessionPrompt, botSessionPromptKey, botTaskInstructions, isBotTask, isReadOnlyTask, newChatOptions, updatedChatOptions } from "../../features/bots/data.js";
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
 import { RuntimeBase, STOP_GRACE_MS, type ForkTarget, type InterruptOptions, type RuntimeEvents, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
 import { personsMessage, unreadDelivery, withDelivery } from "../items.js";
-import { queueMessagePurpose } from "../message-purpose.js";
+import { isBotConversationInput, queueMessagePurpose } from "../message-purpose.js";
 import type { CodexServerHandle } from "./server-manager.js";
 import { codexUsage, reviewTarget, STANDARD_TIER, toModelOption, type CodexModel, type CodexSkill, type GetAccountRateLimitsResponse } from "./account.js";
 import { CodexAsks } from "./asks.js";
@@ -122,16 +122,19 @@ export class CodexRuntime extends RuntimeBase {
   async startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]): Promise<Session> {
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
-    const token = isBotTask(this.store, input.taskId) ? undefined : this.options.identities?.issue();
+    const bot = isBotTask(this.store, input.taskId);
+    const token = this.options.identities?.issue(bot);
     const options = newChatOptions(this.store, input.taskId, profile.id, "codex", input.options);
-    const role = token ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
-    const developerInstructions = input.developerInstructions ?? role;
+    const role = token && !bot ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
+    const persona = input.developerInstructions ?? role ?? botTaskInstructions(this.store, input.taskId);
+    const developerInstructions = [persona, input.botSkillPrompt].filter(Boolean).join("\n\n");
     const params = this.threadParams(profile, token);
     const cwd = input.cwd ?? input.workspace.path;
     const lead = await this.leadConfig(handle, input.taskId, cwd);
+    const permissions = this.permissions(options, input.taskId);
     const started = await handle.client.request("thread/start", {
       cwd,
-      ...this.permissions(options, input.taskId),
+      ...permissions,
       ...params,
       ...(lead.config ? { config: { ...params.config, ...lead.config } } : {}),
       ...(options.model ? { model: options.model } : {}),
@@ -148,8 +151,8 @@ export class CodexRuntime extends RuntimeBase {
       title: input.title ?? "",
       runtimeRef: started.thread.id,
       options,
-    });
-    if (this.restrictedTask(input.taskId, options)) this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
+    }, input.botSkillPrompt ? developerInstructions : undefined);
+    if (lead.config && permissions.sandbox === "read-only" && permissions.approvalPolicy === "never") this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (role) this.options.roleGiven?.(session.id);
     if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
@@ -243,7 +246,7 @@ export class CodexRuntime extends RuntimeBase {
       if (row) { this.assertCurrentMessage(sessionId, row); setDelivery(row, undefined); }
       options.beforeDispatch?.();
       const purpose = options.purpose ?? "work";
-      queueMessagePurpose(this.store, sessionId, purpose, false);
+      queueMessagePurpose(this.store, sessionId, purpose, false, !!row && isBotConversationInput(this.store.getItem(row)));
       await handle.client.request("turn/start", { threadId: session.runtimeRef!, input, ...(clientId ? { clientUserMessageId: clientId } : {}), ...this.turnOptions(this.requireSession(sessionId).options, session.taskId, purpose), ...tier });
     } catch (err) {
       if (row && clientId) {
@@ -321,7 +324,7 @@ export class CodexRuntime extends RuntimeBase {
       this.assertCurrentMessage(sessionId, first.itemId);
       const firstRow = this.store.getItem(first.itemId);
       this.checkGoalPurpose(this.requireSession(sessionId), firstRow?.type === "user" ? firstRow.messagePurpose : undefined);
-      queueMessagePurpose(this.store, sessionId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work", false);
+      queueMessagePurpose(this.store, sessionId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work", false, isBotConversationInput(firstRow));
       this.updateItem(first.itemId, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
       await handle.client.request("turn/start", { threadId: session.runtimeRef, input: first.input, clientUserMessageId: firstId, ...this.turnOptions(this.requireSession(sessionId).options, session.taskId, firstRow?.type === "user" ? firstRow.messagePurpose ?? "work" : "work"), ...tier });
     } catch (err) {
@@ -598,17 +601,21 @@ export class CodexRuntime extends RuntimeBase {
     if (!parent.runtimeRef) throw new Error(`session ${sessionId} has no thread yet`);
     const profile = this.profile(profileId ?? parent.profileId);
     const handle = await this.handleFor(parent.profileId);
-    const token = isBotTask(this.store, parent.taskId) ? undefined : this.options.identities?.issue();
+    const token = this.options.identities?.issue(isBotTask(this.store, parent.taskId));
     const cwd = target?.cwd ?? parent.cwd;
     const lead = await this.leadConfig(handle, parent.taskId, cwd ?? this.store.getWorkspace(parent.workspaceId)?.path);
+    const permissions = this.permissions(parent.options, parent.taskId);
     const params = this.threadParams(profile, token);
+    const storedPrompt = botSessionPrompt(this.store, parent.id);
+    const forkPrompt = storedPrompt && (profile.id !== parent.profileId || cwd !== parent.cwd) ? botTaskInstructions(this.store, parent.taskId) : storedPrompt;
     const release = this.events.holdForks(parent.runtimeRef);
     let created: string | undefined;
     try {
       const r = await handle.client.request("thread/fork", {
-        threadId: parent.runtimeRef, ...params, ...this.permissions(parent.options, parent.taskId),
+        threadId: parent.runtimeRef, ...params, ...permissions,
         ...(target ? { lastTurnId: target.lastTurnId } : {}),
         ...(cwd ? { cwd } : {}),
+        ...(forkPrompt ? { developerInstructions: forkPrompt } : {}),
         ...(lead.config ? { config: { ...params.config, ...lead.config } } : {}),
       });
       created = r.thread.id;
@@ -619,7 +626,8 @@ export class CodexRuntime extends RuntimeBase {
       }
       if (this.requireSession(sessionId).archivedAt) throw new Error("原会话已归档，请恢复后重试。");
       const fork = this.events.adoptThread(r.thread, parent, "fork", parent.profileId);
-      if (this.restrictedTask(parent.taskId, parent.options)) this.store.setKv(`codex-lead-readonly:${fork.id}`, r.thread.id);
+      if (forkPrompt) this.store.setKv(botSessionPromptKey(fork.id), forkPrompt);
+      if (lead.config && permissions.sandbox === "read-only" && permissions.approvalPolicy === "never") this.store.setKv(`codex-lead-readonly:${fork.id}`, r.thread.id);
       if (token) this.options.identities!.bind(token, fork.id);
       return fork;
     } catch (err) {
@@ -692,11 +700,11 @@ export class CodexRuntime extends RuntimeBase {
     return workspace ? this.commandsFor(session.profileId, session.cwd ? { ...workspace, path: session.cwd } : workspace, true) : { commands: [] };
   }
 
-  async listProfileCommands(profileId: Id, workspace: Workspace): Promise<SlashCommandList> {
-    return this.commandsFor(profileId, workspace, false);
+  async listProfileCommands(profileId: Id, workspace: Workspace, botSkills = false): Promise<SlashCommandList> {
+    return this.commandsFor(profileId, workspace, false, botSkills);
   }
 
-  private async commandsFor(profileId: Id, workspace: Workspace, review: boolean): Promise<SlashCommandList> {
+  private async commandsFor(profileId: Id, workspace: Workspace, review: boolean, botSkills = false): Promise<SlashCommandList> {
     this.profile(profileId);
     const commands: SlashCommand[] = review ? [
       {
@@ -707,8 +715,9 @@ export class CodexRuntime extends RuntimeBase {
       },
     ] : [];
     try {
-      for (const skill of await this.profileSkills(profileId, workspace.path)) {
-        commands.push({ name: skill.name, description: (skill.shortDescription || skill.description).replace(/\s+/g, " ").trim(), group: "skill", skillPath: skill.path });
+      for (const skill of await this.profileSkills(profileId, workspace.path, botSkills)) {
+        commands.push({ name: skill.name, description: (skill.shortDescription || skill.description).replace(/\s+/g, " ").trim(), group: "skill", skillPath: skill.path,
+          ...(botSkills && skill.pluginId ? { skillPluginId: skill.pluginId } : {}), ...(botSkills && skill.scope ? { skillScope: skill.scope === "repo" ? "project" : "global" } : {}), ...(botSkills && skill.enabled === false ? { skillDisabled: true } : {}) });
       }
       return { commands };
     } catch (err) {
@@ -723,15 +732,16 @@ export class CodexRuntime extends RuntimeBase {
     return this.profileSkills(session.profileId, cwd);
   }
 
-  private async profileSkills(profileId: Id, cwd: string): Promise<CodexSkill[]> {
+  private async profileSkills(profileId: Id, cwd: string, botSkills = false): Promise<CodexSkill[]> {
     const key = `${profileId}|${cwd}`;
     const cached = this.skillCache.get(key);
-    if (cached && Date.now() - cached.at < 60_000) return cached.skills;
+    if (!botSkills && cached && Date.now() - cached.at < 60_000) return cached.skills;
     const handle = await this.handleFor(profileId);
-    const r = (await handle.client.request("skills/list", { cwds: [cwd] })) as unknown as { data: Array<{ skills: CodexSkill[] }> };
-    const skills = r.data.flatMap((e) => e.skills).filter((s) => s.enabled !== false);
-    this.skillCache.set(key, { at: Date.now(), skills });
-    return skills;
+    const r = (await handle.client.request("skills/list", { cwds: [cwd], ...(botSkills ? { forceReload: true } : {}) })) as unknown as { data: Array<{ skills: CodexSkill[] }> };
+    const skills = r.data.flatMap((e) => e.skills);
+    const enabled = skills.filter((skill) => skill.enabled !== false);
+    this.skillCache.set(key, { at: Date.now(), skills: enabled });
+    return botSkills ? skills : enabled;
   }
 
   /**
@@ -968,28 +978,31 @@ export class CodexRuntime extends RuntimeBase {
     if (servers && typeof servers === "object" && !Array.isArray(servers)) {
       // Only amend an existing server: tool settings alone would create an AMO entry with no transport.
       const amo = servers.amo;
-      if (!bot && amo && typeof amo === "object" && !Array.isArray(amo)) {
-        for (const name of LEAD_MANAGEMENT_TOOLS) config[`mcp_servers.amo.tools.${name}.approval_mode`] = "approve";
+      if (amo && typeof amo === "object" && !Array.isArray(amo)) {
+        if (bot && this.options.identities) config["mcp_servers.amo.enabled"] = true;
+        if (!bot) for (const name of LEAD_MANAGEMENT_TOOLS) config[`mcp_servers.amo.tools.${name}.approval_mode`] = "approve";
       }
       for (const name of Object.keys(servers)) {
         if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Codex MCP 服务名无法安全隔离，不能启动只读主控。");
-        if (bot || name !== "amo") config[`mcp_servers.${name}.enabled`] = false;
+        if (name !== "amo" || (bot && !this.options.identities)) config[`mcp_servers.${name}.enabled`] = false;
       }
     }
     return { config };
   }
 
-  private async resumeConfig(handle: CodexServerHandle, session: Session): Promise<{ config: CodexConfig; cwd?: string }> {
+  private async resumeConfig(handle: CodexServerHandle, session: Session): Promise<{ config: CodexConfig; cwd?: string; developerInstructions?: string }> {
     this.requireLeadThread(session);
     const lead = await this.leadConfig(handle, session.taskId, session.cwd ?? this.store.getWorkspace(session.workspaceId)?.path);
-    return { config: { ...this.identityConfig(session.id).config, ...lead.config }, ...(session.cwd ? { cwd: session.cwd } : {}) };
+    const prompt = botSessionPrompt(this.store, session.id);
+    return { config: { ...this.identityConfig(session.id).config, ...lead.config }, ...(session.cwd ? { cwd: session.cwd } : {}), ...(prompt ? { developerInstructions: prompt } : {}) };
   }
 
   /** For thread/resume: the session's identity header (takes effect when the server loads the thread again). */
   /** thread/resume's config: the AMO MCP identity header and the 自动压缩点. */
   private identityConfig(sessionId: Id): { config: CodexConfig } {
+    const session = this.requireSession(sessionId);
     const ids = this.options.identities;
-    return { config: { ...codexAutoCompactConfig(this.store, this.store.getSession(sessionId)?.profileId), ...(ids ? McpIdentities.threadConfig(ids.tokenFor(sessionId)) : {}) } };
+    return { config: { ...codexAutoCompactConfig(this.store, session.profileId), ...(ids ? McpIdentities.threadConfig(ids.tokenFor(sessionId, isBotTask(this.store, session.taskId))) : {}) } };
   }
 
   private async handleFor(profileId: Id): Promise<CodexServerHandle> {

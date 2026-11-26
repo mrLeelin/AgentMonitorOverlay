@@ -901,6 +901,8 @@ export type HostErrorCode = "bad_request" | "not_found" | "conflict" | "read_onl
 /** Events on `ws://127.0.0.1:<port>/api/events?since=<eventSeq>`. `seq` is global and monotonic. */
 export type HostEvent = { seq: number } & (
   | { type: "bots.changed" }
+  | { type: "bot-files.changed"; botId: Id }
+  | { type: "bot.notification"; botId: Id; botName: string; notice: "approval" | "completed" | "failed" }
   | { type: "bot-groups.changed" }
   | { type: "bot-group-posts.changed"; groupId: Id }
   | { type: "workspace.upserted"; workspace: Workspace }
