@@ -4,18 +4,20 @@
     {
       "id": "ui.composer",
       "label": "输入框和行内资源",
-      "aliases": ["输入框", "光标", "拖入", "粘贴", "行内图片", "网址", "附件", "富文本", "撤销"],
+      "aliases": ["输入框", "光标", "拖入", "粘贴", "行内图片", "网址", "附件", "富文本", "撤销", "绘图", "草图", "添加菜单"],
       "category": "ui",
-      "purpose": "新建任务、远程新建任务和会话共用的行内资源编辑器：图片、文件、网址在光标处插入，支持整块删除、撤销和预览。草稿存文本与资源标记；发送前转换为编号图片、文件引用与真实图片 id，消息气泡按编号原位显示。不要把仅用于编辑的资源标记传给模型。",
+      "purpose": "新建任务、远程新建任务和会话共用的行内资源编辑器：图片、文件、网址在光标处插入，支持整块删除、撤销和预览。「+」打开文件和文件夹、绘图、目标模式；确认绘图后将 PNG 走现有图片上传和插入流程。草稿存文本与资源标记；发送前转换为编号图片、文件引用与真实图片 id，消息气泡按编号原位显示。不要把仅用于编辑的资源标记传给模型。",
       "anchors": [
         { "label": "编辑器和选择区", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "export function ResourceInput" },
         { "label": "上传和粘贴接入", "path": "studio/packages/ui/src/attach/AttachmentInput.tsx", "anchor": "export function AttachmentInput" },
+        { "label": "输入框添加菜单", "path": "studio/packages/ui/src/attach/ComposerAddMenu.tsx", "anchor": "export function ComposerAddMenu" },
+        { "label": "绘图面板与 PNG 导出", "path": "studio/packages/ui/src/attach/SketchDialog.tsx", "anchor": "export function SketchDialog" },
         { "label": "资源发送格式", "path": "studio/packages/ui/src/attach/inlineResources.ts", "anchor": "export function resourceMessage" },
         { "label": "消息气泡行内显示", "path": "studio/packages/ui/src/attach/InlineMessage.tsx", "anchor": "export function inlineMessage" },
         { "label": "对话图片在独立查看器打开", "path": "studio/packages/ui/src/attach/MessageAttachments.tsx", "anchor": "export function MessageImages" }
       ],
-      "related": ["ui.chat", "studio.files", "studio.sessions"],
-      "next": ["studio/e2e/studio/inline-resources.spec.ts", "studio/packages/ui/src/attach/useAttachments.ts"]
+      "related": ["ui.chat", "studio.files", "studio.sessions", "runtime.goals"],
+      "next": ["studio/e2e/studio/composer-tools.spec.ts", "studio/e2e/studio/inline-resources.spec.ts", "studio/packages/ui/src/attach/useAttachments.ts"]
     }
   ]
 }

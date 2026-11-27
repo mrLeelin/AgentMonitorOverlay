@@ -3,7 +3,7 @@ import type { RemoteCatalog, RemoteState, Task } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { onHostEvent } from "../host/events.js";
 import { StartingCover } from "../lib/StartingCover.js";
-import { IconPaperclip } from "../attach/icons.js";
+import { ComposerAddMenu } from "../attach/ComposerAddMenu.js";
 import { useAttachments } from "../attach/useAttachments.js";
 import { AttachmentInput } from "../attach/AttachmentInput.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
@@ -87,7 +87,6 @@ export function RemoteDraft({
   const input = useRef<ResourceInputHandle>(null);
   // Pictures and files go along (2026-10-29 evening): this computer's Host sends them to the device before the task.
   const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
-  const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
   // The device's catalog, each time it is picked (or comes online).
@@ -331,20 +330,7 @@ export function RemoteDraft({
         />
         <SlashMenu slash={slash} />
         <div className="cbar">
-          <button type="button" className="round-btn attach" aria-label="添加图片或文件" title="添加图片或文件（也可以粘贴截图或拖进来）：开始时一起传到那台电脑" onClick={() => picker.current?.click()} data-testid="remote-draft-attach">
-            <IconPaperclip />
-          </button>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            data-testid="remote-draft-attach-input"
-            onChange={(e) => {
-              attach.addDropped([...(e.currentTarget.files ?? [])]);
-              e.currentTarget.value = "";
-            }}
-          />
+          <ComposerAddMenu key={deviceKey} attach={attach} fileInputId="remote-draft-attach-input" disabled={busy} remote />
           <div className="model-row" role="group" aria-label="模型">
             {(catalog && !problem ? catalog.models : []).map((m) => (
               <button key={m.id} type="button" className="chip" aria-pressed={m.id === profileId} onClick={() => setProfileId(m.id)} data-testid="remote-draft-model">

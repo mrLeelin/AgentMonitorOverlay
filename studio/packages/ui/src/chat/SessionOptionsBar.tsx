@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ModelProfile, Session, SessionOptions, SessionPreset, Task, Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { optionsSummary, sameOptions, sessionModel, useProfileChoices } from "../lib/choices.js";
@@ -9,6 +9,8 @@ import { IconShield, IconChevronDown } from "./icons.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { SessionMcpTray, useSessionMcp } from "../mcp/SessionMcp.js";
 import { SessionGoalButton, SessionGoalTray, useSessionGoal } from "./SessionGoal.js";
+import { ComposerAddMenu } from "../attach/ComposerAddMenu.js";
+import type { AttachmentsState } from "../attach/useAttachments.js";
 
 // Under the composer: what the session runs with — model, effort, permissions — each one click away
 // (design/ui-directions/new-task.html, "会话中切换"). Clicking the model or the permissions opens that group above the
@@ -18,7 +20,8 @@ import { SessionGoalButton, SessionGoalTray, useSessionGoal } from "./SessionGoa
 type Tray = "model" | "permission" | "mcp" | "goal" | null;
 
 export function SessionOptionsBar({
-  children,
+  attach,
+  composerDisabled,
   link,
   session,
   profile,
@@ -28,7 +31,8 @@ export function SessionOptionsBar({
   sessions,
   projects,
 }: {
-  children: ReactNode;
+  attach: AttachmentsState;
+  composerDisabled: boolean;
   link: HostLink;
   session: Session;
   profile: ModelProfile | undefined;
@@ -45,6 +49,7 @@ export function SessionOptionsBar({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const goalTray = useRef<HTMLDivElement>(null);
   const mcp = useSessionMcp(link, session);
   const goal = useSessionGoal(link, session);
   const mcpOn = mcp.state?.entries.filter((e) => e.on).length ?? 0;
@@ -136,7 +141,7 @@ export function SessionOptionsBar({
         </div>
       )}
       {tray === "goal" && goal.supported && (
-        <div className="tray goal-tray" role="dialog" aria-label="Goal 目标" data-testid="options-tray">
+        <div ref={goalTray} className="tray goal-tray" role="dialog" aria-label="Goal 目标" tabIndex={-1} data-testid="options-tray">
           <SessionGoalTray control={goal} disabled={disabled || !!session.archivedAt} tasks={tasks} sessions={sessions} projects={projects} />
         </div>
       )}
@@ -173,7 +178,15 @@ export function SessionOptionsBar({
         </div>
       )}
       <div className="status-line" title={optionsSummary(choices, { ...session.options, model: model?.id ?? session.options.model })}>
-        {children}
+        <ComposerAddMenu key={session.id} attach={attach} fileInputId="attach-input" disabled={composerDisabled} remote={session.runtime === "remote"}
+          goal={session.runtime === "remote" ? undefined : {
+            detail: goal.supported ? goal.goal ? "查看或管理当前目标" : "设定要持续追求的目标" : "当前模型暂不支持",
+            action: goal.supported && !disabled ? () => {
+              goal.refresh();
+              setTray("goal");
+              requestAnimationFrame(() => goalTray.current?.focus({ preventScroll: true }));
+            } : undefined,
+          }} />
         <button
           type="button"
           className="seg-btn"

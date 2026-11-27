@@ -45,14 +45,14 @@ export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () =
 }
 
 /** Where a menu opened at `at` goes so that it stays inside the window (near the right or bottom edge: leftwards or upwards). */
-export function useInWindow(box: RefObject<HTMLElement | null>, at: { x: number; y: number }): { x: number; y: number } {
+export function useInWindow(box: RefObject<HTMLElement | null>, at: { x: number; y: number }, above = false): { x: number; y: number } {
   const [pos, setPos] = useState(at);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return setPos(at);
     const r = el.getBoundingClientRect();
-    setPos({ x: Math.max(4, Math.min(at.x, window.innerWidth - r.width - 4)), y: Math.max(4, Math.min(at.y, window.innerHeight - r.height - 4)) });
-  }, [at.x, at.y]); // eslint-disable-line react-hooks/exhaustive-deps
+    setPos({ x: Math.max(4, Math.min(at.x, window.innerWidth - r.width - 4)), y: Math.max(4, Math.min(at.y - (above ? r.height : 0), window.innerHeight - r.height - 4)) });
+  }, [at.x, at.y, above]); // eslint-disable-line react-hooks/exhaustive-deps
   return pos;
 }
 
@@ -66,6 +66,7 @@ export function ContextMenu({
   onKeyDown,
   boxRef,
   trigger,
+  above,
   children,
 }: {
   at: { x: number; y: number };
@@ -77,12 +78,13 @@ export function ContextMenu({
   onKeyDown?: (e: ReactKeyboardEvent<HTMLDivElement>) => void;
   boxRef?: RefObject<HTMLDivElement | null>;
   trigger?: HTMLElement;
+  above?: boolean;
   children: ReactNode;
 }) {
   const own = useRef<HTMLDivElement>(null);
   const box = boxRef ?? own;
   useMenuDismiss(box, onClose, { trigger });
-  const pos = useInWindow(box, at);
+  const pos = useInWindow(box, at, above);
   return (
     <div className={`ctx-menu${className ? ` ${className}` : ""}`} role="menu" aria-label={label} style={{ left: pos.x, top: pos.y }} ref={box} onContextMenu={(e) => e.preventDefault()} onKeyDown={onKeyDown} data-testid={testId}>
       {children}

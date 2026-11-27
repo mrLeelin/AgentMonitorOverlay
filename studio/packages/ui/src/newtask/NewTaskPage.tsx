@@ -28,7 +28,7 @@ import { AttachmentInput } from "../attach/AttachmentInput.js";
 import { SlashMenu, useSlashCommands } from "../chat/cli/SlashMenu.js";
 import type { ResourceInputHandle } from "../attach/ResourceInput.js";
 import { resourceMessage, resourceTitle } from "../attach/inlineResources.js";
-import { IconPaperclip } from "../attach/icons.js";
+import { ComposerAddMenu } from "../attach/ComposerAddMenu.js";
 import { IconBranch, IconChevronDown, IconShield } from "../chat/icons.js";
 import { useRemote } from "../remote/remote.js";
 import { RemoteDraft } from "./RemoteDraft.js";
@@ -101,7 +101,6 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const input = useRef<ResourceInputHandle>(null);
   // Images and files pasted, dropped or picked go with the first sentence (2026-10-19); they are not kept in the draft.
   const attach = useAttachments(link, { text: draft.text, insert: (text) => input.current?.insert(text) });
-  const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const settings = useSettings(link);
   const presets = settings?.presets ?? [];
@@ -114,6 +113,11 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // 接续已有会话 (2026-11-05): the outside session picked; not kept in the draft (it may be taken on elsewhere meanwhile).
   const [resume, setResume] = useState<OutsideSession | null>(null);
   const [pickingResume, setPickingResume] = useState(false);
+  const goalDisabled = busy || !!resume || (!draft.goal && !supportsDraftGoal(runtime));
+  const toggleGoal = () => {
+    update({ goal: draft.goal ? undefined : { tokenBudget: "", roundBudget: "" } });
+    setError("");
+  };
   const subscription = profiles.find((p) => p.id === CLAUDE_SUBSCRIPTION && !p.hidden && !p.unavailable);
   const [worktreeSelection, setWorktreeSelection] = useState<{ workspaceId: string; choice: WorktreeChoice }>();
   const [worktreeDialog, setWorktreeDialog] = useState<string>();
@@ -448,20 +452,15 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
             <MentionList mentions={mentions} />
             <SlashMenu slash={slash} inline />
             <div className="cbar draft-tools">
-              <button type="button" className="round-btn attach" aria-label="添加图片或文件" title="添加图片或文件（也可以粘贴或拖进来）" onClick={() => picker.current?.click()}>
-                <IconPaperclip />
-              </button>
-              <input
-                ref={picker}
-                type="file"
-                multiple
-                hidden
-                data-testid="draft-attach-input"
-                onChange={(e) => {
-                  attach.addDropped([...(e.currentTarget.files ?? [])]);
-                  e.currentTarget.value = "";
-                }}
-              />
+              <ComposerAddMenu attach={attach} fileInputId="draft-attach-input" disabled={busy} goal={{
+                detail: resume ? "接续后可在会话内开启" : draft.goal ? "已开启，点击关闭" : supportsDraftGoal(runtime) ? "把第一句话作为持续目标" : "当前模型暂不支持",
+                action: goalDisabled ? undefined : () => {
+                  toggleGoal();
+                  setDrawer(false);
+                  setMoreOptions(true);
+                  input.current?.focus();
+                },
+              }} />
               <button
                 type="button"
                 className="round-btn attach draft-worktree-btn"
@@ -507,7 +506,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
             </div>}
             <div className="composer-extra draft-extra" id={optionsId} hidden={!moreOptions}>
               <FastToggle {...fastProps} small />
-              <button type="button" className="chip small" aria-pressed={!!draft.goal} disabled={busy || !!resume || (!draft.goal && !supportsDraftGoal(runtime))} onClick={() => { update({ goal: draft.goal ? undefined : { tokenBudget: "", roundBudget: "" } }); setError(""); }} title={resume ? "接续后在会话内开启 Goal" : "把第一句话作为目标，开始后自动继续执行"} data-testid="draft-goal-toggle">Goal {draft.goal ? "已开启" : "关闭"}</button>
+              <button type="button" className="chip small" aria-pressed={!!draft.goal} disabled={goalDisabled} onClick={toggleGoal} title={resume ? "接续后在会话内开启 Goal" : "把第一句话作为目标，开始后自动继续执行"} data-testid="draft-goal-toggle">Goal {draft.goal ? "已开启" : "关闭"}</button>
             </div>
             {moreOptions && draft.goal && <div className="draft-goal goal-content" data-testid="draft-goal-options">
               <div className="tray-note">第一句话就是 Goal 目标，开始后 Agent 会围绕目标自动继续执行；最多 4000 个字符（含引用内容）。</div>

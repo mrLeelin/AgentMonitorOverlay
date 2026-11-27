@@ -44,7 +44,7 @@ test("new-task footer opens templates at the caret and files from the bottom rig
     const templateBox = (await templates.boundingBox())!;
     const fileBox = (await file.boundingBox())!;
     const composerBox = (await page.locator(".draft-composer").boundingBox())!;
-    const attachBox = (await page.getByRole("button", { name: "添加图片或文件", exact: true }).boundingBox())!;
+    const attachBox = (await page.getByRole("button", { name: "添加", exact: true }).boundingBox())!;
     const branchBox = (await page.getByTestId("draft-worktree-open").boundingBox())!;
     const modelBox = (await page.getByTestId("all-models").boundingBox())!;
     expect(attachBox.x + attachBox.width).toBeLessThanOrEqual(branchBox.x);

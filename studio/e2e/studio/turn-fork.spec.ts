@@ -98,7 +98,7 @@ test("新建任务从附件旁设置分支，并在所选分支的工作树启�
   await expect(trigger).toBeDisabled();
   await page.getByRole("group", { name: "项目", exact: true }).getByRole("button", { name: workspace.name, exact: true }).click();
   await expect(trigger).toBeEnabled();
-  const attach = (await page.getByRole("button", { name: "添加图片或文件", exact: true }).boundingBox())!;
+  const attach = (await page.getByRole("button", { name: "添加", exact: true }).boundingBox())!;
   const icon = (await trigger.boundingBox())!;
   expect(icon.x).toBeGreaterThan(attach.x);
   expect(icon.y).toBe(attach.y);

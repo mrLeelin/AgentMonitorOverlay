@@ -20,7 +20,6 @@ import { resourceMessage } from "../attach/inlineResources.js";
 import { splitFileRefItems } from "../attach/refs.js";
 import { mentionSpans, splitMentionRefs } from "../attach/mentions.js";
 import { AttachLink } from "../attach/MessageAttachments.js";
-import { IconPaperclip } from "../attach/icons.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
 import { FileSelector } from "../attach/FileSelector.js";
 import { SubSessionDialog } from "../attach/SubSessionDialog.js";
@@ -215,7 +214,6 @@ export function Thread({ link, bots, botsEnabled, botBlock, presets, session, fi
   useEffect(() => resetAttach(), [session?.id, resetAttach]);
   useEffect(() => setFinding(null), [session?.id]);
   const [dragging, setDragging] = useState(false);
-  const picker = useRef<HTMLInputElement>(null);
 
   // A question the agent waits on opens as a card over the conversation (a second-level popup: the conversation and
   // the composer keep their place; a plan review sits above the composer instead). It can be folded to a strip, or
@@ -861,29 +859,7 @@ ${d}` : restored));
             <MentionList mentions={mentions} />
             <SlashMenu slash={slash} />
             <div className="chat-bar">
-              <SessionOptionsBar link={link} session={session} profile={profile} presets={presets} disabled={readOnly || isRemote} tasks={tasks} sessions={sessions} projects={projects ?? []}>
-                <button
-                  type="button"
-                  className="round-btn attach"
-                  aria-label="添加图片或文件"
-                  title={isRemote ? "添加图片或文件（也可以粘贴截图或拖进来）：发送时一起传到那台电脑，每个最多 20 MB" : "添加图片或文件（也可以粘贴或拖进来）"}
-                  disabled={readOnly}
-                  onClick={() => picker.current?.click()}
-                >
-                  <IconPaperclip />
-                </button>
-                <input
-                  ref={picker}
-                  type="file"
-                  multiple
-                  hidden
-                  data-testid="attach-input"
-                  onChange={(e) => {
-                    attach.addDropped([...(e.currentTarget.files ?? [])]);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </SessionOptionsBar>
+              <SessionOptionsBar link={link} session={session} attach={attach} composerDisabled={readOnly} profile={profile} presets={presets} disabled={readOnly || isRemote} tasks={tasks} sessions={sessions} projects={projects ?? []} />
               <div className="chat-send-actions">
                 <span
                   className="composer-hint"
