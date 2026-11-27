@@ -132,6 +132,23 @@ describe("Store", () => {
     expect(migrated.getTask(task.id)?.firstMessageAttachments).toBeUndefined();
   });
 
+  it("removes orphaned Plane worker jobs on upgrade and keeps pending and live jobs", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { task, ws } = seed(store);
+    store.db.prepare("DELETE FROM schema_migrations WHERE version = 42").run();
+    const insert = store.db.prepare(`INSERT INTO plane_bot_jobs
+      (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data, task_id)
+      VALUES (?, ?, 'plane', 'actor', ?, 'bot', ?, 'prompt', '{}', ?)`);
+    insert.run("live", "r-live", "i-live", ws.id, task.id);
+    insert.run("pending", "r-pending", "i-pending", ws.id, null);
+    insert.run("orphaned", "r-orphaned", "i-orphaned", ws.id, "deleted-task");
+    open.pop()!.close();
+
+    const migrated = makeStore(path);
+    expect(migrated.db.prepare("SELECT id FROM plane_bot_jobs ORDER BY id").all().map((row) => row.id)).toEqual(["live", "pending"]);
+  });
+
   it("preserves the archived Plane reference while allowing a new draft per submission", () => {
     const path = tempDbPath();
     const store = makeStore(path);

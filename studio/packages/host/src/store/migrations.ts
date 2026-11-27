@@ -489,4 +489,8 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   ALTER TABLE tasks ADD COLUMN first_message_attachments TEXT;
   `,
+  // 42: Clear Plane intake records for workers permanently deleted by older Hosts.
+  `
+  DELETE FROM plane_bot_jobs WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT id FROM tasks);
+  `,
 ];
