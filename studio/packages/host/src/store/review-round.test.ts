@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { removeTempDir } from "@amo-studio/testkit";
+import { MIGRATIONS } from "./migrations.js";
 import { Store } from "./store.js";
 
 describe("task review rounds", () => {
@@ -31,20 +33,28 @@ describe("task review rounds", () => {
   it("backfills existing review cards and keeps their round after reopening", () => {
     const dir = mkdtempSync(join(tmpdir(), "amo-studio-test-review-"));
     const path = join(dir, "studio.db");
-    let store = new Store(path);
+    const updatedAt = "2026-11-09T00:00:00.000Z";
     try {
-      const ws = store.addWorkspace({ name: "migration", path: "C:/sandbox/migration" });
-      const task = store.createTask({ title: "Old review", workspaceId: ws.id, column: "review" });
-      // Exercise the migration against an actual pre-reminder schema, keeping existing card times.
-      store.db.exec("ALTER TABLE tasks DROP COLUMN review_entered_at; ALTER TABLE sessions DROP COLUMN goal; DELETE FROM schema_migrations WHERE version >= 28;");
-      store.close();
-      store = new Store(path);
-      expect(store.getTask(task.id)?.reviewEnteredAt).toBe(task.updatedAt);
-      store.close();
-      store = new Store(path);
-      expect(store.getTask(task.id)?.reviewEnteredAt).toBe(task.updatedAt);
+      // Build the last pre-reminder schema directly so later task/session columns cannot leak into the fixture.
+      const legacy = new DatabaseSync(path);
+      try {
+        legacy.exec("PRAGMA foreign_keys = OFF; CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+        const record = legacy.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)");
+        for (const [index, migration] of MIGRATIONS.slice(0, 27).entries()) {
+          legacy.exec(typeof migration === "string" ? migration : migration.sql);
+          record.run(index + 1, updatedAt);
+        }
+        legacy.prepare("INSERT INTO workspaces (id, name, path, created_at) VALUES ('w', 'migration', 'C:/sandbox/migration', ?)").run(updatedAt);
+        legacy.prepare("INSERT INTO tasks (id, title, workspace_id, column_name, created_at, updated_at) VALUES ('t', 'Old review', 'w', 'review', ?, ?)").run(updatedAt, updatedAt);
+      } finally {
+        legacy.close();
+      }
+      for (let run = 0; run < 2; run++) {
+        const store = new Store(path);
+        try { expect(store.getTask("t")?.reviewEnteredAt).toBe(updatedAt); }
+        finally { store.close(); }
+      }
     } finally {
-      store.close();
       removeTempDir(dir);
     }
   });
