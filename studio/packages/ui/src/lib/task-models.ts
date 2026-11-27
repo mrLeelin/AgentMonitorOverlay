@@ -1,15 +1,19 @@
 import { inTurn, type ModelProfile, type ProfileChoices, type Session } from "@amo-studio/protocol";
 import { activeModel, sessionModelName } from "./choices.js";
 
-/** The task's current main sessions; branches only stand in when no live main remains. */
+/** The task's root main session; launched sessions only stand in when no root main remains. */
 export function taskModelSessions(sessions: readonly Session[]): Session[] {
   const newest = (list: readonly Session[]) => [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  const oldest = (list: readonly Session[]) => [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const live = sessions.filter((s) => !s.archivedAt);
   const main = live.filter((s) => s.kind === "main");
   const current = (list: readonly Session[]) => newest(list).sort((a, b) => Number(b.status === "running") - Number(a.status === "running") || Number(inTurn(b.status)) - Number(inTurn(a.status)));
-  if (main.length) return current(main);
-  if (live.length) return current(live);
-  const historical = sessions.filter((s) => s.kind === "main");
+  const rootMain = sessions.filter((s) => s.kind === "main" && !s.parentId && !s.startedBy);
+  const liveRootMain = rootMain.filter((s) => !s.archivedAt);
+  if (liveRootMain.length) return [oldest(liveRootMain)[0]!];
+  if (main.length) return [current(main)[0]!];
+  if (live.length) return [current(live)[0]!];
+  const historical = rootMain.length ? rootMain : sessions.filter((s) => s.kind === "main");
   return newest(historical.length ? historical : sessions).slice(0, 1);
 }
 
@@ -17,6 +21,7 @@ export interface TaskModelBadge {
   key: string;
   name: string;
   channel: string;
+  profile: ModelProfile | undefined;
   runtime: Session["runtime"];
 }
 
@@ -33,7 +38,7 @@ export function taskModelBadges(sessions: readonly Session[], profiles: readonly
     const key = JSON.stringify([session.profileId, model]);
     if (seen.has(key)) continue;
     seen.add(key);
-    badges.push({ key, name, channel, runtime: session.runtime });
+    badges.push({ key, name, channel, profile, runtime: session.runtime });
   }
   return badges;
 }

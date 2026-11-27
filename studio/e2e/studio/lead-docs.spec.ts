@@ -24,7 +24,7 @@ test("主控 from the new task page and the task's menu; a topic's documents on 
   await page.getByRole("group", { name: "专题" }).getByRole("button", { name: "迁移" }).click();
   await page.getByTestId("draft-lead").check();
   await page.getByTestId("all-models").click();
-  await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click();
+  await page.getByTestId("model-drawer").getByRole("group", { name: "Mock Claude", exact: true }).getByRole("button", { name: "mock-claude", exact: true }).click();
   await page.getByLabel("第一句话").fill("拆一下迁移的任务");
   await page.getByLabel("第一句话").press("Enter");
   await expect(page.getByTestId("task-lead")).toHaveText("主控", { timeout: 60_000 });

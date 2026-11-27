@@ -85,6 +85,12 @@ export class ChannelsFeature extends Feature {
     return [...this.profiles];
   }
 
+  setIcon(profileId: string, icon: unknown): { ok: true } {
+    this.run(() => this.registry.setIcon(profileId, icon));
+    this.changed();
+    return { ok: true };
+  }
+
   /** The profile's balance, asked again at most once a minute unless `refresh`. */
   async balance(profileId: string, refresh: boolean): Promise<ChannelBalance> {
     this.requireProfile(profileId);

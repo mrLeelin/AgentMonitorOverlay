@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { CHANNEL_KIND_LABEL, RUNTIME_LABELS, type ChannelKind, type CredentialStatus, type ModelChannel, type ModelProfile, type ProfileEndpoint, type StudioSettings } from "@amo-studio/protocol";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { CHANNEL_ICON_MAX_BYTES, CHANNEL_KIND_LABEL, RUNTIME_LABELS, type ChannelKind, type CredentialStatus, type ModelChannel, type ModelProfile, type ProfileEndpoint, type StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
 import { balanceText, useBalance } from "../lib/balance.js";
@@ -59,6 +59,24 @@ export function ChannelNavItem({ profile, channel, selected, onSelect }: { profi
       </span>
     </button>
   );
+}
+
+const ICON_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
+async function readChannelIcon(file: File): Promise<string> {
+  if (!ICON_TYPES.includes(file.type) || file.size > CHANNEL_ICON_MAX_BYTES) {
+    throw new Error("请选择不超过 128 KB 的 PNG、JPEG 或 WebP 图片。");
+  }
+  const icon = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("读取图标图片失败。"));
+    reader.readAsDataURL(file);
+  });
+  const image = new Image();
+  image.src = icon;
+  await image.decode().catch(() => { throw new Error("无法打开这张图标图片，请选择其他图片。"); });
+  return icon;
 }
 
 /**
@@ -148,6 +166,9 @@ export function ChannelPage({
   const { balance, loading, refresh } = useBalance(link, profile);
   const [message, setMessage] = useState<SettingsMessage>(null);
   const [confirm, setConfirm] = useState(false);
+  const iconInput = useRef<HTMLInputElement>(null);
+  const [savingIcon, setSavingIcon] = useState(false);
+  const [iconError, setIconError] = useState("");
   // Shown at once; the Host's profiles.updated (or a refusal) settles it.
   const [hidden, setHidden] = useState(!!profile.hidden);
   useEffect(() => setHidden(!!profile.hidden), [profile.hidden]);
@@ -170,6 +191,19 @@ export function ChannelPage({
         : "Key 未设置：在旧 AMO 设置里保存"
       : null;
   const keyOk = channel ? channel.keySaved : !!cred?.saved;
+
+  async function changeIcon(file: File | null) {
+    setIconError("");
+    setSavingIcon(true);
+    try {
+      const icon = file ? await readChannelIcon(file) : null;
+      await call(link, "PUT /api/profiles/:id/icon", { id: profile.id }, { icon });
+    } catch (error) {
+      setIconError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingIcon(false);
+    }
+  }
 
   async function toggleHidden(next: boolean) {
     setHidden(next);
@@ -196,7 +230,14 @@ export function ChannelPage({
     <div className="channel-page" data-testid="channel-page" data-id={profile.id}>
       <section className="settings-section" aria-label="连接">
         <div className="channel-head">
-          <Mark profile={profile} />
+          <input ref={iconInput} type="file" accept={ICON_TYPES.join(",")} hidden onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void changeIcon(file);
+          }} />
+          <button type="button" className="channel-icon-edit" disabled={savingIcon} onClick={() => iconInput.current?.click()} title="点击选择渠道图标" aria-label={`更换 ${profile.label} 图标`}>
+            <Mark profile={profile} />
+          </button>
           <span className="channel-name">
             <b data-testid="channel-title">{profile.label}</b>
             <span className="channel-sub" title={channel?.baseUrl}>
@@ -208,6 +249,8 @@ export function ChannelPage({
             在模型选择里隐藏
           </label>
         </div>
+        {profile.icon && <button type="button" className="btn-ghost small channel-icon-reset" disabled={savingIcon} onClick={() => void changeIcon(null)}>恢复默认图标</button>}
+        {iconError && <span className="form-error" role="alert">{iconError}</span>}
         {(keyState || channel || profile.balance) && (
           <div className="channel-meta">
             {channel && <span className="scheme-chip">{SCHEME[channel.kind]}</span>}

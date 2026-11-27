@@ -47,7 +47,7 @@ const PAGES = [
   { id: "ui", group: "general", label: "界面", keywords: "主题 深色 浅色 外观 大小 缩放 Focus 皮肤 对话 工作步骤 发送 跳到最新 建议 远程 输入 Enter 回车 换行 快捷键 排队 插话 后续消息 放进待办" },
   { id: "common", group: "general", label: "项目与目录", keywords: "默认 公共 工作 文件夹 访问 权限" },
   { id: "scratchpad", group: "general", label: "便签", keywords: "随手记 快捷键" },
-  { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 隐藏 压缩" },
+  { id: "models", group: "models", label: "模型与渠道", keywords: "渠道 Claude GPT Codex DeepSeek Pi 登录 账号 密钥 API Key 常用预设 型号 排序 隐藏 压缩 Fast" },
   { id: "subsession", group: "models", label: "子会话", keywords: "型号 渠道 Fast 启动选项 权限 默认" },
   { id: "prompt-templates", group: "models", label: "提示词模板", keywords: "提示词 模板 prompt template 常用 新建 编辑 全局 项目" },
   { id: "quota", group: "models", label: "额度", keywords: "用量 余额 订阅 GPT Claude DeepSeek 左下角" },

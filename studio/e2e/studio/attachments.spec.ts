@@ -120,7 +120,7 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByRole("group", { name: "项目" }).getByRole("button", { name: "alpha" }).click();
   await page.getByTestId("all-models").click();
-  await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
+  await page.getByTestId("model-drawer").getByRole("group", { name: "Mock 模型", exact: true }).getByRole("button", { name: "Mock Model", exact: true }).click();
   const first = page.getByLabel("第一句话");
   await first.fill("这张图里是什么");
   await pasteImage(page, "截图.png", first);
@@ -148,7 +148,7 @@ for (const start of ["button", "Enter"] as const) {
     const { page } = studio;
     await page.getByRole("button", { name: "+ 新任务" }).click();
     await page.getByTestId("all-models").click();
-    await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
+    await page.getByTestId("model-drawer").getByRole("group", { name: "Mock 模型", exact: true }).getByRole("button", { name: "Mock Model", exact: true }).click();
     const first = page.getByLabel("第一句话");
     await first.fill(start === "button" ? "   " : "");
     await pasteImage(page, "截图.png", first);

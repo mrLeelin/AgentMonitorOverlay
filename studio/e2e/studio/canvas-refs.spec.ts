@@ -70,7 +70,7 @@ test("canvas: the new-task page and the new task's page return to the canvas the
   // Created from the canvas: the task page opens, and its "←" goes back to the canvas too.
   await page.getByRole("button", { name: "+ 在专题里新建任务" }).click();
   await page.getByTestId("all-models").click();
-  await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
+  await page.getByTestId("model-drawer").getByRole("group", { name: "Mock 模型", exact: true }).getByRole("button", { name: "Mock Model", exact: true }).click();
   await page.getByLabel("第一句话").fill("从画布建的任务");
   await page.getByRole("button", { name: "开始" }).click();
   await expect(page.getByTestId("task-title")).toHaveText("从画布建的任务");

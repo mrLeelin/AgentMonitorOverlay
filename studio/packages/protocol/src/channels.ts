@@ -52,6 +52,8 @@ export interface ModelChannel {
   id: Id;
   kind: ChannelKind;
   label: string;
+  /** Optional user-selected PNG, JPEG or WebP icon as a data URL. */
+  icon?: string;
   baseUrl: string;
   /** The model new sessions start on; null = the CLI's default. */
   model: string | null;
@@ -96,6 +98,8 @@ export interface ProfileEndpoint {
 export interface ChannelInput {
   kind?: ChannelKind;
   label?: string;
+  /** Empty string removes the custom icon. */
+  icon?: string | null;
   baseUrl?: string;
   model?: string | null;
   /** DSH: the site's model names; [] = DSH's built-in ones. */
@@ -116,6 +120,8 @@ export const AMO_CHANNEL_KEYS: ReadonlyArray<{ id: string; label: string; kind: 
 
 /** At most this many model names on a DSH channel. */
 export const CHANNEL_MODELS_MAX = 30;
+
+export const CHANNEL_ICON_MAX_BYTES = 128 * 1024;
 
 /** A channel's balance as last asked. Numbers are in `unit`. */
 export interface ChannelBalance {
@@ -145,6 +151,8 @@ export interface ChannelRoutes {
   /** Asks a balance with settings not saved yet (the 添加/编辑 dialog's 测试); `id` fills in what is stored. */
   "POST /api/channels/balance-test": { req: { id?: Id; kind?: ChannelKind; baseUrl?: string; balance: BalanceConfig; key?: string; keyFrom?: string | null; accessToken?: string }; res: ChannelBalance };
   "PUT /api/profiles/:id/hidden": { req: { hidden: boolean }; res: ModelProfile[] };
+  /** A user-selected raster icon, or null to restore the default. */
+  "PUT /api/profiles/:id/icon": { req: { icon: string | null }; res: { ok: true } };
   /** `?refresh=1` asks the site again; otherwise the last answer within a minute. */
   "GET /api/profiles/:id/balance": { req: void; res: ChannelBalance };
   /** 问题 #14: Claude 订阅's and GPT's request address as the person's Claude Code / Codex setup has it; null for other profiles. */

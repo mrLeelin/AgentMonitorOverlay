@@ -19,8 +19,8 @@ export function profileMark(p: ModelProfile | undefined): { text: string; tone: 
 export function Mark({ profile, small = false }: { profile: ModelProfile | undefined; small?: boolean }) {
   const m = profileMark(profile);
   return (
-    <span className={`mark mark-${m.tone}${small ? " small" : ""}`} aria-hidden="true">
-      {m.text}
+    <span className={`mark mark-${m.tone}${small ? " small" : ""}${profile?.icon ? " custom" : ""}`} aria-hidden="true">
+      {profile?.icon ? <img className="mark-image" src={profile.icon} alt="" /> : m.text}
     </span>
   );
 }

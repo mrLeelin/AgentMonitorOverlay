@@ -3,9 +3,9 @@ import { BackButton } from "../shell/BackButton.js";
 import type { ModelProfile, Session, Task, Topic, Workspace } from "@amo-studio/protocol";
 import type { Scope } from "../board/Board.js";
 import { call, HostApiError, type HostLink } from "../host/client.js";
-import { activeModel, sameOptions, useProfileChoices } from "../lib/choices.js";
+import { activeModel, sameOptions, useChoicesFor, useProfileChoices } from "../lib/choices.js";
 import { isHiddenPick, samePick } from "../lib/recents.js";
-import { pickFolder, shortModel } from "../lib/profiles.js";
+import { pickable, pickFolder, shortModel } from "../lib/profiles.js";
 import { StartingCover } from "../lib/StartingCover.js";
 import { useSettings } from "../settings/useSettings.js";
 import { PRIMARY_ENTER_LABELS, TODO_SHORTCUTS, useTaskEnter } from "../chat/inputPrefs.js";
@@ -14,7 +14,7 @@ import { EffortPicker, withEffort } from "../chat/EffortPicker.js";
 import { DSH_FULL_ACCESS, SandboxHint } from "../settings/SandboxHint.js";
 import { draftText, submitDraft, useTaskDraft, type CreateTaskFromDraft, type TaskDraft, type WorktreeChoice } from "./draft.js";
 import { Modal } from "../lib/Modal.js";
-import { ModelRow, tilePicks } from "./ModelRow.js";
+import { ModelDrawer, tilePicks } from "./ModelRow.js";
 import { WorktreeDialog } from "./WorktreeDialog.js";
 import { ChoiceRow } from "./ChoiceRow.js";
 import { useDraftChoices } from "./useDraftChoices.js";
@@ -71,8 +71,7 @@ interface NewTaskPageProps {
 
 /**
  * 草稿任务页 (design/ui-directions/new-task.html): no dialog, the main area becomes an empty task. Projects and topics are
- * rows of chips (both may stay unpicked: no project runs in the common folder), the model is a tile, the effort a set
- * of bars, the permissions a segmented control. The draft follows the shared composer shortcuts.
+ * rows of chips (both may stay unpicked: no project runs in the common folder). The draft follows the shared composer shortcuts.
  */
 export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, dialog, remoteDevice, onOpenRemote }: NewTaskPageProps) {
   const { draft, update, reset } = useTaskDraft(profiles, dialog?.initial);
@@ -86,6 +85,8 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const rows = useDraftChoices({ draft, update, workspaces, topics, tasks });
   const projects = rows.projects;
   const [drawer, setDrawer] = useState(false);
+  const drawerProfiles = drawer ? pickable(profiles, draft.pick.profileId) : [];
+  const drawerChoices = useChoicesFor(link, drawerProfiles.map(p => p.id));
   const modelButton = useRef<HTMLButtonElement>(null);
   const modelPickerId = useId();
   const [moreOptions, setMoreOptions] = useState(false);
@@ -240,7 +241,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     }
   }
 
-  // Alt 1–6: the 常用 tiles; Alt E: one effort up.
+  // Alt 1–6: quick model picks; Alt E: one effort up.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Not in 「在别的设备上」: its models are the other computer's.
@@ -496,9 +497,13 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               <ComposerMore expanded={moreOptions} controls={optionsId} onClick={() => { setMoreOptions(!moreOptions); setDrawer(false); }} />
             </div>
             {drawer && <div className="draft-model-picker" id={modelPickerId} onKeyDown={e => {
-              if (e.key === "Escape" && !e.currentTarget.querySelector(".model-menu")) { setDrawer(false); modelButton.current?.focus(); }
+              if (e.key === "Escape") { setDrawer(false); modelButton.current?.focus(); }
             }}>
-              <ModelRow link={link} profiles={profiles} pick={draft.pick} onPick={pick => { update({ pick }); setDrawer(false); modelButton.current?.focus(); }} drawer />
+              <ModelDrawer profiles={drawerProfiles} choices={drawerChoices} pick={draft.pick} onPick={(pick, isDefault) => {
+                update({ pick: isDefault ? { ...pick, model: null } : pick });
+                setDrawer(false);
+                modelButton.current?.focus();
+              }} />
             </div>}
             <div className="composer-extra draft-extra" id={optionsId} hidden={!moreOptions}>
               <FastToggle {...fastProps} small />

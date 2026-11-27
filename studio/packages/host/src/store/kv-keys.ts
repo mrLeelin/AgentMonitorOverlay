@@ -5,9 +5,9 @@
 // scope: what one value belongs to. "global": one value for the Host. "session" / "task" / "workspace": the key is
 // the prefix + that id, and Store.purge deletes it with what it belongs to. "folder" / "token": the prefix + a folder
 // path or an MCP token (the token's key goes with its session, see Store.purge). "outside": the prefix + the id of a
-// Claude session started outside Studio (接续已有会话, 2026-11-05).
+// Claude session started outside Studio (接续已有会话, 2026-11-05). "profile": the feature owns its keys.
 
-export type KvScope = "global" | "session" | "task" | "workspace" | "folder" | "token" | "outside";
+export type KvScope = "global" | "session" | "task" | "workspace" | "folder" | "token" | "outside" | "profile";
 
 export interface KvKey {
   /** The whole key, or for a scope other than global the prefix the id is appended to. */
@@ -57,6 +57,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "settings:scratchpad-safe-newlines", scope: "global", owner: "features/scratchpad/service.ts", what: "便签「复制」是否合并换行" },
   { key: "chat.settings", scope: "global", owner: "runtime/chat-settings.ts", what: "设置 → 界面：对话的设置（会话开始时 runtime 读）" },
   { key: "modelChannels", scope: "global", owner: "runtime/channels.ts", what: "模型渠道" },
+  { key: "profileIcon:", scope: "profile", owner: "runtime/channels.ts", what: "内置模型渠道自定义图标" },
   { key: "hiddenProfiles", scope: "global", owner: "runtime/channels.ts", what: "藏起来的模型" },
   { key: "prompt-templates", scope: "global", owner: "features/prompttemplates/service.ts", what: "提示词模板" },
   { key: "mcp:servers", scope: "global", owner: "features/mcp/service.ts", what: "Studio 自己的 MCP 服务器" },

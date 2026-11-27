@@ -21,6 +21,8 @@ kbd {
 .mark-pi { background: #66548c; }
 .mark-glm { background: #5b5470; }
 .mark-mock { background: #6f6a62; }
+.mark.custom { overflow: hidden; background: transparent; }
+.mark-image { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 
 .mtile {
   display: inline-flex; align-items: center; gap: 7px; height: var(--ctl); padding: 0 10px 0 4px; border: 1px solid var(--border);

@@ -42,7 +42,7 @@ test("model, effort and permissions: new task, presets, switching inside a sessi
   // New task with the highest effort: one click on the last bar.
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByTestId("all-models").click();
-  await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" }).click();
+  await page.getByTestId("model-drawer").getByRole("group", { name: "Mock 模型", exact: true }).getByRole("button", { name: "Mock Model", exact: true }).click();
   await page.getByTestId("effort").click();
   await page.getByRole("slider", { name: "推理强度" }).press("End");
   await page.keyboard.press("Escape");
@@ -275,8 +275,6 @@ test("设置 → 模型: hide a model from pickers, keep existing sessions and r
 
   await page.getByRole("button", { name: "+ 新任务", exact: true }).click();
   await page.getByTestId("all-models").click();
-  const tiles = page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile").locator(".mtile-main");
-  await expect(tiles.filter({ hasText: /^mock-claude$/ })).toHaveCount(0);
   await expect(page.getByTestId("preset-chip").filter({ hasText: "原型号预设" })).toHaveCount(0);
   const account = page.getByTestId("model-drawer").getByRole("group", { name: "Mock Claude", exact: true });
   await expect(account.getByRole("button")).toHaveText([replacement]);

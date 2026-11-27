@@ -132,6 +132,8 @@ export interface ModelProfile {
   hidden?: boolean;
   /** One of the person's own channels (设置 → 模型 → 添加渠道), not built in. */
   custom?: boolean;
+  /** Optional user-selected PNG, JPEG or WebP icon for a custom model channel. */
+  icon?: string;
   /** Its site can be asked for the balance (`GET /api/profiles/:id/balance`). */
   balance?: boolean;
   /**

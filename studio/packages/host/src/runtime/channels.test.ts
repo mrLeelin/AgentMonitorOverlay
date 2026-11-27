@@ -15,6 +15,8 @@ const BUILTINS: ModelProfile[] = [
   { id: "claude-glm", label: "GLM", runtime: "claude", provider: "glm", model: "glm-5.3[1m]", credentialId: "glm-5.2" },
 ];
 
+const PNG_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nWQAAAAASUVORK5CYII=";
+
 function registry(secrets: Record<string, string> = {}) {
   const store = kv();
   const credentials = new StaticCredentialReader(secrets);
@@ -50,6 +52,38 @@ describe("ChannelRegistry", () => {
     expect(env).toMatchObject({ ANTHROPIC_BASE_URL: "https://cc.example/api", ANTHROPIC_API_KEY: "sk-cc", ANTHROPIC_MODEL: "claude-opus-5-5", ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5" });
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(claudeProviders[c.id]!.models![0]!.id).toBe("claude-opus-5-5");
+  });
+
+  it("stores a custom channel icon, exposes it to model pickers, and lets the user replace or remove it", () => {
+    const { r, store } = registry();
+    const firstIcon = PNG_ICON;
+    const secondIcon = "data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA";
+    const channel = r.create({ kind: "codex", label: "My Codex", baseUrl: "https://x.example", icon: firstIcon });
+    expect(channel.icon).toBe(firstIcon);
+    expect(r.profiles.find((profile) => profile.id === channel.id)?.icon).toBe(firstIcon);
+    expect(r.update(channel.id, { icon: secondIcon })).toMatchObject({ channel: { icon: secondIcon }, routingChanged: false });
+    r.setIcon(channel.id, null);
+    expect(r.get(channel.id).icon).toBeUndefined();
+    expect(JSON.parse(store.getKv("modelChannels")!.value)[0].icon).toBeUndefined();
+    expect(() => r.update(channel.id, { icon: "data:image/svg+xml;base64,PHN2Zz4=" })).toThrow(/PNG/);
+    expect(() => r.setIcon(channel.id, "data:image/png;base64,YWJjZA==")).toThrow(/内容与格式不符/);
+    expect(() => r.update(channel.id, { icon: `data:image/png;base64,${"a".repeat(180_000)}` })).toThrow(/128 KB/);
+  });
+
+  it("keeps built-in icon overrides per profile across registry reloads, and restores the default", () => {
+    const { r, store, credentials } = registry();
+    r.setIcon("codex-default", PNG_ICON);
+    expect(() => r.setIcon("codex-default", undefined)).toThrow(/请选择图标图片/);
+    expect(() => r.setIcon("missing", PNG_ICON)).toThrow(/不存在/);
+    r.setHidden("codex-default", true);
+    const again = new ChannelRegistry({ kv: store, credentials, builtins: BUILTINS, codexProviders: {}, claudeProviders: {} });
+    expect(again.profiles[0]).toMatchObject({ ...BUILTINS[0], hidden: true, icon: PNG_ICON });
+    expect(again.profiles[1]?.icon).toBeUndefined();
+    expect(again.list()).toEqual([]);
+    again.setIcon("codex-default", null);
+    expect(again.profiles[0]).toEqual({ ...BUILTINS[0], hidden: true });
+    r.refresh();
+    expect(r.profiles[0]?.icon).toBeUndefined();
   });
 
   it("reuses old AMO's DXX key without writing it, and edits report a routing change", () => {

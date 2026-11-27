@@ -99,21 +99,24 @@ test("creates a task from the blank task page and streams the first reply", asyn
   await expect(page.getByTestId("scope-hint")).toContainText("不指定项目：在公共目录里运行");
   await projects.getByRole("button", { name: "alpha" }).click();
   await expect(page.getByTestId("scope-hint")).toContainText("在 alpha 里运行");
-  // The compact model control opens the existing choices and their context menus.
-  await page.getByTestId("all-models").click();
-  const tile = page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock 模型" });
-  await tile.click();
-  await page.getByTestId("all-models").click();
-  await expect(tile).toHaveAttribute("aria-pressed", "true");
-  // Right click on a tile: that account's own models in a small menu.
-  await page.getByRole("group", { name: "模型" }).getByTestId("model-tile").filter({ hasText: "Mock Claude" }).click({ button: "right" });
-  const menu = page.getByTestId("model-menu");
-  await expect(menu.getByRole("menuitemradio")).toHaveText(["mock-claude", "mock-claude-b"]);
-  await menu.getByRole("menuitemradio", { name: "mock-claude-b" }).click();
-  await expect(menu).toHaveCount(0);
-  await page.getByTestId("all-models").click();
-  await expect(page.getByRole("group", { name: "模型" }).locator('[data-testid="model-tile"][aria-pressed="true"]')).toContainText("mock-claude-b");
-  await tile.click();
+  // The model control opens the grouped catalog directly.
+  const modelButton = page.getByTestId("all-models");
+  const drawer = page.getByTestId("model-drawer");
+  const codex = drawer.getByRole("group", { name: "Mock 模型", exact: true }).getByRole("button", { name: "Mock Model", exact: true });
+  const claude = drawer.getByRole("group", { name: "Mock Claude", exact: true }).getByRole("button", { name: "mock-claude-b", exact: true });
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  await modelButton.click();
+  await expect(drawer).toBeVisible();
+  await expect(page.getByTestId("model-tile")).toHaveCount(0);
+  await expect(codex).toHaveAttribute("aria-pressed", "true");
+  await expect(claude).toBeVisible();
+  await screenshot(studio.app, "studio", "new-task-model-picker", page);
+  await claude.click();
+  await expect(drawer).toHaveCount(0);
+  await expect(modelButton).toBeFocused();
+  await modelButton.click();
+  await expect(claude).toHaveAttribute("aria-pressed", "true");
+  await codex.click();
   await page.getByTestId("effort").click();
   await page.getByRole("slider", { name: "推理强度" }).press("Home");
   await page.keyboard.press("Escape");

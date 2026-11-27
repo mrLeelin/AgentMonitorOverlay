@@ -265,6 +265,10 @@
 .scheme-chip { padding: 1px 8px; border-radius: 10px; background: var(--chip); font-size: 12px; color: var(--text-dim); }
 .settings-tag { padding: 0 6px; border-radius: 8px; background: var(--chip); font-size: 11px; color: var(--text-dim); }
 .channel-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.channel-icon-edit { display: inline-flex; flex: none; padding: 0; border: 0; border-radius: var(--r-s); background: transparent; cursor: pointer; }
+.channel-icon-edit:hover:not(:disabled), .channel-icon-edit:focus-visible { outline: 1px solid var(--primary); outline-offset: 3px; }
+.channel-icon-edit:disabled { cursor: wait; }
+.channel-icon-reset { align-self: flex-start; margin-left: 26px; }
 .channel-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .channel-name b { font-weight: 600; }
 .channel-sub { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

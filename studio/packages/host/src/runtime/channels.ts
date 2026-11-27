@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { AMO_CHANNEL_KEYS, CHANNEL_MODELS_MAX, type BalanceConfig, type BalanceTemplate, type ChannelInput, type ChannelKind, type ModelChannel, type ModelOption, type ModelProfile } from "@amo-studio/protocol";
+import { AMO_CHANNEL_KEYS, CHANNEL_ICON_MAX_BYTES, CHANNEL_MODELS_MAX, type BalanceConfig, type BalanceTemplate, type ChannelInput, type ChannelKind, type ModelChannel, type ModelOption, type ModelProfile } from "@amo-studio/protocol";
 import type { ClaudeProviderDef } from "./claude/claude-env.js";
 import { CLAUDE_BUILTIN_MODELS, CLAUDE_EFFORTS } from "./choices.js";
 import type { CredentialReader, CredentialStore } from "./credentials.js";
@@ -22,6 +22,7 @@ interface StoredChannel {
   id: string;
   kind: ChannelKind;
   label: string;
+  icon?: string;
   baseUrl: string;
   model: string | null;
   /** DSH: the site's own model names. */
@@ -52,6 +53,24 @@ const keyId = (id: string) => `channel-${id.slice(3)}`;
 const accessId = (id: string) => `channel-${id.slice(3)}-access`;
 const codexProviderId = (id: string) => `amo-${id}`;
 const isChannelId = (id: string) => /^ch-[0-9a-f]{8}$/.test(id);
+const builtinIconKey = (id: string) => `profileIcon:${id}`;
+
+/** Keep user-selected channel art small and raster-only so it is safe to render directly in the UI. */
+function channelIcon(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (typeof value !== "string") throw new ChannelError("bad_request", "图标格式不正确");
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) throw new ChannelError("bad_request", "图标请使用 PNG、JPEG 或 WebP 图片");
+  const encoded = match[2]!;
+  if (encoded.length > Math.ceil(CHANNEL_ICON_MAX_BYTES / 3) * 4) throw new ChannelError("bad_request", "图标图片不能超过 128 KB");
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.byteLength > CHANNEL_ICON_MAX_BYTES) throw new ChannelError("bad_request", "图标图片不能超过 128 KB");
+  const matchesFormat = match[1] === "png" ? bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a"
+    : match[1] === "jpeg" ? bytes.subarray(0, 3).toString("hex") === "ffd8ff"
+    : bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
+  if (!matchesFormat || bytes.toString("base64") !== encoded) throw new ChannelError("bad_request", "图标图片内容与格式不符");
+  return value;
+}
 
 function text(value: unknown, what: string, max: number, required = true): string {
   const v = typeof value === "string" ? value.trim() : "";
@@ -190,6 +209,7 @@ export class ChannelRegistry {
       id,
       kind,
       label: text(input.label, "名字", 40),
+      ...(input.icon !== undefined && input.icon !== null && input.icon !== "" ? { icon: channelIcon(input.icon) } : {}),
       baseUrl: httpUrl(input.baseUrl, "网址"),
       model: modelId(input.model, "模型"),
       keyFrom: null,
@@ -212,6 +232,11 @@ export class ChannelRegistry {
     const c: StoredChannel = { ...before };
     if (input.kind !== undefined && input.kind !== c.kind) throw new ChannelError("bad_request", "渠道类型建好后不能改；新建一个渠道");
     if (input.label !== undefined) c.label = text(input.label, "名字", 40);
+    if (input.icon !== undefined) {
+      const icon = channelIcon(input.icon);
+      if (icon) c.icon = icon;
+      else delete c.icon;
+    }
     if (input.baseUrl !== undefined) c.baseUrl = httpUrl(input.baseUrl, "网址");
     if (input.model !== undefined) c.model = modelId(input.model, "模型");
     if (c.kind === "claude") {
@@ -249,6 +274,22 @@ export class ChannelRegistry {
     } else set.delete(profileId);
     this.options.kv.setKv(HIDDEN_PROFILES_KEY, JSON.stringify([...set]));
     this.rebuild();
+  }
+
+  setIcon(profileId: string, value: unknown): void {
+    if (value === undefined) throw new ChannelError("bad_request", "请选择图标图片或恢复默认");
+    const icon = channelIcon(value);
+    if (this.options.builtins.some((p) => p.id === profileId)) {
+      this.options.kv.setKv(builtinIconKey(profileId), icon ?? "");
+      this.rebuild();
+      return;
+    }
+    const channels = this.stored();
+    const channel = channels.find((c) => c.id === profileId);
+    if (!channel) throw new ChannelError("not_found", `渠道 ${profileId} 不存在`);
+    if (icon) channel.icon = icon;
+    else delete channel.icon;
+    this.save(channels);
   }
 
   /** What a balance query of this profile needs, or null when it has none. */
@@ -354,6 +395,7 @@ export class ChannelRegistry {
       id: c.id,
       kind: c.kind,
       label: c.label,
+      ...(c.icon ? { icon: c.icon } : {}),
       baseUrl: c.baseUrl,
       model: c.model,
       ...(c.kind === "claude" ? { smallModel: c.smallModel ?? null, claudeAuth: c.claudeAuth ?? "bearer" } : {}),
@@ -380,10 +422,13 @@ export class ChannelRegistry {
     for (const k of Object.keys(claudeProviders)) if (/^ch-/.test(k)) delete claudeProviders[k];
     const dshProviders = this.dshProviders;
     for (const k of Object.keys(dshProviders)) if (/^ch-/.test(k)) delete dshProviders[k];
-    const next: ModelProfile[] = builtins.map((p) => ({ ...p, ...(hidden.has(p.id) ? { hidden: true } : {}), ...(builtinBalance?.[p.id] ? { balance: true } : {}) }));
+    const next: ModelProfile[] = builtins.map((p) => {
+      const icon = this.options.kv.getKv(builtinIconKey(p.id))?.value;
+      return { ...p, ...(icon ? { icon } : {}), ...(hidden.has(p.id) ? { hidden: true } : {}), ...(builtinBalance?.[p.id] ? { balance: true } : {}) };
+    });
     for (const c of channels) {
       const credentialId = c.keyFrom ?? keyId(c.id);
-      const flags = { custom: true, ...(hidden.has(c.id) ? { hidden: true } : {}), ...(c.balance ? { balance: true } : {}) };
+      const flags = { custom: true, ...(c.icon ? { icon: c.icon } : {}), ...(hidden.has(c.id) ? { hidden: true } : {}), ...(c.balance ? { balance: true } : {}) };
       if (c.kind === "codex") {
         const provider = codexProviderId(c.id);
         codexProviders[provider] = { name: c.label, baseUrl: c.baseUrl, wireApi: "responses", envKey: `AMO_${c.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_KEY` };

@@ -1,7 +1,7 @@
 import { selectSettingsPage } from "../support/settings.js";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import type { ModelChannel, ModelProfile, Session, StateSnapshot, StudioSettings, Task, Workspace } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
@@ -19,6 +19,69 @@ test.afterEach(async () => {
   studio = undefined;
   server?.close();
   server = undefined;
+});
+
+async function iconFile(page: Page, color: string, mimeType = "image/png") {
+  const icon = await page.evaluate(({ color, mimeType }) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(17, 18, 30, 10);
+    ctx.fillRect(17, 36, 20, 10);
+    return canvas.toDataURL(mimeType);
+  }, { color, mimeType });
+  return { name: mimeType === "image/webp" ? "channel.webp" : "channel.png", mimeType, buffer: Buffer.from(icon.split(",")[1]!, "base64") };
+}
+
+test("a built-in channel icon can be selected in its header, replaced, persisted and reset", async () => {
+  studio = await launchStudio({ mockModel: false });
+  await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  const { page, app } = studio;
+  const choose = async (page: Page) => {
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await selectSettingsPage(dialog, "模型与渠道");
+    const nav = dialog.locator('[data-testid="channel-nav"][data-id="codex-default"]');
+    await nav.click();
+    return { dialog, nav, card: dialog.getByTestId("channel-page") };
+  };
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  const { dialog, nav, card } = await choose(page);
+  const upload = card.getByRole("button", { name: "更换 GPT 图标" });
+  const firstChooser = page.waitForEvent("filechooser");
+  await upload.click();
+  await (await firstChooser).setFiles(await iconFile(page, "#216e64"));
+  await expect(upload.locator("img")).toHaveJSProperty("naturalWidth", 64);
+  await expect(nav.locator("img")).toHaveJSProperty("naturalWidth", 64);
+
+  const invalidChooser = page.waitForEvent("filechooser");
+  await upload.click();
+  await (await invalidChooser).setFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from("broken") });
+  await expect(card.getByRole("alert")).toContainText("无法打开这张图标图片");
+  await expect(upload.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+
+  const nextChooser = page.waitForEvent("filechooser");
+  await upload.click();
+  await (await nextChooser).setFiles(await iconFile(page, "#3852ad", "image/webp"));
+  await expect(nav.locator("img")).toHaveAttribute("src", /^data:image\/webp;base64,/);
+  await expect(card.getByRole("alert")).toHaveCount(0);
+  await screenshot(app, "studio", "channel-icon-custom", page);
+  await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByTestId("all-models").click();
+  await expect(page.getByTestId("model-drawer").getByRole("group", { name: "GPT", exact: true }).locator('img[src^="data:image/webp;base64,"]')).toHaveJSProperty("naturalWidth", 64);
+
+  const { root } = studio;
+  await studio.close({ keepData: true });
+  studio = await launchStudio({ mockModel: false, root });
+  const reopened = await choose(studio.page);
+  await expect(reopened.nav.locator("img")).toHaveAttribute("src", /^data:image\/webp;base64,/);
+  await reopened.card.getByRole("button", { name: "恢复默认图标", exact: true }).click();
+  await expect(reopened.nav.locator(".mark")).toHaveText("G");
+  await expect(reopened.card.getByRole("button", { name: "恢复默认图标", exact: true })).toHaveCount(0);
 });
 
 test("a third-party Codex channel: added in 设置 with its balance, runs a session, hidden from the pickers", async () => {
@@ -55,6 +118,12 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
   const nav = dialog.locator(`[data-testid="channel-nav"][data-id="${channel!.id}"]`);
   await expect(nav).toHaveAttribute("aria-current", "page");
   await expect(nav).toContainText("Codex 方案");
+  const iconFileChooser = page.waitForEvent("filechooser");
+  await card.getByRole("button", { name: `更换 ${channel!.label} 图标` }).click();
+  await (await iconFileChooser).setFiles(await iconFile(page, "#216e64"));
+  await expect(nav.locator(".mark-image")).toHaveJSProperty("naturalWidth", 64);
+  const iconState = await studio.api<StateSnapshot>("GET", "/api/state");
+  expect(iconState.profiles.find((profile) => profile.id === channel!.id)?.icon).toMatch(/^data:image\/png;base64,/);
   await screenshot(app, "stage-18", "S18-models-third-party", page);
 
   expect(channel).toMatchObject({ kind: "codex", label: "中转 GPT", model: "mock-model", keySaved: true, balance: { template: "general" } });
@@ -87,8 +156,7 @@ test("a third-party Codex channel: added in 设置 with its balance, runs a sess
   await page.getByTestId("back").click();
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByTestId("all-models").click();
-  await expect(page.getByRole("group", { name: "模型", exact: true })).not.toContainText("中转 GPT");
-  await expect(page.getByTestId("model-drawer")).not.toContainText("中转 GPT");
+  await expect(page.getByTestId("model-drawer").getByRole("group", { name: "中转 GPT", exact: true })).toHaveCount(0);
 });
 
 test("a third-party Claude channel runs Claude Code against its address; the last visible channel cannot be hidden", async () => {
@@ -166,18 +234,13 @@ test("设置 → 模型 → 快速选择: the automatic row, dragged into the pe
   await screenshot(app, "stage-18", "S18-quick-models", page);
   await page.keyboard.press("Escape");
 
-  // The new-task page shows them in that order; the model the draft has now (Mock 模型) always shows, in the last place.
+  // The new-task page still honors quick model shortcuts with the catalog closed.
   await page.getByRole("button", { name: "+ 新任务" }).click();
-  await page.getByTestId("all-models").click();
-  const tiles = page.getByRole("group", { name: "模型", exact: true }).getByTestId("model-tile");
-  await expect(tiles).toHaveCount(3);
-  await expect(tiles.nth(0)).toHaveAttribute("title", /^Mock Claude/);
-  await expect(tiles.nth(1)).toHaveAttribute("title", /^Claude/);
-  await expect(tiles.nth(2)).toHaveAttribute("title", /^Mock 模型/);
-  await tiles.nth(0).click();
+  const modelButton = page.getByTestId("all-models");
+  await page.keyboard.press("Alt+1");
+  await expect(modelButton).toHaveAccessibleName(/^mock-claude$/i);
   await page.keyboard.press("Alt+3");
-  await page.getByTestId("all-models").click();
-  await expect(tiles.nth(2)).toHaveAttribute("title", /mock-claude-b|Mock Claude B/i);
+  await expect(modelButton).toContainText(/mock-claude-b|Mock Claude B/i);
 });
 
 test("设置 → 模型 → a channel's 自动压缩点: 272k by default, its own value, the CLI's, or back to the default (S18)", async () => {
@@ -312,9 +375,9 @@ test("without a Claude Code client the Claude channels are unavailable, and 设�
   // Not offered for a new task.
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByTestId("all-models").click();
-  const tiles = page.getByRole("group", { name: "模型" }).getByTestId("model-tile");
-  await expect(tiles.filter({ hasText: "Mock 模型" })).not.toHaveCount(0);
-  await expect(tiles.filter({ hasText: "Mock Claude" })).toHaveCount(0);
+  const drawer = page.getByTestId("model-drawer");
+  await expect(drawer.getByRole("group", { name: "Mock 模型", exact: true })).toBeVisible();
+  await expect(drawer.getByRole("group", { name: "Mock Claude", exact: true })).toHaveCount(0);
 });
 
 test("a Claude channel's page names the Claude Code its sessions run on", async () => {
@@ -338,8 +401,9 @@ test("hiding the picked model moves 新建任务 to the default; Claude 订阅 s
   const { page, app } = studio;
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await page.getByTestId("all-models").click();
-  const tiles = page.getByRole("group", { name: "模型" }).getByTestId("model-tile");
-  await expect(tiles.filter({ hasText: "Mock 模型" })).toHaveAttribute("aria-pressed", "true");
+  const drawer = page.getByTestId("model-drawer");
+  const codex = drawer.getByRole("group", { name: "Mock 模型", exact: true });
+  await expect(codex.getByRole("button", { pressed: true })).toHaveText("Mock Model");
 
   // The Host reads the person's real ~/.claude here, so the page gets a stand-in answer.
   await page.route("**/api/profiles/claude-subscription/endpoint", (route) =>
@@ -372,6 +436,6 @@ test("hiding the picked model moves 新建任务 to the default; Claude 订阅 s
   await dialog.getByTestId("channel-page").getByTestId("channel-hidden").check();
   await expect(dialog.locator('[data-testid="channel-nav"][data-id="codex-mock"]')).toContainText("已隐藏");
   await page.keyboard.press("Escape");
-  await expect(tiles.filter({ hasText: "Mock 模型" })).toHaveCount(0);
-  await expect(page.getByRole("group", { name: "模型" }).locator('[data-testid="model-tile"][aria-pressed="true"]')).toHaveCount(1);
+  await expect(codex).toHaveCount(0);
+  await expect(drawer.getByRole("button", { pressed: true })).toHaveCount(1);
 });

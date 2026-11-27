@@ -136,9 +136,8 @@
 .composer-model-pick > span:not(.mark), .status-line .seg-btn > span:not(.mark) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .composer-extra { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; border-top: 1px solid var(--border); padding-top: 6px; }
 .composer-extra[hidden] { display: none; }
-.draft-model-picker, .draft-extra { padding: 8px 12px; border-top: 1px solid var(--border); }
+.draft-extra { padding: 8px 12px; border-top: 1px solid var(--border); }
 .draft-model-picker { max-height: min(32vh, 280px); overflow: auto; }
-.draft-model-picker .model-drawer { margin-top: 8px; }
 .studio-workbench .draft-actions { flex-wrap: wrap; }
 @media (prefers-reduced-motion: no-preference) {
   .composer-extra:not([hidden]) { animation: wb-menu-open 150ms ease-out; }
