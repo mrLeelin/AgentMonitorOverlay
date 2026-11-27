@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Annotation, ApprovalDecision, Session, SessionItem, TurnUsage } from "@amo-studio/protocol";
+import type { Annotation, ApprovalDecision, Session, SessionItem, TurnCharge, TurnUsage } from "@amo-studio/protocol";
 import { splitAnnotationRefs, splitRoleUpdate } from "@amo-studio/protocol";
 import { Markdown } from "../lib/markdown.js";
 import { TaskRunner } from "../board/TaskRunner.js";
@@ -269,6 +269,7 @@ function TurnView({
         <TurnFooter
           answer={seg.answer}
           usage={seg.turn?.usage}
+          charge={seg.turn?.state === "completed" ? seg.turn.charge : undefined}
           speed={outputSpeed(seg.turn ?? undefined)}
           approx={seg.turn?.decode?.basis === "request"}
           subs={subagentsUsage(segmentMembers(seg))}
@@ -534,7 +535,17 @@ function CopyMessageButton({ copy, label }: { copy(): Promise<void>; label: stri
   );
 }
 
-function TurnFooter({ answer, usage, speed, approx, subs, endedAt, model, always }: { answer: AgentItem; usage?: TurnUsage; speed: number | null; approx: boolean; subs: SubsUsage | null; endedAt?: string; model: string; always: boolean }) {
+const chargeNumber = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+
+function formatCharge({ amount, unit }: TurnCharge): string {
+  const minimum = 0.0001;
+  const belowMinimum = amount > 0 && amount < minimum;
+  const value = chargeNumber.format(belowMinimum ? minimum : amount);
+  const money = unit === "USD" ? `$${value}` : unit === "CNY" || unit === "RMB" ? `¥${value}` : `${value} ${unit}`;
+  return belowMinimum ? `花费低于 ${money}` : `花费约 ${money}`;
+}
+
+function TurnFooter({ answer, usage, charge, speed, approx, subs, endedAt, model, always }: { answer: AgentItem; usage?: TurnUsage; charge?: TurnCharge; speed: number | null; approx: boolean; subs: SubsUsage | null; endedAt?: string; model: string; always: boolean }) {
   return (
     <div className="turn-foot" data-reveal={always ? "always" : "hover"} data-testid="turn-foot">
       <CopyMessageButton copy={() => copyText(answer.markdown)} label="复制回复" />
@@ -544,6 +555,11 @@ function TurnFooter({ answer, usage, speed, approx, subs, endedAt, model, always
         <span className="turn-foot-speed" title={approx ? APPROX_SPEED_TITLE : SPEED_TITLE} data-testid="turn-speed">
           {approx ? "约 " : ""}
           {speed} tok/s
+        </span>
+      )}
+      {charge && (
+        <span className="turn-foot-speed" title="根据本轮期间的 API Key 扣费变化估算，已核对本轮 Token 用量" data-testid="turn-charge">
+          {formatCharge(charge)}
         </span>
       )}
       {subs && (

@@ -245,6 +245,11 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
       store,
       servers,
       profiles,
+      balanceFor: (profileId) => {
+        if (!profiles.some((p) => p.id === profileId && p.balance)) return null;
+        const ask = channels.balanceOf(profileId);
+        return ask && { profileId, ...ask };
+      },
       ...(options.stopGraceMs !== undefined ? { stopGraceMs: options.stopGraceMs } : {}),
       ...(manager ? { identities } : {}),
       roleInstructions: (draft): string | undefined => {

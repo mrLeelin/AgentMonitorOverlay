@@ -39,6 +39,35 @@ export function pick(json: unknown, path: string | undefined): unknown {
 
 const round = (n: number | null) => (n === null ? null : Math.round(n * 100) / 100);
 
+export interface Sub2ApiKeyUsage {
+  requests: number;
+  input: number;
+  cachedInput: number;
+  output: number;
+  cost: number;
+  unit: string;
+}
+
+async function sub2ApiUsage(ask: BalanceAsk): Promise<Record<string, unknown>> {
+  if (!ask.key) throw new BalanceError("还没有保存API Key");
+  const site = siteOf(ask.config.url || ask.baseUrl);
+  return await getJson(ask, `${site}/v1/usage`, { Authorization: `Bearer ${ask.key}` }) as Record<string, unknown>;
+}
+
+/** For turn charges, retain the key's unrounded totals and require a wallet (Sub2API subscriptions have no balance). */
+export async function askSub2ApiKeyUsage(ask: BalanceAsk): Promise<Sub2ApiKeyUsage | null> {
+  const data = await sub2ApiUsage(ask);
+  if (data.isValid !== true || data.mode !== "unrestricted" || num(data.balance) === null || data.subscription != null) return null;
+  const [requests, input, cachedInput, cacheCreation, output, cost] = [
+    "requests", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens", "actual_cost",
+  ].map((field) => num(pick(data, `usage.total.${field}`)));
+  if (requests == null || input == null || cachedInput == null || cacheCreation == null || output == null || cost == null) return null;
+  const totalInput = input + cachedInput + cacheCreation;
+  if (![requests, input, cachedInput, cacheCreation, totalInput, output].every((n) => Number.isSafeInteger(n) && n >= 0) || cost < 0) return null;
+  if (typeof data.unit !== "string" || !data.unit.trim() || data.unit.length > 16) return null;
+  return { requests, input: totalInput, cachedInput, output, cost, unit: data.unit };
+}
+
 export async function askBalance(ask: BalanceAsk): Promise<ChannelBalance> {
   const at = new Date().toISOString();
   const base = { profileId: ask.profileId, checkedAt: at };
@@ -93,7 +122,7 @@ async function query(ask: BalanceAsk): Promise<Numbers> {
       return { remaining, used: spent, total: remaining !== null && spent !== null ? remaining + spent : null, unit: "USD", planName: typeof group === "string" && group ? group : null };
     }
     case "sub2api": {
-      const j = (await getJson(ask, `${siteOf(site)}/v1/usage`, bearer(ask.key))) as Record<string, unknown>;
+      const j = await sub2ApiUsage(ask);
       if (j.isValid === false) throw new BalanceError(String(j.status || "这个 Key 无效"));
       const quota = (j.quota ?? {}) as Record<string, unknown>;
       const limit = num(quota.limit);

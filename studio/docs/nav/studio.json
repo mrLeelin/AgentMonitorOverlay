@@ -527,11 +527,13 @@
     {
       "id": "ui.chat",
       "label": "对话区",
-      "aliases": ["对话", "Transcript", "chat", "详细", "完全展开", "思考", "审批", "提问", "questions", "会话工具栏", "有序列表", "自动续号"],
+      "aliases": ["对话", "Transcript", "chat", "详细", "完全展开", "思考", "审批", "提问", "questions", "会话工具栏", "有序列表", "自动续号", "用量", "花费", "费用"],
       "category": "ui",
       "purpose": "会话的对话区：轮次和折叠（详细 / 完全展开）、思考、工具行、审批和提问。输入框底部从附件、模型、思考强度到权限依次排列，「更多选项」中可设置 Fast、Goal、MCP 和常用预设。",
       "anchors": [
         { "label": "对话区", "path": "studio/packages/ui/src/chat/Transcript.tsx", "anchor": "export const Transcript" },
+        { "label": "本轮用量、速度和花费", "path": "studio/packages/ui/src/chat/Transcript.tsx", "anchor": "function TurnFooter" },
+        { "label": "Codex 余额渠道费用对账", "path": "studio/packages/host/src/runtime/codex/turn-charges.ts", "anchor": "export class CodexTurnCharges" },
         { "label": "轮次折叠", "path": "studio/packages/ui/src/chat/turns.ts" },
         { "label": "输入框换行和列表续号", "path": "studio/packages/ui/src/attach/ResourceInput.tsx", "anchor": "function insertLineBreak" },
         { "label": "会话选项栏", "path": "studio/packages/ui/src/chat/SessionOptionsBar.tsx" },

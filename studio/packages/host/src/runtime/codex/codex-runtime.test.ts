@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Attachment, HostEvent, ModelProfile, Session, SessionItem, Workspace } from "@amo-studio/protocol";
+import { startFakeAppServer } from "@amo-studio/testkit";
 import { Store } from "../../store/store.js";
 import { describeReview, CodexRuntime } from "./codex-runtime.js";
 import { FakeServers } from "./fake-servers.test-support.js";
@@ -135,6 +136,60 @@ describe("CodexRuntime", () => {
     expect([...types]).toEqual(expect.arrayContaining(["session.upserted", "item.appended", "item.delta", "item.updated"]));
     const fake = servers.fakes.get("p-ds")!;
     expect(fake.threads.get(s.runtimeRef!)!.modelProvider).toBe("amo-ds");
+  });
+
+  it("publishes the reconciled charge on the completed turn when billing finishes", async () => {
+    let recordCharge!: () => void;
+    const recorded = new Promise<void>((resolve) => { recordCharge = resolve; });
+    let reads = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      const first = ++reads === 1;
+      if (!first) await recorded;
+      return Response.json({
+        mode: "unrestricted",
+        isValid: true,
+        balance: 10,
+        unit: "USD",
+        usage: { total: {
+          requests: first ? 4 : 5,
+          input_tokens: first ? 80 : 100,
+          cache_creation_tokens: 0,
+          cache_read_tokens: first ? 40 : 80,
+          output_tokens: first ? 80 : 90,
+          actual_cost: first ? 0.05 : 0.051,
+        } },
+      });
+    });
+    servers = new FakeServers(PROFILES);
+    servers.fakes.set("p-ds", await startFakeAppServer({
+      defaultProvider: "amo-ds",
+      script: async (ctx) => {
+        await ctx.agentMessage("Billed reply");
+        const tokens = { totalTokens: 70, inputTokens: 60, cachedInputTokens: 40, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 };
+        ctx.notify("thread/tokenUsage/updated", { tokenUsage: { total: tokens, last: tokens, modelContextWindow: 1000 } });
+      },
+    }));
+    runtime = new CodexRuntime({
+      store, servers, profiles: PROFILES,
+      balanceFor: (profileId) => ({ profileId, baseUrl: "https://balance.example", config: { template: "sub2api" }, key: "fixture-key", fetch }),
+    });
+    runtime.on("event", (e) => events.push(e));
+    const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "hello" });
+    const completed = () => items(s.id).filter((i) => i.type === "turn").find((i) => i.state === "completed");
+    try {
+      await until(idle(s.id), "idle while billing is pending");
+      expect(completed()).toBeDefined();
+      expect(completed()).not.toHaveProperty("charge");
+    } finally {
+      recordCharge();
+    }
+    await until(() => Boolean(completed()?.charge), "charge written to the completed turn");
+    const charge = { amount: 0.001, unit: "USD" };
+    expect(completed()).toMatchObject({ charge });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "item.updated",
+      item: expect.objectContaining({ id: completed()?.id, charge }),
+    }));
   });
 
   it("lists a model's fast tier and sends it as serviceTier only when Fast is chosen (stage 13)", async () => {

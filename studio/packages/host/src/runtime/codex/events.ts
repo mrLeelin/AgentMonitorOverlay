@@ -8,6 +8,7 @@ import type { CodexAsks } from "./asks.js";
 import { codexRetry, firstLineOf, type CodexRateWindow, type CodexTurnError } from "./account.js";
 import { addUsage, describePlan, describeReview, describeTool, type CodexItem, type CodexReview } from "./describe.js";
 import { turnKey, type CodexCore, type ThreadLike } from "./state.js";
+import type { CodexTurnCharges } from "./turn-charges.js";
 
 // What a Codex app-server's notifications become in Studio (stage 16 split out of codex-runtime.ts): turns, items
 // (messages, reasoning, tools, compaction, reviews, subagents), token usage, retries and notices. Approvals and
@@ -36,6 +37,7 @@ export class CodexEvents {
     private readonly onRateLimits: (profileId: Id, limits: { primary: CodexRateWindow; secondary: CodexRateWindow }) => void,
     /** A turn ended (completed, interrupted or failed): steered messages it never read go on as the next turn. */
     private readonly afterTurn: (sessionId: Id) => void = () => undefined,
+    private readonly turnCharges?: CodexTurnCharges,
   ) {}
 
   /** A notice row; the same key again in this turn updates that row (with a count) instead of adding another. */
@@ -117,7 +119,8 @@ export class CodexEvents {
         st.activeTurnId = turnId;
         st.notices.clear();
         st.callFirstAt = null;
-        this.openTurn(s.id, turnId, n.params.turn.startedAt);
+        const id = this.openTurn(s.id, turnId, n.params.turn.startedAt);
+        this.turnCharges?.start(s.id, id, s.profileId);
         this.core.setStatus(s.id, "running");
         const queued = this.serverNotices.get(handle.profileId);
         if (queued?.length) {
@@ -137,7 +140,14 @@ export class CodexEvents {
         st.compacting = false;
         const turn = { ...(n.params.turn as { id: string; status: string; error?: { message: string } | null; startedAt?: number | null; completedAt?: number | null }), id: turnId };
         this.asks.cancelQuestionsOf(s.id);
-        this.closeTurn(s.id, turn);
+        const id = this.closeTurn(s.id, turn);
+        if (this.turnCharges) {
+          const item = this.core.store.getItem(id);
+          const usage = item?.type === "turn" && item.state === "completed" ? item.usage : undefined;
+          void this.turnCharges.finish(id, usage).then((charge) => {
+            if (charge) this.core.updateItem(id, (it) => it.type === "turn" && it.state === "completed" ? { ...it, charge } : it);
+          }).catch((err: unknown) => this.core.log(`could not record Codex turn charge: ${String(err)}`));
+        }
         if (turn.status === "failed") {
           this.core.appendItem(s.id, { type: "error", message: turn.error?.message ?? "turn failed" }, { method: n.method, turnId });
           this.core.setStatus(s.id, "error");
@@ -201,6 +211,7 @@ export class CodexEvents {
         const id = s && this.turnItemId(s.id, n.params.turnId);
         if (!id) return;
         const { last, modelContextWindow } = n.params.tokenUsage;
+        if (last.inputTokens || last.outputTokens) this.turnCharges?.called(id);
         const st = this.core.sessionState(s.id);
         const firstAt = st.callFirstAt;
         st.callFirstAt = null;
@@ -539,7 +550,7 @@ export class CodexEvents {
     return item.id;
   }
 
-  private closeTurn(sessionId: Id, turn: { id: string; status: string; error?: { message: string } | null; startedAt?: number | null; completedAt?: number | null }): void {
+  private closeTurn(sessionId: Id, turn: { id: string; status: string; error?: { message: string } | null; startedAt?: number | null; completedAt?: number | null }): Id {
     const id = this.openTurn(sessionId, turn.id, turn.startedAt);
     const state: TurnState = turn.status === "failed" ? "failed" : turn.status === "interrupted" ? "interrupted" : "completed";
     const endedAt = (turn.completedAt ? new Date(turn.completedAt * 1000) : this.core.now()).toISOString();
@@ -551,6 +562,7 @@ export class CodexEvents {
       if (item.type === "tool" && item.status === "running") this.core.updateItem(item.id, (it) => (it.type === "tool" ? { ...it, status: "declined" } : it));
       if (item.type === "reasoning" && item.streaming) this.core.updateItem(item.id, (it) => (it.type === "reasoning" ? { ...it, streaming: false } : it));
     }
+    return id;
   }
 
   /** The model call streaming in this thread gave output: its first one starts its generation time. */

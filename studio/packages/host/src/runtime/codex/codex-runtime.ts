@@ -18,6 +18,8 @@ import { CodexEvents } from "./events.js";
 import { newSessionState, type CodexCore, type SessionState } from "./state.js";
 import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 import { RpcError } from "./rpc-client.js";
+import type { BalanceAsk } from "../balance.js";
+import { CodexTurnCharges } from "./turn-charges.js";
 
 export { codexRetry, codexUsage, fastTier, reviewTarget } from "./account.js";
 export { describePlan, describeReview, describeTool, inputQuestions } from "./describe.js";
@@ -39,6 +41,7 @@ export interface CodexRuntimeOptions {
   store: Store;
   servers: CodexServers;
   profiles: readonly ModelProfile[];
+  balanceFor?: (profileId: Id) => BalanceAsk | null;
   now?: () => Date;
   /** 停止 not answered by the app-server this long: Studio takes the turn as stopped (default STOP_GRACE_MS). */
   stopGraceMs?: number;
@@ -76,6 +79,7 @@ export class CodexRuntime extends RuntimeBase {
   private readonly skillCache = new Map<string, { at: number; skills: CodexSkill[] }>();
   private readonly asks: CodexAsks;
   private readonly events: CodexEvents;
+  private readonly turnCharges?: CodexTurnCharges;
   private readonly goalRevisions = new Map<Id, number>();
   private readonly goalMutations = new Map<Id, Promise<unknown>>();
   private readonly goalStopVersions = new Map<Id, number>();
@@ -91,6 +95,7 @@ export class CodexRuntime extends RuntimeBase {
       profile: (id) => this.profile(id),
     };
     this.asks = new CodexAsks(core);
+    if (options.balanceFor) this.turnCharges = new CodexTurnCharges(options.balanceFor);
     this.events = new CodexEvents(
       core,
       this.asks,
@@ -99,6 +104,7 @@ export class CodexRuntime extends RuntimeBase {
         if (profile && profile.provider === null) this.usageCache.set(profile.id, codexUsage(profile, limits));
       },
       (sessionId) => void this.afterTurn(sessionId),
+      this.turnCharges,
     );
     this.asks.cancelStale();
     // Sessions not running any more (the last Host stopped mid-turn): close what that turn left open.
@@ -795,6 +801,7 @@ export class CodexRuntime extends RuntimeBase {
    * are over. `notify` adds a line saying the reply was cut off.
    */
   private settleTurn(sessionId: Id, notify: boolean): void {
+    this.turnCharges?.cancelSession(sessionId);
     // Approvals are not settled here: the app-server replays the ones still wanted after resubscribing (asks.ts).
     const cut = this.settleLeftovers(sessionId);
     // Steered and never read (now unsent, or held again for the inbox's): the turn (and Codex's copy of it) is gone.
@@ -835,7 +842,8 @@ export class CodexRuntime extends RuntimeBase {
       this.asks.onConnectionLost(handle.profileId);
       // Steered messages the app-server had not read went with it (2026-11-02).
       for (const [id, st] of this.state) {
-        if (!st.sent.size || this.store.getSession(id)?.profileId !== handle.profileId) continue;
+        if (this.store.getSession(id)?.profileId !== handle.profileId) continue;
+        this.turnCharges?.cancelSession(id);
         for (const m of st.sent.values()) this.updateItem(m.itemId, (it) => (it.type === "user" && it.delivery === "waiting" ? withDelivery(it, unreadDelivery(it)) : it));
         st.sent.clear();
       }
