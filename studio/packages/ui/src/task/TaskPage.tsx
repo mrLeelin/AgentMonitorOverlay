@@ -61,6 +61,7 @@ import { useMarkReviewSeen } from "../board/reviewSeen.js";
 import { TaskHeader } from "./TaskHeader.js";
 import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
 import { LocalTeamBoardTask } from "../teamtasks/StudioTeamBoard.js";
+import { PlaneBotTaskAction, usePlaneBotJob } from "../teamtasks/PlaneBot.js";
 import { LinkPlaneTaskDialog } from "../teamtasks/PlaneTaskDialogs.js";
 import { TaskWorkspaceDialog } from "./TaskWorkspaceDialog.js";
 
@@ -94,7 +95,7 @@ interface TaskPageProps {
   /** What "←" says: where it returns (看板 or 画布). */
   backLabel?: string;
   onBack(): void;
-  onOpenTask?(taskId: string): void;
+  onOpenTask?(taskId: string, sessionId?: string): void;
   onOpenPlaneOriginal?(url: string): void;
 }
 
@@ -144,6 +145,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   // terminal, files or changes to the task here), or a task of this computer granted to other devices.
   const remote = useRemote(link);
   const copy = copyStatus(task, remote);
+  const [planeBotJob, setPlaneBotJob] = usePlaneBotJob(link, teamTasksEnabled && !copy ? task.id : null);
   const localSessionId = copy ? null : session?.id ?? null;
   const hasSessionChanges = useMemo(() => {
     // The previous session's items can still be present on the first render after switching.
@@ -564,7 +566,9 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       </div>
       </TaskHeader>
       {teamTasksEnabled && !copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
-      {teamTasksEnabled && !copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal} />}
+      {teamTasksEnabled && !copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal}
+        onDescribe={planeBotJob && task.description && !task.archivedAt ? () => setDescribing(true) : undefined}
+        actions={planeBotJob && <PlaneBotTaskAction key={task.id} link={link} task={task} tasks={tasks} job={planeBotJob} setJob={setPlaneBotJob} onOpen={(id, sessionId) => onOpenTask?.(id, sessionId)} />} />}
       {teamTasksEnabled && linkingPlane && <LinkPlaneTaskDialog link={link} taskId={task.id} onClose={() => setLinkingPlane(false)} onDone={() => {
         setLinkingPlane(false);
         setLinkedRevision((value) => value + 1);
@@ -700,7 +704,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       )}
 
-      {task.description && (
+      {task.description && (!planeBotJob || task.archivedAt) && (
         <div className="task-desc" data-testid="task-description">
           <p className="task-desc-text">{task.description}</p>
           {!task.archivedAt && !copy && (

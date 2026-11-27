@@ -14,6 +14,7 @@
 | [tutorial-onboarding.md](tutorial-onboarding.md) | 教程和产品内引导 | 教程和展示页 11-05 已上 GitHub Pages；教程第 2、5 章和产品内引导没做 |
 | [lan-file-transfer.md](lan-file-transfer.md) | AMO 文件快传（局域网传文件） | 10-31 首轮调查做完，范围没定，没开工 |
 | [canvas-workflow.md](canvas-workflow.md) | 画布工作流 canvasflow | 10-30 谈定方向，细节等用户想，没开工 |
+| [bot-work-loop-full.md](bot-work-loop-full.md) | Bot 负责到底的完整设计（事项、Bot 工具、落分支、标签接单、记忆、建议） | 11-26 写完并经 GPT 审稿；用户嫌复杂，先做了两步方案 `plans/done/bot-work-loop.md`（11-27 做完），第 2–7 阶段没开工 |
 
 还没写成方案的小事（用户定了以后再说）：
 

@@ -7,7 +7,7 @@ export type Passage = { itemId: string; start: number; end: number; quote: strin
 export type PlaneTarget = { server: string; workspace: string; project: string; identity: string; name?: string; originalUrl?: string };
 export type PlaneRegion = { x: number; y: number; width: number; height: number };
 export type PlaneTheme = "light" | "dark";
-export type PlaneItemRef = { id: string } | { url: string };
+export type PlaneItemRef = ({ id: string } | { url: string }) & { bot?: true };
 
 /** What a folder picker call answers (packages/app/src/folders.ts). */
 export type FolderResult<T> = { ok: true; value: T } | { ok: false; error: string };

@@ -3,7 +3,7 @@
   "topics": [{
     "id": "studio.teamTasks",
     "label": "Plane 团队看板与本地任务副本",
-    "aliases": ["团队任务", "提单", "团队收件箱", "原单", "接单", "验收", "独立客户端", "Plane", "工作区选择"],
+    "aliases": ["团队任务", "提单", "团队收件箱", "原单", "接单", "验收", "独立客户端", "Plane", "工作区选择", "交给 Bot"],
     "category": "host",
     "purpose": "Studio 在右侧工作区切换本地页面与 Plane 原生团队看板，标题栏和左侧项目栏照常使用。",
     "steps": ["从左栏打开团队任务，直接填 Plane 地址和令牌，选择工作区和项目。通过看板右上角的齿轮更改连接。", "Studio 可直接使用令牌显示团队看板，已有同账号网页会话时复用原生页面。读写都由 Plane 项目权限控制。", "从团队工作项创建个人任务后保存原单信息，并在 Plane 添加当前执行人。"],
@@ -16,11 +16,14 @@
       { "label": "Plane 原单上下文接口", "path": "studio/integrations/plane/amo_team_board.py", "anchor": "class WorkItemContextView" },
       { "label": "旧看板原单、附件与权限", "path": "studio/packages/team-board-server/src/store.ts", "anchor": "export class TeamBoardStore" },
       { "label": "本地工作项副本与原单链接", "path": "studio/packages/host/src/features/teamtasks/board.ts", "anchor": "export class TeamBoardHost" },
+      { "label": "Bot 接单与验收回写", "path": "studio/packages/host/src/features/teamtasks/plane-bot-jobs.ts", "anchor": "export class PlaneBotJobs" },
+      { "label": "Plane Bot 交付与检查卡片", "path": "studio/packages/ui/src/teamtasks/PlaneBot.tsx", "anchor": "export function PlaneBotDeliveryCard" },
+      { "label": "Bots 工作台的 Plane 工单", "path": "studio/packages/ui/src/teamtasks/PlaneBotJobs.tsx", "anchor": "export function PlaneBotJobs" },
       { "label": "Studio 团队看板", "path": "studio/packages/ui/src/teamtasks/StudioTeamBoard.tsx", "anchor": "export function StudioTeamBoard" },
       { "label": "桌面 Plane 页面与浏览会话", "path": "studio/packages/app/src/team-plane-view.ts", "anchor": "export function installTeamPlaneView" },
       { "label": "浏览器入口和登录", "path": "studio/packages/team-board-server/web/main.tsx", "anchor": "function App()" }
     ],
     "related": ["studio.tasks", "tool.account", "tool.relayService"],
-    "next": ["studio/plans/done/plane-team-tasks.md", "studio/integrations/plane/README.md", "studio/plans/done/team-board-server.md"]
+    "next": ["studio/plans/done/plane-team-tasks.md", "studio/plans/studio-bots.md", "studio/plans/done/bot-work-loop.md", "studio/integrations/plane/README.md", "studio/plans/done/team-board-server.md"]
   }]
 }

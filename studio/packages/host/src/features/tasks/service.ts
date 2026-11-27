@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CanvasDoc, Id, NewSessionInput, OutsideSessionList, OutsideSessionPreview, Session, SessionOptions, Task, TaskColumn, TaskResult, Workspace } from "@amo-studio/protocol";
@@ -9,6 +9,7 @@ import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
 import { assertBotTaskEnabled, isBotTask } from "../bots/data.js";
+import { isPlaneBotWorker, planeBotWorkerSession, planeBotWorkspaceId } from "../../store/plane-bot.js";
 import { supportsBotRuntime } from "@amo-studio/protocol";
 import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
@@ -228,7 +229,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     managerTaskId?: Id | null;
     description?: string;
     firstSession?: NewSessionInput;
-    worktree?: { branch?: string };
+    worktree?: { branch?: string; commit?: string };
     /** Filed without a session: the sentence its first session will take (2026-11-05). */
     firstMessage?: string;
   }, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
@@ -248,13 +249,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
     let worktree: Awaited<ReturnType<typeof createForkWorktree>> | undefined;
     if (input.worktree !== undefined) {
-      if (!input.worktree || typeof input.worktree !== "object" || Array.isArray(input.worktree) || (input.worktree.branch !== undefined && typeof input.worktree.branch !== "string")) {
+      if (!input.worktree || typeof input.worktree !== "object" || Array.isArray(input.worktree) || (input.worktree.branch !== undefined && typeof input.worktree.branch !== "string") || (input.worktree.commit !== undefined && typeof input.worktree.commit !== "string")) {
         throw new HostError("bad_request", "工作树设置无效。");
       }
       if (isCommon(workspace) || !input.firstSession || input.firstSession.resumeFrom) {
         throw new HostError("bad_request", "新建工作树需要选择 Git 项目，并直接开始新的会话。");
       }
-      worktree = await createForkWorktree(workspace.path, workspace.path, input.worktree.branch);
+      worktree = await createForkWorktree(workspace.path, workspace.path, input.worktree.branch, input.worktree.commit);
     }
     let task: Task | undefined;
     try {
@@ -313,6 +314,11 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   updateTask(id: Id, patch: { title?: unknown; description?: unknown; firstMessage?: unknown; lead?: unknown; managerTaskId?: unknown; relayAuto?: unknown; column?: unknown; workspaceId?: unknown; topicId?: unknown }): Task {
+    if ((patch.column === "done" || patch.managerTaskId || patch.lead === true) && isPlaneBotWorker(this.store, id)) {
+      if (patch.managerTaskId || patch.lead === true) throw new HostError("conflict", "Plane Bot 执行任务由用户直接验收。");
+      const result = this.latestDelivery(id);
+      if (result?.state !== "accepted" || result.reviewedBy !== "user") throw new HostError("conflict", "请先在「交付与验收」验收此任务。");
+    }
     const current = this.requireTask(id);
     if (current.remote) throw new HostError("read_only", `这是 ${current.remote.name} 上的远程任务：状态、说明和专题跟着那台电脑走，这里不能改（名字可以改，会改到那边）`);
     const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "lead" | "relayAuto" | "managerTaskId">> = {};
@@ -490,7 +496,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   /** What nothing was chosen for, from 设置 → 模型 (the CLI's own defaults when the person set none). */
   async withDefaults(profileId: Id, options: SessionOptions): Promise<SessionOptions> {
     const prefs = readModelPrefs(this.store)[profileId];
-    if (!prefs || (options.model && options.effort && options.permission)) return options;
+    if (!prefs || (options.model && options.effort && options.permission && (prefs.fast !== true || options.fast !== undefined))) return options;
     try {
       return fillDefaults(options, await this.f.config.choices(profileId), prefs);
     } catch {
@@ -512,6 +518,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
     assertBotTaskEnabled(this.store, owner.taskId);
     if (isBotTask(this.store, owner.taskId) && !supportsBotRuntime(this.requireProfile(input.profileId).runtime)) throw new HostError("bad_request", "请选择支持 Bot 的模型渠道。");
+    const planeWorkspace = owner.taskId ? planeBotWorkspaceId(this.store, owner.taskId) : undefined;
+    if (owner.taskId && planeWorkspace) {
+      if (workspace.id !== planeWorkspace) throw new HostError("conflict", "Plane Bot 执行会话须使用接单时的 Git 项目。");
+      if (input.resumeFrom) throw new HostError("bad_request", "Plane Bot 执行任务须在独立工作树内开始新会话。");
+      cwd ??= planeBotWorkerSession(this.store, owner.taskId, planeWorkspace)?.cwd ?? undefined;
+      if (!cwd || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new HostError("conflict", "执行任务的独立工作树不可用，请检查原执行会话的工作目录。");
+    }
     return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
   }
 

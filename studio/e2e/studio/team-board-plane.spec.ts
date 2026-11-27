@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type PlaneBoardConnection, type Task, type Workspace } from "@amo-studio/protocol";
+import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type BotRequest, type PlaneBoardConnection, type PlaneBotJob, type SessionItem, type StateSnapshot, type StudioBot, type Task, type Workspace } from "@amo-studio/protocol";
+import { listenInStudioRange } from "@amo-studio/testkit";
 import { launchStudio, screenshot } from "../support/studio.js";
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -163,6 +166,262 @@ test("connects and reopens the Plane board without web sign-in", async () => {
   } finally {
     await studio.close();
     remote.close();
+  }
+});
+
+const planeBotPlan = [
+  "## 核对发布说明的计划",
+  "",
+  "- **结论** 检查项目发布说明。",
+  "- **拟改范围** `release.md`。",
+  "- **完成标准** 发布说明和变更记录一致。",
+  "- **验证方法** 核对内容和链接。",
+  "- **需要确认的缺失信息** 无。",
+].join("\n");
+
+const planeBotScenarios = [
+  { name: "hands a Plane item to a Bot and retries comment writeback without repeating acceptance", approve: true },
+  { name: "abandons a Plane Bot plan and analyzes again without starting a worker", approve: false },
+];
+for (const { name, approve } of planeBotScenarios) test(name, async () => {
+  test.setTimeout(90_000);
+  const projectId = "8af9b331-e9aa-4f1d-ae07-fcbb149ece27";
+  const itemId = "9e1afba8-22ae-44c1-b4ad-223fad55ce4a";
+  const projectPath = `/workspaces/demo/projects/${projectId}`;
+  const api = PLANE_BOARD_API + projectPath;
+  const token = "fixture-plane-bot-key";
+  const viewer = "plane-bot-account";
+  const item = { id: itemId, number: "DEMO-5", title: "核对发布说明", stateId: "todo", priority: "none", assigneeIds: [], labelIds: [], startDate: null, dueDate: null, revision: 1, archived: false };
+  const comments: Array<{ id: string; actor: string; external_id: string; external_source: string; comment_html: string }> = [];
+  let rejectNative = true;
+  const commentPath = `/api/v1${projectPath}/work-items/${itemId}/comments/`;
+  const methods: string[] = [];
+  const remote = createServer((request, response) => {
+    const json = (body: object, status = 200) => response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+    if (request.headers["x-api-key"] !== token) return json({}, 401);
+    if (request.method !== "GET") methods.push(`${request.method} ${request.url}`);
+    if (request.url === `${PLANE_BOARD_API}/catalog/`) return json({ identity: { id: viewer, name: "团队成员" },
+      workspaces: [{ slug: "demo", name: "Demo", projects: [{ id: projectId, name: "试点项目", writable: true, missing: [] }] }] });
+    if (request.url === `${api}/work-items`) return json({ name: "试点项目", viewerId: viewer, writable: true,
+      states: [{ id: "todo", name: "待办", color: "#777777", group: "unstarted" }], members: [], labels: [], items: [item] });
+    if (request.url === `${api}/work-items/${itemId}` && request.method === "GET") return json({ ...item, description: "检查项目发布说明。", url: `http://127.0.0.1:${remotePort}/demo/browse/DEMO-5/`, creator: "团队成员", files: [], comments: [] });
+    if (request.url === `${api}/work-items/${itemId}` && request.method === "POST") return json({ message: "不支持的工作项操作" }, 400);
+    if (request.url?.startsWith(commentPath) && request.method === "GET") return json({ results: comments, next_page_results: false, next_cursor: null });
+    if (request.url === commentPath && request.method === "POST") {
+      if (rejectNative) return json({ error: "Plane 暂时拒绝评论" }, 403);
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const comment = { ...JSON.parse(body), id: "confirmed-comment", actor: viewer };
+        comments.push(comment);
+        json(comment, 201);
+      });
+      return;
+    }
+    return json({}, 404);
+  });
+  const remotePort = await listenInStudioRange(remote);
+  let studio: Awaited<ReturnType<typeof launchStudio>> | undefined;
+  const checkOpinion = "建议验收：发布说明与变更记录一致，已核对内容和链接。";
+  try {
+    studio = await launchStudio({ mockScript: ({ lastUserText }) => ({
+      kind: "text", text: approve && lastUserText.includes("对照检查") ? checkOpinion : lastUserText.includes("独立 worktree") ? "已核对发布说明。" : planeBotPlan,
+    }) });
+    const { page, app } = studio;
+    const repo = studio.workspace("PlaneBotRepo");
+    const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { windowsHide: true });
+    git("init", "--quiet", "-b", "main");
+    await writeFile(join(repo, "release.md"), "Fixture release notes\n");
+    git("add", "release.md");
+    git("-c", "user.name=Test fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture");
+    const baseCommit = git("rev-parse", "HEAD").toString().trim();
+    if (!approve) await studio.api("POST", "/api/workspaces", { path: studio.workspace("PlaneBotOtherProject") });
+    const workspace = await studio.api<Workspace>("POST", "/api/workspaces", { path: repo });
+    const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "试点审核员", purpose: "检查发布内容", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
+    await studio.api("PUT", "/api/settings", { teamTasksEnabled: true });
+    const server = `http://127.0.0.1:${remotePort}`;
+    await studio.api("POST", "/api/team-board/plane/connect", { server, token });
+    await studio.api("POST", "/api/team-board/plane/select", { workspace: "demo", project: projectId });
+    await page.getByRole("navigation", { name: "范围" }).getByRole("button", { name: "团队任务", exact: true }).click();
+    await page.getByRole("button", { name: /核对发布说明/ }).click();
+    const delegate = page.getByRole("button", { name: "交给 Bot", exact: true });
+    await delegate.click();
+    const dialog = page.getByRole("dialog", { name: "交给 Bot" });
+    const botSelect = dialog.getByLabel("只读 Bot");
+    const projectSelect = dialog.getByLabel("本地 Git 项目");
+    if (!approve) {
+      await expect(projectSelect.locator("option")).toHaveCount(3);
+      await expect(projectSelect).toHaveValue("");
+    }
+    await botSelect.selectOption(bot.id);
+    await projectSelect.selectOption(workspace.id);
+    if (approve) await screenshot(app, "studio", "plane-bot-intake", page);
+    await dialog.getByRole("button", { name: "开始接单" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("计划待确认", { timeout: 45_000 });
+    await expect(dialog.locator("strong").filter({ hasText: "完成标准" })).toBeVisible();
+    await expect(dialog.getByText(baseCommit.slice(0, 7))).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "查看 Bot 分析" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "打开执行任务" })).toHaveCount(0);
+
+    const getJob = () => studio!.api<PlaneBotJob>("GET", `/api/team-board/plane/work-items/${itemId}/bot`);
+    const state = () => studio!.api<StateSnapshot>("GET", "/api/state");
+    const pending = await getJob();
+    expect(pending).toMatchObject({ state: "awaiting-approval", taskId: null, baseCommit });
+    expect(methods).toEqual([]);
+
+    if (!approve) {
+      await dialog.getByRole("button", { name: "放弃", exact: true }).click();
+      await expect(dialog.getByRole("status")).toHaveText("已放弃");
+      expect(await getJob()).toMatchObject({ state: "declined", taskId: null });
+      await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await delegate.click();
+      await expect(dialog.getByRole("status")).toHaveText("已放弃");
+      await expect(botSelect).toHaveValue(bot.id);
+      await expect(projectSelect).toHaveValue(workspace.id);
+      await screenshot(app, "studio", "plane-bot-declined", page);
+      await dialog.getByRole("button", { name: "重新交给 Bot" }).click();
+      await expect(dialog.getByRole("status")).toHaveText("计划待确认", { timeout: 45_000 });
+      const renewed = await getJob();
+      expect(renewed).toMatchObject({ state: "awaiting-approval", taskId: null, botId: bot.id, workspaceId: workspace.id });
+      expect(renewed.botSessionId).toBeTruthy();
+      expect(renewed.botSessionId).not.toBe(pending.botSessionId);
+      expect((await state()).tasks.filter((task) => task.title.includes(item.number))).toEqual([]);
+      expect(methods).toEqual([]);
+      expect(comments).toEqual([]);
+      return;
+    }
+
+    git("-c", "user.name=Test fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-qm", "after analysis");
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await delegate.click();
+    await expect(dialog.getByRole("status")).toHaveText("计划待确认");
+    await expect(dialog.getByText("分析后项目有 1 个新提交。开工会从分析时的提交开始改；想用最新代码，请放弃后重新交给 Bot。", { exact: true })).toBeVisible();
+    await screenshot(app, "studio", "plane-bot-plan", page);
+    await dialog.getByRole("button", { name: "开工", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "打开执行任务" })).toBeVisible({ timeout: 45_000 });
+    await dialog.getByRole("button", { name: "打开执行任务" }).click();
+    const job = await getJob();
+    await expect.poll(async () => (await state()).sessions.some((entry) => entry.taskId === job.taskId)).toBe(true);
+    const worker = (await state()).sessions.find((entry) => entry.taskId === job.taskId)!;
+    await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${worker.id}/items`)).filter((item) => item.type === "turn").at(-1)?.state, { timeout: 30_000 }).toBe("completed");
+    await expect.poll(async () => (await state()).sessions.find((entry) => entry.id === worker.id)?.status).toBe("idle");
+    expect(worker.cwd).toBeTruthy();
+    expect(worker.cwd).not.toBe(repo);
+    await page.getByTestId("new-session-toggle").click();
+    await page.getByRole("button", { name: "开始新会话", exact: true }).click();
+    const followup = async () => (await state()).sessions.find((entry) => entry.taskId === job.taskId && entry.id !== worker.id);
+    await expect.poll(followup).toMatchObject({ cwd: worker.cwd });
+    const session = (await followup())!;
+    expect(execFileSync("git", ["-C", session.cwd!, "rev-parse", "HEAD"], { windowsHide: true, encoding: "utf8" }).trim()).toBe(baseCommit);
+    await writeFile(join(session.cwd!, "release.md"), "Fixture release notes\nVerified release links in the worker worktree.\n");
+    expect(execFileSync("git", ["-C", repo, "status", "--short"], { windowsHide: true, encoding: "utf8" }).trim()).toBe("");
+    const verification = ["检查工作树中的 release.md", ...Array.from({ length: 24 }, (_, index) => `验证项 ${index + 1}：检查内容、链接及变更记录。`)].join("\n");
+    await studio.api("POST", `/api/tasks/${job.taskId}/workflow/submit`, { sessionId: session.id, summary: "已核对发布说明", verification });
+
+    await page.getByRole("navigation", { name: "范围" }).getByRole("button", { name: "团队任务", exact: true }).click();
+    if (!await dialog.isVisible()) {
+      await page.locator(`[data-team-ticket="${itemId}"]`).click();
+      await expect(dialog.or(delegate).first()).toBeVisible();
+      if (!await dialog.isVisible()) await delegate.click();
+    }
+    await expect(dialog.getByRole("status")).toHaveText("等待人工验收");
+    await expect(dialog.getByText("已核对发布说明", { exact: true })).toBeVisible();
+    const reviewOpened = app.waitForEvent("window");
+    await dialog.getByRole("button", { name: "查看改动", exact: true }).click();
+    const gitReview = await reviewOpened;
+    await expect(gitReview).toHaveURL(/#review\?/);
+    const reviewHash = new URL(gitReview.url()).hash;
+    const reviewParams = new URLSearchParams(reviewHash.slice("#review?".length));
+    expect(reviewParams.get("worktree")).toBe(session.id);
+    expect(reviewParams.get("base")).toBe(baseCommit);
+    await expect(gitReview.getByTestId("review-file").filter({ hasText: "release.md" })).toBeVisible();
+    await gitReview.close();
+
+    const analysisRequests = await studio.api<BotRequest[]>("GET", "/api/bot-requests");
+    expect(analysisRequests).toHaveLength(1);
+    await dialog.getByRole("button", { name: "让 Bot 对照检查", exact: true }).click();
+    await expect(dialog.getByText(checkOpinion, { exact: true })).toBeVisible({ timeout: 45_000 });
+    await expect(dialog.getByRole("status")).toHaveText("等待人工验收");
+    expect(await getJob()).toMatchObject({ state: "review", check: { status: "completed", opinion: checkOpinion } });
+    expect((await state()).tasks.find((task) => task.id === job.taskId)?.column).toBe("review");
+    const allRequests = await studio.api<BotRequest[]>("GET", "/api/bot-requests");
+    expect(allRequests).toHaveLength(2);
+    const checkRequest = allRequests.find((request) => request.id !== analysisRequests[0]!.id);
+    const checkTitle = "对照检查 Plane 工作项 DEMO-5 的交付。";
+    expect(checkRequest?.text.split("\n", 1)[0]).toBe(checkTitle);
+    expect(checkRequest?.text.split("【改动文件】\n", 2)[1]?.split("\n\n", 1)[0]).toContain("release.md");
+    expect(methods).toEqual([]);
+    await screenshot(app, "studio", "plane-bot-delivery", page);
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "关闭工作项", exact: true }).click();
+
+    await page.getByRole("button", { name: "Bot 选项", exact: true }).click();
+    await page.getByRole("menuitem", { name: "打开 Bots 工作台" }).click();
+    const workbench = page.getByRole("region", { name: "Bots 工作台" });
+    const planeJobs = workbench.getByRole("region", { name: "Plane 工单" });
+    await expect(planeJobs.getByText("DEMO-5 · 核对发布说明", { exact: true })).toBeVisible();
+    await expect(planeJobs.getByText("等待人工验收", { exact: true })).toBeVisible();
+    await expect(planeJobs.getByText(checkOpinion, { exact: true })).toBeVisible();
+    const record = workbench.getByTestId("bot-request").filter({ has: page.getByText(checkTitle, { exact: true }) });
+    const requestText = record.locator("details").filter({ has: page.locator("summary").filter({ hasText: checkTitle }) });
+    await expect(requestText.locator("summary")).toHaveText(checkTitle);
+    await expect(requestText).not.toHaveAttribute("open");
+    await expect(requestText.locator(".bot-request-result")).toContainText("【改动文件】");
+    await expect(requestText.locator(".bot-request-result")).toBeHidden();
+    await screenshot(app, "studio", "plane-bot-workbench", page);
+    await planeJobs.getByRole("button", { name: "打开执行任务", exact: true }).click();
+
+    const original = page.getByRole("region", { name: "关联的团队原单" });
+    const reviewButton = original.getByRole("button", { name: "验收交付" });
+    await expect(original.getByText("等待人工验收")).toBeVisible();
+    await expect(page.getByTestId("workflow-result")).toHaveCount(0);
+    await expect(page.getByTestId("task-description")).toHaveCount(0);
+    await original.getByRole("button", { name: "原单与任务说明" }).click();
+    await page.getByRole("menuitem", { name: "任务说明…" }).click();
+    await expect(page.getByRole("dialog", { name: "任务说明" }).getByLabel("说明内容")).toHaveValue(/原请求/);
+    await page.keyboard.press("Escape");
+
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await screenshot(app, "studio", "plane-bot-task-compact", page);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(960, 680));
+    const conversationHeight = () => page.locator(".task-body").evaluate((element) => element.getBoundingClientRect().height);
+    await expect.poll(conversationHeight).toBeGreaterThan(300);
+    const beforeReview = await conversationHeight();
+    await reviewButton.click();
+    const review = page.getByRole("dialog", { name: "交付与验收" });
+    await expect(review.getByText(checkOpinion, { exact: true })).toBeVisible();
+    const result = review.getByTestId("workflow-result");
+    await expect(result).toHaveAttribute("data-state", "submitted");
+    await expect(result).toHaveAttribute("open", "");
+    await expect(review.getByRole("button", { name: "关闭" })).toBeInViewport();
+    expect(await conversationHeight()).toBe(beforeReview);
+    expect(await review.locator(".plane-bot-review-body").evaluate((body) => body.scrollHeight > body.clientHeight)).toBe(true);
+    await screenshot(app, "studio", "plane-bot-review", page);
+    await page.keyboard.press("Escape");
+    await expect(review).toHaveCount(0);
+    await expect(reviewButton).toBeFocused();
+    await reviewButton.click();
+    const accept = result.getByRole("button", { name: "验收通过" });
+    await accept.scrollIntoViewIfNeeded();
+    await screenshot(app, "studio", "plane-bot-review-actions", page);
+    expect(comments).toEqual([]);
+    await accept.click();
+    await expect(original.getByText("交付已验收，Plane 回写失败")).toBeVisible();
+    await expect(result).toHaveAttribute("data-state", "accepted");
+    expect(comments).toEqual([]);
+    await review.getByRole("button", { name: "关闭" }).click();
+    await screenshot(app, "studio", "plane-bot-writeback-failed", page);
+    rejectNative = false;
+    await original.getByRole("button", { name: "重试回写" }).click();
+    await expect(original.getByText("已回写 Plane 评论", { exact: true })).toBeVisible();
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatchObject({ actor: viewer, external_source: "AMO Studio", access: "INTERNAL", comment_html: expect.stringContaining("检查工作树中的 release.md") });
+    expect(methods).toEqual([ `POST ${api}/work-items/${itemId}`, `POST ${commentPath}`, `POST ${api}/work-items/${itemId}`, `POST ${commentPath}` ]);
+  } finally {
+    await studio?.close();
+    await new Promise<void>((resolve) => remote.close(() => resolve()));
   }
 });
 
@@ -426,7 +685,15 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
       const child = webContents.getAllWebContents().find((candidate) => candidate.getURL() === url)!;
       return child.executeJavaScript("Array.from(document.querySelectorAll('[role=menuitem]'), (item) => item.textContent)");
     }, origin + path);
-    await expect.poll(guestMenuItems).toEqual(["创建个人任务", "编辑", "复制链接"]);
+    await expect.poll(guestMenuItems).toEqual(["创建个人任务", "交给 Bot", "编辑", "复制链接"]);
+    await page.route(`**/api/team-board/plane/work-items/${issueId}/bot`, (route) => route.fulfill({ json: null }));
+    await clickGuest("#amo-studio-delegate-to-bot", "left");
+    const botIntake = page.getByRole("dialog", { name: "交给 Bot" });
+    await expect(botIntake).toContainText("TALUO-16 · 780");
+    await botIntake.getByRole("button", { name: "取消" }).click();
+    await expect.poll(matchRightPane).toBe(true);
+    await clickGuest(card, "right");
+    await expect.poll(guestMenuItems).toEqual(["创建个人任务", "交给 Bot", "编辑", "复制链接"]);
     await clickGuest("#amo-studio-create-personal-task", "left");
     const personal = page.getByRole("dialog", { name: "创建个人任务" });
     await expect(personal).toContainText("TALUO-16 · 780");

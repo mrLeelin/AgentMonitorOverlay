@@ -3,11 +3,13 @@ import { RelayClient, RelayClientError } from "@amo-studio/relay/light";
 import { Feature } from "../../core/feature.js";
 import { HostError } from "../../core/shared.js";
 import { TeamBoardHost } from "./board.js";
+import { PlaneBotJobs } from "./plane-bot-jobs.js";
 
 type Link = { task_id: string; server: string; ticket_id: string; started: number; awaiting_review: number };
 
-export class TeamTasksFeature extends Feature<"tasks"> {
+export class TeamTasksFeature extends Feature<"tasks" | "bots" | "orchestration"> {
   readonly board = new TeamBoardHost(this.host);
+  readonly planeBots = new PlaneBotJobs(this.host, this.board);
   private client(server?: string): RelayClient {
     const account = this.teamLink.account;
     if (!account) throw new HostError("bad_request", "请先在 AMO 平台里登录");

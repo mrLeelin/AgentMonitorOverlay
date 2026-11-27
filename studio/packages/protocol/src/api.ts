@@ -77,7 +77,7 @@ export interface NewSessionInput {
 /** Either file a personal task for later, or start its first session in the selected project. */
 export type NewTaskInput = {
   title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null;
-  column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string };
+  column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string; commit?: string };
 };
 
 /** 接续已有会话 (2026-11-05): a Claude session started outside Studio, as GET /api/claude/outside-sessions lists it. */
@@ -905,6 +905,7 @@ export type HostErrorCode = "bad_request" | "not_found" | "conflict" | "read_onl
 /** Events on `ws://127.0.0.1:<port>/api/events?since=<eventSeq>`. `seq` is global and monotonic. */
 export type HostEvent = { seq: number } & (
   | { type: "bots.changed" }
+  | { type: "plane.bot.changed"; itemId: Id; taskId: Id | null }
   | { type: "bot-files.changed"; botId: Id }
   | { type: "bot.notification"; botId: Id; botName: string; notice: "approval" | "completed" | "failed" }
   | { type: "bot-groups.changed" }

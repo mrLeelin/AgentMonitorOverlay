@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LinkedTeamBoardTicket, ModelProfile, PlaneBoardConnection, PlaneState, PlaneTaskReference, Session, Task, TeamBoardAction, TeamBoardSnapshot, TeamBoardSummary, TeamBoardTicket, TeamTaskFile, Topic, Workspace } from "@amo-studio/protocol";
 import type { Scope } from "../board/Board.js";
 import type { ViewDef } from "../shell/views.js";
@@ -10,6 +10,7 @@ import { PlaneWorkItems } from "./PlaneWorkItems.js";
 import { discardNativePlaneView, NativePlaneWorkItems, nativePlaneKey } from "./NativePlaneWorkItems.js";
 import { PublishPlaneTaskDialog } from "./PlaneTaskDialogs.js";
 import { TeamBoardPreview } from "./TeamBoardPreview.js";
+import { below, PopMenu, type Anchor } from "../task/TaskHead.js";
 import "./teamtasks.css";
 
 const empty: TeamBoardSnapshot = { name: null, tickets: [], notices: [] };
@@ -184,19 +185,20 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
   </section>;
 }
 
-export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal }: {
-  link: HostLink; taskId: string; archived: boolean; onOpenPlaneOriginal?(url: string): void;
+export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal, actions, onDescribe }: {
+  link: HostLink; taskId: string; archived: boolean; onOpenPlaneOriginal?(url: string): void; actions?: ReactNode; onDescribe?(): void;
 }) {
   const [data, setData] = useState<LinkedTeamBoardTicket | null>(null);
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<TeamBoardAction | null>(null);
   const [error, setError] = useState("");
-  const [reference, setReference] = useState<PlaneTaskReference | null>(null);
+  const [reference, setReference] = useState<PlaneTaskReference | null>();
+  const [options, setOptions] = useState<Anchor | null>(null);
   useEffect(() => {
     let live = true;
     void call(link, "GET /api/team-board/local/:id/reference", { id: taskId }).then(
       (value) => { if (live) setReference(value); },
-      () => {},
+      () => { if (live) setReference(null); },
     );
     const load = () => call(link, "GET /api/team-board/local/:id", { id: taskId }).then(
       (value) => { if (live) setData(value); },
@@ -206,7 +208,28 @@ export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal
     const timer = open ? setInterval(() => void load(), 5000) : undefined;
     return () => { live = false; clearInterval(timer); };
   }, [link, taskId, open]);
-  if (!reference && !data && !error) return null;
+  if (!reference && !data && !error && !actions) return null;
+  const unlink = () => void call(link, "DELETE /api/team-board/local/:id/reference", { id: taskId }).then(
+    () => { setReference(null); showToast("原单链接已移除。"); }, (err) => setError(teamBoardMessage(err)),
+  );
+  if (actions) return <section className="tb-panel tb-local plane-bot-task" aria-label="关联的团队原单">
+    <div className="plane-bot-source">
+      {reference ? <button type="button" className="link-btn plane-bot-source-link" title={reference.title} disabled={!onOpenPlaneOriginal}
+        aria-label={`打开 Plane 原单 ${reference.number ?? ""}`.trim()} onClick={() => onOpenPlaneOriginal?.(reference.url)}>
+        <span>Plane 原单</span><strong>{reference.number ?? "打开原单"}</strong>
+      </button> : <span className="dim">{reference === null ? "Plane 原单链接不可用" : "Plane 原单"}</span>}
+      {!archived && (onDescribe || reference) && <button type="button" className="btn-ghost small plane-bot-options" aria-label="原单与任务说明" aria-haspopup="menu"
+        aria-expanded={!!options} onClick={(event) => setOptions(options ? null : below(event.currentTarget))}>
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="13" cy="8" r="1.2"/></svg>
+      </button>}
+      {options && <PopMenu at={options} label="原单与任务说明" onClose={() => setOptions(null)}>
+        {onDescribe && <button type="button" role="menuitem" onClick={() => { setOptions(null); onDescribe(); }}>任务说明…</button>}
+        {reference && <button type="button" role="menuitem" onClick={() => { setOptions(null); unlink(); }}>移除 Plane 原单链接</button>}
+      </PopMenu>}
+    </div>
+    {actions}
+    {error && <p className="tb-error" role="alert">{error}</p>}
+  </section>;
   return <section className="tb-panel tb-local" aria-label="关联的团队原单">
     <div className={reference ? "tb-row tb-source-row" : "tb-row"}>
       {reference && <>
@@ -218,9 +241,7 @@ export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal
         </span>}
         <button type="button" className="tb-button" disabled={!onOpenPlaneOriginal}
           onClick={() => onOpenPlaneOriginal?.(reference.url)}>打开 Plane 原单</button>
-        {!archived && <button type="button" className="tb-button tb-quiet" onClick={() => void call(link, "DELETE /api/team-board/local/:id/reference", { id: taskId }).then(
-          () => { setReference(null); showToast("原单链接已移除。"); }, (err) => setError(teamBoardMessage(err)),
-        )}>移除链接</button>}
+        {!archived && <button type="button" className="tb-button tb-quiet" onClick={unlink}>移除链接</button>}
       </>}
       {data && <><button type="button" className="tb-button" aria-expanded={open} onClick={() => setOpen(!open)}>团队原单</button><BoardStatus status={data.ticket.status} /></>}
     </div>

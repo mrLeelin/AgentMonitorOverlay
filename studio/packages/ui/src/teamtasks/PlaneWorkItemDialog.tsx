@@ -5,7 +5,7 @@ import { Modal } from "../lib/Modal.js";
 import { teamBoardMessage } from "./SharedTeamBoard.js";
 import { PLANE_PRIORITIES, planeStateName } from "./PlaneWorkItemLayouts.js";
 
-export function PlaneWorkItemDialog({ link, item, board, target, projects, onProject, onCopy, onChange, onClose }: {
+export function PlaneWorkItemDialog({ link, item, board, target, projects, onProject, onCopy, onBot, onChange, onClose }: {
   link: HostLink;
   item: Pick<PlaneWorkItem, "id" | "number" | "title">;
   board: PlaneProjectBoard;
@@ -13,6 +13,7 @@ export function PlaneWorkItemDialog({ link, item, board, target, projects, onPro
   projects?: readonly Workspace[];
   onProject(id: string): void;
   onCopy(): Promise<void>;
+  onBot(): void;
   onChange(item: PlaneWorkItem, change: PlaneWorkItemChange): Promise<PlaneWorkItemDetail | null>;
   onClose(): void;
 }) {
@@ -179,6 +180,7 @@ export function PlaneWorkItemDialog({ link, item, board, target, projects, onPro
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>}
           <button type="button" className="tb-button" title={target ? `创建到「${target.name}」，并把当前 Plane 账号加为执行人` : "请选择本地项目"} disabled={busy || loading || editing || !target} onClick={() => void run(onCopy)}>创建个人任务</button>
+          {board.writable && !detail?.archived && <button type="button" className="tb-button" disabled={busy || loading || editing || !detail} onClick={onBot}>交给 Bot</button>}
         </div>}
       </>}
     </footer>}

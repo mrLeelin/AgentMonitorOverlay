@@ -599,6 +599,8 @@ class ProjectWorkItemView(BaseAPIView):
             raise BoardProblem(409, "这张工作项已被修改，请刷新后重试")
         if issue.archived_at and action not in ("restore", "delete"):
             raise BoardProblem(409, "请先恢复这张工作项")
+        if action == "bot-comment":
+            return result_comment(request, issue)
         if action == "edit":
             edit_work_item(request, issue, project, fields)
         elif action in ("archive", "restore"):
@@ -664,13 +666,30 @@ def update_issue(request, issue, project, data):
     ), robust=True)
 
 
-def note(request, issue, text):
+def result_comment(request, issue):
+    if request.data.get("viewerId") != str(request.user.id):
+        raise BoardProblem(409, "Plane 账号已变更，请用接单时的账号回写")
+    result_id = request.data.get("resultId")
+    text = request.data.get("text")
+    if not isinstance(result_id, str) or not fullmatch(r"result-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", result_id):
+        raise BoardProblem(400, "验收编号无效")
+    if not isinstance(text, str) or not text.strip() or len(text) > 40100:
+        raise BoardProblem(400, "交付评论内容无效")
+    # ProjectWorkItemView holds the issue row lock through commit, including if the client never sees our response.
+    comment = IssueComment.objects.filter(issue=issue, external_source="AMO Studio", external_id=result_id).first()
+    if comment is None:
+        comment = note(request, issue, text.strip(), result_id=result_id)
+    return Response({"id": str(comment.id)})
+
+
+def note(request, issue, text, *, result_id=None):
     if not text:
         return None
     comment = IssueComment.objects.create(
         project_id=issue.project_id, issue=issue, actor=request.user,
-        comment_html="<p>" + escape(text).replace("\n", "<br/>") + "</p>",
+        comment_html=text_html(text),
         comment_stripped=text,
+        **({"external_source": "AMO Studio", "external_id": result_id} if result_id else {}),
     )
     dispatch_activity(request, issue, "comment.activity.created", {"id": str(comment.id), "comment_html": comment.comment_html})
     return comment

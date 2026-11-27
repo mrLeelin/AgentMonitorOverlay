@@ -5,6 +5,7 @@ import { PLANE_WORK_ITEM_DRAG } from "@amo-studio/protocol";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const settingsButton = "amo-studio-team-settings";
 const personalMenuItem = "amo-studio-create-personal-task";
+const botMenuItem = "amo-studio-delegate-to-bot";
 const projectTitle = "amo-studio-team-project";
 // Plane CE 1.5 renders the issue toolbar as Header.LeftItem followed by Header.RightItem inside AppHeader.
 const header = '[class~="z-[18]"]';
@@ -74,8 +75,8 @@ const PROJECT_CHROME = `
   @media (prefers-reduced-motion: reduce) {
     ${kanban} [class~="group/kanban-block"] > a { transition: none; }
   }
-  #${personalMenuItem} { text-align: start; }
-  #${personalMenuItem}:is(:hover, :focus-visible) { background: color-mix(in srgb, currentColor 8%, transparent); }
+  #${personalMenuItem}, #${botMenuItem} { text-align: start; }
+  :is(#${personalMenuItem}, #${botMenuItem}):is(:hover, :focus-visible) { background: color-mix(in srgb, currentColor 8%, transparent); }
 `;
 
 function projectControlsScript(projectPath: string, name: string, settingsUrl: string, personalTaskPrefix: string, viewId: string): string {
@@ -111,6 +112,12 @@ function projectControlsScript(projectPath: string, name: string, settingsUrl: s
     copy.tabIndex = -1;
     copy.setAttribute("role", "menuitem");
     copy.innerHTML = '<svg class="shrink-0" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 4v8M4 8h8"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="3"/></svg><span>创建个人任务</span>';
+    const bot = document.createElement("button");
+    bot.type = "button";
+    bot.id = ${JSON.stringify(botMenuItem)};
+    bot.tabIndex = -1;
+    bot.setAttribute("role", "menuitem");
+    bot.textContent = "交给 Bot";
     let pending = null;
     let itemId = null;
     const insert = () => {
@@ -121,7 +128,8 @@ function projectControlsScript(projectPath: string, name: string, settingsUrl: s
       itemId = pending.id;
       pending = null;
       copy.className = first.className;
-      menu.prepend(copy);
+      bot.className = first.className;
+      menu.prepend(copy, bot);
     };
     const itemOf = (element) => {
       const card = element instanceof Element && element.closest('[id^="issue-"],[data-entity-id]');
@@ -138,6 +146,7 @@ function projectControlsScript(projectPath: string, name: string, settingsUrl: s
       pending = null;
       itemId = null;
       copy.remove();
+      bot.remove();
       const id = itemOf(event.target);
       if (!id) return;
       const opening = { id, prior: new Set(openMenus()) };
@@ -145,24 +154,30 @@ function projectControlsScript(projectPath: string, name: string, settingsUrl: s
       setTimeout(() => { if (pending === opening) pending = null; }, 1000);
     }, true);
     window.addEventListener("pointerdown", () => { pending = null; }, true);
-    copy.addEventListener("click", (event) => {
+    const openAction = (event, action, element) => {
       if (!itemId) return;
       event.preventDefault();
       event.stopPropagation();
-      const url = ${JSON.stringify(personalTaskPrefix)} + itemId;
-      copy.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      const url = ${JSON.stringify(personalTaskPrefix)} + action + itemId;
+      element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       window.open(url, "_blank", "noopener");
-    });
+    };
+    copy.addEventListener("click", (event) => openAction(event, "", copy));
+    bot.addEventListener("click", (event) => openAction(event, "bot/", bot));
     window.addEventListener("keydown", (event) => {
       const menu = copy.parentElement;
       if (!menu?.hasAttribute("data-open") || !menu.contains(document.activeElement)) return;
-      const first = copy.nextElementSibling;
+      const first = bot.nextElementSibling;
       const focused = document.activeElement;
-      if (event.key === "Home" || (event.key === "ArrowUp" && focused === first) || (event.key === "ArrowDown" && focused === menu)) {
+      if (event.key === "Home" || (event.key === "ArrowUp" && focused === bot) || (event.key === "ArrowDown" && focused === menu)) {
         event.preventDefault();
         event.stopPropagation();
         copy.focus();
-      } else if (event.key === "ArrowDown" && focused === copy && first instanceof HTMLElement) {
+      } else if ((event.key === "ArrowDown" && focused === copy) || (event.key === "ArrowUp" && focused === first)) {
+        event.preventDefault();
+        event.stopPropagation();
+        bot.focus();
+      } else if (event.key === "ArrowDown" && focused === bot && first instanceof HTMLElement) {
         event.preventDefault();
         event.stopPropagation();
         first.focus();
@@ -350,7 +365,7 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
     const sameOrigin = (url: string) => URL.parse(url)?.origin === target.url.origin;
     const settingsUrl = new URL(`/.amo-studio/team-connection/${id}`, target.url).href;
     const personalTaskPrefix = new URL(`/.amo-studio/personal-task/${id}/`, target.url).href;
-    const requestCopy = (item: { id: string } | { url: string }) => {
+    const requestCopy = (item: ({ id: string } | { url: string }) & { bot?: true }) => {
       if (current === instance && instance.visible && sameOrigin(contents.getURL())) owner.webContents.send("amo:plane-copy", id, item);
     };
     contents.on("will-navigate", (navigation) => {
@@ -364,8 +379,10 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
     contents.setWindowOpenHandler(({ url }) => {
       // The card command must leave the current document in place, even if an editor has an unsaved change.
       if (url.startsWith(personalTaskPrefix)) {
-        const itemId = url.slice(personalTaskPrefix.length);
-        if (uuid.test(itemId)) requestCopy({ id: itemId });
+        const item = url.slice(personalTaskPrefix.length);
+        const bot = item.startsWith("bot/");
+        const itemId = bot ? item.slice(4) : item;
+        if (uuid.test(itemId)) requestCopy({ id: itemId, ...(bot ? { bot: true } : {}) });
         return { action: "deny" };
       }
       if (sameOrigin(url) && URL.parse(url)?.pathname.includes("/browse/")) setImmediate(() => {
@@ -415,7 +432,7 @@ export function installTeamPlaneView(mainWindow: () => BrowserWindow | null): vo
       const original = originalOf(contents.getURL(), target.url.origin);
       const itemRef = original ? { url: original.href } : typeof item === "string" && uuid.test(item) ? { id: item } : null;
       const menu: Electron.MenuItemConstructorOptions[] = [];
-      if (itemRef) menu.push({ label: "创建个人任务", click: () => requestCopy(itemRef) });
+      if (itemRef) menu.push({ label: "创建个人任务", click: () => requestCopy(itemRef) }, { label: "交给 Bot", click: () => requestCopy({ ...itemRef, bot: true }) });
       if (info.isEditable) menu.push({ role: "cut" }, { role: "copy" }, { role: "paste" });
       else if (info.selectionText) menu.push({ role: "copy" });
       if (menu.length) Menu.buildFromTemplate(menu).popup({ window: owner });

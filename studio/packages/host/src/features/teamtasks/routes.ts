@@ -1,10 +1,11 @@
-import { TEAM_TASK_BODY_LIMIT, type PlanePersonalDraft, type PlaneTaskDraft, type PlaneWorkItemChange, type TeamBoardChange, type TeamTaskChange } from "@amo-studio/protocol";
+import { TEAM_TASK_BODY_LIMIT, type PlaneBotDecision, type PlaneBotIntake, type PlanePersonalDraft, type PlaneTaskDraft, type PlaneWorkItemChange, type TeamBoardChange, type TeamTaskChange } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
-import { bytes, route, type Route } from "../../http/route.js";
+import { bytes, obj, route, type Route } from "../../http/route.js";
 import type { HostService } from "../../service.js";
 
 export function teamTasksRoutes(service: HostService): Route[] {
   const board = service.teamTasks.board;
+  const bots = service.teamTasks.planeBots;
   return [
     route("GET /api/team-board", () => board.snapshot()),
     route("GET /api/team-board/plane", () => board.connection()),
@@ -26,6 +27,14 @@ export function teamTasksRoutes(service: HostService): Route[] {
     route("POST /api/team-board/plane/resolve-item", ({ body }) => board.resolveWorkItem((body as { url?: unknown } | undefined)?.url)),
     route("GET /api/team-board/plane/work-items/:id", ({ params }) => board.workItem(params.id)),
     route("POST /api/team-board/plane/work-items/:id", ({ params, body }) => board.changeWorkItem(params.id, body as PlaneWorkItemChange)),
+    route("GET /api/team-board/plane/work-items/:id/bot", ({ params }) => bots.forItem(params.id)),
+    route("POST /api/team-board/plane/work-items/:id/bot", ({ params, body }) => bots.intake(params.id, body as PlaneBotIntake)),
+    route("POST /api/team-board/plane/work-items/:id/bot/approve", ({ params, body }) => bots.approve(params.id, body as PlaneBotDecision)),
+    route("POST /api/team-board/plane/work-items/:id/bot/decline", ({ params, body }) => bots.decline(params.id, body as PlaneBotDecision)),
+    route("GET /api/team-board/plane/bots/:id/jobs", ({ params }) => bots.forBot(params.id)),
+    route("GET /api/team-board/local/:id/bot", ({ params }) => bots.forTask(params.id)),
+    route("POST /api/team-board/local/:id/bot/retry", ({ params }) => bots.retry(params.id)),
+    route("POST /api/team-board/local/:id/bot/check", ({ params, body }) => bots.check(params.id, obj(body).resultId)),
     route("POST /api/team-board/plane/work-items/:id/copy", ({ params, body }) => {
       const input = body as { source?: unknown; workspaceId?: unknown; viewerId?: unknown; topicId?: unknown; requestId?: unknown; draft?: PlanePersonalDraft } | undefined;
       if (typeof input?.source !== "string" || (input.workspaceId !== null && (typeof input.workspaceId !== "string" || !input.workspaceId)) ||

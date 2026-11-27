@@ -1,0 +1,63 @@
+.tb-local.plane-bot-task {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 24px;
+  row-gap: 8px;
+  padding: 8px 18px;
+  background: var(--panel-raised);
+}
+.plane-bot-source { display: flex; align-items: center; gap: 8px; flex: none; }
+.plane-bot-source-link { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.plane-bot-source-link > span { color: var(--text-dim); }
+.plane-bot-options { display: inline-grid; place-items: center; padding-inline: 5px; }
+.plane-bot-delivery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 1 auto;
+  margin-inline-start: auto;
+  min-width: 0;
+}
+.plane-bot-delivery-actions { display: flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; }
+.plane-bot-delivery-copy { display: grid; gap: 2px; min-width: 0; }
+.plane-bot-delivery-status { color: var(--text); font-size: var(--fs-sm); }
+.plane-bot-delivery-detail { color: var(--text-dim); font-size: var(--fs-cap); overflow-wrap: anywhere; }
+.plane-bot-task > .tb-error { flex-basis: 100%; }
+.plane-bot-delivery-status[data-state="review"] { color: var(--attention); }
+.plane-bot-delivery-status[data-state="failed"] { color: var(--error-text); }
+
+.modal.plane-bot-intake-plan { width: 640px; }
+.plane-bot-plan { min-height: 0; max-height: 45vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
+.plane-bot-delivery-card { display: grid; gap: 8px; flex: none; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-raised); overflow-wrap: anywhere; }
+.plane-bot-delivery-card p { margin: 0; }
+.plane-bot-delivery-card summary { cursor: pointer; }
+.plane-bot-evidence { max-height: 18vh; overflow: auto; white-space: pre-wrap; }
+.plane-bot-opinion { display: grid; gap: 6px; min-width: 0; }
+.plane-bot-opinion-text { background: var(--panel); }
+.plane-bot-card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.plane-bot-job { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--panel-raised); overflow-wrap: anywhere; }
+.plane-bot-job > summary { padding: 8px 12px; cursor: pointer; }
+.plane-bot-job-status { margin-inline-start: 12px; color: var(--text-dim); font-size: var(--fs-sm); }
+.plane-bot-job[data-state="review"] .plane-bot-job-status { color: var(--attention); }
+.plane-bot-job[data-state="failed"] .plane-bot-job-status { color: var(--error-text); }
+.plane-bot-job-content { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.plane-bot-job-content > button { justify-self: start; }
+
+.modal.plane-bot-review {
+  width: 640px;
+  overflow: hidden;
+  gap: 12px;
+}
+.plane-bot-review-heading { display: grid; gap: 4px; }
+.plane-bot-review-heading :is(h2, p) { margin: 0; overflow-wrap: anywhere; }
+.plane-bot-review-body { min-height: 0; overflow: auto; padding: 0 4px 2px; scrollbar-gutter: stable; }
+.plane-bot-review-body > .plane-bot-delivery-card { margin-bottom: 10px; }
+/* The accept buttons sit below the card here, so a long opinion scrolls in a short box; elsewhere it gets the plan's height. */
+.plane-bot-review-body .plane-bot-opinion-text { max-height: min(26vh, 200px); }
+.plane-bot-review-body .task-workflow { border: 0; margin: 0; padding: 0; }
+.plane-bot-review-body .workflow-result { background: var(--panel); padding: 10px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.plane-bot-review-body .workflow-user-review { border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 12px 0 0; margin: 12px 0 0; }
+.plane-bot-review-body .workflow-user-review textarea::placeholder { color: var(--text-dim); opacity: 1; }
+.plane-bot-review-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

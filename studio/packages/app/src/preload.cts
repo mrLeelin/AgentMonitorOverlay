@@ -7,7 +7,7 @@ type Passage = { itemId: string; start: number; end: number; quote: string };
 type PlaneTarget = { server: string; workspace: string; project: string; identity: string; name?: string; originalUrl?: string };
 type PlaneRegion = { x: number; y: number; width: number; height: number };
 type PlaneTheme = "light" | "dark";
-type PlaneItemRef = { id: string } | { url: string };
+type PlaneItemRef = ({ id: string } | { url: string }) & { bot?: true };
 
 electron.contextBridge.exposeInMainWorld("amo", {
   host: (): Promise<{ url: string; token: string } | null> => electron.ipcRenderer.invoke("amo:host"),

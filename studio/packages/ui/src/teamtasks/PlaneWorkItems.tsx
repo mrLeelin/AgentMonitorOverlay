@@ -4,6 +4,7 @@ import { call, type HostLink } from "../host/client.js";
 import { showToast } from "../lib/toast.js";
 import { BOARD_DRAG, teamBoardMessage } from "./SharedTeamBoard.js";
 import { PlaneWorkItemDialog } from "./PlaneWorkItemDialog.js";
+import { PlaneBotIntakeDialog } from "./PlaneBot.js";
 import { PLANE_PRIORITIES, PlaneWorkItemLayouts, planeAssignees, planeStateName, type WorkItemLayout } from "./PlaneWorkItemLayouts.js";
 import "./plane-work-items.css";
 
@@ -13,7 +14,7 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
   projects?: readonly Workspace[];
   topicId?: string;
   onNew(state: PlaneState): void;
-  onLocalOpen(id: string): void;
+  onLocalOpen(id: string, sessionId?: string): void;
   onProject(id: string): void;
   publishVersion: number;
   originalUrl?: string;
@@ -29,6 +30,7 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
   const [analysis, setAnalysis] = useState(false);
   const [archived, setArchived] = useState(false);
   const [selected, setSelected] = useState<Pick<PlaneWorkItem, "id" | "number" | "title"> | null>(null);
+  const [intake, setIntake] = useState(false);
   const [originalError, setOriginalError] = useState("");
   const [dragging, setDragging] = useState<PlaneWorkItem | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -213,7 +215,11 @@ export function PlaneWorkItems({ link, target, projects, topicId, onNew, onLocal
           </section>}
           {!lanes.length && !unassigned.length && <p className="tb-empty">这个项目还没有工作项。</p>}
         </div>}
-    {selected && <PlaneWorkItemDialog key={selected.id} link={link} item={selected} board={board} target={target} projects={projects} onProject={onProject}
-      onCopy={async () => { await copy(selected.id); setSelected(null); }} onChange={change} onClose={() => setSelected(null)} />}
+    {selected && (intake
+      ? <PlaneBotIntakeDialog link={link} item={selected} source={board.source} viewerId={board.viewerId}
+        projects={projects ?? (target ? [target] : [])} projectId={target?.id} topicId={topicId}
+        onOpen={onLocalOpen} onClose={() => setIntake(false)} />
+      : <PlaneWorkItemDialog key={selected.id} link={link} item={selected} board={board} target={target} projects={projects} onProject={onProject}
+        onCopy={async () => { await copy(selected.id); setSelected(null); }} onBot={() => setIntake(true)} onChange={change} onClose={() => setSelected(null)} />)}
   </div>;
 }

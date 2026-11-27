@@ -453,6 +453,7 @@ export class Store extends DocumentStore {
       // Forks point at their parents: one statement per owner set is checked at its end, so order does not matter.
       if (sessions.size) this.db.prepare(`DELETE FROM sessions WHERE id IN (${[...sessions].map(() => "?").join(", ")})`).run(...sessions);
       // A whole management subtree may go together, independent of parent/child insertion order.
+      each(tasks, "DELETE FROM plane_bot_jobs WHERE task_id = ?");
       if (tasks.size) this.db.prepare(`DELETE FROM tasks WHERE id IN (${[...tasks].map(() => "?").join(", ")})`).run(...tasks);
       each(topics, "DELETE FROM canvas_docs WHERE id = ?");
       each(topics, "DELETE FROM canvas_callouts WHERE topic_id = ?");

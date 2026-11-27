@@ -197,6 +197,74 @@ export class TeamBoardHost {
 
   workItem(id: string) { return this.request(async () => (await this.selectedPlane()).workItem(id)); }
 
+  async planeBotItem(source: string, id: string, viewerId: string): Promise<PlaneWorkItemDetail> {
+    return this.request(async () => {
+      const client = await this.selectedPlane(source);
+      const [item, project] = await Promise.all([client.workItem(id), client.projectBoard()]);
+      if (project.viewerId !== viewerId || (await this.selectedPlane(source)).key !== client.key) throw new HostError("conflict", "Plane 账号或项目已变更，请刷新团队看板。");
+      if (item.id !== id || item.archived) throw new HostError("conflict", "请先恢复这张 Plane 工作项。");
+      if (!project.writable) throw new HostError("read_only", "当前 Plane 账号没有此项目的写入权限。");
+      return item;
+    });
+  }
+
+  planeBotTarget(): { source: string; viewerId: string } | null {
+    const row = this.plane.current;
+    if (!row?.selected || !row.identityId) return null;
+    const { workspace, project } = row.selected;
+    return { source: `${row.server}${PLANE_BOARD_API}/workspaces/${workspace}/projects/${project}`, viewerId: row.identityId };
+  }
+
+  linkPlaneBotTask(taskId: string, source: string, viewerId: string, item: PlaneContext & { id: string }, requestId: string): void {
+    const { id, ...context } = item;
+    this.saveLink(taskId, source, viewerId, id, context, requestId);
+  }
+
+  async postPlaneBotResult(taskId: string, source: string, viewerId: string, itemId: string, resultId: string, text: string, current: () => boolean): Promise<string> {
+    return this.request(async () => {
+      const client = await this.plane.client(source);
+      if (!client || this.plane.current?.identityId !== viewerId) throw new HostError("conflict", "请切换回发起此任务时使用的 Plane 账号。");
+      const validate = () => {
+        const link = this.link(taskId);
+        if (!link || link.server !== source || link.account !== viewerId || link.ticket_id !== itemId) throw new HostError("conflict", "任务的 Plane 原单关联已变更。");
+        if (!current()) throw new HostError("conflict", "这份交付已变更，请重新验收。");
+      };
+      validate();
+      const db = this.host.store.db;
+      const attempted = db.prepare("SELECT 1 FROM plane_bot_native_attempts WHERE result_id = ?").get(resultId);
+      if (!attempted) {
+        try { return await client.postAcceptedResult(itemId, viewerId, resultId, text); }
+        catch (error) {
+          if (!(error instanceof TeamBoardError && error.status === 400 && error.message === "不支持的工作项操作")) throw error;
+        }
+      }
+      const receipt = () => client.acceptedResultReceipt(itemId, viewerId, resultId);
+      const existing = await receipt();
+      if (existing) return existing;
+      const pending = () => new HostError("conflict", "Plane 未返回确认。重试会重新核对原单评论，避免重复发送。");
+      if (attempted) throw pending();
+      const [project, item] = await Promise.all([client.projectBoard(), client.workItem(itemId)]);
+      if (project.viewerId !== viewerId || this.plane.current?.identityId !== viewerId || (await this.plane.client(source))?.key !== client.key) {
+        throw new HostError("conflict", "Plane 账号或项目已变更，请刷新团队看板。");
+      }
+      if (!project.writable) throw new HostError("read_only", "当前 Plane 账号没有此项目的写入权限。");
+      if (item.id !== itemId || item.archived) throw new HostError("conflict", "原单已移动或归档，请检查 Plane 原单。");
+      validate();
+      // The native endpoint checks external_id, but does not serialize concurrent inserts.
+      if (!db.prepare("INSERT OR IGNORE INTO plane_bot_native_attempts (result_id) VALUES (?)").run(resultId).changes) throw pending();
+      try { return await client.postNativeAcceptedResult(itemId, resultId, text); }
+      catch (error) {
+        if (error instanceof TeamBoardError && [400, 401, 403, 404, 405, 429].includes(error.status)) {
+          db.prepare("DELETE FROM plane_bot_native_attempts WHERE result_id = ?").run(resultId);
+          throw error;
+        }
+        const confirmed = await receipt().catch(() => null);
+        if (confirmed) return confirmed;
+        throw pending();
+      }
+    });
+  }
+
   resolveWorkItem(url: unknown) {
     return this.request(async () => {
       const { client, ticketId } = await this.plane.ticketReference(url);

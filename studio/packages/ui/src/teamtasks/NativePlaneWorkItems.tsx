@@ -6,6 +6,7 @@ import { showToast } from "../lib/toast.js";
 import { topicProject } from "../newtask/choices.js";
 import { NewTaskPage } from "../newtask/NewTaskPage.js";
 import { teamBoardMessage } from "./SharedTeamBoard.js";
+import { PlaneBotIntakeDialog } from "./PlaneBot.js";
 
 type CopyRequest = { item: PlaneItemRef; destination?: { kind: "workspace" | "topic"; id: string } };
 
@@ -192,13 +193,15 @@ function CopyPlaneWorkItem({ link, target, accountName, item, projects, projectI
     return () => { live = false; };
   }, [link, target, item]);
 
-  const label = "创建个人任务";
+  const label = item.bot ? "交给 Bot" : "创建个人任务";
   if (!detail) return <Modal portal label={label} className="team-return-modal" onClose={onClose}>
     <h2 className="modal-title">{label}</h2>
     {error ? <p className="team-return-error" role="alert">{error}</p> : <p role="status">正在读取工作项…</p>}
     <div className="settings-row end"><button type="button" className="btn-ghost small" onClick={onClose}>取消</button></div>
   </Modal>;
   const original = detail.task;
+  if (item.bot) return <PlaneBotIntakeDialog link={link} item={original} source={detail.source} viewerId={target.identity}
+    projects={projects} projectId={projectId} topicId={topicId} onOpen={onOpen} onClose={onClose} />;
   return <NewTaskPage link={link} workspaces={projects} topics={topics} tasks={tasks} sessions={sessions} profiles={profiles}
     scope={{ kind: "all" }} onBack={onClose} onCreated={(task, session) => {
       onOpen(task.id, session?.id);

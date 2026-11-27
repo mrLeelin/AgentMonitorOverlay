@@ -10,6 +10,8 @@ import { useDuty } from "../duty/duty.js";
 import { BotAvatar, BotGroupAvatar } from "./BotAvatar.js";
 import { BotGroupPage } from "./BotGroupChat.js";
 import { BotGroupDialog } from "./BotGroupDialog.js";
+import { useSettings } from "../settings/useSettings.js";
+import { PlaneBotJobs } from "../teamtasks/PlaneBotJobs.js";
 
 export const botsView: ViewDef<"bots"> = {
   kind: "bots",
@@ -29,6 +31,7 @@ function BotsWorkbench({ link, sessions, botId, onPick, onGroup, onOpen }: { lin
   const bots = useBots(link);
   const groups = useBotGroups(link);
   const duty = useDuty();
+  const teamTasksEnabled = useSettings(link)?.teamTasksEnabled === true;
   const [requests, setRequests] = useState<BotRequest[]>([]);
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
@@ -79,6 +82,7 @@ function BotsWorkbench({ link, sessions, botId, onPick, onGroup, onOpen }: { lin
         <header className="bots-workbench-header"><div className="bot-identity"><BotAvatar name={bot.name} avatar={bot.avatar} size={42} /><div><h3>{bot.name}</h3><p className="settings-hint">{bot.purpose}</p></div></div><button type="button" className="btn-primary" disabled={!bot.enabled || opening} onClick={() => void openHome()}>打开主聊天</button></header>
         {error && <p className="form-error" role="alert">{error}</p>}
         {!!pending.length && <section className="settings-section"><strong>待你处理</strong>{pending.map((chat) => <button key={chat.id} className="btn-ghost small bot-history-row" type="button" onClick={() => onOpen(chat.taskId!, chat.id)}>{chat.title || "未命名聊天"} ↗</button>)}</section>}
+        {teamTasksEnabled && <PlaneBotJobs key={bot.id} link={link} botId={bot.id} onOpen={onOpen} />}
         <section className="settings-section"><strong>聊天记录</strong>{chats.length === 0 && <span className="settings-hint">还没有聊天。</span>}
           {[...chats].reverse().map((chat) => <button key={chat.id} className="btn-ghost small bot-history-row" type="button" onClick={() => onOpen(chat.taskId!, chat.id)}>{botChatName(chat, bot.homeSessionId)}{chat.archivedAt ? "（已归档）" : inTurn(chat.status) ? "（运行中）" : ""} ↗</button>)}
         </section>

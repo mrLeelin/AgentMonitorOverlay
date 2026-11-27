@@ -183,6 +183,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.tasks.watchColumns();
     this.tasks.leadPromotion.watch();
     this.orchestration.watch();
+    this.teamTasks.planeBots.watch();
     this.taskPlans.watch();
     this.relays.watch();
     this.duty.registerCheck(this.issues.dutyCheck());

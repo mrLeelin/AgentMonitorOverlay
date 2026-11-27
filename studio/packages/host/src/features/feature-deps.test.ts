@@ -39,7 +39,7 @@ const GRAPH: Record<string, string[]> = {
   taskplans: ["canvas", "collab", "orchestration", "sessions", "sharedcontext", "tasks", "topics"],
   tasks: ["canvas", "config", "mcp", "remote", "sessions", "topics"],
   teamrelay: ["config", "sessions"],
-  teamtasks: ["tasks"],
+  teamtasks: ["bots", "orchestration", "tasks"],
   topics: ["tasks"],
   viewpacks: ["remote"],
 };

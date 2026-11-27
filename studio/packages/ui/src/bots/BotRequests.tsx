@@ -107,15 +107,20 @@ export function BotRequestList({ rows, bots, onOpen, onWorker }: { rows: readonl
   if (!rows.length) return null;
   const avatars = new Map(bots.map((bot) => [bot.id, bot.avatar]));
   return <section className="bot-requests" aria-label="Bot 请求">
-    {[...rows].reverse().map((row) => <article key={row.id} className="bot-request" data-testid="bot-request">
-      <div className="bot-request-heading"><strong className="bot-identity"><BotAvatar name={row.botName} avatar={avatars.get(row.botId)} />@{row.botName}</strong><span className="settings-hint" role="status">{BOT_REQUEST_STATUS[row.status]}</span></div>
-      <div>{row.text}</div>
-      {row.result && <details><summary>{row.status === "failed" ? "失败原因" : "查看结论"}</summary><div className="bot-request-result">{row.result}</div></details>}
-      {row.taskId && row.sessionId && <button type="button" className="btn-ghost small" onClick={() => {
-        if (onOpen) onOpen(row.taskId!, row.sessionId!);
-        else void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! });
-      }}>打开 Bot 会话 ↗</button>}
-      {row.status === "completed" && row.result && onWorker && <button type="button" className="btn-ghost small" onClick={() => onWorker(row.id)}>在独立工作树开始执行</button>}
-    </article>)}
+    {[...rows].reverse().map((row) => {
+      const firstLine = row.text.split(/\r\n?|\n/, 1)[0] ?? "";
+      return <article key={row.id} className="bot-request" data-testid="bot-request">
+        <div className="bot-request-heading"><strong className="bot-identity"><BotAvatar name={row.botName} avatar={avatars.get(row.botId)} />@{row.botName}</strong><span className="settings-hint" role="status">{BOT_REQUEST_STATUS[row.status]}</span></div>
+        {firstLine !== row.text || firstLine.length > 120
+          ? <details><summary>{firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine}</summary><div className="bot-request-result">{row.text}</div></details>
+          : <div>{row.text}</div>}
+        {row.result && <details><summary>{row.status === "failed" ? "失败原因" : "查看结论"}</summary><div className="bot-request-result">{row.result}</div></details>}
+        {row.taskId && row.sessionId && <button type="button" className="btn-ghost small" onClick={() => {
+          if (onOpen) onOpen(row.taskId!, row.sessionId!);
+          else void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! });
+        }}>打开 Bot 会话 ↗</button>}
+        {row.status === "completed" && row.result && onWorker && <button type="button" className="btn-ghost small" onClick={() => onWorker(row.id)}>在独立工作树开始执行</button>}
+      </article>;
+    })}
   </section>;
 }

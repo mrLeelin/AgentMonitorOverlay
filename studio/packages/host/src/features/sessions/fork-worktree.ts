@@ -1,8 +1,8 @@
 import { mkdtemp, realpath, rmdir, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { HostError } from "../../core/shared.js";
-import { git, GitError } from "../gitreview/git.js";
-import type { SessionForkOptions } from "@amo-studio/protocol";
+import { git, GitError, resolveCommit } from "../gitreview/git.js";
+import { isObjectId, type SessionForkOptions } from "@amo-studio/protocol";
 
 export async function forkGitOptions(cwd: string): Promise<SessionForkOptions["git"]> {
   const inside = await git(cwd, ["rev-parse", "--is-inside-work-tree"]).catch((err: unknown) => {
@@ -18,15 +18,28 @@ export async function forkGitOptions(cwd: string): Promise<SessionForkOptions["g
   return { branch: branch.trim().replace(/^refs\/heads\//, "") || null, head: head.trim() || null, branches: branches.trim().split(/\r?\n/).filter(Boolean) };
 }
 
-/** The user chose a new checkout. Resolve the branch to a commit and leave the source checkout and refs alone. */
-export async function createForkWorktree(cwd: string, projectDir: string, branch: string | undefined) {
+async function worktreeCommit(cwd: string, branch: string | undefined, pinnedCommit?: string): Promise<string> {
+  if (pinnedCommit !== undefined) {
+    if (!isObjectId(pinnedCommit)) throw new HostError("bad_request", "工作树基准必须是完整的 Git 提交编号。");
+    const resolved = await resolveCommit(cwd, pinnedCommit).catch((err: unknown) => {
+      if (err instanceof GitError && err.kind === "failed") return null;
+      throw err;
+    });
+    if (resolved !== pinnedCommit) throw new HostError("conflict", "工作树的基准提交已不可用。");
+    return pinnedCommit;
+  }
   const options = await forkGitOptions(cwd);
   if (!options?.head) throw new HostError("conflict", "这个目录没有可用于新建工作树的 Git 提交。");
   if (branch !== undefined && !options.branches.includes(branch)) throw new HostError("conflict", "所选本地分支已不存在，请重新选择。");
-  const [sourceRoot, projectRoot, commit] = await Promise.all([
+  return branch === undefined ? options.head : git(cwd, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+}
+
+/** An approved baseline must stay fixed even if the project moves to a new commit. */
+export async function createForkWorktree(cwd: string, projectDir: string, branch: string | undefined, pinnedCommit?: string) {
+  const commit = await worktreeCommit(cwd, branch, pinnedCommit);
+  const [sourceRoot, projectRoot] = await Promise.all([
     git(cwd, ["rev-parse", "--show-toplevel"]),
     git(projectDir, ["rev-parse", "--show-toplevel"]),
-    branch === undefined ? options.head : git(cwd, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]),
   ]);
   const root = projectRoot.trim();
   const within = relative(await realpath(sourceRoot.trim()), await realpath(cwd));
@@ -43,7 +56,7 @@ export async function createForkWorktree(cwd: string, projectDir: string, branch
     await git(cwd, ["worktree", "add", "--detach", "--", worktree, commit.trim()], undefined, 180_000);
     const resolved = await realpath(target).catch(() => null);
     if (!resolved || !isWithin(relative(await realpath(worktree), resolved)) || !(await stat(resolved)).isDirectory()) {
-      throw new HostError("conflict", "所选分支没有当前项目的子目录，请选另一个分支。");
+      throw new HostError("conflict", pinnedCommit === undefined ? "所选分支没有当前项目的子目录，请选另一个分支。" : "基准提交没有当前项目的子目录。");
     }
     return { cwd: target, remove };
   } catch (err) {

@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 203
+      "used": 208
     },
     "claude": {
       "limit": 300,
@@ -1432,6 +1432,31 @@
       "at": "2026-11-25T12:37:51.709Z",
       "provider": "gpt",
       "note": "Orca Bots migration: one isolated read-only fixture turn"
+    },
+    {
+      "at": "2026-11-26T11:20:59.501Z",
+      "provider": "gpt",
+      "note": "Plane Bot live pilot TALUO-10 read-only Bot planning"
+    },
+    {
+      "at": "2026-11-26T11:20:59.504Z",
+      "provider": "gpt",
+      "note": "Plane Bot live pilot TALUO-10 isolated worker first turn"
+    },
+    {
+      "at": "2026-11-26T11:21:57.805Z",
+      "provider": "gpt",
+      "note": "Plane Bot live pilot TALUO-10 return and resubmit"
+    },
+    {
+      "at": "2026-11-26T11:29:20.308Z",
+      "provider": "gpt",
+      "note": "Plane TALUO-11 @AmoStudio real test: read-only analysis"
+    },
+    {
+      "at": "2026-11-26T11:29:20.310Z",
+      "provider": "gpt",
+      "note": "Plane TALUO-11 @AmoStudio real test: worker first turn"
     }
   ]
 }

@@ -2,6 +2,7 @@ import { managementRoot, taskManagement, type DecisionRequest, type Id, type Ses
 import { Feature } from "../../core/feature.js";
 import { HostError, sessionMoving } from "../../core/shared.js";
 import { newId } from "../../store/store.js";
+import { inPlaneBotWorktree, isPlaneBotWorker, planeBotWorkspaceId } from "../../store/plane-bot.js";
 
 const RESULTS_KEY = "task-results:";
 const OUTBOX_KEY = "orchestration.outbox";
@@ -82,7 +83,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   private acceptedCurrent(task: Task, result: TaskResult): boolean {
-    const filedForReview = task.column === "review" && !!task.lead && !task.managerTaskId && result.reviewedBy === "user";
+    const filedForReview = task.column === "review" && this.humanReviewable(task) && result.reviewedBy === "user";
     return (task.column === "done" || filedForReview) && result.state === "accepted" && this.results(task.id).at(-1)?.id === result.id && result.managerTaskId === (task.managerTaskId ?? null) && this.f.sharedContext.isResultCurrent(task.id, result);
   }
 
@@ -159,10 +160,16 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     this.changed(notice.targetTaskId);
   }
 
-  private own(sessionId: Id): { session: Session; task: Task } {
+  private humanReviewable(task: Task): boolean {
+    return !task.managerTaskId && (task.lead
+      ? managementRoot(this.store.listTasks(), task.id)?.id === task.id
+      : isPlaneBotWorker(this.store, task.id));
+  }
+
+  private own(sessionId: Id, allowPlaneWorker = false): { session: Session; task: Task } {
     const session = this.requireSession(sessionId);
     const task = session.taskId ? this.requireTask(session.taskId) : null;
-    if (!task || task.archivedAt || task.remote || session.archivedAt || session.kind === "sub" || session.writer === "archived" || !managementRoot(this.store.listTasks(), task.id)) throw new HostError("bad_request", "此操作需要有效管理树中的本地任务会话。");
+    if (!task || task.archivedAt || task.remote || session.archivedAt || session.kind === "sub" || session.writer === "archived" || (!managementRoot(this.store.listTasks(), task.id) && !(allowPlaneWorker && this.humanReviewable(task)))) throw new HostError("bad_request", "此操作需要有效管理树中的本地任务会话。");
     if (task.topicId) this.requireLiveTopic(task.topicId);
     return { session, task };
   }
@@ -183,7 +190,11 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   }
 
   submit(sessionId: Id, summaryIn: unknown, verificationIn: unknown, input?: Pick<TaskResult, "contextBasis" | "prerequisiteResultIds">): TaskResult {
-    const { task } = this.own(sessionId);
+    const { session, task } = this.own(sessionId, true);
+    const planeWorkspace = planeBotWorkspaceId(this.store, task.id);
+    if (planeWorkspace && !inPlaneBotWorktree(session, task.id, planeWorkspace)) {
+      throw new HostError("conflict", "请在执行任务的独立工作树会话中提交交付。");
+    }
     const summary = requiredText(summaryIn, "交付摘要"), verification = requiredText(verificationIn, "验证证据");
     this.ready(task);
     const basis = this.f.sharedContext.captureBasis(sessionId, input);
@@ -216,7 +227,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   /** Human-only REST entry; the MCP credential cannot reach REST and no AI tool exposes this operation. */
   reviewByUser(taskId: Id, resultId: Id, accept: boolean, reviewIn: unknown, contextExplanation?: string): TaskResult {
     const task = this.requireTask(taskId);
-    if (!task.lead || task.managerTaskId || task.archivedAt || task.remote || managementRoot(this.store.listTasks(), taskId)?.id !== taskId) throw new HostError("bad_request", "用户最终验收只适用于当前有效总主控；受管任务由直属主控验收。");
+    if (task.archivedAt || task.remote || !this.humanReviewable(task)) throw new HostError("bad_request", "用户验收适用于当前总主控和独立 Plane Bot 任务；受管任务由直属主控验收。");
     if (task.topicId) this.requireLiveTopic(task.topicId);
     return this.reviewResult(task, null, resultId, accept, requiredText(reviewIn, "验收结论或退回原因"), contextExplanation);
   }
@@ -228,13 +239,18 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
     if (latest.state === state && latest.review === review) return latest;
     if (latest.state !== "submitted") throw new HostError("conflict", "此交付已经处理，请读取最新状态。");
     if (accept) {
+      const planeWorkspace = planeBotWorkspaceId(this.store, child.id);
+      if (planeWorkspace && !inPlaneBotWorktree(this.store.getSession(latest.sessionId), child.id, planeWorkspace)) {
+        throw new HostError("conflict", "这份交付未关联独立工作树，请退回后从执行工作树重新提交。");
+      }
       this.assertReviewSettled(child.id);
       this.ready(child);
     }
     const next = this.store.transaction(() => {
       // Acceptance is based on the requirement and ownership read inside the write transaction.
       const current = this.requireTask(child.id), currentManager = expectedManager ? this.requireTask(expectedManager) : current, currentResults = this.results(child.id), currentLatest = currentResults.at(-1);
-      if (current.archivedAt || (current.managerTaskId ?? null) !== expectedManager || !currentManager.lead || !managementRoot(this.store.listTasks(), current.id) || currentLatest?.id !== resultId || currentLatest.state !== "submitted" || currentLatest.managerTaskId !== expectedManager) throw new HostError("conflict", "交付或任务归属已变化，请重新读取后验收。");
+      const reviewable = expectedManager ? currentManager.lead && !!managementRoot(this.store.listTasks(), current.id) : this.humanReviewable(current);
+      if (current.archivedAt || (current.managerTaskId ?? null) !== expectedManager || !reviewable || currentLatest?.id !== resultId || currentLatest.state !== "submitted" || currentLatest.managerTaskId !== expectedManager) throw new HostError("conflict", "交付或任务归属已变化，请重新读取后验收。");
       if (accept) { this.assertReviewSettled(current.id); this.ready(current); }
       const contextResolution = accept ? this.f.sharedContext.assertAcceptable(current.id, currentLatest, contextExplanation) : undefined;
       const updatedAt = new Date().toISOString();
@@ -242,7 +258,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
       this.saveResults(child.id, [...currentResults.slice(0, -1), next]);
       // Done again: tasks that started on its earlier delivery go on from this one (2026-11-17, plans/done/task-dependencies.md).
       if (accept) this.f.sharedContext.refreshPrerequisites(child.id, next.id);
-      if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: expectedManager ?? child.id, targetTaskId: child.id, direction: expectedManager ? "down" : "user-return", resultId, text: `【${expectedManager ? "直属主控" : "用户"}退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。${expectedManager ? "" : "总主控须再次等待用户审核，不能自行验收。"}` });
+      if (!accept) this.queue({ id: `i-${next.id}-return`, sourceTaskId: expectedManager ?? child.id, targetTaskId: child.id, direction: expectedManager ? "down" : "user-return", resultId, text: `【${expectedManager ? "直属主控" : "用户"}退回交付】结果 ${resultId}\n${review}\n\n请读取 task_workflow 确认当前归属与最新结论，修改和验证后重新 task_submit_result。${expectedManager ? "" : "提交后等待用户审核。"}` });
       return next;
     });
     this.f.tasks.updateTask(child.id, { column: accept ? "done" : "doing" });
@@ -273,7 +289,7 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
         const results = this.results(event.task.id), latest = results.at(-1);
         // Filing a human-accepted root in 待审阅 is not a new assignment. Doing/todo, ownership changes and
         // real managed work still invalidate it; this never turns an unreviewed/returned result into acceptance.
-        const filedForReview = event.task.lead && !event.task.managerTaskId && latest?.reviewedBy === "user" && event.task.column === "review";
+        const filedForReview = latest?.reviewedBy === "user" && event.task.column === "review" && this.humanReviewable(event.task);
         if (latest && latest.managerTaskId !== (event.task.managerTaskId ?? null) && latest.state !== "returned") {
           this.saveResults(event.task.id, [...results.slice(0, -1), { ...latest, state: "returned", reviewedBy: undefined, review: "直属主控已变更，请按当前归属重新提交交付。", updatedAt: new Date().toISOString() }]);
         } else if ((latest?.state === "accepted" && event.task.column !== "done" && !filedForReview || latest?.state === "submitted" && event.task.column !== "review") && !event.task.archivedAt) {
@@ -357,9 +373,10 @@ export class OrchestrationFeature extends Feature<"tasks" | "sessions" | "collab
   private valid(notice: Notice): boolean {
     if (notice.expiredAt || notice.retiredAt) return false;
     const source = this.store.getTask(notice.sourceTaskId), target = this.store.getTask(notice.targetTaskId);
-    if (!source || !target || source.archivedAt || target.archivedAt || !managementRoot(this.store.listTasks(), source.id)) return false;
+    if (!source || !target || source.archivedAt || target.archivedAt) return false;
+    if (notice.direction !== "user-return" && !managementRoot(this.store.listTasks(), source.id)) return false;
     if (notice.rootTaskId && managementRoot(this.store.listTasks(), source.id)?.id !== notice.rootTaskId) return false;
-    if (notice.direction === "user-return" ? source.id !== target.id || !!source.managerTaskId || !source.lead : notice.direction === "up" ? source.managerTaskId !== target.id : target.managerTaskId !== source.id) return false;
+    if (notice.direction === "user-return" ? source.id !== target.id || !this.humanReviewable(source) : notice.direction === "up" ? source.managerTaskId !== target.id : target.managerTaskId !== source.id) return false;
     if (notice.decisionId) { const d = this.store.getDecision(notice.decisionId); if (d?.state !== "open" || d.routedToTaskId !== target.id) return false; }
     if (notice.resultId) {
       const r = this.results(notice.direction === "up" ? source.id : target.id).at(-1);

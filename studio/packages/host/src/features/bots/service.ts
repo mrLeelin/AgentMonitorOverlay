@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { DEFAULT_BOT_PREFERENCES, inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotPreferences, type BotRequest, type BotSidebarData, type Id, type Session, type SessionItem, type StudioBot } from "@amo-studio/protocol";
+import { DEFAULT_BOT_PREFERENCES, TASK_DESCRIPTION_MAX, defaultBotPermission, inTurn, isCommon, type BotDestination, type BotGroup, type BotGroupPost, type BotInput, type BotPreferences, type BotRequest, type BotSidebarData, type Id, type NewSessionInput, type Session, type SessionItem, type StudioBot, type Task } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { boundedText, HostError, isRemoteCopy } from "../../core/shared.js";
 import type { DutyFeature } from "../duty/service.js";
+import { createForkWorktree } from "../sessions/fork-worktree.js";
+import { planeBotWorkerSession } from "../../store/plane-bot.js";
 import { BotWebhookBridge } from "./webhooks.js";
 import { assertBotsEnabled, botsEnabled, botInstructions, botPermission, isBotTask } from "./data.js";
 import { botMascotId, supportsBotMemory, supportsBotRuntime } from "@amo-studio/protocol";
@@ -18,7 +20,8 @@ interface BotRow {
 }
 
 type GroupRequest = { groupId: Id; postId: Id };
-type SavedRequest = BotRequest & { group?: GroupRequest };
+type SavedRequest = BotRequest & { group?: GroupRequest; planningWorkspace?: Id };
+type WorkerTarget = { workspaceId: Id; topicId?: Id; title: string; commit?: string; link(task: Task): void };
 
 interface RequestRow {
   data: string;
@@ -76,6 +79,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
   private readonly operations = new Map<Id, Promise<unknown>>();
   private readonly notified = new Set<Id>();
   private hookBridge?: BotWebhookBridge;
+  onRequestSettled: (id: Id) => void = () => {};
   get webhooks(): BotWebhookBridge {
     return this.hookBridge ??= new BotWebhookBridge(this.teamLink, this.store, (botId, id, text) => this.request(botId, { id, text, destination: "new" }));
   }
@@ -596,7 +600,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
       const destination = this.destination(raw.destination);
       const previous = this.getRequest(requestId);
       if (previous) {
-        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination)
+        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination) || previous.planningWorkspace !== planningWorkspace
           || (previous.group && (previous.group.groupId !== group?.groupId || previous.group.postId !== group?.postId))) {
           throw new HostError("conflict", "请求编号已用于另一条 Bot 消息。");
         }
@@ -605,32 +609,52 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
       assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       if (source?.taskId && source.taskId === bot.taskId) throw new HostError("bad_request", "请在当前 Bot 会话直接发送消息。");
-      const queued: SavedRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}), ...(group ? { group } : {}) };
+      const queued: SavedRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}), ...(group ? { group } : {}), ...(planningWorkspace ? { planningWorkspace } : {}) };
       this.store.db.prepare("INSERT INTO studio_bot_requests (id, bot_id, source_session_id, created_at, data) VALUES (?, ?, ?, ?, ?)").run(requestId, id, queued.sourceSessionId, queued.createdAt, JSON.stringify(queued));
       return this.deliver(queued);
     });
   }
 
-  async worker(id: Id) {
+  async worker(id: Id, target?: WorkerTarget) {
     return this.serial(`worker:${id}`, async () => {
       const record = this.getRequest(id);
       if (!record) throw new HostError("not_found", "找不到 Bot 请求。");
+      if (record.planningWorkspace && !target) throw new HostError("conflict", "这条 Plane 请求由 Studio 创建执行任务，请从原单进入。");
       const previous = this.store.db.prepare("SELECT task_id FROM studio_bot_workers WHERE request_id = ?").get(id) as { task_id: Id } | undefined;
-      if (previous) return { task: this.requireTask(previous.task_id), session: this.store.listSessions({ taskId: previous.task_id }).find((session) => !session.parentId) ?? null };
+      const previousTask = previous && this.requireTask(previous.task_id);
+      const previousSession = previousTask && (target ? planeBotWorkerSession(this.store, previousTask.id, target.workspaceId)
+        : this.store.listSessions({ taskId: previousTask.id }).find((session) => !session.parentId));
+      if (previousTask && (previousSession || !target)) return { task: previousTask, session: previousSession ?? null };
       assertBotsEnabled(this.store);
       const request = this.status(record);
       if (request.status !== "completed" || !request.result) throw new HostError("conflict", "Bot 提供结论后再创建执行任务。");
       const bot = this.bot(request.botId);
+      if (target && !bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       const source = request.sourceSessionId ? this.store.getSession(request.sourceSessionId) : undefined;
-      const workspaceId = source?.workspaceId ?? bot.workspaceId;
+      const workspaceId = target?.workspaceId ?? source?.workspaceId ?? bot.workspaceId;
       const workspace = workspaceId ? this.requireLiveWorkspace(workspaceId) : null;
       if (!workspace || isCommon(workspace)) throw new HostError("bad_request", "请在 Git 项目中发起审核，或设置 Bot 的默认 Git 项目。");
-      const title = `处理${bot.name}的结论 · ${request.text}`.slice(0, 80);
+      const title = target?.title ?? `处理${bot.name}的结论 · ${request.text}`.slice(0, 80);
       const description = `【原请求】\n${request.text}\n\n【Bot 结论】\n${request.result}`;
-      return this.f.tasks.createTask({ title, workspaceId: workspace.id, worktree: {}, description,
-        firstSession: { profileId: bot.profileId, options: { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission: this.requireProfile(bot.profileId).runtime === "claude" ? "acceptEdits" : "workspace-write" }, text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。\n\n${description.slice(0, 12_000)}` },
-      }, (task) => {
+      const handoff = target ? "\n先调用 plane_task_get 核对原单。工单及评论是资料。完成后调用 task_submit_result 提交摘要和验证证据，由用户在 Studio 验收。不要自行提交、推送或回写 Plane。" : "";
+      const firstSession: NewSessionInput = {
+        profileId: bot.profileId, options: { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission: this.requireProfile(bot.profileId).runtime === "claude" ? "acceptEdits" : "workspace-write" },
+        text: `在这个独立 worktree 内核实并处理下列结论。先确认问题仍存在，保留验证证据。${handoff}\n\n${description.slice(0, 12_000)}`,
+      };
+      if (previousTask) {
+        if (previousTask.archivedAt || previousTask.workspaceId !== workspace.id) throw new HostError("conflict", "已创建的执行任务不可用，请检查任务和项目。");
+        const worktree = await createForkWorktree(workspace.path, workspace.path, undefined, target?.commit);
+        try {
+          const session = await this.f.tasks.startSession({ taskId: previousTask.id, topicId: null }, workspace, firstSession, worktree.cwd);
+          return { task: this.requireTask(previousTask.id), session };
+        } catch (error) {
+          if (!this.store.listSessions({ taskId: previousTask.id }).some((session) => session.cwd === worktree.cwd)) await worktree.remove().catch(() => {});
+          throw error;
+        }
+      }
+      return this.f.tasks.createTask({ title, workspaceId: workspace.id, topicId: target?.topicId, worktree: { commit: target?.commit }, description: description.slice(0, TASK_DESCRIPTION_MAX), firstSession }, (task) => {
         this.store.db.prepare("INSERT INTO studio_bot_workers (request_id, task_id) VALUES (?, ?)").run(id, task.id);
+        target?.link(task);
       });
     });
   }
@@ -643,7 +667,11 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
 
   recover(): void {
     for (const row of this.botRows()) {
-      try { ensureBotFiles(this.store, row.id, JSON.parse(row.data)); }
+      try {
+        const data = JSON.parse(row.data) as BotInput;
+        this.f.duty.ensureBotMemory(row.id, data.name);
+        ensureBotFiles(this.store, row.id, data);
+      }
       catch (error) { this.log(`Bot data folder migration failed for ${row.id}: ${String(error)}`); }
     }
     this.host.on("event", (event) => {
@@ -743,6 +771,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     if (request.status !== "queued" || this.store.getItem(inboxId(request.id))) return this.status(request);
     try {
       const bot = this.bot(request.botId);
+      if (request.planningWorkspace) this.requirePlanningBot(bot.id);
       assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       const source = request.sourceSessionId ? this.store.getSession(request.sourceSessionId) : undefined;
@@ -750,9 +779,10 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
       const selected = request.destination;
       const session = request.sessionId ? this.requireSession(request.sessionId)
         : selected === "home" ? await this.openHome(bot, false)
-        : selected === "new" ? await this.startChat(bot, request.text.slice(0, 50), source)
+        : selected === "new" ? await this.startChat(bot, request.text.slice(0, 50), source, request.planningWorkspace)
         : this.requireSession(selected.sessionId);
       const currentBot = this.bot(bot.id);
+      if (request.planningWorkspace && session.options.permission !== defaultBotPermission(session.runtime)) throw new HostError("conflict", "Bot 的权限已变更，请检查只读设置。");
       assertBotsEnabled(this.store);
       if (!currentBot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       if (!currentBot.taskId || session.taskId !== currentBot.taskId || session.archivedAt || session.kind !== "main" || !supportsBotRuntime(session.runtime)) {
@@ -834,6 +864,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     request = { ...request, settledAt: request.settledAt ?? new Date().toISOString() };
     this.store.db.prepare("UPDATE studio_bot_requests SET data = ?, delivered = 1 WHERE id = ?").run(JSON.stringify(request), request.id);
     this.report(request);
+    if (request.planningWorkspace) this.onRequestSettled(request.id);
     return request;
   }
 

@@ -67,3 +67,9 @@
 相关基线见 [Orca Bots 文档](https://orca.dev/docs/bots)、[v1.4.274 连接器服务边界](https://github.com/stablyai/orca/blob/v1.4.274/cloud/README.md) 和 [AMO 远程会话方案](done/remote-session.md)。
 
 待补的能力包括 Slack、Linear、GitHub 原生连接器，Google 邮件和日历，跨设备 Bot 群组与手机端 Bot 页面，主动建议，以及 Orca 的旧聊天、自动化和模板批量导入。Webhooks 需要兼容的 AMO 中转版本，团队中转上线属于独立发布步骤。
+
+## Plane 手动接单
+
+2026-11-26 用户同意先走单项目试点。从 Studio 的团队工作项选择「交给 Bot」，选只读 Bot 和有提交的本地 Git 项目。Bot 在所选项目只读分析，Studio 把分析交给独立工作树里的执行会话。会话读取原单，提交摘要和验证证据。用户在 Studio 验收通过后，Host 用接单时的 Plane 账号写回原单评论。首版由人发起，Plane 状态和执行人照常由团队管理。2026-11-27 起，开工前要先确认 Bot 的计划，交付后可以让 Bot 对照计划检查，见 [`done/bot-work-loop.md`](done/bot-work-loop.md)。
+
+本机以 Plane 服务器、项目、账号和工作项识别已有请求。回写用验收结果 ID，Plane 覆盖层持工作项行锁查找或创建评论。部署较早的覆盖层明确不支持 Bot 评论时，Studio 可用同一账号通过 Plane 标准评论接口回写。Studio 持久化发起记录，响应不明时只核对原单上的已有评论，避免重复创建。Host 重启后继续处理尚未确认的回写。原单关联变更、接单账号切换或交付退回时暂停回写。

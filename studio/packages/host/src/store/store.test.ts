@@ -29,16 +29,26 @@ function makeStore(path = ":memory:"): Store {
   return store;
 }
 
-/** These fixtures start before migration 36 and replay it when the database is reopened. */
+/** These fixtures start before migration 36 and replay the Bot and Plane migrations when reopened. */
 function removeBotSchema(store: Store): void {
   store.db.exec(`
+    DROP TABLE plane_bot_native_attempts;
+    DROP TABLE plane_bot_jobs;
     DROP TABLE studio_bot_group_chats;
     DROP TABLE studio_bot_group_posts;
     DROP TABLE studio_bot_groups;
     DROP TABLE studio_bot_workers;
     DROP TABLE studio_bot_requests;
     DROP TABLE studio_bots;
-    DELETE FROM schema_migrations WHERE version = 36;
+    DELETE FROM schema_migrations WHERE version >= 36;
+  `);
+}
+
+function removePlaneBotCheckSchema(store: Store): void {
+  store.db.exec(`
+    ALTER TABLE plane_bot_jobs DROP COLUMN check_result_id;
+    ALTER TABLE plane_bot_jobs DROP COLUMN check_request_id;
+    DELETE FROM schema_migrations WHERE version >= 40;
   `);
 }
 
@@ -61,6 +71,49 @@ describe("Store", () => {
     expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
     open.pop()!.close();
     expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
+  });
+
+  it("requires a fresh analysis for a legacy Plane intake without a base and preserves dispatched work", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { task, ws } = seed(store);
+    removePlaneBotCheckSchema(store);
+    store.db.exec(`
+      ALTER TABLE plane_bot_jobs DROP COLUMN base_commit;
+      ALTER TABLE plane_bot_jobs DROP COLUMN plan;
+      ALTER TABLE plane_bot_jobs DROP COLUMN plan_hash;
+      ALTER TABLE plane_bot_jobs DROP COLUMN approved_at;
+      ALTER TABLE plane_bot_jobs DROP COLUMN declined_at;
+      DELETE FROM schema_migrations WHERE version = 39;
+    `);
+    const insert = store.db.prepare(`INSERT INTO plane_bot_jobs
+      (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data, task_id, sent_result_id, comment_id)
+      VALUES (?, ?, 'plane', 'actor', ?, 'bot', ?, 'plan', '{}', ?, ?, ?)`);
+    insert.run("pending", "request-pending", "item-pending", ws.id, null, null, null);
+    insert.run("sent", "request-sent", "item-sent", ws.id, task.id, "result", "comment");
+    open.pop()!.close();
+
+    const migrated = makeStore(path);
+    const job = migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = ?");
+    expect(job.get("pending")).toMatchObject({ base_commit: null, plan: null, plan_hash: null, approved_at: null, declined_at: null, error: expect.stringContaining("请重试接单") });
+    expect(job.get("sent")).toMatchObject({ task_id: task.id, sent_result_id: "result", comment_id: "comment", approved_at: null, error: null });
+  });
+
+  it("adds delivery check references to Plane Bot jobs in migration 40 without changing existing rows", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { task, ws } = seed(store);
+    removePlaneBotCheckSchema(store);
+    expect(store.schemaVersion()).toBe(39);
+    store.db.prepare(`INSERT INTO plane_bot_jobs
+      (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data, task_id, sent_result_id, comment_id, base_commit, plan, plan_hash, approved_at)
+      VALUES ('job', 'request', 'plane', 'actor', 'item', 'bot', ?, 'prompt', '{}', ?, 'result', 'comment', 'base', 'plan', 'hash', 'approved')`).run(ws.id, task.id);
+    const existing = store.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get();
+    open.pop()!.close();
+
+    const migrated = makeStore(path);
+    expect(migrated.schemaVersion()).toBe(MIGRATIONS.length);
+    expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null });
   });
 
   it("preserves the archived Plane reference while allowing a new draft per submission", () => {

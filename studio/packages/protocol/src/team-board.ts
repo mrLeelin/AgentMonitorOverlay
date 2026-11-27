@@ -1,5 +1,6 @@
 import type { Session, Task } from "./entities.js";
 import type { NewTaskInput } from "./api.js";
+import type { BotRequest } from "./bots.js";
 import type { TeamTaskFile, TeamTaskFileInput, TeamTaskIdentity, TeamTaskStatus } from "./team-tasks.js";
 
 export const TEAM_BOARD_PORT = 47121;
@@ -17,6 +18,17 @@ export type PlaneBoardIdentity = { id: string; name: string };
 export type PlaneTaskReference = { url: string; number?: string; title?: string; creator?: string; creatorAvatarUrl?: string | null };
 export type PlanePersonalDraft = Pick<NewTaskInput, "title" | "lead" | "firstMessage" | "firstSession" | "worktree">;
 export type PlanePersonalTask = { task: Task; session: Session | null; existing: boolean; assignee: string };
+export type PlaneBotIntake = { source: string; viewerId: string; botId: string; workspaceId: string; topicId?: string };
+export type PlaneBotDecision = Pick<PlaneBotIntake, "source" | "viewerId"> & { planHash: string };
+export type PlaneBotDelivery = { resultId: string; state: "submitted" | "accepted"; summary: string; verification: string; sessionId: string | null; baseCommit?: string };
+export type PlaneBotCheck = { resultId: string; status: BotRequest["status"]; opinion?: string; error?: string; taskId: string | null; sessionId: string | null };
+export type PlaneBotJob = {
+  botId: string; workspaceId: string; itemId: string; taskId: string | null; botTaskId: string | null; botSessionId: string | null;
+  state: "planning" | "awaiting-approval" | "starting" | "declined" | "executing" | "review" | "sending" | "sent" | "failed";
+  item: { number: string; title: string }; delivery?: PlaneBotDelivery; check?: PlaneBotCheck;
+  plan?: string; planHash?: string; baseCommit?: string; behind?: number;
+  error?: string; failureStage?: "execution" | "writeback"; canRetry?: boolean;
+};
 export type PlaneBoardProject = { id: string; name: string; writable: boolean; missing: string[] };
 export type PlaneBoardWorkspace = { slug: string; name: string; projects: PlaneBoardProject[] };
 export type PlaneBoardCatalog = { identity: PlaneBoardIdentity; workspaces: PlaneBoardWorkspace[] };
@@ -67,6 +79,8 @@ export type PlaneWorkItemChange = { source: string; revision: number } & (
 export type LinkedTeamBoardTicket = { ticket: TeamBoardTicket; name: string; viewerId?: string; writable?: boolean };
 export const PLANE_BOARD_API = "/api/v1/amo-team-board";
 export const PLANE_WORK_ITEM_DRAG = "application/x-amo-plane-work-item";
+const PLANE_BOT_COMMENT_SOURCE = "AMO Studio";
+type PlaneCommentReceipt = { id: string; actor: string; external_id: string | null; external_source: string | null };
 
 export class TeamBoardError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -83,13 +97,13 @@ export class TeamBoardClient {
     return this.plane ? { "x-api-key": this.key } : { authorization: `Bearer ${this.key}` };
   }
 
-  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const response = await fetch(`${this.base}${this.prefix}${path}`, {
+  private async call<T>(method: string, path: string, body?: unknown, prefix = this.prefix): Promise<T> {
+    const response = await fetch(`${this.base}${prefix}${path}`, {
       method, redirect: "error", headers: { ...this.headers(), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15_000),
     });
-    const value = await response.json().catch(() => null) as (T & { message?: string }) | null;
-    if (!response.ok || value === null) throw new TeamBoardError(response.status, (typeof value?.message === "string" ? value.message : this.plane && [401, 403].includes(response.status) ? "Plane 授权无效或没有访问权限" : "团队看板服务返回了无效响应"));
+    const value = await response.json().catch(() => null) as (T & { message?: string; error?: string }) | null;
+    if (!response.ok || value === null) throw new TeamBoardError(response.status, (typeof value?.message === "string" ? value.message : this.plane && [401, 403].includes(response.status) ? "Plane 授权无效或没有访问权限" : typeof value?.error === "string" ? value.error : "团队看板服务返回了无效响应"));
     return value;
   }
 
@@ -128,6 +142,43 @@ export class TeamBoardClient {
   changeWorkItem(id: string, input: PlaneWorkItemChange): Promise<{ item: PlaneWorkItemDetail | null }> {
     return this.call("POST", `/work-items/${encodeURIComponent(id)}`, input);
   }
+  async postAcceptedResult(id: string, viewerId: string, resultId: string, text: string): Promise<string> {
+    const reply = await this.call<{ id: string }>("POST", `/work-items/${encodeURIComponent(id)}`, { action: "bot-comment", viewerId, resultId, text });
+    if (typeof reply.id !== "string" || !reply.id) throw new TeamBoardError(500, "Plane 未返回回写评论编号");
+    return reply.id;
+  }
+  private nativeComments(id: string): string {
+    if (!this.plane || !this.prefix.startsWith(PLANE_BOARD_API + "/workspaces/")) throw new TeamBoardError(400, "请先连接 Plane 并选择项目");
+    return `${this.prefix.slice(PLANE_BOARD_API.length)}/work-items/${encodeURIComponent(id)}/comments/`;
+  }
+  async acceptedResultReceipt(id: string, viewerId: string, resultId: string): Promise<string | null> {
+    const path = this.nativeComments(id);
+    const query = new URLSearchParams({ per_page: "100", fields: "id,actor,external_id,external_source" });
+    for (let page = 0; page < 50; page++) {
+      const reply = await this.call<{ results: PlaneCommentReceipt[]; next_page_results: boolean; next_cursor: string | null }>("GET", `${path}?${query}`, undefined, "/api/v1");
+      if (!Array.isArray(reply.results) || typeof reply.next_page_results !== "boolean") break;
+      const receipt = reply.results.find((comment) => comment?.external_source === PLANE_BOT_COMMENT_SOURCE && comment.external_id === resultId);
+      if (receipt) {
+        if (receipt.actor === viewerId && typeof receipt.id === "string" && receipt.id) return receipt.id;
+        throw new TeamBoardError(409, "Plane 已有同一交付编号的评论，无法确认评论归属。");
+      }
+      if (!reply.next_page_results) return null;
+      if (typeof reply.next_cursor !== "string" || !reply.next_cursor || reply.next_cursor === query.get("cursor")) break;
+      query.set("cursor", reply.next_cursor);
+    }
+    throw new TeamBoardError(502, "未能完整核对 Plane 原单评论。");
+  }
+  async postNativeAcceptedResult(id: string, resultId: string, text: string): Promise<string> {
+    const escaped = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    const reply = await this.call<PlaneCommentReceipt>("POST", this.nativeComments(id), {
+      access: "INTERNAL", external_id: resultId, external_source: PLANE_BOT_COMMENT_SOURCE,
+      comment_html: escaped.split(/\r?\n\r?\n/).map((section) => `<p>${section.replace(/\r?\n/g, "<br>")}</p>`).join(""),
+    }, "/api/v1");
+    if (typeof reply.id !== "string" || !reply.id || reply.external_id !== resultId || reply.external_source !== PLANE_BOT_COMMENT_SOURCE) {
+      throw new TeamBoardError(502, "Plane 返回的评论缺少交付回执。");
+    }
+    return reply.id;
+  }
   create(input: NewTeamBoardTicket): Promise<TeamBoardTicket> { return this.call("POST", "/tickets", input); }
   change(id: string, input: TeamBoardChange): Promise<TeamBoardTicket> { return this.call("POST", `/tickets/${encodeURIComponent(id)}/change`, input); }
   unclaim(id: string, input: TeamBoardUnclaim): Promise<TeamBoardTicket> { return this.call("POST", `/tickets/${encodeURIComponent(id)}/change`, { action: "unclaim", revision: input.revision, text: input.reason }); }
@@ -156,6 +207,14 @@ export interface TeamBoardHostRoutes {
   "GET /api/team-board/plane/work-items/:id": { req: void; res: PlaneWorkItemDetail };
   "POST /api/team-board/plane/work-items/:id": { req: PlaneWorkItemChange; res: { item: PlaneWorkItemDetail | null } };
   "POST /api/team-board/plane/work-items/:id/copy": { req: { source: string; workspaceId: string | null; viewerId: string; topicId?: string; draft?: PlanePersonalDraft; requestId?: string }; res: PlanePersonalTask };
+  "GET /api/team-board/plane/work-items/:id/bot": { req: void; res: PlaneBotJob | null };
+  "POST /api/team-board/plane/work-items/:id/bot": { req: PlaneBotIntake; res: PlaneBotJob };
+  "POST /api/team-board/plane/work-items/:id/bot/approve": { req: PlaneBotDecision; res: PlaneBotJob };
+  "POST /api/team-board/plane/work-items/:id/bot/decline": { req: PlaneBotDecision; res: PlaneBotJob };
+  "GET /api/team-board/plane/bots/:id/jobs": { req: void; res: PlaneBotJob[] };
+  "GET /api/team-board/local/:id/bot": { req: void; res: PlaneBotJob | null };
+  "POST /api/team-board/local/:id/bot/retry": { req: void; res: PlaneBotJob };
+  "POST /api/team-board/local/:id/bot/check": { req: { resultId: string }; res: PlaneBotJob };
   "GET /api/team-board/:id": { req: void; res: TeamBoardTicket };
   "GET /api/team-board/:id/file/:fileId": { req: void; res: { base64: string } };
   "POST /api/team-board/:id/change": { req: TeamBoardChange; res: TeamBoardTicket };

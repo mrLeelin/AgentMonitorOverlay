@@ -1,6 +1,7 @@
 import type { Id, Session } from "@amo-studio/protocol";
 import { Feature, type FeatureHost } from "../../core/feature.js";
 import { HostError, sessionMoving } from "../../core/shared.js";
+import { isPlaneBotWorker } from "../../store/plane-bot.js";
 import { newId } from "../../store/store.js";
 import type { TasksFeature } from "./service.js";
 
@@ -41,6 +42,7 @@ export class TaskLeadPromotion extends Feature<"sessions" | "topics" | "canvases
     const source = this.requireSession(sessionId);
     if (source.kind !== "main" || source.parentId || !source.taskId) throw new HostError("bad_request", "只有任务的主会话可以将自己的任务设为主控；专题、分支和子 agent 不能调用。");
     const task = this.requireTask(source.taskId);
+    this.assertPromotable(task.id);
     const records = this.records();
     const previous = records[task.id];
     const retry = previous?.state === "failed" && (previous.retryState === "switching" || previous.retryState === "starting");
@@ -116,8 +118,13 @@ export class TaskLeadPromotion extends Feature<"sessions" | "topics" | "canvases
     return this.processing;
   }
 
+  private assertPromotable(taskId: Id): void {
+    if (isPlaneBotWorker(this.store, taskId)) throw new HostError("conflict", "Plane Bot 执行任务由用户直接验收，不能设为主控。");
+  }
+
   private async advance(entry: Promotion): Promise<void> {
     let task = this.requireTask(entry.taskId);
+    this.assertPromotable(task.id);
     this.requireLiveWorkspace(task.workspaceId);
     if (task.topicId) this.requireLiveTopic(task.topicId);
     if (task.archivedAt || task.remote) throw new HostError("read_only", "任务已归档或属于远程，已停止切换。");

@@ -455,4 +455,34 @@ export const MIGRATIONS: readonly Migration[] = [
     session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, PRIMARY KEY(group_id, bot_id)
   );
   `,
+  // 37: Manual Plane intake and the durable comment delivery state.
+  `
+  CREATE TABLE plane_bot_jobs (
+    id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL, viewer_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    bot_id TEXT NOT NULL, workspace_id TEXT NOT NULL, topic_id TEXT,
+    prompt TEXT NOT NULL, item_data TEXT NOT NULL, task_id TEXT UNIQUE,
+    sent_result_id TEXT, comment_id TEXT, error TEXT,
+    UNIQUE(source, viewer_id, item_id)
+  );
+  `,
+  // 38: Keep a native Plane comment attempt durable even when the response is lost.
+  `
+  CREATE TABLE plane_bot_native_attempts (
+    result_id TEXT PRIMARY KEY
+  );
+  `,
+  // 39: An old intake never recorded the Git baseline of its analysis, so ask for a fresh plan before starting it.
+  `
+  ALTER TABLE plane_bot_jobs ADD COLUMN base_commit TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN plan TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN plan_hash TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN approved_at TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN declined_at TEXT;
+  UPDATE plane_bot_jobs SET error = '升级前的接单没有记录基准提交，请重试接单。' WHERE task_id IS NULL;
+  `,
+  // 40: Keep the delivery and its Bot request together so a check can be deduplicated after a restart.
+  `
+  ALTER TABLE plane_bot_jobs ADD COLUMN check_result_id TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN check_request_id TEXT;
+  `,
 ];
