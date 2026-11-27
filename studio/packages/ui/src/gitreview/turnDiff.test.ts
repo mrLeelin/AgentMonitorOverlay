@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { recordedDiffRows, turnDiff } from "./turnDiff.js";
 import { parseReviewHash, reviewHash } from "./logic.js";
+import { tokensOf } from "./splitview.js";
+import { recordedTokensFor } from "./tokens.js";
 
 describe("recorded turn review", () => {
   it("keeps hunk line numbers and repeated edits without reading the current file", () => {
@@ -52,6 +54,18 @@ describe("recorded turn review", () => {
     expect(parseReviewHash("#review?workspace=ws&sessionChanges=1")).toBeNull();
     for (const scope of ["turnItem=i", "worktree=s", "remote=t", "commit=abc1234"]) {
       expect(parseReviewHash(`${reviewHash(target)}&${scope}`)).toBeNull();
+    }
+  });
+
+  it("colours each occurrence of a reused line number from its own recorded edit", async () => {
+    const diffs = ["-const n = 1;\n+const n = 2;", "-const n = 2;\n+return n;"].map((diff) =>
+      turnDiff({ path: "a.ts", change: "update", added: 1, removed: 1, diff: "@@ -12 +12 @@\n" + diff }));
+    const rows = recordedDiffRows(diffs).filter((row) => row.kind === "line");
+    const tokens = await recordedTokensFor(diffs);
+    for (const row of rows) {
+      const line = tokensOf(tokens, row.line);
+      expect(line?.map((token) => token.text).join("")).toBe(row.line.text);
+      expect(line?.some((token) => token.color)).toBe(true);
     }
   });
 });

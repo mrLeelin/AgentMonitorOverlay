@@ -162,7 +162,7 @@ export function ProposalItemView({ link, state, pack, workspace, item, active }:
             <DiffView
               diff={diff}
               rows={rows}
-              split={split}
+              layout={split ? "split" : "unified"}
               tokens={tokens}
               placed={placed}
               elsewhere={elsewhere}

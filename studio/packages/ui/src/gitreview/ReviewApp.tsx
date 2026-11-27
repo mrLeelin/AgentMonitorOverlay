@@ -692,7 +692,7 @@ export function ReviewPage({
                   <DiffView
                     diff={shown}
                     rows={rows}
-                    split={prefs.split}
+                    layout={prefs.split ? "split" : "unified"}
                     tokens={tokens}
                     placed={placed}
                     elsewhere={elsewhere}

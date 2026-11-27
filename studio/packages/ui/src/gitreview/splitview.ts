@@ -52,11 +52,7 @@ export function splitRows(rows: readonly DiffRow[]): SplitRow[] {
 /** Files longer than this show without colours (highlighting runs in the window, all at once). */
 export const MAX_HIGHLIGHT_LINES = 5000;
 
-/** Tokens of each line of the old and the new version, by line number. */
-export interface DiffTokens {
-  old: ReadonlyMap<number, readonly CodeToken[]>;
-  new: ReadonlyMap<number, readonly CodeToken[]>;
-}
+export type DiffTokens = (line: GitDiffLine, side: "old" | "new") => readonly CodeToken[] | undefined;
 
 /**
  * What a diff's colours need: the old text (unchanged + deleted lines) and the new one (unchanged + added), each
@@ -88,7 +84,9 @@ function tokenPlan(lines: readonly GitDiffLine[]): { texts: string[]; build(resu
       if (needNew && !newSide) return null;
       oldSide ??= newSide ? borrow(oldOwn, oldNo, newSide, newNo) : new Map();
       newSide ??= borrow(newOwn, newNo, oldSide, oldNo);
-      return { old: oldSide, new: newSide };
+      return (line, side) => side === "old"
+        ? line.oldLine === null ? undefined : oldSide.get(line.oldLine)
+        : line.newLine === null ? undefined : newSide.get(line.newLine);
     },
   };
 }
@@ -107,9 +105,7 @@ export async function diffTokensAsync(lines: readonly GitDiffLine[], highlight: 
 
 /** A line's tokens: deleted lines from the old version, the rest from the new one (or the old, for the left side). */
 export function tokensOf(tokens: DiffTokens | null, line: GitDiffLine, side: "old" | "new" = line.kind === "del" ? "old" : "new"): readonly CodeToken[] | undefined {
-  if (!tokens) return undefined;
-  const n = side === "old" ? line.oldLine : line.newLine;
-  return n === null ? undefined : (side === "old" ? tokens.old : tokens.new).get(n);
+  return tokens?.(line, side);
 }
 
 /** The new-file line to open the editor at: the given row's, else the next row's that has one, else 1. */

@@ -242,7 +242,7 @@
     {
       "id": "studio.gitReview",
       "label": "Git Review 和批注发回会话（Host 侧）",
-      "aliases": ["gitreview", "GitReview", "review_open", "diff", "批注", "annotation", "ReviewFeature", "最近改动", "会话改动", "本轮改动"],
+      "aliases": ["gitreview", "GitReview", "review_open", "diff", "批注", "annotation", "ReviewFeature", "最近改动", "会话改动", "本轮改动", "Rider 对比"],
       "category": "host",
       "purpose": "Host 读 git（状态、diff、提交范围）给 Reviewer 窗口用；批注发回会话（review）。任务页「会话改动」读取当前会话记录的全部文件编辑，「本轮改动」读取单轮记录。界面和独立程序见 tool.reviewer。",
       "anchors": [
@@ -250,7 +250,8 @@
         { "label": "GitReviewFeature", "path": "studio/packages/host/src/features/gitreview/service.ts" },
         { "label": "批注发回", "path": "studio/packages/host/src/features/review/service.ts", "anchor": "export class ReviewFeature" },
         { "label": "协议", "path": "studio/packages/protocol/src/gitreview.ts", "anchor": "GitReviewRoutes" },
-        { "label": "会话和单轮的文件改动记录", "path": "studio/packages/ui/src/gitreview/TurnReview.tsx", "anchor": "export function TurnReview" }
+        { "label": "会话和单轮的文件改动记录", "path": "studio/packages/ui/src/gitreview/TurnReview.tsx", "anchor": "export function TurnReview" },
+        { "label": "Rider 对比的双栏和连接带", "path": "studio/packages/ui/src/gitreview/RiderLines.tsx", "anchor": "export function RiderLines" }
       ],
       "related": ["tool.reviewer", "studio.viewPacks"],
       "next": ["studio/plans/done/reviewer-standalone.md", "studio/plans/done/stage-12.md"]

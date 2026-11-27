@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { composeGitReviewMessage, type FileDiff, type GitChangedFile, type GitReviewComment, type Workspace } from "@amo-studio/protocol";
+import { composeGitReviewMessage, type GitChangedFile, type GitReviewComment, type Workspace } from "@amo-studio/protocol";
 import { call, copyText, HostApiError, type HostLink } from "../host/client.js";
 import { buildTranscript, segmentMembers } from "../chat/turns.js";
-import { recordedChanges, turnChanges, type ChangedFile } from "../files/changes.js";
+import { recordedChanges } from "../files/changes.js";
 import { fileName } from "../files/paths.js";
 import { showToast } from "../lib/toast.js";
 import { TitleMark, WindowControls } from "../shell/WindowControls.js";
@@ -10,19 +10,25 @@ import { openViewer } from "../viewer/open.js";
 import { DiffView } from "./DiffView.js";
 import { FileList, Splitter } from "./FileList.js";
 import { dropDraft, newDraftKey } from "./drafts.js";
-import { diffRows, listOrder, step } from "./logic.js";
+import { listOrder, step } from "./logic.js";
 import { diffText, typingIn, useSelectAll } from "./selectAll.js";
-import { useDiffTokens } from "./tokens.js";
+import { useRecordedTokens } from "./tokens.js";
 import { recordedDiffRows, turnDiff } from "./turnDiff.js";
 
 type TurnComment = GitReviewComment & { rowKey: string };
 
+const layouts = [
+  { id: "unified", label: "单栏" },
+  { id: "split", label: "左右对照" },
+  { id: "rider", label: "Rider 对比" },
+] as const;
+
 /** The edits saved in a single turn or the full session. */
 export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce }: { link: HostLink; workspace: Workspace; sessionId: string; turnItemId?: string; file: string | null; nonce: string }) {
-  const [files, setFiles] = useState<Array<ChangedFile & { patches?: FileDiff[] }> | null>(null);
+  const [files, setFiles] = useState<ReturnType<typeof recordedChanges> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(file);
-  const [split, setSplit] = useState(false);
+  const [layout, setLayout] = useState<(typeof layouts)[number]["id"]>("unified");
   const [width, setWidth] = useState(300);
   const [comments, setComments] = useState<TurnComment[]>([]);
   const [draftAt, setDraftAt] = useState<string | null>(null);
@@ -43,7 +49,7 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
       if (!live) return;
       const members = turnItemId ? buildTranscript(items, false).map(segmentMembers).find((items) => items.some((item) => item.id === turnItemId)) : items;
       if (!members) throw new Error("找不到这一轮的记录。");
-      const changes = turnItemId ? turnChanges(members) : recordedChanges(members);
+      const changes = recordedChanges(members);
       setFiles(changes);
       setSelected((current) => changes.some((f) => f.path === current) ? current : changes[0]?.path ?? null);
     }).catch((err: unknown) => live && setError(err instanceof HostApiError ? err.message : String(err)));
@@ -62,14 +68,11 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
 
   const listed = useMemo<GitChangedFile[]>(() => listOrder((files ?? []).map((f) => ({ path: f.path, status: f.change === "add" ? "added" : f.change === "delete" ? "deleted" : "modified", additions: f.added, deletions: f.removed, binary: false }))), [files]);
   const shown = files?.find((f) => f.path === selected) ?? null;
-  const diff = useMemo(() => shown ? turnDiff(shown.patches?.[0] ?? shown) : null, [shown]);
+  const diffs = useMemo(() => shown?.patches.map(turnDiff) ?? [], [shown]);
+  const diff = diffs[0];
   // Repeated edits can reuse a source line number. Keep each recorded occurrence independently addressable.
-  const rows = useMemo(() => {
-    if (shown?.patches) return recordedDiffRows(shown.patches);
-    return diff ? diffRows(diff, "changes").map((r, i) => ({ ...r, key: `${r.key}:${i}` })) : [];
-  }, [diff, shown]);
-  // Line-based highlighting cannot share a token map across versions that reuse the same line numbers.
-  const tokens = useDiffTokens((shown?.patches?.length ?? 0) > 1 ? null : diff);
+  const rows = useMemo(() => recordedDiffRows(diffs), [diffs]);
+  const tokens = useRecordedTokens(diffs);
   const placed = useMemo(() => {
     const map = new Map<string, TurnComment[]>();
     for (const c of comments) if (c.path === selected) map.set(c.rowKey, [...(map.get(c.rowKey) ?? []), c]);
@@ -86,7 +89,10 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
       const key = e.key.toLowerCase();
-      if (key === "e") { e.preventDefault(); setSplit((s) => !s); }
+      if (key === "e") {
+        e.preventDefault();
+        setLayout((current) => layouts[(layouts.findIndex((entry) => entry.id === current) + 1) % layouts.length]!.id);
+      }
       if (key === "j" || key === "k" || key === "arrowdown" || key === "arrowup") {
         e.preventDefault();
         setSelected((current) => {
@@ -120,15 +126,16 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
         <span data-testid="review-scope">{label}</span>
         <span className="spacer" />
         <div className="gr-seg" role="group" aria-label="显示方式">
-          <button type="button" aria-pressed={!split} onClick={() => setSplit(false)}>单栏</button>
-          <button type="button" aria-pressed={split} onClick={() => setSplit(true)}>左右对照</button>
+          {layouts.map(({ id, label }) => (
+            <button key={id} type="button" aria-pressed={layout === id} onClick={() => setLayout(id)}>{label}</button>
+          ))}
         </div>
         <WindowControls />
       </header>
       <div className="gr-body">
         <nav className="gr-files" aria-label={`${label}的文件`} style={{ width }}>
           <div className="gr-files-head">{files ? `${files.length} 个文件` : "正在读取…"}</div>
-          <div className="gr-files-hint gr-dim">↑ / ↓ 或 J / K 切换文件，E 切换单栏 / 左右对照</div>
+          <div className="gr-files-hint gr-dim">↑ / ↓ 或 J / K 切换文件，E 切换显示方式</div>
           <FileList files={listed} layout="flat" selected={selected} perFile={counts} closed={new Set()} onToggle={() => undefined} onSelect={setSelected} onMenu={(f) => setSelected(f.path)} />
         </nav>
         <Splitter width={width} onChange={setWidth} />
@@ -153,7 +160,7 @@ export function TurnReview({ link, workspace, sessionId, turnItemId, file, nonce
             {diff && rows.length > 0 && <DiffView
               diff={diff}
               rows={rows}
-              split={split}
+              layout={layout}
               tokens={tokens}
               placed={placed}
               elsewhere={[]}

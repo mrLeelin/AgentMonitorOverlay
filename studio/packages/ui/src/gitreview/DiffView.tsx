@@ -7,6 +7,7 @@ import { dropDraft, draftText, editDraftKey, setDraftText, useEditing } from "./
 import type { DiffRow } from "./logic.js";
 import { LazyChunks } from "./LazyChunks.js";
 import { CHUNK_ROWS, maxColumns } from "./overview.js";
+import { RiderLines } from "./RiderLines.js";
 import { splitRows, tokensOf, type DiffTokens, type LineRow, type SideCell } from "./splitview.js";
 
 // The right side of the review window: one file's rows ("只看改动" or "完整文件"), in one column or side by side
@@ -17,8 +18,7 @@ import { splitRows, tokensOf, type DiffTokens, type LineRow, type SideCell } fro
 interface DiffViewProps {
   diff: GitFileDiff;
   rows: readonly DiffRow[];
-  /** "左右对照": old on the left, new on the right. */
-  split: boolean;
+  layout: "unified" | "split" | "rider";
   /** Syntax colours by line number (null: plain text). */
   tokens: DiffTokens | null;
   placed: ReadonlyMap<string, GitReviewComment[]>;
@@ -95,7 +95,8 @@ function HighlightNotes({ notes }: { notes: readonly ViewMark[] | undefined }) {
 const plainClick = (e: MouseEvent) => !(e.target as Element).closest("button, textarea, a");
 
 export function DiffView(props: DiffViewProps) {
-  const { diff, rows, split, placed, elsewhere, showSent, busy, onEdit, onDelete, onLocate } = props;
+  const { diff, rows, layout, elsewhere, showSent, busy, onEdit, onDelete, onLocate } = props;
+  const Lines = layout === "rider" ? RiderLines : layout === "split" ? SplitLines : UnifiedLines;
   const visible = (list: readonly GitReviewComment[]) => list.filter((c) => showSent || c.state === "draft");
   const others = visible(elsewhere);
 
@@ -113,14 +114,14 @@ export function DiffView(props: DiffViewProps) {
         </div>
       )}
       {!rows.length && <div className="gr-notice">{diff.lines.length ? "没有文字改动。" : "空文件。"}</div>}
-      {split ? <SplitLines {...props} visible={visible} /> : <UnifiedLines {...props} visible={visible} />}
+      <Lines {...props} visible={visible} />
     </>
   );
 }
 
-type LinesProps = DiffViewProps & { visible(list: readonly GitReviewComment[]): GitReviewComment[] };
+export type LinesProps = DiffViewProps & { visible(list: readonly GitReviewComment[]): GitReviewComment[] };
 
-function Hunk({ header, hidden }: { header: string; hidden: number }) {
+export function Hunk({ header, hidden }: { header: string; hidden: number }) {
   return (
     <div className="gr-hunk" data-testid="diff-hunk">
       {hidden > 0 && <span className="gr-hidden">⋯ {hidden} 行未改动</span>}
@@ -129,7 +130,7 @@ function Hunk({ header, hidden }: { header: string; hidden: number }) {
   );
 }
 
-function AddButton({ row, open, onDraft }: { row: LineRow; open: boolean; onDraft(key: string | null): void }) {
+export function AddButton({ row, open, onDraft }: { row: LineRow; open: boolean; onDraft(key: string | null): void }) {
   return (
     <button type="button" className="gr-add" aria-label={`给第 ${row.number} 行加批注`} title="加批注" onClick={() => onDraft(open ? null : row.key)} data-testid="add-comment">
       +
@@ -138,7 +139,7 @@ function AddButton({ row, open, onDraft }: { row: LineRow; open: boolean; onDraf
 }
 
 /** The comments under a line and the draft being written for it. */
-function Notes({ row, props }: { row: LineRow; props: LinesProps }) {
+export function Notes({ row, props }: { row: LineRow; props: LinesProps }) {
   const { placed, visible, draftAt, busy, onEdit, onDelete, onAdd, onDraft, draftKey } = props;
   const key = draftKey(row.key);
   return (

@@ -2,9 +2,9 @@ import type { FileDiff, GitDiffHunk, GitFileDiff } from "@amo-studio/protocol";
 import { diffRows } from "../files/changes.js";
 import { diffRows as reviewRows, type DiffRow } from "./logic.js";
 
-export function recordedDiffRows(patches: readonly FileDiff[]): DiffRow[] {
+export function recordedDiffRows(patches: readonly (GitFileDiff | FileDiff)[]): DiffRow[] {
   return patches.flatMap((patch, index) => {
-    const rows = reviewRows(turnDiff(patch), "changes").map((row, i) => ({ ...row, key: `${index}:${row.key}:${i}` }));
+    const rows = reviewRows("lines" in patch ? patch : turnDiff(patch), "changes").map((row, i) => ({ ...row, key: `${index}:${row.key}:${i}` }));
     if (patches.length === 1) return rows;
     const label = `第 ${index + 1} 次改动`;
     const first = rows[0];

@@ -185,7 +185,7 @@ export function FileReview({
           <DiffView
             diff={diff}
             rows={rows}
-            split={false}
+            layout="unified"
             plain
             marked={line ? { from: line, to: last } : null}
             {...(highlights ? { highlights } : {})}

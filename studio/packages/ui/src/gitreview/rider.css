@@ -1,0 +1,54 @@
+/* Line numbers flank the ribbon. Each revision flows vertically on its own side of a hunk. */
+.gr-scroll-wrap .gr-rider {
+  --rider-bridge: clamp(24px, 4%, 48px);
+  --rider-gutter: max(5ch, var(--rider-number, 0ch));
+  --rider-columns: minmax(0, 1fr) var(--rider-bridge) minmax(0, 1fr);
+  min-width: 0;
+  padding: 0 0 40px;
+}
+.gr-rider-labels, .gr-rider-body { display: grid; grid-template-columns: var(--rider-columns); }
+.gr-rider-labels {
+  color: var(--text-dim); background: var(--chat-code-bg); font: 600 var(--fs-cap)/1.5 var(--font-ui);
+  border-bottom: 1px solid var(--chat-hairline); user-select: none;
+}
+.gr-rider-labels > span { padding: 5px 10px; }
+.gr-rider-labels > :last-child { grid-column: 3; padding-left: calc(var(--rider-gutter) + 10px); }
+.gr-rider .gr-hunk { padding: 3px 10px; }
+.gr-rider-body { position: relative; }
+.gr-rider-column { position: relative; min-width: 0; align-self: start; }
+.gr-rider-group { display: flow-root; }
+.gr-rider-bridge {
+  position: relative; min-width: 0; pointer-events: none;
+  background: color-mix(in srgb, var(--chat-code-banner) 65%, var(--chat-code-bg));
+  box-shadow: inset 1px 0 var(--chat-hairline), inset -1px 0 var(--chat-hairline);
+}
+.gr-rider-bridge > svg { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.gr-rider [data-kind="change"] { --rider-tint: var(--gr-hl); }
+.gr-rider [data-kind="add"] { --rider-tint: var(--gr-st-added); }
+.gr-rider [data-kind="del"] { --rider-tint: var(--gr-st-deleted); }
+.gr-rider-bridge path { fill: color-mix(in srgb, var(--rider-tint) 37%, var(--chat-code-bg)); }
+.gr-rider-line {
+  display: grid; min-height: 20px; grid-template-columns: minmax(0, 1fr) var(--rider-gutter); align-items: stretch;
+}
+.gr-rider-column.new .gr-rider-line { grid-template-columns: var(--rider-gutter) minmax(0, 1fr); }
+.gr-rider-line[data-kind]:not([data-kind="context"]) { background: color-mix(in srgb, var(--rider-tint) 19%, var(--chat-code-bg)); }
+.gr-rider-code {
+  min-width: 0; padding: 0 10px; color: var(--chat-label); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
+}
+.gr-rider-number {
+  position: relative; grid-row: 1; grid-column: 2; padding-inline: 3px; text-align: center;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.gr-rider-column.new .gr-rider-number { grid-column: 1; }
+.gr-rider-column.new .gr-rider-code { grid-column: 2; }
+.gr-rider-number .gr-no { padding: 0; }
+.gr-rider-number .gr-add { position: absolute; left: 50%; top: 0; transform: translateX(-50%); }
+.gr-rider-line:hover .gr-add, .gr-rider-line:focus-within .gr-add {
+  background: var(--panel-raised); opacity: 1;
+}
+.gr-rider-line.active .gr-rider-code { box-shadow: inset 2px 0 var(--attention); }
+.gr-rider-line mark { background: var(--rider-inline); color: inherit; border-radius: 2px; }
+.gr-rider-column.old { --rider-inline: color-mix(in srgb, var(--gr-st-deleted) 45%, transparent); }
+.gr-rider-column.new { --rider-inline: color-mix(in srgb, var(--gr-st-added) 45%, transparent); }
+.gr-rider .gr-comment { margin: 4px 8px 6px; overflow-wrap: anywhere; }
+.gr-rider .float-anchor > .float-note { left: 6px; max-width: calc(100% - 12px); }
