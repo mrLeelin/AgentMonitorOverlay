@@ -127,11 +127,18 @@ test("Fast (stage 13): a Codex model with a fast tier runs at it from the next t
   const fast = summary.getByTestId("fast-toggle");
   await expect(fast).toHaveAttribute("aria-pressed", "false");
   await expect(fast).toHaveAttribute("title", /2x speed, increased usage/);
-  await summary.getByTestId("effort").click();
+  const effort = summary.getByTestId("effort");
+  const triggerBolt = effort.locator(".effort-trigger-bolt");
+  const effortColor = await effort.evaluate(el => getComputedStyle(el).color);
+  await expect(triggerBolt).toHaveCSS("stroke", effortColor);
+  await effort.click();
   const bolt = page.getByRole("dialog", { name: "选择推理强度" }).getByRole("button", { name: "Fast 加速" });
   await bolt.click();
   await expect(bolt).toHaveAttribute("aria-pressed", "true");
+  const fastColor = await bolt.locator("svg path").evaluate(el => getComputedStyle(el).fill);
+  await expect(triggerBolt).toHaveCSS("stroke", fastColor);
   await page.keyboard.press("Escape");
+  await expect(triggerBolt).toHaveCSS("stroke", fastColor);
   await expect(fast).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("options-note")).toContainText("Fast 已开，下一轮生效");
   await screenshot(app, "stage-13", "S13-C-fast", page);
@@ -143,6 +150,7 @@ test("Fast (stage 13): a Codex model with a fast tier runs at it from the next t
 
   await fast.click();
   await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await expect(triggerBolt).toHaveCSS("stroke", effortColor);
   await composer.fill("standard again");
   await composer.press("Enter");
   await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: standard again", { timeout: 60_000 });

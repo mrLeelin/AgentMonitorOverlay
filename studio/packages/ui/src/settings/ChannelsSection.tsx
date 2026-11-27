@@ -295,7 +295,7 @@ export function ChannelPage({
         <CredentialMessage message={message} />
         {extra && <div className="channel-extra">{extra}</div>}
       </section>
-      <ModelDefaultsSection key={`defaults-${profile.id}`} link={link} settings={settings} profileId={profile.id} />
+      <ModelDefaultsSection key={`defaults-${profile.id}`} link={link} settings={settings} profile={profile} />
       <AutoCompactSection key={`compact-${profile.id}`} link={link} settings={settings} profile={profile} />
     </div>
   );

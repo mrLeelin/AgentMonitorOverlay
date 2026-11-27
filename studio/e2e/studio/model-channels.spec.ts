@@ -1,8 +1,11 @@
 import { selectSettingsPage } from "../support/settings.js";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import type { ModelChannel, ModelProfile, Session, StateSnapshot, StudioSettings, Task, Workspace } from "@amo-studio/protocol";
+import type { ModelChannel, ModelProfile, ProfileChoices, Session, StateSnapshot, StudioSettings, Task, Workspace } from "@amo-studio/protocol";
+import { MOCK_MODEL_CATALOG } from "@amo-studio/testkit";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 // 设置 → 模型 → 渠道 (2026-10-15): the person's own third-party Codex and Claude endpoints, run against the mocks; the
@@ -35,6 +38,83 @@ async function iconFile(page: Page, color: string, mimeType = "image/png") {
   }, { color, mimeType });
   return { name: mimeType === "image/webp" ? "channel.webp" : "channel.png", mimeType, buffer: Buffer.from(icon.split(",")[1]!, "base64") };
 }
+
+test("GPT channel Fast default is shown on new tasks and can be overridden or reset", async () => {
+  studio = await launchStudio({ env: { AMO_STUDIO_TEST_GPT_PROFILE: "1" } });
+  const { page, app } = studio;
+  const profileId = "codex-default";
+  const section = page.getByRole("region", { name: "型号顺序和默认" });
+  const setting = section.getByRole("checkbox", { name: "默认开启 Fast" });
+  const openGpt = async () => {
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await selectSettingsPage(dialog, "模型与渠道");
+    await dialog.locator('[data-testid="channel-nav"][data-id="codex-default"]').click();
+    return dialog;
+  };
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  const dialog = await openGpt();
+  await expect(setting).not.toBeChecked();
+  await setting.click();
+  await expect(setting).toBeChecked();
+  await expect.poll(async () => (await studio!.api<ProfileChoices>("GET", `/api/profiles/${profileId}/choices`)).defaultFast).toBe(true);
+  await section.getByRole("button", { name: "恢复 CLI 的顺序和默认" }).scrollIntoViewIfNeeded();
+  await screenshot(app, "studio", "gpt-default-fast", page);
+  await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
+
+  await page.getByRole("button", { name: "+ 新任务" }).click();
+  await page.getByRole("button", { name: "更多选项", exact: true }).click();
+  const fast = page.getByTestId("fast-toggle");
+  await expect(fast).toHaveAttribute("aria-pressed", "true");
+  await fast.click();
+  await page.getByLabel("第一句话").fill("Fast override");
+  await page.getByRole("button", { name: "开始", exact: true }).click();
+  await expect(page.getByTestId("msg-agent").last()).toContainText("MOCK: Fast override", { timeout: 60_000 });
+  const snapshot = await studio.api<StateSnapshot>("GET", "/api/state");
+  expect(snapshot.sessions.find((s) => s.profileId === profileId)?.options.fast).toBe(false);
+
+  await openGpt();
+  await expect(setting).toBeChecked();
+  await setting.click();
+  await expect(setting).not.toBeChecked();
+  await expect.poll(async () => (await studio!.api<StudioSettings>("GET", "/api/settings")).modelPrefs[profileId]?.fast).toBeUndefined();
+  await setting.click();
+  await expect(setting).toBeChecked();
+  await section.getByRole("button", { name: "恢复 CLI 的顺序和默认" }).click();
+  await expect(setting).not.toBeChecked();
+  await expect.poll(async () => (await studio!.api<StudioSettings>("GET", "/api/settings")).modelPrefs[profileId]?.fast).toBeUndefined();
+  await dialog.locator('[data-testid="channel-nav"][data-id="claude-mock"]').click();
+  await expect(section.getByRole("combobox", { name: "默认权限" })).toBeVisible();
+  await expect(setting).toHaveCount(0);
+});
+
+test("a third-party Codex channel saves its own Fast default and sends the Fast tier", async () => {
+  studio = await launchStudio({ env: { AMO_STUDIO_TEST_GPT_PROFILE: "1" } });
+  const { page, app, mock } = studio;
+  // The added channel gets its own app-server, using this sandbox's model catalog.
+  const config = join(studio.root, "codex-home", "config.toml");
+  writeFileSync(config, `model_catalog_json = ${JSON.stringify(MOCK_MODEL_CATALOG.replaceAll("\\", "/"))}\n${readFileSync(config, "utf8")}`);
+  const channel = await studio.api<ModelChannel>("POST", "/api/channels", { kind: "codex", label: "第三方 Codex", baseUrl: mock!.baseUrl, model: "mock-model", key: "mock-channel-key" });
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "设置" });
+  await selectSettingsPage(dialog, "模型与渠道");
+  await dialog.locator(`[data-testid="channel-nav"][data-id="${channel.id}"]`).click();
+  const setting = dialog.getByRole("checkbox", { name: "默认开启 Fast" });
+  await expect(setting).not.toBeChecked();
+  await setting.click();
+  await expect(setting).toBeChecked();
+  await screenshot(app, "studio", "third-party-codex-default-fast", page);
+  const prefs = (await studio.api<StudioSettings>("GET", "/api/settings")).modelPrefs;
+  expect(prefs[channel.id]?.fast).toBe(true);
+  expect(prefs["codex-default"]?.fast).toBeUndefined();
+
+  const ws = await studio.api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  const text = "third-party Fast default";
+  const { session } = await studio.api<{ session: Session }>("POST", "/api/tasks", { workspaceId: ws.id, firstSession: { profileId: channel.id, text } });
+  expect(session.options.fast).toBe(true);
+  await expect.poll(() => mock!.requests.find((r) => r.lastUserText === text)?.body).toMatchObject({ service_tier: "priority" });
+});
 
 test("a built-in channel icon can be selected in its header, replaced, persisted and reset", async () => {
   studio = await launchStudio({ mockModel: false });

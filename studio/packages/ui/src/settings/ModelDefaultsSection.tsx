@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import type { ModelPrefs, StudioSettings } from "@amo-studio/protocol";
+import type { ModelPrefs, ModelProfile, StudioSettings } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { effortLabel, modelName, useProfileChoices } from "../lib/choices.js";
 
 // 设置 → 模型 → a channel's page → 型号顺序和默认 (S18: the channel is the page's): drag the models into the order every picker shows, mark the one new sessions
-// start on, and the default reasoning effort and permissions. Saved at once; the pickers follow.
+// start on, and the default reasoning effort, permissions and Codex Fast preference. Saved at once; the pickers follow.
 
-export function ModelDefaultsSection({ link, settings, profileId }: { link: HostLink; settings: StudioSettings | null; profileId: string }) {
-  const { choices, error: loadError } = useProfileChoices(link, profileId || null);
-  const prefs: ModelPrefs = (profileId && settings?.modelPrefs?.[profileId]) || {};
+export function ModelDefaultsSection({ link, settings, profile }: { link: HostLink; settings: StudioSettings | null; profile: ModelProfile }) {
+  const profileId = profile.id;
+  const { choices, error: loadError } = useProfileChoices(link, profileId);
+  const prefs: ModelPrefs = settings?.modelPrefs?.[profileId] ?? {};
   // What was last saved, ahead of the Host's settings event: saves in quick succession build on each other.
   const latest = useRef<{ profileId: string; prefs: ModelPrefs }>({ profileId, prefs });
   const prefsKey = JSON.stringify(prefs);
@@ -60,6 +61,8 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
   const lastVisible = choices?.models.length === 1;
   const defaultId = choices?.models.find((m) => m.isDefault)?.id ?? null;
   const efforts = [...new Set(choices?.models.flatMap((m) => m.efforts) ?? [])];
+  const showFast = profile.runtime === "codex" && (prefs.fast === true || choices?.models.some((m) => m.fast) || hiddenModels.some((m) => m.fast));
+  const canReset = !!(prefs.order || prefs.model || prefs.effort || prefs.permission || prefs.fast);
 
   const dropOn = (id: string) => ({
     onDragOver: (e: DragEvent) => {
@@ -80,7 +83,7 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
   return (
     <section className="settings-section" aria-label="型号顺序和默认">
       <span className="settings-heading">型号顺序和默认</span>
-      <span className="settings-hint">拖动调整各处列出的顺序（也可以选中一行按 Alt ↑ / Alt ↓）；点「默认」决定新会话没选型号时用哪个。思考强度和权限的默认同样只影响之后新开的会话。</span>
+      <span className="settings-hint">拖动调整各处列出的顺序（也可以选中一行按 Alt ↑ / Alt ↓）。点「默认」决定新会话没选型号时用哪个。默认设置只影响之后新开的会话。</span>
       <span className="settings-hint">隐藏的型号会从选择列表中移除，可在下方恢复。</span>
       {loadError && <span className="form-error">{loadError}</span>}
       {!choices && !loadError && <span className="settings-hint">正在读取可选型号…</span>}
@@ -182,11 +185,17 @@ export function ModelDefaultsSection({ link, settings, profileId }: { link: Host
               ))}
             </select>
           </div>
-          {(prefs.order || prefs.model || prefs.effort || prefs.permission) && (
-            <div className="settings-row end">
-              <button type="button" className="btn-ghost small" onClick={() => void save({ order: undefined, model: undefined, effort: undefined, permission: undefined })}>
+          {(showFast || canReset) && (
+            <div className={`settings-row ${showFast ? "model-default-actions" : "end"}`}>
+              {showFast && (
+                <label className="model-default-fast settings-label" title="开启后，此渠道支持 Fast 的新会话会自动开启。关闭后沿用 Codex 设置。">
+                  <input type="checkbox" checked={prefs.fast === true} onChange={(e) => void save({ fast: e.currentTarget.checked || undefined })} />
+                  默认开启 Fast
+                </label>
+              )}
+              {canReset && <button type="button" className="btn-ghost small" onClick={() => void save({ order: undefined, model: undefined, effort: undefined, permission: undefined, fast: undefined })}>
                 恢复 CLI 的顺序和默认
-              </button>
+              </button>}
             </div>
           )}
         </>

@@ -31,11 +31,12 @@ function testModelOptions(): Partial<StartHostOptions> {
   const claudeUrl = process.env.AMO_STUDIO_TEST_CLAUDE_URL;
   const dshAgent = process.env.AMO_STUDIO_TEST_DSH_AGENT;
   const piAgent = process.env.AMO_STUDIO_TEST_PI_AGENT;
+  const testGpt = process.env.AMO_STUDIO_TEST_GPT_PROFILE === "1";
   // Under Electron the Host's own executable is Electron: the agent runs on the system's Node, as DSH would.
   const node = dshAgent || piAgent ? resolveNode() : null;
   return {
     profiles: [
-      { id: "codex-mock", label: "Mock 模型", runtime: "codex", provider: "amo-mock", model: "mock-model", credentialId: "mock" },
+      { id: testGpt ? "codex-default" : "codex-mock", label: testGpt ? "GPT" : "Mock 模型", runtime: "codex", provider: "amo-mock", model: "mock-model", credentialId: "mock" },
       ...(claudeUrl
         ? [
             { id: "claude-mock", label: "Mock Claude", runtime: "claude" as const, provider: "mock", model: "mock-claude", credentialId: "mock" },

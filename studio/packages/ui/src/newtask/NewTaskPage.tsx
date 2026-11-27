@@ -110,7 +110,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   const profile = profiles.find((p) => p.id === draft.pick.profileId);
   const runtime = profile?.runtime;
   const permission = draft.options.permission ?? choices?.defaultPermission;
-  const fastProps = { fast: model?.fast, value: draft.options.fast, onChange: (fast: boolean) => update({ options: { ...draft.options, fast } }), disabled: busy };
+  const fastProps = { fast: model?.fast, value: draft.options.fast ?? choices?.defaultFast, onChange: (fast: boolean) => update({ options: { ...draft.options, fast } }), disabled: busy };
   // 接续已有会话 (2026-11-05): the outside session picked; not kept in the draft (it may be taken on elsewhere meanwhile).
   const [resume, setResume] = useState<OutsideSession | null>(null);
   const [pickingResume, setPickingResume] = useState(false);

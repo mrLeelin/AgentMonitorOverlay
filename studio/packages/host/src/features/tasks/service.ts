@@ -363,6 +363,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (patch.workspaceId !== undefined) {
       const workspaceId = patch.workspaceId === null || patch.workspaceId === "" ? this.commonWorkspace().id : this.requireLiveWorkspace(String(patch.workspaceId)).id;
       if (workspaceId !== current.workspaceId) {
+        const planeWorkspace = planeBotWorkspaceId(this.store, id);
+        if (planeWorkspace && workspaceId !== planeWorkspace) throw new HostError("conflict", "Plane Bot 执行任务须保留接单时的 Git 项目。");
         if (this.f.remote.grants.of(id).length) throw new HostError("conflict", "请先收回这个任务的远程授权，再切换工作区。");
         if (this.hasStartingSession(id)) throw new HostError("conflict", "任务有会话正在创建，等待创建结束后再切换工作区。");
       }

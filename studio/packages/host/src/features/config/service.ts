@@ -282,7 +282,7 @@ export class ConfigFeature extends Feature<"claudeAccounts" | "scratchpad"> {
       }
       this.store.setKv(QUOTA_DISPLAY_KEY, JSON.stringify(next));
     }
-    if (input.modelPrefs !== undefined) writeModelPrefs(this.store, this.profiles.map((p) => p.id), input.modelPrefs);
+    if (input.modelPrefs !== undefined) writeModelPrefs(this.store, this.profiles, input.modelPrefs);
     if (input.scratchpadShortcut !== undefined) this.f.scratchpad.setShortcut(input.scratchpadShortcut);
     if (input.scratchpadSafeNewlines !== undefined) this.f.scratchpad.setSafeNewlines(input.scratchpadSafeNewlines);
     if (input.autoCompactTokens !== undefined) {

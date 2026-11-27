@@ -182,7 +182,7 @@ export function SessionTree({ link, task, sessions, workspaces, profiles, select
             small
           />
           {model && model.efforts.length > 0 && <EffortBars efforts={model.efforts} value={effort} fallback={model.defaultEffort} onChange={setEffort} small />}
-          <FastToggle fast={model?.fast} value={fast} onChange={setFast} small />
+          <FastToggle fast={model?.fast} value={fast ?? choices?.defaultFast} onChange={setFast} small />
           <button
             type="button"
             className="btn-primary small"

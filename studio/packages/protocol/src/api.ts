@@ -150,6 +150,8 @@ export interface ProfileChoices {
   hiddenModels?: ModelOption[];
   permissions: PermissionOption[];
   defaultPermission: string;
+  /** Studio enables Fast for new sessions on models that support it. */
+  defaultFast?: boolean;
   /** Where the model list came from ("cli", or "builtin" when the CLI could not be asked). */
   source: "cli" | "builtin";
 }
@@ -163,6 +165,8 @@ export interface ModelPrefs {
   model?: string;
   effort?: string;
   permission?: string;
+  /** Enable Fast by default for supported models on a Codex channel. */
+  fast?: boolean;
 }
 
 /** A saved combination for one-click switching: a profile plus its model, effort and permissions. */

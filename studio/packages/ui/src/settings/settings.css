@@ -217,6 +217,9 @@
 .model-default:disabled { opacity: 0.45; cursor: default; color: var(--text-dim); }
 .model-default + .model-default { margin-left: 0; }
 .model-order-hidden { color: var(--text-dim); cursor: default; }
+.model-default-actions { justify-content: space-between; }
+.model-default-fast { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.model-default-fast input { margin: 0; accent-color: var(--primary); }
 .model-default[aria-pressed="true"] { border-color: var(--primary); background: var(--tint); color: var(--primary); font-weight: 600; cursor: default; }
 
 /* 设置 → 数据管理: archived things, restored or deleted for good. */

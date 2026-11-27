@@ -43,6 +43,20 @@ describe("model prefs", () => {
     expect(fillDefaults({}, choices, undefined)).toEqual({});
   });
 
+  it.each(["codex-default", "ch-relay"])("defaults new sessions in %s to Fast when the resolved model supports it", (profileId) => {
+    const prefs = { fast: true };
+    const codex = { ...choices, profileId, models: choices.models.map((m) => m.id === "sol" ? { ...m, fast: { tier: "priority" } } : m) };
+    const offered = applyModelPrefs(codex, prefs);
+    expect(offered.defaultFast).toBe(true);
+    expect(fillDefaults({}, offered, prefs)).toEqual({ fast: true });
+    expect(fillDefaults({ model: "sol", effort: "low", permission: "ask" }, offered, prefs)).toEqual({ model: "sol", effort: "low", permission: "ask", fast: true });
+    expect(fillDefaults({ fast: false }, offered, prefs)).toEqual({ fast: false });
+    expect(fillDefaults({ model: "luna" }, offered, prefs)).toEqual({ model: "luna" });
+    expect(fillDefaults({ model: "gone" }, offered, prefs)).toEqual({ model: "gone" });
+    expect(fillDefaults({}, codex, { fast: false })).toEqual({});
+    expect(fillDefaults({}, { ...choices, profileId }, prefs)).toEqual({});
+  });
+
   it("hides models independently of ordering and picks a visible default for new sessions", () => {
     const prefs = { order: ["luna", "sol"], model: "sol", hidden: ["sol", "unlisted"], effort: "medium" };
     const out = applyModelPrefs(choices, prefs);

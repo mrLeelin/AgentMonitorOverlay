@@ -289,12 +289,13 @@
     {
       "id": "studio.channels",
       "label": "模型渠道、账号和额度",
-      "aliases": ["渠道", "channel", "额度", "quota", "余额", "balance", "Claude 多账号", "ClaudeAccounts", "profile", "UsageFooter"],
+      "aliases": ["渠道", "channel", "额度", "quota", "余额", "balance", "Claude 多账号", "ClaudeAccounts", "profile", "UsageFooter", "默认开启 Fast"],
       "category": "host",
-      "purpose": "会话能选的模型（profile）：内置的、用户加的第三方渠道（设置 → 模型与渠道）、Claude 多账号。点击渠道详情标题旁的图标可更换或恢复默认图标。每个渠道可排序、隐藏或恢复单个型号，并设定新会话默认型号。订阅额度和渠道余额显示在左下角和额度页。Claude 只用本机 Claude Code 登录。",
+      "purpose": "会话能选的模型（profile）：内置的、用户加的第三方渠道（设置 → 模型与渠道）、Claude 多账号。点击渠道详情标题旁的图标可更换或恢复默认图标。每个渠道可排序、隐藏或恢复单个型号，并设定新会话默认型号。内置 GPT 和第三方 Codex 渠道可为支持 Fast 的新会话分别设置 Fast 默认值。订阅额度和渠道余额显示在左下角和额度页。Claude 只用本机 Claude Code 登录。",
       "anchors": [
         { "label": "渠道注册表", "path": "studio/packages/host/src/runtime/channels.ts", "anchor": "export class ChannelRegistry" },
         { "label": "渠道详情与图标设置", "path": "studio/packages/ui/src/settings/ChannelsSection.tsx", "anchor": "export function ChannelPage" },
+        { "label": "型号顺序和会话默认设置", "path": "studio/packages/ui/src/settings/ModelDefaultsSection.tsx", "anchor": "export function ModelDefaultsSection" },
         { "label": "ChannelsFeature（余额）", "path": "studio/packages/host/src/features/channels/service.ts", "anchor": "cachedBalance" },
         { "label": "问余额", "path": "studio/packages/host/src/runtime/balance.ts", "anchor": "export async function askBalance" },
         { "label": "Claude 订阅额度", "path": "studio/packages/host/src/runtime/claude/claude-usage.ts", "anchor": "fetchClaudeUsage" },

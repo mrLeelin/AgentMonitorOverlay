@@ -10,6 +10,7 @@
 .effort-trigger span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .effort-trigger svg, .effort-picker svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .effort-trigger svg:last-child, .effort-heading svg { width: 12px; height: 12px; }
+.effort-trigger:has(+ .effort-picker .effort-fast[aria-pressed="true"]) > .effort-trigger-bolt { color: var(--primary); }
 .effort-trigger:hover:not(:disabled), .effort-trigger[aria-expanded="true"] { background: var(--chip); }
 .effort-trigger[data-highest="true"] { background: color-mix(in srgb, var(--level-color) 10%, var(--panel)); }
 /* Reserve the top and bottom edges for the particles so the label and icons stay clear. */

@@ -12,7 +12,7 @@ export function withEffort(options: SessionOptions, effort: string | null): Sess
 }
 
 const labelOf = (effort: string | null) => effort === null ? "默认" : effort === "ultra" ? "Ultra" : effortLabel(effort);
-const Bolt = () => <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 2 4 11h5l-.8 7L16 8.5h-5.2z" /></svg>;
+const Bolt = () => <svg className="effort-trigger-bolt" viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 2 4 11h5l-.8 7L16 8.5h-5.2z" /></svg>;
 
 // Offset the starting phases so the highest detent is already populated when dragged into view.
 const particles = Array.from({ length: 20 }, (_, i) => ({

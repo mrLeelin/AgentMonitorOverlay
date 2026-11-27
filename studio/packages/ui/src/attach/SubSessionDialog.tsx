@@ -142,7 +142,7 @@ export function SubSessionDialog({
         <div className="subsession-field">
           <span className="settings-label">Fast</span>
           <label className="settings-row subsession-fast">
-            <input type="checkbox" checked={chosenFast === true} onChange={(e) => setFast(e.currentTarget.checked)} data-testid="subsession-fast" />
+            <input type="checkbox" checked={(chosenFast ?? choices?.defaultFast) === true} onChange={(e) => setFast(e.currentTarget.checked)} data-testid="subsession-fast" />
             <span className={claudeFast ? "subsession-cost" : "settings-hint"}>{claudeFast ? "输出更快；按额外用量（usage credits）计费，不算订阅额度，账号没开额外用量时子会话会报错" : (model.fast.description ?? "更快的响应速度")}</span>
           </label>
         </div>

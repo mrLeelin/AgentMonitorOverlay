@@ -162,7 +162,7 @@ export function QuickStart({
           {model && model.efforts.length > 0 && (
             <EffortBars efforts={model.efforts} value={draft.options.effort ?? null} fallback={model.defaultEffort} onChange={(effort) => update({ options: { ...draft.options, effort } })} small />
           )}
-          <FastToggle fast={model?.fast} value={draft.options.fast} onChange={(fast) => update({ options: { ...draft.options, fast } })} small />
+          <FastToggle fast={model?.fast} value={draft.options.fast ?? choices?.defaultFast} onChange={(fast) => update({ options: { ...draft.options, fast } })} small />
           <span className="quick-hints">
             <button type="button" className="link-btn" onClick={() => void submit(false)} disabled={busy}>
               <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>开始

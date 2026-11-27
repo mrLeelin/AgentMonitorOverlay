@@ -26,9 +26,13 @@ test("draft slider follows the model's available levels, remembers Ultra and res
     const trigger = page.getByTestId("effort");
     const width = (await trigger.boundingBox())!.width;
     const normalColor = await trigger.evaluate(el => getComputedStyle(el).color);
+    const triggerBolt = trigger.locator(".effort-trigger-bolt");
+    await expect(triggerBolt).toHaveCSS("stroke", normalColor);
     const fast = panel.getByRole("button", { name: "Fast 加速" });
     await fast.click();
     await expect(fast).toHaveAttribute("aria-pressed", "true");
+    const fastColor = await fast.locator("svg path").evaluate(el => getComputedStyle(el).fill);
+    await expect(triggerBolt).toHaveCSS("stroke", fastColor);
     await expect(page.getByTestId("fast-toggle")).toHaveAttribute("aria-pressed", "true");
     await screenshot(app, "studio", "effort-picker-normal", page);
     await slider.press("End");
@@ -47,6 +51,7 @@ test("draft slider follows the model's available levels, remembers Ultra and res
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.keyboard.press("Escape");
     await expect(panel).toBeHidden();
+    await expect(triggerBolt).toHaveCSS("stroke", fastColor);
     const edge = (property: string) => trigger.evaluate((el, prop) => getComputedStyle(el, "::before").getPropertyValue(prop), property);
     const closedFrame = await edge("transform");
     await expect.poll(() => edge("transform")).not.toBe(closedFrame);
@@ -61,6 +66,7 @@ test("draft slider follows the model's available levels, remembers Ultra and res
     for (const [width, theme] of [[1280, "dark"], [960, "light"]] as const) {
       await app.evaluate(({ BrowserWindow }, [url, w]) => { BrowserWindow.getAllWindows().find(win => win.webContents.getURL() === url)!.setSize(w, 800); }, [page.url(), width] as const);
       await page.evaluate(t => { document.documentElement.dataset.theme = t; }, theme);
+      await expect(triggerBolt).toHaveCSS("stroke", await fast.locator("svg path").evaluate(el => getComputedStyle(el).fill));
       const bounds = (await panel.boundingBox())!;
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.y).toBeGreaterThanOrEqual(0);
