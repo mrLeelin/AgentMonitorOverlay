@@ -64,6 +64,15 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
+/** Chromium seeks with one byte range at a time. Ignore unsupported range units and multipart requests. */
+function fileRange(header: string | undefined, size: number): { start: number; end: number } | "unsatisfiable" | null {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header ?? "");
+  if (!match || (!match[1] && !match[2])) return null;
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[1] && match[2] ? Math.min(size - 1, Number(match[2])) : size - 1;
+  return start >= size || start > end ? "unsatisfiable" : { start, end };
+}
+
 export async function startHostServer(options: HostServerOptions): Promise<HostServer> {
   const { service } = options;
 
@@ -178,9 +187,24 @@ export async function startHostServer(options: HostServerOptions): Promise<HostS
       req.on("error", reject);
     });
 
-  const sendFile = (res: ServerResponse, file: FileReply) => {
+  const sendFile = (req: IncomingMessage, res: ServerResponse, file: FileReply) => {
     if (!existsSync(file.path)) return fail(res, 404, "not_found", "file not found");
-    res.writeHead(200, { "content-type": file.mime, "cache-control": file.options.fresh ? "no-store" : "private, max-age=31536000, immutable", ...(file.options.cors ? { "access-control-allow-origin": "*" } : {}) });
+    const headers = { "content-type": file.mime, "cache-control": file.options.fresh ? "no-store" : "private, max-age=31536000, immutable", ...(file.options.cors ? { "access-control-allow-origin": "*" } : {}) };
+    const size = file.options.rangeSize;
+    if (size !== undefined) {
+      // No validator is provided for live previews, so a conditional range gets a fresh full response.
+      const range = fileRange(req.headers["if-range"] ? undefined : req.headers.range, size);
+      res.setHeader("Accept-Ranges", "bytes");
+      if (range === "unsatisfiable") return res.writeHead(416, { "Content-Range": `bytes */${size}`, "cache-control": headers["cache-control"] }).end();
+      if (range) res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+      res.setHeader("Content-Length", range ? range.end - range.start + 1 : size);
+      res.writeHead(range ? 206 : 200, headers);
+      // Closing or seeking in the player can cancel a request while its stream is open.
+      if (size === 0) return res.end();
+      pipeline(createReadStream(file.path, range ?? { end: size - 1 }), res, () => undefined);
+      return;
+    }
+    res.writeHead(200, headers);
     // A remote task's copy (at most 20 MB) is read whole: a stream to a picture the page no longer shows was seen to
     // stay open, holding the file, so archiving the copy could not delete its folder (2026-10-29).
     if (file.options.whole) {
@@ -229,7 +253,7 @@ export async function startHostServer(options: HostServerOptions): Promise<HostS
     }
     const auth = req.headers.authorization;
     const matched = isMcp ? undefined : match(req.method ?? "GET", url.pathname);
-    // An <img> cannot send a header: routes that allow it take the token from the query (GET only).
+    // A media element cannot send an auth header: routes that allow it take the token from the query (GET only).
     const given = auth?.startsWith("Bearer ") ? auth.slice(7) : matched?.route.queryToken && req.method === "GET" ? url.searchParams.get("token") : null;
     const open = !!matched?.route.open && req.method === "GET";
     if (!open && !(isMcp ? mcpTokenOk(given) : tokenOk(given))) return fail(res, 401, "bad_request", "missing or invalid host token");
@@ -249,7 +273,7 @@ export async function startHostServer(options: HostServerOptions): Promise<HostS
         // A copy of a paired device's task (远程, step 2) takes only some of the API.
         service.remote.guardRoute(matched.route, matched.params);
         const out = await matched.route.handle({ method: req.method!, path: url.pathname, params: matched.params, query: url.searchParams, body });
-        return out instanceof FileReply ? sendFile(res, out) : out instanceof JsonReply ? send(res, out.status, out.body) : send(res, 200, out);
+        return out instanceof FileReply ? sendFile(req, res, out) : out instanceof JsonReply ? send(res, out.status, out.body) : send(res, 200, out);
       }
       for (const extra of options.extraRoutes ?? []) {
         const out = await extra({ method: req.method ?? "GET", path: url.pathname, params: {}, query: url.searchParams, body });

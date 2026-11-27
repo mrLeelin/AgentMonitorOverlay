@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
-import { MAX_TEXT_FILE_BYTES, PAGE_ASSET_TYPES, PREVIEW_IMAGE_TYPES, type GitEditorOpenResult, type GitEditorState, type Id, type OpenInApp, type OpenInApps, type OpenInRequest, type OpenInResult, type PageBase, type TextFile } from "@amo-studio/protocol";
+import { MAX_TEXT_FILE_BYTES, PAGE_ASSET_TYPES, PREVIEW_IMAGE_TYPES, PREVIEW_VIDEO_TYPES, type GitEditorOpenResult, type GitEditorState, type Id, type OpenInApp, type OpenInApps, type OpenInRequest, type OpenInResult, type PageBase, type TextFile } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { checkedGitEditorPath, detectGitEditors, GIT_EDITOR_KEY, gitEditorArgs, gitEditorName, gitRepositoryRoot, startGitEditor } from "./git-editor.js";
@@ -107,13 +107,15 @@ export class OpenInFeature extends Feature {
     return text === null ? { ...base, binary: true } : { ...base, text };
   }
 
-  /** An image for a preview; other types are refused. */
-  image(pathIn: unknown, workspaceId: unknown): { path: string; mime: string } {
+  /** An image or video for a local preview. */
+  previewMedia(pathIn: unknown, workspaceId: unknown): { path: string; mime: string; size: number } {
     const path = this.resolve(pathIn, workspaceId);
-    const mime = PREVIEW_IMAGE_TYPES[extname(path).toLowerCase()];
-    if (!mime) throw new HostError("bad_request", "only images are served");
-    if (!existsSync(path)) throw new HostError("not_found", `${path} does not exist`);
-    return { path, mime };
+    const ext = extname(path).toLowerCase();
+    const mime = PREVIEW_IMAGE_TYPES[ext] ?? PREVIEW_VIDEO_TYPES[ext];
+    if (!mime) throw new HostError("bad_request", "only images and videos are served");
+    const info = statSync(path, { throwIfNoEntry: false });
+    if (!info?.isFile()) throw new HostError("not_found", `${path} is not a file`);
+    return { path, mime, size: info.size };
   }
 
   /**

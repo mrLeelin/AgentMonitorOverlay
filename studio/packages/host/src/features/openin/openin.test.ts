@@ -183,13 +183,59 @@ describe("quick look", () => {
     expect((await api("GET", `/api/fs/text?path=${encodeURIComponent(join(ws.path, "Assets"))}`)).status).toBe(400);
   });
 
-  it("serves images with the token in the query, nothing else", async () => {
+  it("serves images with the token in the query and rejects source files", async () => {
     const ws = (await api<Workspace>("POST", "/api/workspaces", { path: makeProject() })).data;
     const img = await fetch(`${http.url}/api/fs/raw?path=${encodeURIComponent(join(ws.path, "logo.png"))}&token=${TOKEN}`);
     expect(img.status).toBe(200);
     expect(img.headers.get("content-type")).toContain("image/png");
+    await img.arrayBuffer();
     const cs = await fetch(`${http.url}/api/fs/raw?path=${encodeURIComponent(join(ws.path, "Assets", "Player.cs"))}&token=${TOKEN}`);
     expect(cs.status).toBe(400);
+    await cs.json();
+  });
+
+  it("streams video with byte ranges and keeps host authentication", async () => {
+    const name = "演示 #1.MP4";
+    const dir = makeProject();
+    writeFileSync(join(dir, name), "0123456789");
+    mkdirSync(join(dir, "folder.webm"));
+    const ws = (await api<Workspace>("POST", "/api/workspaces", { path: dir })).data;
+    const url = (path: string) => `${http.url}/api/fs/raw?${new URLSearchParams({ path, workspaceId: ws.id })}`;
+    const video = (range?: string) => fetch(`${url(name)}&token=${TOKEN}`, { headers: range ? { range } : {} });
+
+    const unauthenticated = await fetch(url(name), { headers: { range: "bytes=0-" } });
+    expect(unauthenticated.status).toBe(401);
+    await unauthenticated.json();
+
+    const full = await video();
+    expect(full.status).toBe(200);
+    expect(full.headers.get("content-type")).toBe("video/mp4");
+    expect(full.headers.get("accept-ranges")).toBe("bytes");
+    expect(full.headers.get("content-length")).toBe("10");
+    expect(await full.text()).toBe("0123456789");
+
+    for (const [range, contentRange, body] of [
+      ["bytes=2-4", "bytes 2-4/10", "234"],
+      ["bytes=7-", "bytes 7-9/10", "789"],
+      ["bytes=-2", "bytes 8-9/10", "89"],
+      ["bytes=8-20", "bytes 8-9/10", "89"],
+    ]) {
+      const part = await video(range);
+      expect(part.status).toBe(206);
+      expect(part.headers.get("content-range")).toBe(contentRange);
+      expect(part.headers.get("content-length")).toBe(String(body!.length));
+      expect(await part.text()).toBe(body);
+    }
+
+    const invalid = await video("bytes=10-");
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get("content-range")).toBe("bytes */10");
+    expect(await invalid.text()).toBe("");
+    for (const path of ["missing.mp4", "folder.webm"]) {
+      const missing = await fetch(`${url(path)}&token=${TOKEN}`);
+      expect(missing.status).toBe(404);
+      await missing.json();
+    }
   });
 
   it("serves a page's stylesheets, scripts, pictures and fonts under a key for its project, nothing outside or else (2026-11-06)", async () => {

@@ -74,6 +74,14 @@ export const PREVIEW_IMAGE_TYPES: Readonly<Record<string, string>> = {
   ".ico": "image/x-icon",
 };
 
+/** Video containers the file preview hands to Electron's media player. */
+export const PREVIEW_VIDEO_TYPES: Readonly<Record<string, string>> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+};
+
 /**
  * 页面旁边的文件 (2026-11-06): what an HTML page shown in the viewer may load from beside it — its stylesheets, scripts,
  * pictures and fonts (the user: DSH's pages keep their CSS next to them) — by lowercase extension. Served by
@@ -114,7 +122,7 @@ export interface OpenInRoutes {
   "POST /api/open-in": { req: OpenInRequest; res: OpenInResult };
   /** Reads a text file for a quick look: `?path=` (absolute, or relative with `?workspaceId=`). */
   "GET /api/fs/text": { req: void; res: TextFile };
-  /** An image file itself, for previews (types in PREVIEW_IMAGE_TYPES); also takes `?token=`. */
+  /** An image or video file for previews; videos support byte ranges. Also takes `?token=`. */
   "GET /api/fs/raw": { req: void; res: Blob };
   /**
    * 页面旁边的文件 (2026-11-06): the key an HTML page's stylesheets, scripts, pictures and fonts are served under

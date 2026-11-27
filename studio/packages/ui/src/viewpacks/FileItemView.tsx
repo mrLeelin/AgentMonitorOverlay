@@ -3,7 +3,7 @@ import type { FileViewItem, StateSnapshot, ViewPack, Workspace } from "@amo-stud
 import { copyText, HostApiError, type HostLink } from "../host/client.js";
 import { openInEditor, revealInExplorer, type FileRef } from "../lib/openin.js";
 import { showToast } from "../lib/toast.js";
-import { FileContent, isHtmlText, isImage, isMarkdownText, RenderedToggle, useTextFile } from "../files/FilePreview.js";
+import { FileContent, isHtmlText, isImage, isMarkdownText, isVideo, RenderedToggle, useTextFile } from "../files/FilePreview.js";
 import { useVsCode } from "../files/FileLinks.js";
 import { MarkButton } from "../marks/MarkButton.js";
 import type { ViewMark } from "../gitreview/DiffView.js";
@@ -20,7 +20,8 @@ export function FileItemView({ link, state, pack, workspace, item, nonce, active
   // 远程 Reviewer (2026-11-02): a remote task's file — read from its computer; nothing of this computer's (Explorer, 书签).
   const remote = useRemoteReview();
   const [reload, setReload] = useState(0);
-  const loaded = useTextFile(link, file, !isImage(item.path), `${reload}:${nonce}`);
+  const media = isImage(item.path) || (!remote && isVideo(item.path));
+  const loaded = useTextFile(link, file, !media, `${reload}:${nonce}`);
   const markdown = isMarkdownText(item.path, loaded);
   // Markdown and HTML show rendered, their passages taking comments (2026-10-28), or as source.
   const html = isHtmlText(item.path, loaded);
@@ -57,8 +58,8 @@ export function FileItemView({ link, state, pack, workspace, item, nonce, active
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [active]);
-  const absolute = loaded.state === "ok" ? loaded.file.path : `${workspace.path}/${item.path}`;
-  const code = loaded.state === "ok" && !isImage(item.path) && !loaded.file.binary && !loaded.file.tooLarge && loaded.file.text !== undefined && !(renderable && rendered);
+  const absolute = !media && loaded.state === "ok" ? loaded.file.path : `${workspace.path}/${item.path}`;
+  const code = !media && loaded.state === "ok" && !loaded.file.binary && !loaded.file.tooLarge && loaded.file.text !== undefined && !(renderable && rendered);
   const fail = (err: unknown) => showToast({ text: err instanceof HostApiError ? err.message : String(err), error: true });
 
   return (
@@ -153,7 +154,7 @@ export function FileItemView({ link, state, pack, workspace, item, nonce, active
           />
         ) : (
           <div className="vw-content">
-            <FileContent link={link} file={file} loaded={loaded} rendered={rendered} reload={`${reload}:${nonce}`} />
+            <FileContent link={link} file={file} loaded={loaded} rendered={rendered} reload={`${reload}:${nonce}`} videoActive={remote ? undefined : active} />
           </div>
         )}
       </div>

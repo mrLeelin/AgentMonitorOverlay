@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -55,6 +55,20 @@ async function expectTitleBar(win: Page, head: string) {
   expect(Math.round(box.x + box.width)).toBe(await win.evaluate(() => document.documentElement.clientWidth));
   expect(Math.round(box.y)).toBe(0);
 }
+
+test("a local video opens and plays directly in standalone Reviewer", async () => {
+  root = mkdtempSync(join(tmpdir(), "amo-reviewer-e2e-"));
+  const name = "clip.mov";
+  copyFileSync(join(studioRoot, "e2e", "fixtures", "viewer-video.mov"), join(root, name));
+  const launched = programLaunch("reviewer", MAIN);
+  app = await _electron.launch({ executablePath: launched.executablePath, args: [...launched.args, root, "--mode", "file", "--file", name], env: cleanEnv(join(root, "home")) });
+  const viewer = await windowAt(app, "reviewer.html#viewer");
+  const video = viewer.getByTestId("file-preview-video");
+  await expect(viewer.getByTestId("viewer-name")).toHaveText(name);
+  await expect(video).toHaveJSProperty("videoWidth", 160);
+  await video.press("Space");
+  await expect.poll(() => video.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeGreaterThan(0.1);
+});
 
 test("started with a folder it reviews its changes; comments are copied; amo-review --reviewer opens a file; no bookmarks", async () => {
   root = mkdtempSync(join(tmpdir(), "amo-reviewer-e2e-"));

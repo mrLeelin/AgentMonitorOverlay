@@ -5,7 +5,7 @@ import { useHostState } from "../host/useHostState.js";
 import { openInEditor, revealInExplorer, type FileRef } from "../lib/openin.js";
 import { showToast } from "../lib/toast.js";
 import { useFitWidth } from "../lib/fitWidth.js";
-import { FileContent, isHtmlText, isImage, isMarkdownText, RenderedToggle, useTextFile } from "../files/FilePreview.js";
+import { FileContent, isHtmlText, isImage, isMarkdownText, isVideo, RenderedToggle, useTextFile } from "../files/FilePreview.js";
 import { useVsCode } from "../files/FileLinks.js";
 import { fileName, folderOf } from "../files/paths.js";
 import { ReviewPage } from "../gitreview/ReviewApp.js";
@@ -25,7 +25,7 @@ import { TitleMark, WindowControls, WindowPlaceholder } from "../shell/WindowCon
 
 // The viewer window (查看器, stage 13; #viewer?path=…): a file opened from a conversation, a mark or a Review, in one
 // of two modes. 文件: the file as it is now (code coloured, the asked line or range marked and scrolled to; Markdown
-// rendered or as source; images). 改动: the project's Git Review at that file. The window is the preview one, reused
+// rendered or as source; images and videos). 改动: the project's Git Review at that file. The window is the preview one, reused
 // for the next file, until 固定 keeps it. Stage 14 (S14-A): code in 文件 mode takes line comments like Review
 // (FileReview), Ctrl+G goes to a line, Ctrl+F finds; the two modes stay laid out while hidden, so each keeps its place.
 
@@ -109,8 +109,9 @@ function ViewerPage({ link, state, target, remote }: { link: HostLink; state: St
   const [pinned, setPinned] = useState(false);
   // Every open is a fresh read, including the same path after the agent saved another edit.
   const readVersion = `${reload}:${target.nonce ?? ""}`;
-  const loaded = useTextFile(link, file, !isImage(file.path), readVersion);
-  const absolute = loaded.state === "ok" ? loaded.file.path : file.path;
+  const media = isImage(file.path) || isVideo(file.path);
+  const loaded = useTextFile(link, file, !media, readVersion);
+  const absolute = !media && loaded.state === "ok" ? loaded.file.path : file.path;
   /** A remote file as its computer has it, without that computer's own folder (任务文件夹/…). */
   const remotePath = remote ? (remote.rel.startsWith(`${REMOTE_ATTACHMENTS_FOLDER}/`) ? remote.rel : `${REMOTE_TASK_FOLDER}/${remote.rel}`) : "";
   // 远程 Reviewer 的批注 (2026-11-02): a file of the task's folder takes comments, kept on this computer (as in its 查看包):
@@ -147,8 +148,8 @@ function ViewerPage({ link, state, target, remote }: { link: HostLink; state: St
     if (m === "changes") setChangesShown(true);
   };
   const where = linesLabel(target.line, target.endLine);
-  // Code (not an image, not Markdown or HTML shown rendered) is drawn by FileReview: comments, Ctrl+G, Ctrl+F.
-  const code = loaded.state === "ok" && !isImage(file.path) && !loaded.file.binary && !loaded.file.tooLarge && loaded.file.text !== undefined && !(renderable && rendered);
+  // Text source is drawn by FileReview: comments, Ctrl+G, Ctrl+F.
+  const code = !media && loaded.state === "ok" && !loaded.file.binary && !loaded.file.tooLarge && loaded.file.text !== undefined && !(renderable && rendered);
   // Comments go to the conversation that opened the file, else the project's most recently active session; fixed
   // per open, so sessions updating does not move the choice.
   const defaultSession = useMemo(
@@ -309,7 +310,7 @@ function ViewerPage({ link, state, target, remote }: { link: HostLink; state: St
             />
           ) : (
             <div className="vw-content" ref={plain}>
-              <FileContent link={link} file={file} loaded={loaded} line={target.line} endLine={target.endLine} rendered={rendered} reload={readVersion} />
+              <FileContent link={link} file={file} loaded={loaded} line={target.line} endLine={target.endLine} rendered={rendered} reload={readVersion} videoActive={mode === "file"} />
             </div>
           )}
           </RemoteReviewProvider>

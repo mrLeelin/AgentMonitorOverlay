@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { PREVIEW_IMAGE_TYPES, type FileDiff, type TextFile } from "@amo-studio/protocol";
+import { PREVIEW_IMAGE_TYPES, PREVIEW_VIDEO_TYPES, type FileDiff, type TextFile } from "@amo-studio/protocol";
 import { copyText, HostApiError, type HostLink } from "../host/client.js";
 import { CodeTokens } from "../lib/CodeTokens.js";
 import { languageForPath, type CodeToken } from "../lib/highlight.js";
@@ -51,9 +51,14 @@ export const isImage = (path: string) => {
   return dot >= 0 && !!PREVIEW_IMAGE_TYPES[path.slice(dot).toLowerCase()];
 };
 
+export const isVideo = (path: string) => {
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 && !!PREVIEW_VIDEO_TYPES[path.slice(dot).toLowerCase()];
+};
+
 export type Loaded = { state: "loading" } | { state: "ok"; file: TextFile } | { state: "error"; message: string };
 
-/** The file's text from the Host; `enabled` false asks nothing (an image, or a change shown instead). */
+/** The file's text from the Host; `enabled` false asks nothing (media, or a change shown instead). */
 export function useTextFile(link: HostLink, file: FileRef, enabled: boolean, reload: number | string): Loaded {
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   useEffect(() => {
@@ -80,7 +85,7 @@ export const isMarkdownText = (path: string, loaded: Loaded) => languageForPath(
 export const isHtmlText = (path: string, loaded: Loaded) => languageForPath(path) === "html" && loaded.state === "ok" && loaded.file.text !== undefined && !loaded.file.tooLarge;
 
 /**
- * A file as it is now: an image, Markdown rendered (or its source), or code with line numbers and colours, scrolled to
+ * A file as it is now: media, Markdown rendered (or its source), or code with line numbers and colours, scrolled to
  * and marking `line` (through `endLine`).
  */
 export function FileContent({
@@ -91,6 +96,7 @@ export function FileContent({
   endLine,
   rendered,
   reload,
+  videoActive,
 }: {
   link: HostLink;
   file: FileRef;
@@ -99,6 +105,8 @@ export function FileContent({
   endLine?: number | undefined;
   rendered: boolean;
   reload: number | string;
+  /** Omit for sources without local video streaming, such as a remote pack. */
+  videoActive?: boolean | undefined;
 }) {
   if (isImage(file.path))
     return (
@@ -106,6 +114,10 @@ export function FileContent({
         <img src={`${rawFileUrl(link, file)}&v=${reload}`} alt={fileName(file.path)} data-testid="file-preview-image" />
       </div>
     );
+  if (videoActive !== undefined && isVideo(file.path)) {
+    const src = `${rawFileUrl(link, file)}&v=${encodeURIComponent(reload)}`;
+    return <VideoPreview key={src} src={src} name={fileName(file.path)} active={videoActive} />;
+  }
   if (loaded.state === "loading") return <div className="fp-empty">读取中…</div>;
   if (loaded.state === "error")
     return (
@@ -126,6 +138,30 @@ export function FileContent({
   return <CodeView key={`${loaded.file.path}#${reload}`} text={loaded.file.text} path={file.path} line={line} endLine={endLine} />;
 }
 
+function VideoPreview({ src, name, active }: { src: string; name: string; active: boolean }) {
+  const player = useRef<HTMLVideoElement>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const video = player.current!;
+    video.src = src;
+    return () => {
+      // Stop playback and abort reads when the viewer is reused or closed.
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [src]);
+  useEffect(() => {
+    if (!active) player.current?.pause();
+  }, [active]);
+  return (
+    <div className="fp-video">
+      <video ref={player} controls preload={active ? "metadata" : "none"} hidden={failed} aria-label={name} data-testid="file-preview-video" onError={() => setFailed(true)} />
+      {failed && <div className="fp-empty" role="alert">无法播放这个视频。文件可能已移动、损坏，或使用了查看器不支持的编码。</div>}
+    </div>
+  );
+}
+
 export function FilePreview({ link, file, line, endLine, column, diff, onClose, extraActions }: FilePreviewProps) {
   const vscode = useVsCode(link);
   const [width, setWidth] = useState(savedWidth);
@@ -134,8 +170,8 @@ export function FilePreview({ link, file, line, endLine, column, diff, onClose, 
   const [reload, setReload] = useState(0);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const image = isImage(file.path);
-  const loaded = useTextFile(link, file, mode === "file" && !image, reload);
+  const media = isImage(file.path) || isVideo(file.path);
+  const loaded = useTextFile(link, file, mode === "file" && !media, reload);
   const [rendered, setRendered] = useState(!line);
 
   useEffect(() => {
@@ -163,7 +199,7 @@ export function FilePreview({ link, file, line, endLine, column, diff, onClose, 
     return () => clearTimeout(t);
   }, [notice]);
 
-  const absolute = loaded.state === "ok" ? loaded.file.path : file.path;
+  const absolute = !media && loaded.state === "ok" ? loaded.file.path : file.path;
   const markdown = isMarkdownText(file.path, loaded);
   const fail = (err: unknown) => setNotice(err instanceof HostApiError ? err.message : String(err));
 
@@ -272,7 +308,7 @@ export function FilePreview({ link, file, line, endLine, column, diff, onClose, 
         {mode === "diff" && diff ? (
           <DiffBody diff={diff} path={file.path} onLine={(l) => showFile(l)} />
         ) : (
-          <FileContent link={link} file={file} loaded={loaded} line={at.line} endLine={at.endLine} rendered={rendered} reload={reload} />
+          <FileContent link={link} file={file} loaded={loaded} line={at.line} endLine={at.endLine} rendered={rendered} reload={reload} videoActive />
         )}
       </div>
     </aside>

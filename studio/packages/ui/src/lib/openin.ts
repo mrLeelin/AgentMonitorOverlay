@@ -38,7 +38,7 @@ export function readTextFile(link: HostLink, file: FileRef): Promise<TextFile> {
   return call(link, "GET /api/fs/text", {}, undefined, { path: file.path, ...(file.workspaceId ? { workspaceId: file.workspaceId } : {}) });
 }
 
-/** A URL an <img> can load for an image file (the token rides in the query; the Host only serves image types). */
+/** A URL a media element can load (the token rides in the query; the Host serves only preview types). */
 export function rawFileUrl(link: HostLink, file: FileRef): string {
   const q = new URLSearchParams({ path: file.path, token: link.token, ...(file.workspaceId ? { workspaceId: file.workspaceId } : {}) });
   return `${link.url}/api/fs/raw?${q.toString()}`;

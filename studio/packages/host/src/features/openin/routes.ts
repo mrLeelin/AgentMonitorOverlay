@@ -17,9 +17,10 @@ export function openInRoutes(service: HostService): Route[] {
     route(
       "GET /api/fs/raw",
       ({ query }) => {
-        const f = service.openIn.image(query.get("path"), query.get("workspaceId"));
+        const f = service.openIn.previewMedia(query.get("path"), query.get("workspaceId"));
+        if (f.mime.startsWith("video/")) return new FileReply(f.path, f.mime, { rangeSize: f.size, fresh: true });
         // Read whole unless huge: a stream the viewer stopped reading was seen to keep the file open (2026-10-29).
-        return new FileReply(f.path, f.mime, { whole: statSync(f.path).size <= WHOLE_MAX });
+        return new FileReply(f.path, f.mime, { whole: f.size <= WHOLE_MAX });
       },
       { queryToken: true },
     ),

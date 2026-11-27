@@ -76,10 +76,10 @@ export class FileReply {
     readonly mime: string,
     /**
      * `fresh`: not to be kept by the browser (the same address may stand for a newer file: 远程 step 3). `whole`: read
-     * into memory and sent, no file left open (a remote task's copy, deleted when archived).
+     * into memory and sent, no file left open (a remote task's copy, deleted when archived). `rangeSize`: stream a
+     * file of this size with byte ranges for seeking. `cors`: allow reads from a page's sandboxed frame.
      */
-    /** `cors`: any origin may read it (a page's fonts, which its sandboxed frame loads in CORS mode: 2026-11-06). */
-    readonly options: { fresh?: boolean; whole?: boolean; cors?: boolean } = {},
+    readonly options: { fresh?: boolean; whole?: boolean; cors?: boolean; rangeSize?: number } = {},
   ) {}
 }
 
