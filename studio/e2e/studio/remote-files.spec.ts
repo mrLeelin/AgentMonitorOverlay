@@ -134,6 +134,13 @@ test("B opens a remote task's Markdown, HTML and pictures: fetched from A with a
   await expect(reply).toContainText("MOCK", { timeout: 30_000 });
   const link = (path: string) => reply.locator(`[data-file-link][data-path="${path.replace(/\\/g, "\\\\")}"]`);
 
+  await link("docs/a.md").click({ button: "right" });
+  const menu = b.page.getByTestId("file-menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["在查看器中打开O", "复制路径C", "复制名称N"]);
+  await menu.getByRole("menuitem", { name: "复制名称", exact: true }).click();
+  await expect.poll(() => b.app.evaluate(() => (globalThis as { __amoCopied?: string[] }).__amoCopied?.at(-1))).toBe("a.md");
+  await expect(menu).toHaveCount(0);
+
   // The Markdown: the viewer fetches it, then shows it rendered, its picture fetched too.
   const viewer = await nextWindow(b.app, () => link("docs/a.md").click());
   await expect(viewer.getByTestId("viewer-md")).toContainText("远程打开的 Markdown", { timeout: 30_000 });

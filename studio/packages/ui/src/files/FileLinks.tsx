@@ -9,12 +9,12 @@ import { markOrShow } from "../marks/open.js";
 import { openViewer } from "../viewer/open.js";
 import { useExistingPath } from "./exists.js";
 import { showToast } from "../lib/toast.js";
-import { parseInlinePath, parseLinkTarget } from "./paths.js";
+import { fileName, parseInlinePath, parseLinkTarget } from "./paths.js";
 
 // Files named in the conversation become links (stage 12, S12-C). Stage 13: a click opens the file in the viewer
 // window (查看器; a change of this turn still opens in the quick look beside the conversation), Ctrl+click opens VS
 // Code, and a right click offers 在查看器中打开 / 在侧栏预览 / 在 Review 里看 / 用 VS Code 打开 / 在资源管理器中显示 /
-// 复制路径 / 加书签, each with a letter (2026-10-28). A web page opens in the viewer too (2026-10-28; in the browser
+// 复制路径 / 复制名称 / 加书签, each with a letter (2026-10-28). A web page opens in the viewer too (2026-10-28; in the browser
 // from 10-26), 用浏览器打开 on the menu. The page wraps its conversation in <FileLinks>; outside it, plain text.
 
 /** What the quick look shows: a file (at a line or range), or a change to it first (本轮改动). */
@@ -124,7 +124,7 @@ export function FileLinks({
   onError?(text: string): void;
   /**
    * 远程 (2026-10-29): the conversation is a copy of another computer's session (this remote task), whose files are
-   * there — a click opens one in the viewer, which fetches it first (step 3); the menu has only that and 复制路径.
+   * there — a click opens one in the viewer, which fetches it first (step 3); the menu also offers 复制路径 and 复制名称.
    */
   remoteTask?: string;
   children: ReactNode;
@@ -162,6 +162,7 @@ export function FileLinks({
   const t = menu?.target;
   const reviewIn = t ? (t.file.workspaceId ?? workspaceId) : null;
   const rendered = t && /\.(md|markdown|html?)$/i.test(t.file.path);
+  const copyName = t && { label: "复制名称", key: "N", run: () => void copyText(fileName(t.file.path)) };
 
   if (remote)
     return (
@@ -175,7 +176,7 @@ export function FileLinks({
             onClose={() => setMenu(null)}
             groups={[
               [{ label: "在查看器中打开", key: "O", title: "从运行任务的电脑取过来再打开（文本、HTML、Markdown 和图片）", run: () => viewRemoteFile(t, remoteTask, sessionId) }],
-              [{ label: "复制路径", key: "C", title: "那台电脑上的路径", run: () => void copyText(t.file.path) }],
+              [{ label: "复制路径", key: "C", title: "那台电脑上的路径", run: () => void copyText(t.file.path) }, copyName],
             ]}
           />
         )}
@@ -225,6 +226,7 @@ export function FileLinks({
             [{ label: "在资源管理器中显示", key: "E", run: () => void revealInExplorer(link, t.file).catch(fail) }],
             [
               { label: "复制路径", key: "C", run: () => void copyText(t.file.path) },
+              copyName,
               { label: "加书签", key: "B", run: () => void markOrShow(link, t.file, t.line, sessionId ?? undefined).catch(fail) },
             ],
           ]}

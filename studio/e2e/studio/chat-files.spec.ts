@@ -65,6 +65,19 @@ test("a web page named in the conversation opens in the viewer on a click, rende
   expect(open.asked).toMatchObject({ path: join(dir, "report.html"), app: "default" });
   expect(open.result).toMatchObject({ app: "default", dryRun: true });
   await expect(menu).toHaveCount(0);
+
+  const lastCopied = () => app.evaluate(() => (globalThis as { __amoCopied?: string[] }).__amoCopied?.at(-1));
+  await chip.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "复制名称", exact: true }).click();
+  await expect.poll(lastCopied).toBe("report.html");
+  await expect(menu).toHaveCount(0);
+  await chip.click({ button: "right" });
+  await page.keyboard.press("c");
+  await expect.poll(lastCopied).toBe(join(dir, "report.html"));
+  await chip.click({ button: "right" });
+  await page.keyboard.press("n");
+  await expect.poll(lastCopied).toBe("report.html");
+  await expect(menu).toHaveCount(0);
 });
 
 async function approveUntilAnswered(page: Page, answer: string) {
@@ -177,7 +190,7 @@ test("names of existing files in a reply open the viewer, the quick look, VS Cod
   // line 2; then rendered.
   await links.last().click({ button: "right" });
   const menu = page.getByTestId("file-menu");
-  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["查看未提交的改动", "D"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["加书签", "B"]];
+  const items: Array<[string, string]> = [["在查看器中打开", "O"], ["在侧栏预览", "P"], ["查看未提交的改动", "D"], ...(vscode ? [["用 VS Code 打开", "V"] as [string, string]] : []), ["在资源管理器中显示", "E"], ["复制路径", "C"], ["复制名称", "N"], ["加书签", "B"]];
   await expect(menu.getByRole("menuitem")).toHaveText(items.map(([label, key]) => label + key));
   await expect(menu.getByRole("group")).toHaveCount(3);
   await screenshot(app, "stage-13", "S13-A-file-menu", page);

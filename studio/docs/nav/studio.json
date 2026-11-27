@@ -366,13 +366,14 @@
     {
       "id": "studio.files",
       "label": "文件：附件、@ 文件、书签、Studio 里的便签页、外部打开",
-      "aliases": ["附件", "attachments", "@ 文件", "chatfiles", "书签", "marks", "文件标记", "scratchpad", "openin", "VS Code 打开"],
+      "aliases": ["附件", "attachments", "@ 文件", "chatfiles", "文件链接", "FileLinks", "复制路径", "复制名称", "书签", "marks", "文件标记", "scratchpad", "openin", "VS Code 打开"],
       "category": "host",
       "purpose": "会话和便签页里贴的图（存在数据目录 attachments/）、文件选择器和 @ 文件、对话里提到的路径哪些存在、书签（按专题，文件和对话片段）、Studio 里的便签页（scratchpad，和独立的 AMO 便签不是一个东西）、用 VS Code / 资源管理器打开。",
       "anchors": [
         { "label": "附件", "path": "studio/packages/host/src/features/attachments/service.ts", "anchor": "export class AttachmentsFeature" },
         { "label": "项目文件列表", "path": "studio/packages/host/src/features/files/service.ts", "anchor": "export class FilesFeature" },
         { "label": "对话里的路径", "path": "studio/packages/host/src/features/chatfiles/service.ts", "anchor": "export class ChatFilesFeature" },
+        { "label": "对话文件链接与右键菜单", "path": "studio/packages/ui/src/files/FileLinks.tsx", "anchor": "export function FileLinks(" },
         { "label": "书签", "path": "studio/packages/host/src/features/marks/service.ts", "anchor": "export class MarksFeature" },
         { "label": "Studio 便签页", "path": "studio/packages/host/src/features/scratchpad/service.ts", "anchor": "export class ScratchpadFeature" },
         { "label": "外部打开", "path": "studio/packages/host/src/features/openin/service.ts", "anchor": "export class OpenInFeature" }
