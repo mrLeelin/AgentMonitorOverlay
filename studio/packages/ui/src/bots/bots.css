@@ -286,7 +286,8 @@ button.bot-settings-summary-row:hover { color: var(--primary); }
 .bot-editor-scroll > .settings-section { margin-top: 16px; }
 .bot-editor-actions { flex: none; display: grid; gap: 6px; padding: 10px var(--bot-editor-gutter); border-top: 1px solid var(--border); background: var(--panel); }
 .bot-editor-actions p { margin: 0; overflow-wrap: anywhere; }
-.bot-editor-save { margin-left: auto; min-width: 72px; }
+.bot-save-error { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.bot-save-error p { width: 100%; margin: 0; }
 
 @container settings-page (max-width: 600px) {
   .bots-settings { --bot-editor-gutter: 16px; grid-template-columns: minmax(0, 1fr); }

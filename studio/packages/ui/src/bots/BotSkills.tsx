@@ -171,7 +171,7 @@ export function BotSkillsSection({ link, name, profileId, workspaceId, shared, s
         <button type="button" className="btn-ghost small bot-skill-add" disabled={busy || !profileId} onClick={picker.show}><IconPlus /> 添加技能</button>
       </header>
       <SkillList skills={custom} state={picker.state} onRemove={busy ? undefined : (id) => onChange(skills.filter((skill) => skill.id !== id))} />
-      <p className="settings-hint">保存后，新建聊天使用更新后的技能。</p>
+      <p className="settings-hint">新建聊天使用更新后的技能。</p>
     </div>
     {picker.open && <SkillPicker scope={`添加到「${name}」的专用技能`} state={picker.state} existing={[...skills, ...(shared ?? EMPTY)]} limit={BOT_SKILL_LIMIT - skills.length}
       retry={picker.retry} onClose={picker.close} onAdd={(added) => { onChange([...skills, ...added]); picker.close(); }} />}

@@ -5,6 +5,7 @@ import { setDuty, useDuty } from "../duty/duty.js";
 import { call, type HostLink } from "../host/client.js";
 import { onHostEvent } from "../host/events.js";
 import { revealInExplorer } from "../lib/openin.js";
+import { showToast } from "../lib/toast.js";
 import { scheduleText } from "../settings/DutyPage.js";
 
 export const botSettingsTabs = [["overview", "概览"], ["runtime", "运行配置"], ["memory", "角色与记忆"], ["automation", "自动化"], ["access", "访问与技能"], ["notifications", "通知"]] as const;
@@ -71,36 +72,63 @@ export function BotNotificationSettings({ preferences, disabled, onChange }: {
   </section>;
 }
 
-const memoryTitle = "整理近期已完成的 Bot 请求";
-
-export function BotAutomation({ bot, link, preferences, disabled, onChange, onManage }: {
-  bot: StudioBot; link: HostLink; preferences: BotPreferences; disabled: boolean; onChange(value: BotPreferences): void; onManage(): void;
+export function BotAutomation({ bot, link, preferences, disabled, memorySupported, onChange, onManage }: {
+  bot: StudioBot; link: HostLink; preferences: BotPreferences; disabled: boolean; memorySupported: boolean; onChange(value: BotPreferences): void; onManage(): void;
 }) {
   const duty = useDuty();
-  const [editing, edit] = useState<false | "patrol" | "memory">(false);
+  const [editingPatrol, editPatrol] = useState(false);
+  const [editingTime, editTime] = useState<{ jobId: string; value: string }>();
   const [period, setPeriod] = useState("4");
-  const [time, setTime] = useState("23:00");
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<{ runningItemId?: string }>();
   const [error, setError] = useState("");
+  const busy = !!pending;
   const jobs = duty?.items.filter((item) => item.action.kind === "bot" && item.action.botId === bot.id) ?? [];
 
-  async function change(action: () => Promise<void>) {
-    setBusy(true);
+  async function change(action: () => Promise<void>, runningItemId?: string) {
+    setPending({ runningItemId });
     setError("");
     try { await action(); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
+    finally { setPending(undefined); }
+  }
+
+  async function runJob(item: DutyItem) {
+    await change(async () => {
+      const state = await call(link, "POST /api/duty/items/:id/run", { id: item.id });
+      setDuty(state);
+      if (item.action.kind !== "bot" || item.action.job !== "memory") return;
+      const run = state.runs.find((entry) => entry.itemId === item.id);
+      if (run?.endedAt) showToast({ key: item.id, text: `${run.ok ? "记忆整理完成。" : "记忆整理失败。"}${run.summary}`, error: run.ok === false });
+    }, item.id);
   }
 
   function renderJob(item: DutyItem) {
     const latest = duty?.runs.find((run) => run.itemId === item.id && run.endedAt);
-    return <div className="bot-settings-scheduled" key={item.id}>
-      <div><strong>{item.title}</strong><small className="settings-hint">{scheduleText(item.schedule)}{latest && ` · ${latest.summary}`}</small></div>
-      <button type="button" className="btn-ghost small" disabled={busy || disabled || !bot.enabled || duty?.running.includes(item.id)}
-        onClick={() => void change(async () => setDuty(await call(link, "POST /api/duty/items/:id/run", { id: item.id })))}>运行一次</button>
-      <input aria-label={`启用${item.title}`} className="bot-setting-switch" type="checkbox" role="switch" checked={item.enabled} disabled={busy || disabled}
-        onChange={(event) => { const enabled = event.target.checked; void change(async () => setDuty(await call(link, "PATCH /api/duty/items/:id", { id: item.id }, { enabled }))); }} />
+    const running = pending?.runningItemId === item.id || duty?.running.includes(item.id);
+    const daily = item.action.kind === "bot" && item.action.job === "memory" && "daily" in item.schedule ? item.schedule.daily : undefined;
+    return <div key={item.id}>
+      <div className="bot-settings-scheduled">
+        <div><strong>{item.title}</strong><small className="settings-hint">{scheduleText(item.schedule)}{latest && ` · ${latest.summary}`}</small></div>
+        {daily && <button type="button" className="btn-ghost small" disabled={busy || disabled} onClick={() => editTime({ jobId: item.id, value: daily })}>修改时间</button>}
+        <button type="button" className="btn-ghost small" disabled={busy || disabled || !bot.enabled || running}
+          onClick={() => void runJob(item)}>{running ? "运行中…" : "运行一次"}</button>
+        <input aria-label={`启用${item.title}`} className="bot-setting-switch" type="checkbox" role="switch" checked={item.enabled} disabled={busy || disabled}
+          onChange={(event) => { const enabled = event.target.checked; void change(async () => setDuty(await call(link, "PATCH /api/duty/items/:id", { id: item.id }, { enabled }))); }} />
+      </div>
+      {editingTime?.jobId === item.id && <form className="bot-settings-schedule-form" onSubmit={(event) => {
+        event.preventDefault();
+        void change(async () => {
+          setDuty(await call(link, "PATCH /api/duty/items/:id", { id: item.id }, { schedule: { daily: editingTime.value } }));
+          editTime(undefined);
+        });
+      }}>
+        <label className="bot-form-field">每天运行时间<input className="field" type="time" value={editingTime.value} onChange={(event) => editTime({ jobId: item.id, value: event.target.value })} /></label>
+        <div className="settings-row">
+          <button type="button" className="btn-ghost small" disabled={busy} onClick={() => editTime(undefined)}>取消</button>
+          <button type="submit" className="btn-primary small" disabled={busy || disabled || !editingTime.value}>保存时间</button>
+        </div>
+      </form>}
     </div>;
   }
 
@@ -108,26 +136,25 @@ export function BotAutomation({ bot, link, preferences, disabled, onChange, onMa
     <div className="settings-row"><button className="btn-ghost small" type="button" onClick={onManage}>管理值守</button></div>
     {(["patrol", "memory"] as const).map((kind) => <section key={kind} className="bot-settings-card">
       <h4>{kind === "patrol" ? "巡视" : "记忆整理"}</h4>
-      <p className="settings-hint">{kind === "patrol" ? "按计划在独立聊天里发送巡视指令。" : "把近期已完成的请求汇总到 memory/自动整理.md。"}</p>
-      {jobs.filter((item) => item.action.kind === "bot" && (item.action.job === "memory") === (kind === "memory")).map(renderJob)}
-      {editing === kind ? <div className="bot-settings-schedule-form">
-        {kind === "patrol" ? <>
-          <label className="bot-form-field">巡视频率<select className="field" value={period} onChange={(event) => setPeriod(event.target.value)}><option value="4">每 4 小时</option><option value="8">每 8 小时</option><option value="24">每 24 小时</option></select></label>
-          <label className="bot-form-field">巡视指令<textarea className="field" value={prompt} rows={3} maxLength={20_000} onChange={(event) => setPrompt(event.target.value)} /></label>
-        </> : <label className="bot-form-field">每天运行时间<input className="field" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label>}
+      <p className="settings-hint">{kind === "patrol" ? "按计划在独立聊天里发送巡视指令。"
+        : memorySupported ? "由 Bot 的 Codex 或 Claude 模型回顾近期直接聊天，将长期偏好、决定和纠正里体现的约定写入 MEMORY.md。"
+        : "切换到 Codex 或 Claude 渠道后可整理记忆。"}</p>
+      {(kind === "patrol" || memorySupported) && jobs.filter((item) => item.action.kind === "bot" && (item.action.job === "memory") === (kind === "memory")).map(renderJob)}
+      {kind === "patrol" && (editingPatrol ? <div className="bot-settings-schedule-form">
+        <label className="bot-form-field">巡视频率<select className="field" value={period} onChange={(event) => setPeriod(event.target.value)}><option value="4">每 4 小时</option><option value="8">每 8 小时</option><option value="24">每 24 小时</option></select></label>
+        <label className="bot-form-field">巡视指令<textarea className="field" value={prompt} rows={3} maxLength={20_000} onChange={(event) => setPrompt(event.target.value)} /></label>
         <div className="settings-row">
-          <button type="button" className="btn-ghost small" disabled={busy} onClick={() => edit(false)}>取消</button>
-          <button type="button" className="btn-primary small" disabled={busy || disabled || (kind === "patrol" ? !prompt.trim() : !time)} onClick={() => void change(async () => {
-            const memory = kind === "memory";
+          <button type="button" className="btn-ghost small" disabled={busy} onClick={() => editPatrol(false)}>取消</button>
+          <button type="button" className="btn-primary small" disabled={busy || disabled || !prompt.trim()} onClick={() => void change(async () => {
             setDuty(await call(link, "POST /api/duty/items", {}, {
-              title: `${bot.name} · ${memory ? "整理记忆" : "巡视"}`, enabled: true, schedule: memory ? { daily: time } : { every: Number(period) * 3600 },
-              action: { kind: "bot", botId: bot.id, prompt: memory ? memoryTitle : prompt.trim(), ...(memory ? { job: "memory" } : {}) },
+              title: `${bot.name} · 巡视`, enabled: true, schedule: { every: Number(period) * 3600 },
+              action: { kind: "bot", botId: bot.id, prompt: prompt.trim() },
             }));
-            edit(false);
+            editPatrol(false);
             setPrompt("");
           })}>保存计划</button>
         </div>
-      </div> : <button className="link-btn bot-settings-add" type="button" disabled={disabled || busy || !duty} onClick={() => edit(kind)}><IconPlus />{kind === "patrol" ? "新建巡视" : "新建记忆整理"}</button>}
+      </div> : <button className="link-btn bot-settings-add" type="button" disabled={disabled || busy || !duty} onClick={() => editPatrol(true)}><IconPlus />新建巡视</button>)}
     </section>)}
     <section className="bot-settings-card"><label className="bot-settings-summary-row"><span>多久算长期未活动</span><select className="field" value={preferences.inactiveDays} disabled={disabled}
       onChange={(event) => onChange({ ...preferences, inactiveDays: Number(event.target.value) as BotPreferences["inactiveDays"] })}>
@@ -216,7 +243,7 @@ export function BotMemoryFiles({ link, botId, active, file, select, purpose, mem
           {creating ? <label className="bot-form-field">文件名<input className="field" value={name} placeholder="审查笔记.md" maxLength={78} onChange={(event) => setName(event.target.value)} /></label>
             : <label className="bot-settings-file-title" htmlFor="bot-note-content">{note}</label>}
           <textarea aria-label="记忆文件内容" id="bot-note-content" className="field" value={content} readOnly={generated} disabled={busy || original === undefined} maxLength={32_000} onChange={(event) => setContent(event.target.value)} />
-          {generated ? <p className="settings-hint">由自动化更新。要长期保留的内容可以复制到 MEMORY.md。</p>
+          {generated ? <p className="settings-hint">旧版整理记录。现在的整理结果写入 MEMORY.md。</p>
             : <div className="settings-row"><button type="button" className="btn-primary small" disabled={busy || original === undefined || (creating ? !name.trim() : content === original)} onClick={saveNote}>保存文件</button></div>}
         </> : <p className="settings-hint">选择一份记忆文件，或新建笔记。</p>)}
       </div>

@@ -43,11 +43,12 @@ function read(path: string, limit: number) {
   return value;
 }
 
-function write(path: string, value: string) {
+function write(path: string, value: string, expected?: { text: string; limit: number }) {
   checked(path, "file");
   const temporary = join(dirname(path), `.amo-${randomUUID()}.tmp`);
   try {
     writeFileSync(temporary, value, { encoding: "utf8", flag: "wx" });
+    if (expected && read(path, expected.limit) !== expected.text) throw new HostError("conflict", "Bot 资料文件已变化，请重新读取后再保存。");
     renameSync(temporary, path);
   } finally {
     rmSync(temporary, { force: true });
@@ -72,17 +73,20 @@ export function ensureBotFiles(store: Store, id: string, input: BotInput) {
 /** Roll back changed files if writing the other document or committing the configuration fails. */
 export function updateBotFiles<T>(store: Store, id: string, input: BotInput, previous: BotInput | undefined, commit: () => T): T {
   const folder = ensureBotFiles(store, id, previous ?? input);
-  const undo: Array<{ path: string; text: string }> = [];
+  const undo: Array<{ path: string; text: string; written: string; limit: number }> = [];
   try {
-    for (const [name, value, before] of [["SOUL.md", input.purpose, previous?.purpose], ["MEMORY.md", input.memory, previous?.memory]] as const) {
+    for (const [name, value, before, limit] of [["SOUL.md", input.purpose, previous?.purpose, 8000], ["MEMORY.md", input.memory, previous?.memory, 32_000]] as const) {
       if (before === undefined || value === before) continue;
       const path = join(folder, name);
-      write(path, value);
-      undo.push({ path, text: before });
+      write(path, value, { text: before, limit });
+      undo.push({ path, text: before, written: value, limit });
     }
     return commit();
   } catch (error) {
-    if (previous) for (const { path, text } of undo.reverse()) write(path, text);
+    if (previous) for (const { path, text, written, limit } of undo.reverse()) {
+      // A local editor can replace the file while the Host is saving. Preserve that edit even during rollback.
+      if (read(path, limit) === written) write(path, text, { text: written, limit });
+    }
     else rmSync(folder, { recursive: true, force: true });
     throw error;
   }

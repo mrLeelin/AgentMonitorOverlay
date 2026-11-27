@@ -52,7 +52,18 @@ export interface RuntimeEvents {
   "message-delivered": [Id, string];
 }
 
+export interface ReplyOnlyInput {
+  profileId: Id;
+  options: Pick<SessionOptions, "model" | "effort">;
+  cwd: string;
+  instructions: string;
+  text: string;
+  signal: AbortSignal;
+}
+
 export interface SessionRuntimeApi {
+  /** Runs one isolated text reply without tools or a Studio conversation. */
+  replyOnly?(input: ReplyOnlyInput): Promise<string>;
   getGoal?(sessionId: Id): Promise<SessionGoalState>;
   setGoal?(sessionId: Id, input: SessionGoalUpdate, beforeDispatch?: () => void): Promise<SessionGoalState>;
   clearGoal?(sessionId: Id): Promise<SessionGoalState>;
@@ -262,6 +273,13 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     if (profile) return this.runtimes[profile.runtime] ?? this.fallback ?? undefined;
     if (parseRemoteProfileId(profileId) && this.runtimes.remote) return this.runtimes.remote;
     return this.fallback ?? undefined;
+  }
+
+  async replyOnly(input: ReplyOnlyInput): Promise<string> {
+    const runtime = this.forProfile(input.profileId);
+    if (!runtime) throw profileGone(input.profileId);
+    if (!runtime.replyOnly) throw new Error("这个模型渠道暂不支持记忆整理。");
+    return runtime.replyOnly(input);
   }
 
   private requireProfileRuntime(profileId: Id): SessionRuntimeApi {

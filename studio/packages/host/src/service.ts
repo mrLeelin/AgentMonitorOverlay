@@ -176,6 +176,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.orchestration.prepareInbox();
     this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);
     this.sessions.watchReports();
+    this.duty.botJob = this.bots.dutyJob();
     this.bots.recover();
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();
@@ -184,7 +185,6 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.orchestration.watch();
     this.taskPlans.watch();
     this.relays.watch();
-    this.duty.botJob = this.bots.dutyJob();
     this.duty.registerCheck(this.issues.dutyCheck());
     this.tasks.recoverColumns();
   }

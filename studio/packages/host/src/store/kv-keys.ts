@@ -5,9 +5,9 @@
 // scope: what one value belongs to. "global": one value for the Host. "session" / "task" / "workspace": the key is
 // the prefix + that id, and Store.purge deletes it with what it belongs to. "folder" / "token": the prefix + a folder
 // path or an MCP token (the token's key goes with its session, see Store.purge). "outside": the prefix + the id of a
-// Claude session started outside Studio (接续已有会话, 2026-11-05). "profile": the feature owns its keys.
+// Claude session started outside Studio (接续已有会话, 2026-11-05). "profile" / "bot": the feature owns its keys.
 
-export type KvScope = "global" | "session" | "task" | "workspace" | "folder" | "token" | "outside" | "profile";
+export type KvScope = "global" | "session" | "task" | "workspace" | "folder" | "token" | "outside" | "profile" | "bot";
 
 export interface KvKey {
   /** The whole key, or for a scope other than global the prefix the id is appended to. */
@@ -78,6 +78,7 @@ export const KV_KEYS: readonly KvKey[] = [
   { key: "bots.enabled", scope: "global", owner: "features/bots/data.ts", what: "是否启用本机 Bots" },
   { key: "bots.confirmHomeReset", scope: "global", owner: "features/bots/data.ts", what: "新建主聊天之前是否询问" },
   { key: "bots.sharedSkills", scope: "global", owner: "features/bots/skills.ts", what: "本机 Bot 共有技能" },
+  { key: "bots.memorySource:", scope: "bot", owner: "features/bots/memory.ts", what: "Bot 已整理的聊天消息，随 Bot 删除" },
   { key: "bots.sessionPrompt:", scope: "session", owner: "features/bots/data.ts", what: "Bot 聊天启动时解析的技能引用" },
   { key: "issues.sessions", scope: "global", owner: "features/issues/service.ts", what: "问题页：每个问题最后写它的会话（留最近 300 个）" },
   { key: "sessions.inbox", scope: "global", owner: "features/sessions/inbox.ts", what: "收件箱里有待送消息的会话" },

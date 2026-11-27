@@ -7,7 +7,7 @@ import { readChatSettings } from "../chat-settings.js";
 import { CLAUDE_BUILTIN_MODELS, CLAUDE_DEFAULT_PERMISSION, claudePermissionMode, claudePermissions } from "../choices.js";
 import type { Store } from "../../store/store.js";
 import type { CredentialReader } from "../credentials.js";
-import { RuntimeBase, STOP_GRACE_MS, type NewItemBody, type SendMode, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
+import { RuntimeBase, STOP_GRACE_MS, type NewItemBody, type ReplyOnlyInput, type SendMode, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
 import { withDelivery } from "../items.js";
 import { claudeEnv, claudeSettingsEnv, type ClaudeHome, type ClaudeProviderDef } from "./claude-env.js";
 import { claudeAutoCompactEnv } from "../compact.js";
@@ -113,6 +113,45 @@ const STRIP_SUBAGENT_MODE: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
 };
 
 export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
+  async replyOnly(input: ReplyOnlyInput): Promise<string> {
+    const profile = this.profile(input.profileId);
+    const home = this.newHome(profile);
+    const abortController = new AbortController();
+    const abort = () => abortController.abort(input.signal.reason);
+    input.signal.throwIfAborted();
+    input.signal.addEventListener("abort", abort, { once: true });
+    try {
+      const run = query({
+        prompt: input.text,
+        options: {
+          cwd: input.cwd,
+          env: agentNetworkEnv(this.store, { ...shellHelpEnv(this.store), ...claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv), ...(home.login === "local" ? claudeSettingsEnv(home.dir) : {}) }),
+          pathToClaudeCodeExecutable: requireClaudeCode(),
+          spawnClaudeCodeProcess: spawnClaudeProcess(() => {}),
+          systemPrompt: input.instructions,
+          settingSources: [], settings: { disableAllHooks: true, fastMode: false }, plugins: [],
+          tools: [], strictMcpConfig: true, permissionMode: "plan", persistSession: false, maxTurns: 1,
+          ...(input.options.model ? { model: input.options.model } : {}),
+          ...(input.options.effort ? { effort: input.options.effort as never } : {}),
+          canUseTool: async () => ({ behavior: "deny", message: "This run only returns text." }),
+          abortController,
+        },
+      });
+      try {
+        for await (const message of run) {
+          if (message.type === "assistant" && message.message.content.some((part) => part.type === "tool_use")) throw new Error("整理模型尝试调用工具，本次结果未保存。");
+          if (message.type === "result") {
+            if (message.subtype === "success" && !message.is_error && message.result.trim()) return message.result;
+            break;
+          }
+        }
+      } finally { run.close(); }
+      throw new Error("Claude 未完成记忆整理回复。");
+    } finally {
+      input.signal.removeEventListener("abort", abort);
+    }
+  }
+
   private readonly live = new Map<Id, Live>();
   private readonly modelCache = new Map<string, { at: number; models: ModelOption[] }>();
   private readonly askingModels = new Map<string, Promise<ModelOption[]>>();

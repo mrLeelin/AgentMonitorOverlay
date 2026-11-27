@@ -5,9 +5,10 @@ import { boundedText, HostError, isRemoteCopy } from "../../core/shared.js";
 import type { DutyFeature } from "../duty/service.js";
 import { BotWebhookBridge } from "./webhooks.js";
 import { assertBotsEnabled, botsEnabled, botInstructions, botPermission, isBotTask } from "./data.js";
-import { botMascotId, supportsBotRuntime } from "@amo-studio/protocol";
+import { botMascotId, supportsBotMemory, supportsBotRuntime } from "@amo-studio/protocol";
 import { botSkillPrompt, botSkillRefs, readBotSkills, saveSharedBotSkills, sharedBotSkills } from "./skills.js";
 import { BOT_MEMORY_SUMMARY, ensureBotFiles, listBotNotes, readBotFiles, readBotNote, removeBotFiles, updateBotFiles, writeBotNote } from "./files.js";
+import { clearBotMemorySources, organizeBotMemory } from "./memory.js";
 
 interface BotRow {
   id: Id;
@@ -70,7 +71,8 @@ function botPreferences(value: unknown, previous?: BotPreferences): BotPreferenc
   } };
 }
 
-export class BotsFeature extends Feature<"tasks" | "sessions"> {
+export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
+  private readonly memoryRuns = new Set<Id>();
   private readonly operations = new Map<Id, Promise<unknown>>();
   private readonly notified = new Set<Id>();
   private hookBridge?: BotWebhookBridge;
@@ -117,8 +119,12 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   }
 
   private findBot(id: Id): StudioBot | undefined {
-    const row = this.store.db.prepare(`SELECT * FROM studio_bots WHERE id = ? AND ${activeBot}`).get(id) as unknown as BotRow | undefined;
+    const row = this.botRow(id);
     return row && this.readBot(row);
+  }
+
+  private botRow(id: Id): BotRow | undefined {
+    return this.store.db.prepare(`SELECT * FROM studio_bots WHERE id = ? AND ${activeBot}`).get(id) as unknown as BotRow | undefined;
   }
 
   files(id: Id) {
@@ -130,7 +136,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
 
   saveNote(id: Id, name: string, raw: Record<string, unknown>) {
     if (typeof raw.expected !== "string" && raw.expected !== null) throw new HostError("bad_request", "请先打开记忆文件再保存。");
-    if (name === BOT_MEMORY_SUMMARY) throw new HostError("read_only", "这份文件由记忆整理更新。请把要保留的内容复制到长期记忆或新笔记。");
+    if (name === BOT_MEMORY_SUMMARY) throw new HostError("read_only", "这是旧版整理记录。可在 MEMORY.md 中编辑长期记忆。");
     writeBotNote(this.files(id).folder, name, raw.text, raw.expected);
     this.publish({ type: "bot-files.changed", botId: id });
     return this.files(id);
@@ -143,12 +149,33 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
   dutyJob(): NonNullable<DutyFeature["botJob"]> {
     return {
       check: (id) => { this.bot(id); },
-      run: async (action, run) => {
+      memorySupported: (id) => {
+        const row = this.botRow(id);
+        const profileId = row && (JSON.parse(row.data) as BotInput).profileId;
+        return supportsBotMemory(this.profiles.find((profile) => profile.id === profileId && !profile.unavailable)?.runtime);
+      },
+      run: async (action, run, signal) => {
         if (!botsEnabled(this.store)) return { ok: true, skipped: true, summary: "Bots 已关闭。" };
         const bot = this.findBot(action.botId);
         if (!bot) return { ok: true, skipped: true, summary: "Bot 已删除。" };
         if (!bot.enabled) return { ok: true, skipped: true, summary: "Bot 已停用。" };
-        if (action.job === "memory") return this.organizeMemory(bot);
+        if (action.job === "memory") {
+          if (this.memoryRuns.has(bot.id)) return { ok: true, skipped: true, summary: "这个 Bot 正在整理记忆。" };
+          this.memoryRuns.add(bot.id);
+          try {
+            const result = await organizeBotMemory(this.store, bot, run.startedAt, signal, (input) => {
+              if (!this.runtime.replyOnly) throw new Error("这个模型渠道暂不支持记忆整理。");
+              return this.runtime.replyOnly(input);
+            }, () => botsEnabled(this.store) ? this.findBot(bot.id) : undefined);
+            if (result.added) {
+              this.publish({ type: "bots.changed" });
+              this.publish({ type: "bot-files.changed", botId: bot.id });
+            }
+            return result;
+          } finally {
+            this.memoryRuns.delete(bot.id);
+          }
+        }
         const id = createHash("sha256").update(`${run.itemId}:${run.startedAt}`).digest("hex");
         const request = await this.request(bot.id, { id, destination: "new", text: action.prompt });
         if (request.status === "failed" || !request.sessionId) return { ok: false, summary: request.result ?? "未能启动 Bot。" };
@@ -157,39 +184,36 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     };
   }
 
-  private organizeMemory(bot: StudioBot) {
-    const rows = this.store.db.prepare(`SELECT * FROM studio_bot_requests WHERE bot_id = ? AND json_extract(data, '$.status') = 'completed'
-      AND length(json_extract(data, '$.result')) > 0 ORDER BY created_at DESC, id DESC LIMIT 12`).all(bot.id) as unknown as RequestRow[];
-    if (!rows.length) return { ok: true, skipped: true, summary: "暂无可整理的已完成请求。" };
-    const folder = ensureBotFiles(this.store, bot.id, bot);
-    const sections = rows.map((row) => {
-      const request = readRequest(row);
-      return `## ${request.settledAt ?? request.createdAt}\n\n${request.text.slice(0, 500)}\n\n${request.result!.slice(0, 1700)}`;
-    });
-    writeBotNote(folder, BOT_MEMORY_SUMMARY, ["# 近期已完成的 Bot 请求", ...sections].join("\n\n"), undefined);
-    this.publish({ type: "bot-files.changed", botId: bot.id });
-    return { ok: true, summary: `已整理 ${rows.length} 条请求到 memory/${BOT_MEMORY_SUMMARY}。` };
-  }
-
-  save(raw: Record<string, unknown>, id?: Id): StudioBot {
+  save(input: Record<string, unknown>, id?: Id): StudioBot {
     if (!id) assertBotsEnabled(this.store);
     const previous = id ? this.bot(id) : undefined;
-    const expected = raw.expectedFiles as Partial<Pick<BotInput, "purpose" | "memory">> | null | undefined;
-    if (expected !== undefined && (!expected || !previous || expected.purpose !== previous.purpose || expected.memory !== previous.memory)) {
+    const expected = input.expectedFiles as Partial<Pick<BotInput, "purpose" | "memory">> | null | undefined;
+    let fields = input;
+    if (previous && Object.hasOwn(input, "changes")) {
+      if (!input.changes || typeof input.changes !== "object" || Array.isArray(input.changes)) throw new HostError("bad_request", "Bot 设置改动无效。");
+      fields = input.changes as Record<string, unknown>;
+      for (const [field, name] of [["purpose", "SOUL.md"], ["memory", "MEMORY.md"]] as const) {
+        if (Object.hasOwn(fields, field) && expected?.[field] !== previous[field]) {
+          throw new HostError("conflict", `${name} 已在其他地方修改。可以复制这次编辑的文字，再放弃未保存的改动。`);
+        }
+      }
+    } else if (expected !== undefined && (!expected || !previous || expected.purpose !== previous.purpose || expected.memory !== previous.memory)) {
       throw new HostError("conflict", "Bot 的职责或长期记忆已变化，请重新打开设置后再保存。");
     }
+    const partial = fields !== input;
+    const raw = partial ? { ...previous, ...fields } : fields;
     const name = botName(raw.name);
     const profileId = boundedText(raw.profileId, "模型配置", 200);
     const profile = this.requireProfile(profileId);
     if (!supportsBotRuntime(profile.runtime) || profile.unavailable) throw new HostError("bad_request", "请选择可运行 Bot 的 AMO 模型渠道。");
     const sameProfile = previous?.profileId === profileId;
-    const model = raw.model === undefined ? (sameProfile ? previous?.model : null) : raw.model === null ? null : boundedText(raw.model, "模型", 256);
+    const model = fields.model === undefined ? (sameProfile ? previous?.model : null) : fields.model === null ? null : boundedText(fields.model, "模型", 256);
     const sameModel = sameProfile && previous?.model === model;
-    const effort = raw.effort === undefined ? (sameModel ? previous?.effort : null) : raw.effort === null ? null : boundedText(raw.effort, "推理强度", 50);
-    const fast = raw.fast === undefined ? (sameModel ? previous?.fast : null) : raw.fast;
+    const effort = fields.effort === undefined ? (sameModel ? previous?.effort : null) : fields.effort === null ? null : boundedText(fields.effort, "推理强度", 50);
+    const fast = fields.fast === undefined ? (sameModel ? previous?.fast : null) : fields.fast;
     if (fast != null && (typeof fast !== "boolean" || profile.runtime === "dsh")) throw new HostError("bad_request", "请检查模型的快速模式设置。");
     const claudeBaseUrl = profile.provider ? this.options.channels?.claudeProviders[profile.provider]?.baseUrl : undefined;
-    const permission = botPermission(raw.permission === undefined && sameProfile ? previous?.permission : raw.permission, profile.runtime, claudeBaseUrl);
+    const permission = botPermission(fields.permission === undefined && sameProfile ? previous?.permission : fields.permission, profile.runtime, claudeBaseUrl);
     const workspaceId = raw.workspaceId === null ? null : boundedText(raw.workspaceId, "项目", 200);
     if (workspaceId) this.requireLiveWorkspace(workspaceId);
     if (typeof raw.enabled !== "boolean" || typeof raw.memory !== "string" || raw.memory.length > 32_000) {
@@ -198,7 +222,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     const avatar = raw.avatar === undefined ? previous?.avatar ?? null : botAvatar(raw.avatar);
     const skills = raw.skills === undefined ? previous?.skills : botSkillRefs(raw.skills);
     const preferences = botPreferences(raw.preferences, previous?.preferences);
-    const data: BotInput = { name, avatar, profileId, model: model ?? null, effort: effort ?? null, fast: fast ?? null, permission, workspaceId, enabled: raw.enabled, purpose: boundedText(raw.purpose, "职责", 8000), memory: raw.memory.trim(), ...(skills ? { skills } : {}), ...(preferences ? { preferences } : {}) };
+    const purpose = partial && previous && !Object.hasOwn(fields, "purpose") ? previous.purpose : boundedText(raw.purpose, "职责", 8000);
+    const memory = partial && previous && !Object.hasOwn(fields, "memory") ? previous.memory : raw.memory.trim();
+    const data: BotInput = { name, avatar, profileId, model: model ?? null, effort: effort ?? null, fast: fast ?? null, permission, workspaceId, enabled: raw.enabled, purpose, memory, ...(skills ? { skills } : {}), ...(preferences ? { preferences } : {}) };
     return this.writeBot(data, previous);
   }
 
@@ -256,6 +282,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
         ON CONFLICT(id) DO UPDATE SET name_key = excluded.name_key, data = excluded.data`).run(botId, nameKey, JSON.stringify(data));
       return previous?.taskId && previous.name !== data.name ? this.store.updateTask(previous.taskId, { title: data.name }) : undefined;
     }));
+    this.f.duty.ensureBotMemory(botId, data.name, !!previous && previous.profileId !== data.profileId);
     if (renamed) this.publish({ type: "task.upserted", task: renamed });
     this.publish({ type: "bots.changed" });
     return this.bot(botId);
@@ -273,9 +300,11 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
         this.store.db.prepare("UPDATE studio_bots SET name_key = ?, data = ?, home_session_id = NULL WHERE id = ?")
           .run(`\u0000${id}`, JSON.stringify({ name: bot.name, enabled: false, deletedAt: new Date().toISOString() }), id);
         this.store.db.prepare("DELETE FROM studio_bot_group_chats WHERE bot_id = ?").run(id);
+        clearBotMemorySources(this.store, id);
         const update = this.store.db.prepare("UPDATE studio_bot_groups SET data = ? WHERE id = ?");
         for (const group of groups) update.run(JSON.stringify({ ...group, memberIds: group.memberIds.filter((member) => member !== id) }), group.id);
       }));
+      this.f.duty.removeBotMemory(id);
       this.publish({ type: "bots.changed" });
       if (groups.length) this.publish({ type: "bot-groups.changed" });
       return { ok: true };
@@ -541,7 +570,22 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     return this.request(recipient.botId, { id, text, sourceSessionId: sourceId, destination: recipient.destination }, true);
   }
 
-  async request(id: Id, raw: Record<string, unknown>, reportToSource = false, group?: GroupRequest): Promise<BotRequest> {
+  requirePlanningBot(id: Id): StudioBot {
+    assertBotsEnabled(this.store);
+    const bot = this.bot(id);
+    const readOnly = defaultBotPermission(this.requireProfile(bot.profileId).runtime);
+    if (!bot.enabled || (bot.permission ?? readOnly) !== readOnly) {
+      throw new HostError("bad_request", "请选择已启用且设置为只读的 Bot。");
+    }
+    return bot;
+  }
+
+  planningStatus(id: Id): BotRequest | undefined {
+    const request = this.getRequest(id);
+    return request && this.status(request);
+  }
+
+  async request(id: Id, raw: Record<string, unknown>, reportToSource = false, group?: GroupRequest, planningWorkspace?: Id): Promise<BotRequest> {
     const requestId = boundedText(raw.id, "请求编号", 80);
     if (!/^[\w-]+$/u.test(requestId)) throw new HostError("bad_request", "请求编号有误。");
     return this.serial(id, async () => {
@@ -682,8 +726,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions"> {
     return session;
   }
 
-  private async startChat(bot: StudioBot, title: string, source?: Session): Promise<Session> {
-    const workspace = bot.workspaceId ? this.requireLiveWorkspace(bot.workspaceId) : this.commonWorkspace();
+  private async startChat(bot: StudioBot, title: string, source?: Session, planningWorkspace?: Id): Promise<Session> {
+    const workspaceId = planningWorkspace ?? bot.workspaceId;
+    const workspace = workspaceId ? this.requireLiveWorkspace(workspaceId) : this.commonWorkspace();
     const task = bot.taskId ? this.requireTask(bot.taskId) : this.f.tasks.createTaskRecord({ title: bot.name, workspaceId: bot.workspaceId, column: "doing" }, (created) => {
       this.store.db.prepare("UPDATE studio_bots SET task_id = ? WHERE id = ?").run(created.id, bot.id);
     });

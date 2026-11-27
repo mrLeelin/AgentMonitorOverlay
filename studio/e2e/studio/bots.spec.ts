@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { defaultScript } from "@amo-studio/testkit";
-import type { BotGroup, BotGroupPost, BotRequest, Session, StudioBot, Task } from "@amo-studio/protocol";
+import type { BotGroup, BotGroupPost, BotRequest, DutyState, Session, SessionItem, StudioBot, Task } from "@amo-studio/protocol";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
 let studio: Studio | undefined;
@@ -36,6 +38,16 @@ for (const profileId of ["claude-mock", "dsh-mock"]) {
     const chats = await studio.api<Session[]>("GET", `/api/bots/${bot.id}/chats`);
     expect(chats.find((s) => s.id === chat!.id)?.options.permission).toBe(chat!.options.permission);
     expect(chats.find((s) => s.id !== chat!.id)?.options.permission).toBe(permission);
+    if (profileId === "dsh-mock") {
+      const { page } = studio;
+      await openBotsWorkbench(page);
+      await page.getByRole("button", { name: "管理 Bots", exact: true }).click();
+      const settings = page.getByTestId("studio-bots-settings");
+      await settings.getByRole("group", { name: "Bot 列表" }).getByRole("button", { name: bot.name, exact: true }).click();
+      await settings.getByRole("button", { name: "自动化", exact: true }).click();
+      await expect(settings.getByText("切换到 Codex 或 Claude 渠道后可整理记忆。")).toBeVisible();
+      await expect(settings.getByRole("button", { name: "运行一次", exact: true })).toHaveCount(0);
+    }
   });
 }
 
@@ -46,8 +58,53 @@ async function creationMenu(page: Page) {
   return page.getByRole("menu", { name: "新建 Bot", exact: true });
 }
 
-test("keeps Bot configuration and save in reach across settings sizes", async () => {
+test("reports every manual memory run even when there is still nothing new", async () => {
   studio = await launchStudio();
+  const { page, app } = studio;
+  const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "记忆检查", purpose: "检查记忆整理。", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
+  const itemId = `duty-bot-memory:${bot.id}`;
+  // Disable the schedule so only clicks can add a run, regardless of the test's local time.
+  await studio.api("PATCH", `/api/duty/items/${itemId}`, { enabled: false });
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  await openBotsWorkbench(page);
+  await page.getByRole("button", { name: "管理 Bots", exact: true }).click();
+  const settings = page.getByTestId("studio-bots-settings");
+  await settings.getByRole("button", { name: bot.name, exact: true }).click();
+  await settings.getByRole("button", { name: "自动化", exact: true }).click();
+  const run = settings.getByRole("button", { name: "运行一次", exact: true });
+  const summary = "没有新的直接聊天消息可整理。";
+  const runs = async () => (await studio!.api<DutyState>("GET", "/api/duty")).runs.filter((entry) => entry.itemId === itemId && entry.endedAt);
+  await run.click();
+  await expect(settings.getByText(new RegExp(summary))).toBeVisible();
+  expect(await runs()).toHaveLength(1);
+  const receipt = page.getByRole("status").filter({ hasText: `记忆整理完成。${summary}` });
+  await expect(receipt).toBeVisible();
+  await receipt.getByRole("button", { name: "关闭提示" }).click();
+
+  let releaseRun!: () => void;
+  const heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
+  await page.route("**/api/duty/items/*/run", async (route) => {
+    await heldRun;
+    await route.continue();
+  }, { times: 1 });
+  try {
+    await run.click();
+    await expect(settings.getByRole("button", { name: "运行中…", exact: true })).toBeDisabled();
+  } finally {
+    releaseRun();
+  }
+  await expect.poll(runs).toMatchObject([{ ok: true, skipped: true, summary }, { ok: true, skipped: true, summary }]);
+  await expect(receipt).toBeVisible();
+  await screenshot(app, "studio", "bots-memory-run-feedback", page);
+  await expect(run).toBeEnabled();
+});
+
+test("automatically saves Bot settings across tabs, Bot switches and window sizes", async () => {
+  const evidence = "每次看审查结果，我都先找影响范围，不然很难判断要不要处理。";
+  const fact = "审查结论优先写影响范围。";
+  studio = await launchStudio({ mockScript: (request) => request.lastUserText.startsWith('{"memory":')
+    ? { kind: "text", text: JSON.stringify([{ source: 1, evidence, text: fact }]) }
+    : defaultScript(request) });
   const { page, app } = studio;
   const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "审核员", purpose: "检查改动并报告需要处理的问题。", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
   await studio.api("POST", "/api/bots", { name: "审核员2", purpose: "复核改动。", memory: "", profileId: "codex-mock", workspaceId: null, enabled: true });
@@ -64,11 +121,30 @@ test("keeps Bot configuration and save in reach across settings sizes", async ()
   await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
   const memory = settings.getByLabel("记忆", { exact: true });
   await memory.scrollIntoViewIfNeeded();
-  await memory.fill("先核对用户能感知的功能回归。");
   const save = settings.getByRole("button", { name: "保存", exact: true });
-  await expect(save).toBeInViewport({ ratio: 1 });
-  await save.click();
-  await expect(settings.getByRole("status")).toHaveText("已保存。");
+  await expect(save).toHaveCount(0);
+  let releaseSave!: () => void;
+  let markSaveStarted!: () => void;
+  const heldSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+  const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+  await page.route(`**/api/bots/${bot.id}`, async (route) => {
+    markSaveStarted();
+    await heldSave;
+    await route.continue();
+  }, { times: 1 });
+  try {
+    await memory.fill("初稿");
+    await roster.getByRole("button", { name: "审核员2", exact: true }).click();
+    await saveStarted;
+    await roster.getByRole("button", { name: "审核员", exact: true }).click();
+    await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
+    await expect(memory).toHaveValue("初稿");
+    await memory.fill("先核对用户能感知的功能回归。");
+  } finally {
+    releaseSave();
+  }
+  await expect(memory).toHaveValue("先核对用户能感知的功能回归。");
+  await expect(settings.getByRole("status")).toHaveText("已自动保存");
   expect((await studio.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.memory).toBe("先核对用户能感知的功能回归。");
   await settings.getByRole("button", { name: "新建记忆文件" }).click();
   await settings.getByLabel("文件名").fill("审查笔记.md");
@@ -77,12 +153,26 @@ test("keeps Bot configuration and save in reach across settings sizes", async ()
   await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toBeVisible();
   await tabs.getByRole("button", { name: "通知", exact: true }).click();
   await settings.getByRole("switch", { name: "任务完成", exact: true }).check();
-  await save.click();
   await expect.poll(async () => (await studio!.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.preferences?.notifications.completed).toBe(true);
   await tabs.getByRole("button", { name: "自动化", exact: true }).click();
-  await settings.getByRole("button", { name: "新建记忆整理" }).click();
-  await settings.getByRole("button", { name: "保存计划" }).click();
   await expect(settings.getByRole("switch", { name: "启用审核员 · 整理记忆", exact: true })).toBeChecked();
+  await expect(settings.getByText("每天 03:00", { exact: true })).toBeVisible();
+  await settings.getByRole("button", { name: "修改时间" }).click();
+  await settings.getByLabel("每天运行时间").fill("04:30");
+  await settings.getByRole("button", { name: "保存时间" }).click();
+  await expect(settings.getByText("每天 04:30", { exact: true })).toBeVisible();
+  const home = await studio.api<Session>("POST", `/api/bots/${bot.id}/home`);
+  await studio.api("POST", `/api/sessions/${home.id}/messages`, { text: evidence });
+  await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${home.id}/items`)).some((item) => item.type === "turn" && item.state === "completed")).toBe(true);
+  await settings.getByRole("button", { name: "运行一次" }).click();
+  await expect(settings.getByText(/已写入 1 条长期记忆/)).toBeVisible();
+  const request = studio.mock?.requests.find((entry) => entry.lastUserText.startsWith('{"memory":'));
+  expect(request?.lastUserText).toContain(evidence);
+  expect(request?.tools.filter((name) => /mcp__|exec|shell|search|image|browser|agent/i.test(name))).toEqual([]);
+  await screenshot(app, "studio", "bots-memory-automation", page);
+  await tabs.getByRole("button", { name: "角色与记忆", exact: true }).click();
+  await settings.getByRole("button", { name: "MEMORY.md", exact: true }).click();
+  await expect(memory).toHaveValue(/先核对用户能感知的功能回归。.*审查结论优先写影响范围。/s);
   await dialog.getByRole("button", { name: "关闭设置" }).click();
 
   await page.getByRole("button", { name: "深色模式", exact: true }).click();
@@ -90,8 +180,9 @@ test("keeps Bot configuration and save in reach across settings sizes", async ()
   const first = roster.getByRole("button", { name: "审核员", exact: true });
   await first.click();
   await expect(settings.getByRole("button", { name: "执行权限 只读" })).toBeVisible();
-  await screenshot(app, "studio", "bots-settings-layout-dark", page);
-  await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
+  await tabs.getByRole("button", { name: "运行配置", exact: true }).click();
+  await screenshot(app, "studio", "bots-settings-autosave-dark", page);
+  await tabs.getByRole("button", { name: "角色与记忆", exact: true }).click();
   await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toBeVisible();
   await screenshot(app, "studio", "bots-settings-memory-dark", page);
   await tabs.getByRole("button", { name: "概览", exact: true }).click();
@@ -104,8 +195,9 @@ test("keeps Bot configuration and save in reach across settings sizes", async ()
   const back = settings.getByRole("button", { name: "返回 Bot 列表" });
   await expect(back).toBeInViewport();
   await expect(roster).toBeHidden();
-  await expect(save).toBeInViewport({ ratio: 1 });
-  await screenshot(app, "studio", "bots-settings-layout-narrow", page);
+  await expect(save).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "打开主聊天" })).toBeInViewport({ ratio: 1 });
+  await screenshot(app, "studio", "bots-settings-autosave-narrow", page);
   await back.click();
   await first.press("Enter");
   await expect(back).toBeFocused();
@@ -115,6 +207,92 @@ test("keeps Bot configuration and save in reach across settings sizes", async ()
   await expect(settings.getByRole("form", { name: "配置 审核员2" })).toBeVisible();
   await tabs.getByRole("button", { name: "角色与记忆", exact: true }).click();
   await expect(settings.getByRole("button", { name: "审查笔记.md", exact: true })).toHaveCount(0);
+});
+
+test("Claude Bot organizes direct chat in a separate text-only model call", async () => {
+  const evidence = "这些日报我总是从结论看起，再决定要不要展开。";
+  const fact = "日报先写结论，再展开细节。";
+  studio = await launchStudio({ claudeMockScript: ({ lastUserText }) => ({
+    kind: "text",
+    text: lastUserText.startsWith('{"memory":') ? JSON.stringify([{ source: 1, evidence, text: fact }]) : "明白，结论在前。",
+  }) });
+  const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "Claude 记忆", purpose: "整理日报", memory: "", profileId: "claude-mock", workspaceId: null, enabled: true });
+  const home = await studio.api<Session>("POST", `/api/bots/${bot.id}/home`);
+  await studio.api("POST", `/api/sessions/${home.id}/messages`, { text: evidence });
+  await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${home.id}/items`)).some((item) => item.type === "turn" && item.state === "completed")).toBe(true);
+  const state = await studio.api<DutyState>("POST", `/api/duty/items/duty-bot-memory:${bot.id}/run`);
+  expect(state.runs[0]).toMatchObject({ ok: true, summary: "已写入 1 条长期记忆。" });
+  expect(studio.claudeMock?.requests.find((request) => request.lastUserText.startsWith('{"memory":'))).toMatchObject({ tools: [], lastUserText: expect.stringContaining("明白，结论在前。") });
+  expect((await studio.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.memory).toContain(fact);
+  expect(await studio.api<Session[]>("GET", `/api/bots/${bot.id}/chats`)).toHaveLength(1);
+});
+
+test("discarding a Codex memory turn that tries to edit a file leaves the chat available for retry", async () => {
+  const evidence = "日报的结论要让我一眼看到。";
+  let target = "";
+  let proposeEdit = true;
+  studio = await launchStudio({ mockScript: (request) => {
+    if (!request.lastUserText.startsWith('{"memory":')) return defaultScript(request);
+    if (proposeEdit && !request.afterToolOutput) {
+      return { kind: "custom_tool_call", name: "apply_patch", input: `*** Begin Patch\n*** Add File: ${target}\n+unexpected\n*** End Patch` };
+    }
+    return { kind: "text", text: JSON.stringify([{ source: 1, evidence, text: evidence }]) };
+  } });
+  target = join(studio.workspace("记忆隔离"), "unexpected.txt");
+  const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "隔离检查", purpose: "整理日报", memory: "", permission: "full-auto", profileId: "codex-mock", workspaceId: null, enabled: true });
+  const home = await studio.api<Session>("POST", `/api/bots/${bot.id}/home`);
+  await studio.api("POST", `/api/sessions/${home.id}/messages`, { text: evidence });
+  await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${home.id}/items`)).some((item) => item.type === "turn" && item.state === "completed")).toBe(true);
+  const url = `/api/duty/items/duty-bot-memory:${bot.id}/run`;
+  const memory = async () => (await studio!.api<StudioBot[]>("GET", "/api/bots")).find(({ id }) => id === bot.id)?.memory;
+  expect((await studio.api<DutyState>("POST", url)).runs[0]).toMatchObject({ ok: false, summary: expect.stringContaining("工具") });
+  expect(existsSync(target)).toBe(false);
+  expect(await memory()).toBe("");
+  proposeEdit = false;
+  expect((await studio.api<DutyState>("POST", url)).runs[0]).toMatchObject({ ok: true, summary: "已写入 1 条长期记忆。" });
+  expect(await memory()).toContain(evidence);
+});
+
+test("autosave preserves a Bot document updated outside Settings", async () => {
+  studio = await launchStudio();
+  const { page, dataDir } = studio;
+  const bot = await studio.api<StudioBot>("POST", "/api/bots", { name: "审核员", purpose: "检查改动。", memory: "原始记忆", profileId: "codex-mock", workspaceId: null, enabled: true });
+  await openBotsWorkbench(page);
+  await page.getByRole("button", { name: "管理 Bots", exact: true }).click();
+  const settings = page.getByTestId("studio-bots-settings");
+  await settings.getByRole("group", { name: "Bot 列表" }).getByRole("button", { name: bot.name, exact: true }).click();
+  await settings.getByRole("button", { name: "长期记忆 MEMORY.md" }).click();
+  const memory = settings.getByLabel("记忆", { exact: true });
+  await expect(memory).toHaveValue("原始记忆");
+  const file = join(dataDir, "bots", bot.id, "MEMORY.md");
+  writeFileSync(file, "外部更新\r\n", "utf8");
+  await settings.getByRole("switch", { name: "接收消息" }).uncheck();
+  await expect(settings.getByRole("status")).toHaveText("已自动保存");
+  expect(readFileSync(file, "utf8")).toBe("外部更新\r\n");
+  writeFileSync(file, "第二次外部更新", "utf8");
+  await memory.fill("本次编辑");
+  await expect(settings.getByRole("alert")).toContainText("MEMORY.md 已在其他地方修改");
+  await expect(memory).toHaveValue("本次编辑");
+  expect(readFileSync(file, "utf8")).toBe("第二次外部更新");
+  await settings.getByRole("button", { name: "放弃未保存的改动" }).click();
+  await expect(memory).toHaveValue("第二次外部更新");
+  await memory.fill("重新编辑");
+  await expect(settings.getByRole("status")).toHaveText("已自动保存");
+  expect(readFileSync(file, "utf8")).toBe("重新编辑");
+
+  // The input stays focused after its first save. A roster refresh can load a newer file while it still displays
+  // the earlier draft. Continuing to type must check against the version that the user was actually editing.
+  await expect(memory).toBeFocused();
+  const appended = "重新编辑\n外部追加的长期约定";
+  writeFileSync(file, appended, "utf8");
+  await studio.api("PATCH", `/api/bots/${bot.id}`, { name: "审核员（已刷新）" });
+  await expect(settings.getByRole("heading", { name: "审核员（已刷新）", exact: true })).toBeVisible();
+  await expect(memory).toHaveValue("重新编辑");
+  await memory.fill("重新编辑\n继续键入");
+  await expect(settings.getByRole("alert")).toContainText("MEMORY.md 已在其他地方修改");
+  expect(readFileSync(file, "utf8")).toBe(appended);
+  await settings.getByRole("button", { name: "放弃未保存的改动" }).click();
+  await expect(memory).toHaveValue(appended);
 });
 
 test("creates a Bot from settings and routes a task mention to its own main chat", async () => {
@@ -202,8 +380,7 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   await permissions.getByRole("button", { name: /^工作区可写/ }).click();
   await expect(permissions.getByRole("button", { name: /^工作区可写/ })).toHaveAttribute("aria-pressed", "true");
   await screenshot(app, "studio", "bot-permission-tiles", page);
-  await settings.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(settings.getByText("已保存。")).toBeVisible();
+  await expect(settings.getByText("已自动保存")).toBeVisible();
   const [bot] = await studio.api<StudioBot[]>("GET", "/api/bots");
   expect(bot?.avatar).toMatch(/^data:image\/png;base64,/);
   expect(bot).toMatchObject({ model: "mock-model", effort: "high", fast: true, permission: "workspace-write" });
@@ -654,10 +831,15 @@ test("the Bots section folds independently and remembers sorting and filters", a
   await expect(askBeforeReset).not.toBeChecked();
   await expect(askBeforeReset).toBeEnabled();
   await settings.getByRole("button", { name: "Alpha" }).click();
+  await settings.getByRole("navigation", { name: "Bot 设置分区" }).getByRole("button", { name: "运行配置" }).click();
+  await settings.getByRole("group", { name: "权限", exact: true }).getByRole("button", { name: /^工作区可写/ }).click();
   await settings.getByRole("button", { name: "新建主聊天" }).click();
   await expect(confirm).toHaveCount(0);
   await expect(settings).toHaveCount(0);
-  expect(await studio.api<Session[]>("GET", `/api/bots/${live.id}/chats`)).toHaveLength(2);
+  const chats = await studio.api<Session[]>("GET", `/api/bots/${live.id}/chats`);
+  expect(chats).toHaveLength(2);
+  expect(chats.find((chat) => chat.id === home.id)?.options.permission).toBe("read-only");
+  expect(chats.find((chat) => chat.id !== home.id)?.options.permission).toBe("workspace-write");
 
   await controls.click();
   await options.getByRole("menuitem", { name: "Bots 设置" }).click();

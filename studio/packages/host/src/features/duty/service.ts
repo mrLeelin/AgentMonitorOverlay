@@ -91,7 +91,11 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
   private readonly running = new Map<Id, Running>();
   private readonly jobs = new Map<string, DutyJob>();
   private readonly checks = new Map<string, DutyCheckJob>();
-  botJob?: { check(id: Id): void; run(action: Extract<DutyAction, { kind: "bot" }>, run: DutyRun): Promise<DutyJobResult> };
+  botJob?: {
+    check(id: Id): void;
+    memorySupported(id: Id): boolean;
+    run(action: Extract<DutyAction, { kind: "bot" }>, run: DutyRun, signal: AbortSignal): Promise<DutyJobResult>;
+  };
   /** Tests: the clock. */
   now: () => number = Date.now;
 
@@ -197,6 +201,33 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
     }
   }
 
+  ensureBotMemory(botId: Id, name: string, profileChanged = false): void {
+    const items = this.items();
+    const id = `duty-bot-memory:${botId}`;
+    const title = `${name} · 整理记忆`;
+    const existing = items.filter(({ action }) => action.kind === "bot" && action.botId === botId && action.job === "memory");
+    if (existing.length) {
+      if (existing.every((item) => item.builtin && (item.id !== id || item.title === title))) {
+        if (profileChanged) this.changed();
+        return;
+      }
+      // Older versions let the person add and turn off this schedule. Keep its time and on/off setting.
+      this.saveItems(items.map((item) => existing.includes(item) ? { ...item, builtin: true, ...(item.id === id ? { title } : {}) } : item));
+    } else {
+      if (!this.botJob?.memorySupported(botId)) return;
+      const at = new Date(this.now()).toISOString();
+      const item: DutyItem = { id, title, enabled: true, builtin: true,
+        schedule: { daily: "03:00" }, action: { kind: "bot", botId, job: "memory", prompt: "整理长期记忆" }, createdAt: at, updatedAt: at };
+      this.saveItems([...items, item]);
+    }
+    this.changed();
+  }
+
+  removeBotMemory(botId: Id): void {
+    const ids = new Set(this.items().filter(({ action }) => action.kind === "bot" && action.botId === botId && action.job === "memory").map(({ id }) => id));
+    if (ids.size) this.removeItems(ids);
+  }
+
   /** `by` "agent": saved by an agent (duty_save, which the person approved); the list marks it. */
   create(input: DutyItemInput, by?: "agent", setBy?: Id): DutyState {
     const at = new Date(this.now()).toISOString();
@@ -278,20 +309,35 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
     const item = this.items().find((i) => i.id === id);
     if (!item) throw new HostError("not_found", `值守项 ${id} 不在了`);
     if (item.builtin) throw new HostError("bad_request", "Studio 自带的值守项不能删，可以关掉");
-    this.running.get(id)?.abort.abort();
-    // Its children stay, on their own.
-    this.saveItems(this.items().filter((i) => i.id !== id).map((i) => (i.parentId === id ? (({ parentId: _, ...rest }) => rest)(i) : i)));
-    this.store.setKv(RUNS_KEY, JSON.stringify(this.runs().filter((r) => r.itemId !== id)));
-    this.changed();
+    this.removeItems(new Set([id]));
     return this.state();
   }
 
+  private removeItems(ids: ReadonlySet<Id>): void {
+    for (const id of ids) {
+      const run = this.running.get(id);
+      this.running.delete(id);
+      run?.abort.abort();
+    }
+    // Its children stay, on their own.
+    this.saveItems(this.items().filter((i) => !ids.has(i.id)).map((i) => {
+      if (!i.parentId || !ids.has(i.parentId)) return i;
+      const { parentId: _, ...rest } = i;
+      return rest;
+    }));
+    this.store.setKv(RUNS_KEY, JSON.stringify(this.runs().filter((r) => !ids.has(r.itemId))));
+    this.changed();
+  }
+
   /** 立即运行: now, unless it runs already. */
-  runNow(id: Id): DutyState {
+  runNow(id: Id): DutyState | Promise<DutyState> {
     const item = this.items().find((i) => i.id === id);
     if (!item) throw new HostError("not_found", `值守项 ${id} 不在了`);
     if (this.running.has(id)) throw new HostError("conflict", "它正在运行，等这次结束");
-    void this.launch(item);
+    if (!this.canRunOnChannel(item)) throw new HostError("bad_request", "记忆整理支持 Codex 和 Claude 渠道。");
+    const run = this.launch(item);
+    // Memory finishes inside the Host. Return its final state so the response cannot replace a newer live update with “running”.
+    if (item.action.kind === "bot" && item.action.job === "memory") return run.then(() => this.state());
     return this.state();
   }
 
@@ -329,6 +375,7 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
       if (!botId || !prompt || prompt.length > 20_000 || !this.botJob) throw new HostError("bad_request", "请选择 Bot 并填写运行内容。");
       this.botJob.check(botId);
       if (a.job !== undefined && a.job !== "memory") throw new HostError("bad_request", "未知的 Bot 自动化类型。");
+      if (a.job === "memory" && !this.botJob.memorySupported(botId)) throw new HostError("bad_request", "记忆整理支持 Codex 和 Claude 渠道。");
       return { kind: "bot", botId, prompt, ...(a.job === "memory" ? { job: a.job } : {}) };
     }
     if (a.kind === "builtin") {
@@ -383,6 +430,7 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
 
   /** When the item runs next (ms), from its last start (or when it was last changed). */
   nextRun(item: DutyItem): number | null {
+    if (!this.canRunOnChannel(item)) return null;
     const last = this.runs().find((r) => r.itemId === item.id);
     const base = Math.max(last ? Date.parse(last.startedAt) : 0, Date.parse(item.updatedAt));
     if ("every" in item.schedule) return base + item.schedule.every * 1000;
@@ -391,6 +439,10 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
     d.setHours(h!, m!, 0, 0);
     if (d.getTime() <= base) d.setDate(d.getDate() + 1);
     return d.getTime();
+  }
+
+  private canRunOnChannel({ action }: DutyItem): boolean {
+    return action.kind !== "bot" || action.job !== "memory" || this.botJob?.memorySupported(action.botId) === true;
   }
 
   /** One look: sessions that stopped end their runs; items that are due start. */
@@ -436,7 +488,7 @@ export class DutyFeature extends Feature<"sessions" | "tasks"> {
     try {
       const a = item.action;
       if (a.kind === "session" || a.kind === "bot") {
-        const started = a.kind === "session" ? await this.startSession(item, a, r.abort.signal) : await this.botJob?.run(a, run) ?? { ok: false, summary: "Bot 服务不可用。" };
+        const started = a.kind === "session" ? await this.startSession(item, a, r.abort.signal) : await this.botJob?.run(a, run, r.abort.signal) ?? { ok: false, summary: "Bot 服务不可用。" };
         if (started.sessionId && !started.skipped) {
           r.sessionId = started.sessionId;
           if (started.repliesBefore !== undefined) r.repliesBefore = started.repliesBefore;

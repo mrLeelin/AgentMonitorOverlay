@@ -60,7 +60,7 @@ export function BotModelField({ link, profiles, draft, change, disabled }: { lin
   const readOnlyPermission = defaultBotPermission(current?.runtime ?? "");
   const loadingCatalog = !!current && !catalog && !error;
   const effortHint = draft.effort ? `${effortLabel(draft.effort)} · 已保存` : loadingCatalog ? "正在读取…" : "此型号不提供强度设置";
-  const fastProps = { fast: model?.fast, value: draft.fast ?? undefined, onChange: (fast: boolean) => change("fast", fast), disabled };
+  const fastProps = { fast: model?.fast, value: draft.fast ?? catalog?.defaultFast, onChange: (fast: boolean) => change("fast", fast), disabled };
   const pickModel = (profileId: string, modelId: string | null) => {
     if (draft.profileId !== profileId || (draft.model ?? null) !== modelId) {
       if (draft.profileId !== profileId) change("permission", null);

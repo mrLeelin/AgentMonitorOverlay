@@ -8,7 +8,7 @@ import { botSessionPrompt, botSessionPromptKey, botTaskInstructions, isBotTask, 
 import { LEAD_MANAGEMENT_TOOLS } from "../../mcp/names.js";
 import { codexAutoCompactConfig } from "../compact.js";
 import { CODEX_DEFAULT_PERMISSION, codexPermission, codexPermissions } from "../choices.js";
-import { RuntimeBase, STOP_GRACE_MS, type ForkTarget, type InterruptOptions, type RuntimeEvents, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
+import { RuntimeBase, STOP_GRACE_MS, type ForkTarget, type InterruptOptions, type ReplyOnlyInput, type RuntimeEvents, type SendOptions, type SessionRuntimeApi } from "../runtime.js";
 import { personsMessage, unreadDelivery, withDelivery } from "../items.js";
 import { isBotConversationInput, queueMessagePurpose } from "../message-purpose.js";
 import type { CodexServerHandle } from "./server-manager.js";
@@ -18,6 +18,7 @@ import { CodexEvents } from "./events.js";
 import { newSessionState, type CodexCore, type SessionState } from "./state.js";
 import type { SessionGoal, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 import { RpcError } from "./rpc-client.js";
+import { codexReplyOnly } from "./reply-only.js";
 import type { BalanceAsk } from "../balance.js";
 import { CodexTurnCharges } from "./turn-charges.js";
 
@@ -68,6 +69,12 @@ export interface CodexRuntimeOptions {
 export type CodexRuntimeEvents = RuntimeEvents;
 
 export class CodexRuntime extends RuntimeBase {
+  async replyOnly(input: ReplyOnlyInput): Promise<string> {
+    const profile = this.profile(input.profileId);
+    const { client } = await this.options.servers.ensure(profile.id);
+    return codexReplyOnly(client, profile, input);
+  }
+
   private readonly state = new Map<Id, SessionState>();
   private readonly attached = new WeakSet<CodexServerHandle["client"]>();
   /** A connection is usable for turns only after its persisted threads have been loaded again. */

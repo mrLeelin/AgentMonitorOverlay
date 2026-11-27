@@ -64,6 +64,7 @@ export function botMascotId(avatar: string | null | undefined): BotMascotId | nu
 }
 
 export const supportsBotRuntime = (runtime: string): boolean => ["codex", "claude", "dsh"].includes(runtime);
+export const supportsBotMemory = (runtime: string | undefined): boolean => runtime === "codex" || runtime === "claude";
 export const defaultBotPermission = (runtime: string): string => runtime === "claude" ? "plan" : "read-only";
 
 export interface StudioBot extends BotInput {
@@ -155,7 +156,11 @@ export interface BotRoutes {
   "GET /api/bots/sidebar": { req: void; res: BotSidebarData };
   "POST /api/bots/import-link": { req: { url: string }; res: BotDraftContent };
   "POST /api/bots": { req: BotInput; res: StudioBot };
-  "PUT /api/bots/:id": { req: BotInput & { expectedFiles?: Pick<BotInput, "purpose" | "memory"> }; res: StudioBot };
+  "PUT /api/bots/:id": {
+    req: (BotInput & { expectedFiles?: Pick<BotInput, "purpose" | "memory"> })
+      | { changes: Partial<BotInput>; expectedFiles: Partial<Pick<BotInput, "purpose" | "memory">> };
+    res: StudioBot;
+  };
   "PATCH /api/bots/:id": { req: Partial<Pick<BotInput, "name" | "enabled">>; res: StudioBot };
   "DELETE /api/bots/:id": { req: void; res: { ok: true } };
   "GET /api/bots/:id/chats": { req: void; res: Session[] };

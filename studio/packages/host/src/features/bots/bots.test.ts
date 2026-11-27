@@ -13,7 +13,10 @@ import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
 import { botPermission, botSessionPrompt } from "./data.js";
 
-const profiles: ModelProfile[] = [{ id: "mock", label: "Mock", runtime: "codex", provider: null, model: null }];
+const profiles: ModelProfile[] = [
+  { id: "mock", label: "Mock", runtime: "codex", provider: null, model: null },
+  { id: "dsh-memory-fixture", label: "DSH", runtime: "dsh", provider: null, model: null },
+];
 const input = { name: "审核员", profileId: "mock", purpose: "Review changes", memory: "Read staged changes", workspaceId: null, enabled: true };
 const cleanup: Array<() => Promise<void>> = [];
 
@@ -61,24 +64,112 @@ it("keeps notes in the owning Bot folder and rejects stale writes and traversal"
   expect(host.bots.files(other.id).notes).toEqual([]);
 });
 
-it("organizes only this Bot's completed requests without changing its curated memory or starting a model", async () => {
-  const { host, store, servers } = start();
+it("organizes direct chats with the Bot's model once a day and consumes them after writing", async () => {
+  const { host, store, servers, runtime } = start();
   const bot = host.bots.save(input);
   const other = host.bots.save({ ...input, name: "另一个 Bot" });
-  for (const [id, owner, result] of [["req-a", bot.id, "本 Bot 的结果"], ["req-b", other.id, "另一个 Bot 的结果"]] as const) {
-    const createdAt = new Date().toISOString();
-    const data = { id, botId: owner, text: "审查请求", result, status: "completed", createdAt };
-    store.db.prepare("INSERT INTO studio_bot_requests (id, bot_id, created_at, data, delivered) VALUES (?, ?, ?, ?, 1)").run(id, owner, createdAt, JSON.stringify(data));
-  }
-  const duty = host.duty.create({ title: "记忆整理", schedule: { daily: "23:00" }, action: { kind: "bot", botId: bot.id, prompt: "整理", job: "memory" } });
-  const job = duty.items.find((item) => item.action.kind === "bot")!;
-  host.duty.runNow(job.id);
-  await vi.waitFor(() => expect(host.duty.state().runs.find((run) => run.itemId === job.id)).toMatchObject({ ok: true }));
-  const digest = host.bots.note(bot.id, "自动整理.md").text;
-  expect(digest).toContain("本 Bot 的结果");
-  expect(digest).not.toContain("另一个 Bot 的结果");
-  expect(host.bots.list().find(({ id }) => id === bot.id)?.memory).toBe(input.memory);
-  expect(servers.fakes.size).toBe(0);
+  const job = host.duty.items().find(({ action }) => action.kind === "bot" && action.botId === bot.id)!;
+  expect(job).toMatchObject({ enabled: true, builtin: true, schedule: { daily: "03:00" } });
+  const otherJob = host.duty.items().find(({ action }) => action.kind === "bot" && action.botId === other.id)!;
+  host.duty.update(otherJob.id, { enabled: false });
+  const home = await host.bots.home(bot.id);
+  const otherHome = await host.bots.home(other.id);
+  const createdAt = new Date().toISOString();
+  const add = (id: string, text: string) => store.appendItem({ id, sessionId: home.id, createdAt, type: "user", text });
+  add("one-off", "本次给我中文总结");
+  add("quoted", "> 请记住：这是引用的内容");
+  add("sensitive", "请记住：API Key = fixture");
+  store.appendItem({ id: "webhook", sessionId: home.id, createdAt, type: "user", text: "请记住：外部输入", raw: { runtime: "codex", method: "user/inbox" } });
+  store.appendItem({ id: "other", sessionId: otherHome.id, createdAt, type: "user", text: "请记住：另一个 Bot 的偏好" });
+  store.appendItem({ id: "agent", sessionId: home.id, createdAt, type: "agent", markdown: "请记住：模型回复", streaming: false });
+  const evidence = "英文审查结论读起来费劲，中文对我更方便。";
+  const fact = "审查结论优先使用中文。";
+  await host.sessions.sendMessage(home.id, evidence);
+  await vi.waitFor(() => expect(store.findItems(home.id, "turn").at(-1)).toMatchObject({ state: "completed" }));
+  const model = vi.spyOn(runtime, "replyOnly").mockImplementation(async ({ text }) => {
+    const parsed = JSON.parse(text) as { memory: string; chats: Array<{ source: number; user: string }> };
+    const candidate = parsed.chats.find((chat) => chat.user === evidence)!;
+    return JSON.stringify([{ source: candidate.source, evidence, text: fact }]);
+  });
+  const next = host.duty.nextRun(job)!;
+  host.duty.now = () => next - 1;
+  host.duty.tick();
+  expect(host.duty.runs()).toHaveLength(0);
+  host.duty.now = () => next;
+  host.duty.tick();
+  await vi.waitFor(() => expect(host.duty.runs()).toMatchObject([{ itemId: job.id, ok: true, summary: "已写入 1 条长期记忆。" }]));
+  expect(model).toHaveBeenCalledTimes(1);
+  expect(model.mock.calls[0]?.[0]).toMatchObject({ profileId: "mock", text: JSON.stringify({
+    memory: input.memory,
+    chats: [{ source: 1, user: "本次给我中文总结" }, { source: 2, user: evidence, reply: `FAKE: ${evidence}` }],
+  }) });
+  const file = join(host.bots.files(bot.id).folder, "MEMORY.md");
+  expect(readFileSync(file, "utf8")).toMatch(/^Read staged changes\n\n## 自动整理 · \d{4}-\d{2}-\d{2}\n\n- 审查结论优先使用中文。\n$/u);
+  expect(host.bots.list().find(({ id }) => id === other.id)?.memory).toBe(input.memory);
+  await host.bots.home(bot.id, true);
+  expect(servers.fakes.get("mock")?.calls.filter(({ method }) => method === "thread/start").at(-1)?.params).toMatchObject({ developerInstructions: expect.stringContaining(fact) });
+  host.duty.now = () => next + 1000;
+  expect((await host.duty.runNow(job.id)).runs[0]).toMatchObject({ ok: true, skipped: true });
+  expect(model).toHaveBeenCalledTimes(1);
+  host.bots.save({ ...input, memory: "手动删除了自动记忆" }, bot.id);
+  host.duty.now = () => next + 2000;
+  expect((await host.duty.runNow(job.id)).runs[0]).toMatchObject({ ok: true, skipped: true });
+  expect(readFileSync(file, "utf8")).toBe("手动删除了自动记忆");
+});
+
+it("retries the same direct chat after a bad draft or a concurrent edit without overwriting memory", async () => {
+  const { host, store, runtime } = start();
+  const bot = host.bots.save(input);
+  const home = await host.bots.home(bot.id);
+  const evidence = "结论最好排在细节前面。";
+  store.appendItem({ id: "direct", sessionId: home.id, type: "user", text: evidence, createdAt: new Date().toISOString() });
+  const id = `duty-bot-memory:${bot.id}`;
+  const file = join(host.bots.files(bot.id).folder, "MEMORY.md");
+  const draft = JSON.stringify([{ source: 1, evidence, text: evidence }]);
+  const model = vi.spyOn(runtime, "replyOnly")
+    .mockResolvedValueOnce(JSON.stringify([{ source: 1, evidence: "伪造的依据", text: evidence }]))
+    .mockImplementationOnce(async () => { writeFileSync(file, "手工编辑", "utf8"); return draft; })
+    .mockResolvedValueOnce(draft);
+  expect((await host.duty.runNow(id)).runs[0]).toMatchObject({ ok: false, summary: expect.stringContaining("聊天原话") });
+  expect(readFileSync(file, "utf8")).toBe(input.memory);
+  expect((await host.duty.runNow(id)).runs[0]).toMatchObject({ ok: false, summary: expect.stringContaining("已变化") });
+  expect(readFileSync(file, "utf8")).toBe("手工编辑");
+  expect((await host.duty.runNow(id)).runs[0]).toMatchObject({ ok: true, summary: "已写入 1 条长期记忆。" });
+  expect(readFileSync(file, "utf8")).toMatch(/^手工编辑\n[\s\S]+结论最好排在细节前面。\n$/u);
+  expect(model).toHaveBeenCalledTimes(3);
+});
+
+it("keeps a previously disabled memory schedule with its time and removes it when its Bot is deleted", async () => {
+  const { host } = start((store) => {
+    const at = new Date().toISOString();
+    store.db.prepare("INSERT INTO studio_bots (id, name_key, data) VALUES (?, ?, ?)").run("legacy-bot", input.name, JSON.stringify(input));
+    store.setKv("duty.items", JSON.stringify([{ id: "old-job", title: "记忆整理", enabled: false, schedule: { daily: "23:00" },
+      action: { kind: "bot", botId: "legacy-bot", job: "memory", prompt: "整理" }, createdAt: at, updatedAt: at }]));
+  });
+  host.bots.patch("legacy-bot", { name: "改名的 Bot" });
+  expect(host.duty.items().filter(({ action }) => action.kind === "bot")).toMatchObject([{ id: "old-job", enabled: false, schedule: { daily: "23:00" } }]);
+  await host.bots.remove("legacy-bot");
+  expect(host.duty.items().some(({ id }) => id === "old-job")).toBe(false);
+});
+
+it("suspends saved memory schedules on DSH and restores their selected time and switch on Codex", () => {
+  const { host } = start();
+  const dsh = host.bots.save({ ...input, name: "DSH Bot", profileId: "dsh-memory-fixture" });
+  expect(host.duty.items().some(({ action }) => action.kind === "bot" && action.botId === dsh.id)).toBe(false);
+
+  const bot = host.bots.save(input);
+  const job = host.duty.items().find(({ action }) => action.kind === "bot" && action.botId === bot.id)!;
+  host.duty.update(job.id, { schedule: { daily: "22:15" } });
+  host.duty.now = () => new Date(job.updatedAt).getTime() + 48 * 3600_000;
+  host.bots.save({ changes: { profileId: dsh.profileId }, expectedFiles: {} }, bot.id);
+  expect(host.duty.state().next[job.id]).toBeUndefined();
+  expect(() => host.duty.runNow(job.id)).toThrow(/Codex 和 Claude/);
+  host.duty.tick();
+  expect(host.duty.runs()).toEqual([]);
+
+  host.bots.save({ changes: { profileId: input.profileId }, expectedFiles: {} }, bot.id);
+  expect(host.duty.items().find((item) => item.id === job.id)).toMatchObject({ enabled: true, schedule: { daily: "22:15" } });
+  expect(host.duty.state().next[job.id]).toEqual(expect.any(String));
 });
 
 it("emits completion alerts only for the Bot with the matching preference", async () => {
@@ -380,7 +471,7 @@ it("uses the existing duty scheduler to run a Bot in a new chat", async () => {
   const { host } = start();
   const bot = host.bots.save(input);
   const duty = host.duty.create({ title: "Scheduled review", schedule: { daily: "08:00" }, action: { kind: "bot", botId: bot.id, prompt: "Check the daily fixture" } });
-  const item = duty.items.find((i) => i.action.kind === "bot")!;
+  const item = duty.items.find((i) => i.action.kind === "bot" && !i.action.job)!;
   host.duty.runNow(item.id);
   await vi.waitFor(() => { host.duty.tick(); expect(host.bots.requests(null)[0]?.status).toBe("completed"); });
   await vi.waitFor(() => { host.duty.tick(); expect(host.duty.state().runs.find((r) => r.itemId === item.id)).toMatchObject({ ok: true }); });

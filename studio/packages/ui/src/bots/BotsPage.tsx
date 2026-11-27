@@ -1,5 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { DEFAULT_BOT_PREFERENCES, type BotInput, type BotSkillRef, type Session, type StateSnapshot, type StudioBot, type StudioSettings } from "@amo-studio/protocol";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
+import { DEFAULT_BOT_PREFERENCES, supportsBotMemory, type BotInput, type BotSkillRef, type Session, type StateSnapshot, type StudioBot, type StudioSettings } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { IconCheck, IconChevronDown, IconChevronRight, IconEnvironment, IconPlus } from "../chat/icons.js";
 import { ConfirmDialog } from "../lib/ConfirmDialog.js";
@@ -11,6 +11,7 @@ import { BotSharedSkills, BotSkillsSection } from "./BotSkills.js";
 import { botChatName, useBots } from "./roster.js";
 import { OPEN_SETTINGS_EVENT } from "../mcp/shared.js";
 import { BotEntityDialog } from "./BotEntityDialog.js";
+import { botSettingsSave } from "./BotSettingsSave.js";
 import { BotAutomation, BotMemoryFiles, BotNotificationSettings, BotSettingsOverview, botSettingsTabs, type BotMemoryPage, type BotSettingsTab } from "./BotSettingsSections.js";
 
 type BotPreferences = Partial<Pick<StudioSettings, "botsEnabled" | "confirmBotHomeReset">>;
@@ -27,7 +28,7 @@ export function BotsPage({ link, state, settings, startBotId, onOpenChat }: { li
   const [deviceOpen, setDeviceOpen] = useState(true);
   const [editingId, edit] = useState(startBotId);
   const editing = bots.find((bot) => bot.id === editingId);
-  const suspendedDrafts = useRef(new Map<string, BotInput>());
+  const sharedFromBot = useRef<string>(undefined);
   const sharedHeading = useRef<HTMLHeadingElement>(null);
   const focusShared = useRef(false);
   const [shared, setShared] = useState<BotSkillRef[]>();
@@ -107,9 +108,8 @@ export function BotsPage({ link, state, settings, startBotId, onOpenChat }: { li
         rosterReturn.current = roster.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]') ?? deviceToggle.current;
         edit(undefined);
       }}><IconChevronRight /> 返回 Bot 列表</button>
-      <BotSettingsEditor key={editing.id} bot={editing} initial={suspendedDrafts.current.get(editing.id)} link={link} state={state} enabled={enabled} confirmReset={confirmReset} shared={shared} onOpenChat={onOpenChat}
-        onSave={() => suspendedDrafts.current.delete(editing.id)} onDelete={() => { suspendedDrafts.current.delete(editing.id); edit(undefined); }}
-        onManage={(draft) => { suspendedDrafts.current.set(editing.id, draft); focusShared.current = true; edit(undefined); }} />
+      <BotSettingsEditor key={editing.id} bot={editing} initialSection={sharedFromBot.current === editing.id ? "access" : "overview"} link={link} state={state} enabled={enabled} confirmReset={confirmReset} shared={shared} onOpenChat={onOpenChat}
+        onDelete={() => edit(undefined)} onManage={() => { sharedFromBot.current = editing.id; focusShared.current = true; edit(undefined); }} />
     </div> : <section className="bot-preferences" aria-labelledby="bot-preferences-title">
       <h3 id="bot-preferences-title">通用设置</h3>
       <BotPreference label="启用 Bots" hint="在本机显示 Bots，接收新消息并运行值守和 Webhook。" checked={enabled} disabled={!!saving || !settings} onChange={(value) => void savePreference({ botsEnabled: value })} />
@@ -122,24 +122,49 @@ export function BotsPage({ link, state, settings, startBotId, onOpenChat }: { li
   </div>;
 }
 
-function BotSettingsEditor({ bot: selected, initial, link, state, enabled, confirmReset, shared, onOpenChat, onSave, onDelete, onManage }: {
-  bot: StudioBot; initial?: BotInput; link: HostLink; state: StateSnapshot; enabled: boolean; confirmReset: boolean; shared?: BotSkillRef[];
-  onOpenChat?(session: Session): void; onSave(): void; onDelete(): void; onManage(draft: BotInput): void;
+function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled, confirmReset, shared, onOpenChat, onDelete, onManage }: {
+  bot: StudioBot; initialSection: BotSettingsTab; link: HostLink; state: StateSnapshot; enabled: boolean; confirmReset: boolean; shared?: BotSkillRef[];
+  onOpenChat?(session: Session): void; onDelete(): void; onManage(): void;
 }) {
   const { id } = selected;
-  const formId = useId();
-  const [draft, setDraft] = useState<BotInput>(initial ?? selected);
-  const [expectedFiles, setExpectedFiles] = useState({ purpose: selected.purpose, memory: selected.memory });
-  const [section, setSection] = useState<BotSettingsTab>(initial ? "access" : "overview");
+  const save = botSettingsSave(link, selected);
+  const { bot, changes, saving, saved, error } = useSyncExternalStore(save.subscribe, save.read);
+  const draft: BotInput = { ...bot, ...changes };
+  const { change } = save;
+  const [textEdit, editText] = useState<{ field: "name" | BotMarkdownField; value: string }>();
+  const [section, setSection] = useState(initialSection);
   const [memoryPage, setMemoryPage] = useState<BotMemoryPage>("memory");
   const [askDelete, setAskDelete] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const [chats, setChats] = useState<Session[]>([]);
   const [busy, setBusy] = useState(false);
   const [askReset, setAskReset] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; error?: boolean }>();
-  const change = <K extends keyof BotInput>(field: K, value: BotInput[K]) => setDraft((old) => ({ ...old, [field]: value }));
+  const [actionError, setActionError] = useState("");
   const preferences = draft.preferences ?? DEFAULT_BOT_PREFERENCES;
+
+  useLayoutEffect(() => { save.receive(selected); }, [save, selected]);
+  useEffect(() => () => {
+    save.endDocumentEdit();
+    if (!save.read().error) void save.flush();
+  }, [save]);
+
+  function textField(field: "name" | BotMarkdownField) {
+    return {
+      value: textEdit?.field === field ? textEdit.value : draft[field],
+      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        const { value } = event.target;
+        if (field !== "name") save.beginDocumentEdit(field, draft[field]);
+        editText({ field, value });
+        change(field, value);
+      },
+      onBlur: () => {
+        if (textEdit?.field !== field) return;
+        editText(undefined);
+        if (field !== "name") save.endDocumentEdit();
+        if (!save.read().error) void save.flush();
+      },
+    };
+  }
 
   function openSection(tab: BotSettingsTab, file?: BotMemoryPage) {
     if (file) setMemoryPage(file);
@@ -156,14 +181,15 @@ function BotSettingsEditor({ bot: selected, initial, link, state, enabled, confi
   async function perform(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
-    setNotice(undefined);
+    setActionError("");
     try { await action(); }
-    catch (err) { setNotice({ text: err instanceof Error ? err.message : String(err), error: true }); }
+    catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   }
 
   async function openHome(reset: boolean) {
     await perform(async () => {
+      if (!await save.flush()) return;
       const home = await call(link, "POST /api/bots/:id/home", { id }, { reset });
       setAskReset(false);
       onOpenChat?.(home);
@@ -178,42 +204,44 @@ function BotSettingsEditor({ bot: selected, initial, link, state, enabled, confi
     }} /></label>;
   }
 
-  const feedback = notice && <p className={notice.error ? "form-error" : "settings-feedback"} role={notice.error ? "alert" : "status"}>{notice.text}</p>;
+  const feedback = <>
+    {actionError && <p className="form-error" role="alert">{actionError}</p>}
+    {error ? <div className="bot-save-error">
+      <p className="form-error" role="alert">{error}</p>
+      <button className="link-btn" type="button" disabled={busy} onClick={() => void save.flush()}>重试</button>
+      <button className="link-btn" type="button" disabled={busy} onClick={() => { editText(undefined); save.discard(); }}>放弃未保存的改动</button>
+    </div> : (saving || saved || Object.keys(changes).length > 0) && <p className="settings-hint" role="status">{saving || !saved ? "正在自动保存…" : "已自动保存"}</p>}
+  </>;
+  const chatActions = enabled && draft.enabled;
   return <div className="bot-settings-editor bot-settings-sections">
     <header className="bot-editor-heading">
-      <h3 title={selected.name}>{selected.name}</h3>
+      <h3 title={bot.name}>{bot.name}</h3>
       <label className="bot-editor-enabled" title="接收消息并出现在 @ 列表">
-        <input form={formId} type="checkbox" className="bot-setting-switch" role="switch" aria-description="启用后出现在 @ 列表" checked={draft.enabled} disabled={busy} onChange={(event) => change("enabled", event.target.checked)} /> 接收消息
+        <input type="checkbox" className="bot-setting-switch" role="switch" aria-description="启用后出现在 @ 列表" checked={draft.enabled} disabled={busy} onChange={(event) => change("enabled", event.target.checked)} /> 接收消息
       </label>
     </header>
     <nav className="bot-settings-tabs" aria-label="Bot 设置分区">
       {botSettingsTabs.map(([key, label]) => <button key={key} type="button" aria-current={section === key ? "page" : undefined} onClick={() => openSection(key)}>{label}</button>)}
     </nav>
     <div className="bot-editor-scroll" ref={scroll}>
-      <form id={formId} className="bot-editor-form" aria-label={`配置 ${selected.name}`} onSubmit={(event) => {
+      <form className="bot-editor-form" aria-label={`配置 ${bot.name}`} onSubmit={(event) => {
         event.preventDefault();
-        void perform(async () => {
-          const saved = await call(link, "PUT /api/bots/:id", { id }, { ...draft, expectedFiles });
-          setDraft(saved);
-          setExpectedFiles({ purpose: saved.purpose, memory: saved.memory });
-          onSave();
-          setNotice({ text: "已保存。" });
-        });
+        void save.flush();
       }}>
         {section === "overview" && <BotSettingsOverview bot={selected} draft={draft} state={state} shared={shared} chats={chats} open={openSection} />}
         <div className="bot-settings-details" hidden={section !== "runtime"}><div className="bot-editor-identity">
           <BotAvatarPicker draft={draft} busy={busy} change={change} run={perform} />
-          <label className="bot-form-field">名称<input className="field" required maxLength={40} value={draft.name} disabled={busy} onChange={(event) => change("name", event.target.value)} /></label>
+          <label className="bot-form-field">名称<input className="field" required maxLength={40} disabled={busy} {...textField("name")} /></label>
         </div>
         <section className="bot-editor-section" aria-labelledby="bot-editor-runtime-title">
           <h4 id="bot-editor-runtime-title">运行配置</h4>
           <div className="bot-editor-runtime">
             <BotModelField link={link} profiles={state.profiles} draft={draft} change={change} disabled={busy} />
-            <small className="settings-hint">保存后，新建聊天使用所选模型、推理强度和权限。{selected.homeSessionId && "要在主聊天中使用新设置，请点「新建主聊天」。"}</small>
+            {selected.homeSessionId && <small className="settings-hint">点「新建主聊天」即可在主聊天中使用新的运行配置。</small>}
             <BotLocalFields workspaces={state.workspaces} draft={draft} change={change} disabled={busy} />
           </div>
         </section>
-        <button className="link-btn bot-settings-delete" type="button" disabled={busy} onClick={() => setAskDelete(true)}>删除 Bot…</button>
+        <button className="link-btn bot-settings-delete" type="button" disabled={busy || saving} onClick={() => setAskDelete(true)}>删除 Bot…</button>
         </div>
         <div className="bot-settings-details" hidden={section !== "access"}>
           <section className="bot-settings-card"><h4>访问权限</h4>
@@ -221,20 +249,21 @@ function BotSettingsEditor({ bot: selected, initial, link, state, enabled, confi
               onChange={(allowGroupAsk) => change("preferences", { ...preferences, allowGroupAsk })} />
           </section>
           <BotSkillsSection link={link} name={draft.name} profileId={draft.profileId} workspaceId={draft.workspaceId} shared={shared} skills={draft.skills}
-            busy={busy} onChange={(skills) => change("skills", skills)} onManage={() => onManage(draft)} />
+            busy={busy} onChange={(skills) => change("skills", skills)} onManage={onManage} />
         </div>
         <div hidden={section !== "memory"}><BotMemoryFiles link={link} botId={id} active={section === "memory"} file={memoryPage} select={setMemoryPage}
           purpose={<div className="bot-form-field">
             <div className="bot-settings-file-title"><label htmlFor="studio-bot-purpose"><code>SOUL.md</code></label>{importButton("purpose", "导入 SOUL.md")}</div>
-            <textarea aria-label="职责" id="studio-bot-purpose" className="field" rows={3} required maxLength={8000} value={draft.purpose} disabled={busy} onChange={(event) => change("purpose", event.target.value)} />
+            <textarea aria-label="职责" id="studio-bot-purpose" className="field" rows={3} required maxLength={8000} disabled={busy} {...textField("purpose")} />
           </div>}
           memory={<div className="bot-form-field">
             <div className="bot-settings-file-title"><label htmlFor="studio-bot-memory"><code>MEMORY.md</code></label>{importButton("memory", "导入 MEMORY.md")}</div>
-            <textarea aria-label="记忆" id="studio-bot-memory" className="field" rows={3} maxLength={32_000} value={draft.memory} disabled={busy} aria-describedby="studio-bot-memory-hint" onChange={(event) => change("memory", event.target.value)} />
-            <small className="settings-hint" id="studio-bot-memory-hint">支持 Markdown。新聊天会读取保存的记忆。</small>
+            <textarea aria-label="记忆" id="studio-bot-memory" className="field" rows={3} maxLength={32_000} disabled={busy} aria-describedby="studio-bot-memory-hint" {...textField("memory")} />
+            <small className="settings-hint" id="studio-bot-memory-hint">支持 Markdown。新聊天会读取长期记忆。</small>
           </div>} /></div>
       </form>
-      <div hidden={section !== "automation"}><BotAutomation bot={selected} link={link} preferences={preferences} disabled={busy}
+      <div hidden={section !== "automation"}><BotAutomation bot={bot} link={link} preferences={preferences} disabled={busy}
+        memorySupported={supportsBotMemory(state.profiles.find((profile) => profile.id === bot.profileId && !profile.unavailable)?.runtime)}
         onChange={(value) => change("preferences", value)} onManage={() => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: "duty" }))} /></div>
       {section === "notifications" && <BotNotificationSettings preferences={preferences} disabled={busy} onChange={(value) => change("preferences", value)} />}
       {section === "runtime" && !!chats.length && <section className="settings-section"><h4 className="settings-heading">聊天记录</h4>
@@ -249,21 +278,20 @@ function BotSettingsEditor({ bot: selected, initial, link, state, enabled, confi
       </section>}
       {section === "access" && <BotWebhooks link={link} id={id} />}
     </div>
-    <footer className="bot-editor-actions">
+    {(chatActions || actionError || error || saving || saved || Object.keys(changes).length > 0) && <footer className="bot-editor-actions">
       {!askReset && feedback}
-      <div className="settings-row">
-        {enabled && selected.enabled && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void openHome(false)}>打开主聊天</button>}
-        {enabled && selected.enabled && !!selected.homeSessionId && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => {
-          if (confirmReset) { setNotice(undefined); setAskReset(true); }
+      {chatActions && <div className="settings-row">
+        <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void openHome(false)}>打开主聊天</button>
+        {!!selected.homeSessionId && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => {
+          if (confirmReset) { setActionError(""); setAskReset(true); }
           else void openHome(true);
         }}>新建主聊天</button>}
-        <button type="submit" form={formId} className="btn-primary small bot-editor-save" disabled={busy || !draft.name.trim() || !draft.purpose.trim() || !draft.profileId}>保存</button>
-      </div>
-    </footer>
+      </div>}
+    </footer>}
     {askReset && <ConfirmDialog title="新建主聊天" action="新建" busy={busy} onCancel={() => setAskReset(false)} onConfirm={() => void openHome(true)}>
       <p>接下来的主聊天消息会进入新对话。旧聊天和记忆会保留。</p>
       {feedback}
     </ConfirmDialog>}
-    {askDelete && <BotEntityDialog link={link} bots={[]} edit={{ action: "delete", entity: { kind: "bot", item: selected } }} onClose={() => setAskDelete(false)} onDeleted={onDelete} />}
+    {askDelete && <BotEntityDialog link={link} bots={[]} edit={{ action: "delete", entity: { kind: "bot", item: selected } }} onClose={() => setAskDelete(false)} onDeleted={() => { save.discard(); onDelete(); }} />}
   </div>;
 }
