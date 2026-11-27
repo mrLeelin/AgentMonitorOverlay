@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { remoteHeldTasks } from "@amo-studio/protocol";
+import { remoteHeldTasks, type PlaneBotAttention } from "@amo-studio/protocol";
 import type { HostState } from "../host/useHostState.js";
 import { useOpenDecisions } from "../collab/DecisionPanel.js";
 import { usePendingProposals } from "../planning/ProposalsPanel.js";
@@ -14,11 +14,12 @@ import { needsPerson } from "../lib/status.js";
 import { useStoredIds } from "../lib/storedIds.js";
 import { ALSO_MINE_KEY } from "./pins.js";
 import { decisionNeedsPerson, replyNeedsPerson } from "./managedAttention.js";
+import { planeBotNeedsAttention } from "../teamtasks/planeBotAttention.js";
 
 const NO_LINK = { url: "", token: "" };
 
 /** Same pending items as Focus, owned by the workbench so closing Focus cannot stop the badge. */
-export function useTaskbarBadge(host: HostState): void {
+export function useTaskbarBadge(host: HostState, planeJobs: readonly PlaneBotAttention[]): void {
   const live = host.kind === "ready" ? host.state : null;
   const link = host.kind === "ready" ? host.link : null;
   const noLink = link ?? NO_LINK;
@@ -41,10 +42,12 @@ export function useTaskbarBadge(host: HostState): void {
   const held = remoteHeldTasks(remote, clock);
   const mine = (s: { taskId?: string | null }) => !s.taskId || !held.has(s.taskId) || alsoMine.has(s.taskId);
   const seen = live ? withGrants(seenHere, live.tasks, live.sessions) : seenHere;
-  const waiting = live?.sessions.filter((s) => !s.archivedAt && needsPerson(s.status) && mine(s)) ?? [];
-  const finished = live ? unseenSessions(live.sessions, seen).filter((s) => !waiting.includes(s) && mine(s) && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
+  const planeWorkers = new Set(planeJobs.map((job) => job.taskId));
+  const waiting = live?.sessions.filter((s) => !s.archivedAt && needsPerson(s.status) && mine(s) && !planeWorkers.has(s.taskId ?? "")) ?? [];
+  const finished = live ? unseenSessions(live.sessions, seen).filter((s) => !waiting.includes(s) && mine(s) && !planeWorkers.has(s.taskId ?? "") && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   const count = live ? waiting.length + finished.length
-    + decisions.filter((d) => decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)).length
+    + decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)).length
+    + planeJobs.filter(planeBotNeedsAttention).length
     + (settings?.disabledFeatures.includes("planning") ? 0 : proposals.length)
     + plans.filter((p) => p.state === "open").length + relays.filter((r) => r.state === "pending").length
     + sends.filter((s) => s.state === "pending").length

@@ -78,6 +78,10 @@ export class SessionInbox extends Feature<"sharedContext"> {
   /** Paused sessions already told so in a notice. */
   private readonly told = new Set<Id>();
 
+  isPaused(sessionId: Id): boolean {
+    return this.pauses().has(sessionId);
+  }
+
   /** 停止 by the person: hold what comes until they write again. */
   pause(sessionId: Id): void {
     this.pauses().add(sessionId);

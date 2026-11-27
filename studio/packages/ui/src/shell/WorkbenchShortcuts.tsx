@@ -1,7 +1,9 @@
 import { useId, useRef, useState, useSyncExternalStore, type FocusEvent, type ReactNode } from "react";
-import type { DecisionRequest, ScheduleProposal, Session, StateSnapshot } from "@amo-studio/protocol";
+import type { DecisionRequest, PlaneBotAttention, ScheduleProposal, Session, StateSnapshot } from "@amo-studio/protocol";
 import { needsPerson, SESSION_LOOK, taskSessions, taskStatus } from "../lib/status.js";
 import { toggleTheme, useThemePref } from "../lib/theme.js";
+import { planeBotStatus } from "../teamtasks/PlaneBot.js";
+import { planeBotNeedsAttention } from "../teamtasks/planeBotAttention.js";
 
 export interface ShortcutItem {
   id: string;
@@ -23,10 +25,14 @@ export function recentSessions(state: StateSnapshot, open: (session: Session) =>
 
 /** One row per task or pending proposal, matching the workbench's 需要你 counter. */
 export function pendingItems(state: StateSnapshot, decisions: readonly DecisionRequest[], proposals: readonly ScheduleProposal[],
-  openTask: (taskId: string, sessionId?: string) => void, openProposal: (id: string) => void): ShortcutItem[] {
-  const items: ShortcutItem[] = [];
+  openTask: (taskId: string, sessionId?: string) => void, openProposal: (id: string) => void, planeJobs: readonly PlaneBotAttention[] = []): ShortcutItem[] {
+  const workers = new Set(planeJobs.map((job) => job.taskId));
+  const items: ShortcutItem[] = planeJobs.filter(planeBotNeedsAttention).map((job) => ({
+    id: job.id, title: `${job.botName} · ${job.item.number}`, detail: `${planeBotStatus(job)} · ${job.item.title}`,
+    pick: () => openTask(job.botTaskId, job.botSessionId ?? undefined),
+  }));
   for (const task of state.tasks) {
-    if (task.archivedAt) continue;
+    if (task.archivedAt || workers.has(task.id)) continue;
     const sessions = taskSessions(task, state.sessions);
     const status = taskStatus(sessions);
     const waiting = status && needsPerson(status) ? sessions.find(s => !s.archivedAt && s.status === status) : undefined;

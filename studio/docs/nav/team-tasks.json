@@ -18,6 +18,7 @@
       { "label": "本地工作项副本与原单链接", "path": "studio/packages/host/src/features/teamtasks/board.ts", "anchor": "export class TeamBoardHost" },
       { "label": "Bot 接单与验收回写", "path": "studio/packages/host/src/features/teamtasks/plane-bot-jobs.ts", "anchor": "export class PlaneBotJobs" },
       { "label": "Plane Bot 交付与检查卡片", "path": "studio/packages/ui/src/teamtasks/PlaneBot.tsx", "anchor": "export function PlaneBotDeliveryCard" },
+      { "label": "Bot 对话中的计划、提问和验收", "path": "studio/packages/ui/src/teamtasks/PlaneBotConversation.tsx", "anchor": "export function PlaneBotConversation" },
       { "label": "Bots 工作台的 Plane 工单", "path": "studio/packages/ui/src/teamtasks/PlaneBotJobs.tsx", "anchor": "export function PlaneBotJobs" },
       { "label": "Studio 团队看板", "path": "studio/packages/ui/src/teamtasks/StudioTeamBoard.tsx", "anchor": "export function StudioTeamBoard" },
       { "label": "桌面 Plane 页面与浏览会话", "path": "studio/packages/app/src/team-plane-view.ts", "anchor": "export function installTeamPlaneView" },

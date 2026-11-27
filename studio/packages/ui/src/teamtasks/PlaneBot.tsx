@@ -11,15 +11,15 @@ import "./plane-bot.css";
 
 const status: Record<PlaneBotJob["state"], string> = {
   planning: "Bot 正在分析", "awaiting-approval": "计划待确认", starting: "正在启动执行任务", declined: "已放弃",
-  executing: "Bot 已进入独立工作树", review: "等待人工验收",
+  executing: "Bot 已进入独立工作树", "awaiting-user": "需要你答复或授权", paused: "执行已暂停", review: "等待人工验收",
   sending: "已验收，正在回写 Plane", sent: "已回写 Plane 评论", failed: "Bot 执行失败",
 };
 
-function writebackFailed(job: PlaneBotJob, taskDone = false): boolean {
+function writebackFailed(job: Pick<PlaneBotJob, "state" | "error" | "failureStage">, taskDone = false): boolean {
   return job.state === "failed" && (job.failureStage === "writeback" || !job.failureStage && (taskDone || job.error === "不支持的工作项操作"));
 }
 
-export function planeBotStatus(job: PlaneBotJob, taskDone = false): string {
+export function planeBotStatus(job: Pick<PlaneBotJob, "state" | "error" | "failureStage">, taskDone = false): string {
   return writebackFailed(job, taskDone) ? "交付已验收，Plane 回写失败" : status[job.state];
 }
 
@@ -141,6 +141,7 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
       </select></label>
     </>}
     {job && <p role="status">{planeBotStatus(job)}</p>}
+    {job?.state === "awaiting-user" && <p className="side-note">可在「待你处理」或执行任务内查看问题。</p>}
     {pending && <>
       {pending.baseCommit && <p className="side-note">基准提交 <code title={pending.baseCommit}>{pending.baseCommit.slice(0, 7)}</code></p>}
       {(pending.behind ?? 0) > 0 && <p className="side-note">分析后项目有 {pending.behind} 个新提交。开工会从分析时的提交开始改；想用最新代码，请放弃后重新交给 Bot。</p>}
@@ -152,9 +153,10 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
     <div className="settings-row end">
       <button type="button" className="btn-ghost small" onClick={onClose}>{job ? "关闭" : "取消"}</button>
       {job?.taskId && <button type="button" className="btn-primary small" onClick={() => onOpen(job.taskId!)}>打开执行任务</button>}
-      {!job?.taskId && job?.botTaskId && job.botSessionId && <button type="button" className="btn-ghost small" onClick={() => onOpen(job.botTaskId!, job.botSessionId!)}>查看 Bot 分析</button>}
+      {job?.botTaskId && job.botSessionId && <button type="button" className="btn-ghost small" onClick={() => onOpen(job.botTaskId!, job.botSessionId!)}>{job.jobId ? "打开 Bot 对话" : "查看 Bot 分析"}</button>}
       {choosing && <button type="button" className="btn-primary small" disabled={busy || !botId || !workspaceId} onClick={() => void start()}>{busy ? "正在接单…" : job?.state === "declined" ? "重新交给 Bot" : "开始接单"}</button>}
       {job?.canRetry && !job.taskId && <button type="button" className="btn-primary small" disabled={busy} onClick={() => void start()}>重试接单</button>}
+      {job?.canRetry && job.taskId && job.failureStage === "execution" && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void update(() => call(link, "POST /api/team-board/local/:id/bot/retry", { id: job.taskId! }))}>重试执行</button>}
       {pending && <>
         <button type="button" className="btn-ghost small" disabled={busy || !planHash} onClick={() => { if (planHash) void decline(planHash); }}>放弃</button>
         <button type="button" className="btn-primary small" disabled={busy || !planHash} onClick={() => { if (planHash) void approve(planHash); }}>开工</button>

@@ -1,4 +1,4 @@
-import { TEAM_TASK_BODY_LIMIT, type PlaneBotDecision, type PlaneBotIntake, type PlanePersonalDraft, type PlaneTaskDraft, type PlaneWorkItemChange, type TeamBoardChange, type TeamTaskChange } from "@amo-studio/protocol";
+import { TEAM_TASK_BODY_LIMIT, type PlaneBotDecision, type PlaneBotIntake, type PlaneBotPlanChoice, type PlanePersonalDraft, type PlaneTaskDraft, type PlaneWorkItemChange, type TeamBoardChange, type TeamTaskChange } from "@amo-studio/protocol";
 import { HostError } from "../../core/shared.js";
 import { bytes, obj, route, type Route } from "../../http/route.js";
 import type { HostService } from "../../service.js";
@@ -31,7 +31,10 @@ export function teamTasksRoutes(service: HostService): Route[] {
     route("POST /api/team-board/plane/work-items/:id/bot", ({ params, body }) => bots.intake(params.id, body as PlaneBotIntake)),
     route("POST /api/team-board/plane/work-items/:id/bot/approve", ({ params, body }) => bots.approve(params.id, body as PlaneBotDecision)),
     route("POST /api/team-board/plane/work-items/:id/bot/decline", ({ params, body }) => bots.decline(params.id, body as PlaneBotDecision)),
-    route("GET /api/team-board/plane/bots/:id/jobs", ({ params }) => bots.forBot(params.id)),
+    route("GET /api/team-board/plane/bots/:id/jobs", ({ params, query }) => bots.forBot(params.id, query.get("unfinished") === "1")),
+    route("POST /api/team-board/plane/bots/:id/jobs/:jobId/decision", ({ params, body }) => bots.decideForBot(params.id, params.jobId, body as PlaneBotPlanChoice)),
+    route("POST /api/team-board/plane/bots/:id/jobs/:jobId/retry", ({ params }) => bots.retryForBot(params.id, params.jobId)),
+    route("GET /api/team-board/plane/bot-attention", () => bots.attention()),
     route("GET /api/team-board/local/:id/bot", ({ params }) => bots.forTask(params.id)),
     route("POST /api/team-board/local/:id/bot/retry", ({ params }) => bots.retry(params.id)),
     route("POST /api/team-board/local/:id/bot/check", ({ params, body }) => bots.check(params.id, obj(body).resultId)),

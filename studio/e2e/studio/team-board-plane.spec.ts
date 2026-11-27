@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type BotRequest, type PlaneBoardConnection, type PlaneBotJob, type SessionItem, type StateSnapshot, type StudioBot, type Task, type Workspace } from "@amo-studio/protocol";
-import { listenInStudioRange } from "@amo-studio/testkit";
+import { defaultScript, listenInStudioRange } from "@amo-studio/testkit";
 import { launchStudio, screenshot } from "../support/studio.js";
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -180,10 +180,11 @@ const planeBotPlan = [
 ].join("\n");
 
 const planeBotScenarios = [
-  { name: "hands a Plane item to a Bot and retries comment writeback without repeating acceptance", approve: true },
-  { name: "abandons a Plane Bot plan and analyzes again without starting a worker", approve: false },
+  { name: "hands a Plane item to a Bot and retries comment writeback without repeating acceptance", approve: true, botOnly: false },
+  { name: "abandons a Plane Bot plan and analyzes again without starting a worker", approve: false, botOnly: false },
+  { name: "handles the Plane plan, question and acceptance from the Bot conversation", approve: true, botOnly: true },
 ];
-for (const { name, approve } of planeBotScenarios) test(name, async () => {
+for (const { name, approve, botOnly } of planeBotScenarios) test(name, async () => {
   test.setTimeout(90_000);
   const projectId = "8af9b331-e9aa-4f1d-ae07-fcbb149ece27";
   const itemId = "9e1afba8-22ae-44c1-b4ad-223fad55ce4a";
@@ -224,9 +225,11 @@ for (const { name, approve } of planeBotScenarios) test(name, async () => {
   let studio: Awaited<ReturnType<typeof launchStudio>> | undefined;
   const checkOpinion = "建议验收：发布说明与变更记录一致，已核对内容和链接。";
   try {
-    studio = await launchStudio({ mockScript: ({ lastUserText }) => ({
-      kind: "text", text: approve && lastUserText.includes("对照检查") ? checkOpinion : lastUserText.includes("独立 worktree") ? "已核对发布说明。" : planeBotPlan,
-    }) });
+    studio = await launchStudio({ mockScript: (request) => {
+      const { lastUserText } = request;
+      if (lastUserText.startsWith("[[mcp:") || lastUserText.startsWith("[[ask-async]]") || lastUserText.startsWith("[[shell:")) return defaultScript(request);
+      return { kind: "text", text: approve && lastUserText.includes("对照检查 Plane 工作项") ? checkOpinion : lastUserText.includes("独立工作树执行") ? "已核对发布说明。" : planeBotPlan };
+    } });
     const { page, app } = studio;
     const repo = studio.workspace("PlaneBotRepo");
     const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { windowsHide: true });
@@ -260,7 +263,7 @@ for (const { name, approve } of planeBotScenarios) test(name, async () => {
     await expect(dialog.getByRole("status")).toHaveText("计划待确认", { timeout: 45_000 });
     await expect(dialog.locator("strong").filter({ hasText: "完成标准" })).toBeVisible();
     await expect(dialog.getByText(baseCommit.slice(0, 7))).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "查看 Bot 分析" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "打开 Bot 对话" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "打开执行任务" })).toHaveCount(0);
 
     const getJob = () => studio!.api<PlaneBotJob>("GET", `/api/team-board/plane/work-items/${itemId}/bot`);
@@ -292,6 +295,93 @@ for (const { name, approve } of planeBotScenarios) test(name, async () => {
       return;
     }
 
+    if (botOnly) {
+      // The person opens the owner Bot once. The worker never needs to become the workbench's active task.
+      await dialog.getByRole("button", { name: "打开 Bot 对话" }).click();
+      const jobCard = page.getByTestId("plane-bot-conversation-job").filter({ hasText: item.number });
+      await expect(jobCard.getByRole("status")).toHaveText("计划待确认");
+      await page.getByRole("button", { name: "试点审核员 主聊天", exact: true }).click();
+      await expect(jobCard.getByRole("status")).toHaveText("计划待确认");
+      await jobCard.getByRole("button", { name: "查看计划" }).click();
+      const botDialog = page.getByRole("dialog", { name: "Bot 工单" });
+      await expect(botDialog.getByRole("heading", { name: `试点审核员 · ${item.number}` })).toBeVisible();
+      await expect(botDialog.getByText(baseCommit.slice(0, 7))).toBeVisible();
+      await screenshot(app, "studio", "plane-bot-conversation-plan", page);
+      await botDialog.getByRole("button", { name: "开工" }).click();
+      await expect.poll(async () => (await getJob()).state, { timeout: 45_000 }).toBe("failed");
+      await expect(botDialog.getByRole("alert")).toContainText("还没有提交交付");
+      const job = await getJob();
+      const worker = (await state()).sessions.find((s) => s.taskId === job.taskId)!;
+      expect(worker.cwd).toBeTruthy();
+      const workerItems = () => studio!.api<SessionItem[]>("GET", `/api/sessions/${worker.id}/items`);
+      expect((await workerItems()).filter((row) => row.type === "turn")).toHaveLength(2);
+
+      // The fixture asks a genuine business question through the worker's own MCP scope.
+      await studio.api("POST", `/api/sessions/${worker.id}/messages`, { text: '[[mcp: decision_request {"question":"发布说明写给谁？","options":["内测成员","所有用户"]}]]' });
+      await expect(botDialog.getByTestId("decision-card")).toContainText("发布说明写给谁？");
+      await screenshot(app, "studio", "plane-bot-conversation-question", page);
+      await botDialog.getByRole("button", { name: "关闭", exact: true }).click();
+      const focusOpened = app.waitForEvent("window");
+      const focusToggle = page.getByRole("button", { name: /^Focus/ });
+      await focusToggle.click();
+      const focus = await focusOpened;
+      await expect(focus.getByTestId("focus-needs")).toHaveText("需要你 1");
+      const focusJob = focus.getByTestId("focus-plane-bot");
+      await expect(focusJob).toContainText("试点审核员 · DEMO-5");
+      await screenshot(app, "studio", "plane-bot-conversation-focus", focus, "focus");
+      await focusJob.getByRole("button").click();
+      await expect(jobCard.getByRole("button", { name: "答复 Bot" })).toBeVisible();
+      await focusToggle.click();
+      await page.getByRole("button", { name: "待你处理", exact: true }).click();
+      await page.getByRole("region", { name: "待你处理" }).getByRole("button", { name: /试点审核员 · DEMO-5/ }).click();
+      await jobCard.getByRole("button", { name: "答复 Bot" }).click();
+      await botDialog.getByRole("button", { name: "内测成员", exact: true }).click();
+      await expect(botDialog.getByTestId("decision-card")).toHaveCount(0);
+      await expect.poll(async () => (await workerItems()).some((row) => row.type === "user" && row.text.includes("我的决定：内测成员"))).toBe(true);
+      await expect.poll(async () => (await state()).sessions.find((s) => s.id === worker.id)?.status).toBe("idle");
+
+      // An asynchronous runtime question should appear in the Bot before its worker turn ends.
+      await studio.api("POST", `/api/sessions/${worker.id}/messages`, { text: "[[ask-async]] [[slow]]" });
+      await botDialog.getByRole("button", { name: "答复「你最喜欢哪个季节？」" }).click();
+      expect((await workerItems()).some((row) => row.type === "turn" && row.state === "running")).toBe(true);
+      const runtimeQuestion = botDialog.getByTestId("question-card");
+      await expect(runtimeQuestion.getByRole("heading")).toHaveText("你最喜欢哪个季节？");
+      await runtimeQuestion.getByRole("radio", { name: /夏天/ }).click();
+      await runtimeQuestion.getByRole("button", { name: "提交" }).click();
+      await expect.poll(async () => (await workerItems()).some((row) => row.type === "question" && row.state === "answered")).toBe(true);
+      await expect.poll(async () => (await state()).sessions.find((s) => s.id === worker.id)?.status).toBe("idle");
+
+      await studio.api("POST", `/api/sessions/${worker.id}/messages`, { text: "[[shell: cmd /c echo plane-bot-permission]]" });
+      const approval = botDialog.getByTestId("approval");
+      await expect(approval).toContainText("plane-bot-permission");
+      await screenshot(app, "studio", "plane-bot-conversation-permission", page);
+      await approval.getByRole("button", { name: "拒绝", exact: true }).click();
+      await expect.poll(async () => (await workerItems()).some((row) => row.type === "approval" && row.state === "declined")).toBe(true);
+      await expect.poll(async () => (await state()).sessions.find((s) => s.id === worker.id)?.status).toBe("idle");
+
+      await writeFile(join(worker.cwd!, "release.md"), "Notes for internal testers.\n");
+      await studio.api("POST", `/api/tasks/${job.taskId}/workflow/submit`, { sessionId: worker.id, summary: "已更新内测公告", verification: "核对 release.md 的发布受众" });
+      await expect(botDialog.getByText("等待人工验收", { exact: true })).toBeVisible();
+      await expect(botDialog.getByRole("button", { name: "查看改动" })).toBeVisible();
+      expect(comments).toEqual([]);
+      await screenshot(app, "studio", "plane-bot-conversation-review", page);
+      await botDialog.getByLabel("验收意见或退回原因").fill("补充回滚步骤。");
+      await botDialog.getByRole("button", { name: "退回修改", exact: true }).click();
+      await expect.poll(async () => (await workerItems()).some((row) => row.type === "user" && row.text.includes("补充回滚步骤"))).toBe(true);
+      await expect.poll(async () => (await getJob()).state, { timeout: 30_000 }).toBe("failed");
+      expect(comments).toEqual([]);
+      await writeFile(join(worker.cwd!, "release.md"), "Notes for internal testers.\nRollback using the previous release.\n");
+      await studio.api("POST", `/api/tasks/${job.taskId}/workflow/submit`, { sessionId: worker.id, summary: "已补充回滚步骤", verification: "核对最新工作树的发布受众和回滚指引" });
+      await expect(botDialog.getByText("已补充回滚步骤").first()).toBeVisible();
+      rejectNative = false;
+      await botDialog.getByRole("button", { name: "验收通过", exact: true }).click();
+      await expect(botDialog.getByText("已回写 Plane 评论", { exact: true })).toBeVisible();
+      expect(comments).toHaveLength(1);
+      expect(comments[0]?.comment_html).toContain("已补充回滚步骤");
+      expect(git("status", "--short").toString().trim()).toBe("");
+      return;
+    }
+
     git("-c", "user.name=Test fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-qm", "after analysis");
     await dialog.getByRole("button", { name: "关闭", exact: true }).click();
     await delegate.click();
@@ -304,6 +394,7 @@ for (const { name, approve } of planeBotScenarios) test(name, async () => {
     const job = await getJob();
     await expect.poll(async () => (await state()).sessions.some((entry) => entry.taskId === job.taskId)).toBe(true);
     const worker = (await state()).sessions.find((entry) => entry.taskId === job.taskId)!;
+    await expect.poll(async () => (await getJob()).state, { timeout: 30_000 }).toBe("failed");
     await expect.poll(async () => (await studio!.api<SessionItem[]>("GET", `/api/sessions/${worker.id}/items`)).filter((item) => item.type === "turn").at(-1)?.state, { timeout: 30_000 }).toBe("completed");
     await expect.poll(async () => (await state()).sessions.find((entry) => entry.id === worker.id)?.status).toBe("idle");
     expect(worker.cwd).toBeTruthy();
@@ -380,7 +471,7 @@ for (const { name, approve } of planeBotScenarios) test(name, async () => {
     await expect(page.getByTestId("task-description")).toHaveCount(0);
     await original.getByRole("button", { name: "原单与任务说明" }).click();
     await page.getByRole("menuitem", { name: "任务说明…" }).click();
-    await expect(page.getByRole("dialog", { name: "任务说明" }).getByLabel("说明内容")).toHaveValue(/原请求/);
+    await expect(page.getByRole("dialog", { name: "任务说明" }).getByLabel("说明内容")).toHaveValue(/已批准的计划/);
     await page.keyboard.press("Escape");
 
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });

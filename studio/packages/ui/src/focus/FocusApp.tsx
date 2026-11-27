@@ -6,6 +6,8 @@ import { noteFocusJump } from "../lib/focusJump.js";
 import { toggleTheme } from "../lib/theme.js";
 import { hangsUnderOf, interruptedSince, noteSeen, runningSubs, subsByParent, unseenSessions, useSessionSeen, withGrants } from "../lib/sessionSeen.js";
 import { DecisionCard, useOpenDecisions } from "../collab/DecisionPanel.js";
+import { planeBotStatus } from "../teamtasks/PlaneBot.js";
+import { planeBotNeedsAttention, usePlaneBotAttention } from "../teamtasks/planeBotAttention.js";
 import { usePendingProposals } from "../planning/ProposalsPanel.js";
 import { useTaskPlans } from "../taskplans/TaskPlans.js";
 import { RelayCard, useRelays } from "../relays/Relays.js";
@@ -67,6 +69,8 @@ export function FocusApp() {
   const decisions = useOpenDecisions(host.kind === "ready" ? host.link : NO_LINK);
   const pending = usePendingProposals(host.kind === "ready" ? host.link : NO_LINK);
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
+  const planeJobs = usePlaneBotAttention(host.kind === "ready" && settings?.teamTasksEnabled === true && settings.botsEnabled !== false ? host.link : null);
+  const planeNeeds = planeJobs.filter(planeBotNeedsAttention);
   // Scheduler proposals belong to the planning feature (设置 → 功能).
   const proposals = settings?.disabledFeatures.includes("planning") ? [] : pending;
   // 拆任务提案 (stage 16): a 主控 waits for the person to accept or dismiss them.
@@ -156,14 +160,15 @@ export function FocusApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the ids by content
   useEffect(() => void (liveSessionsId !== null && subsOpen.keepOnly(new Set(liveSessionsId.split("|")))), [liveSessionsId]);
   const subs = live ? subsByParent(live.sessions) : new Map<string, Session[]>();
-  const waiting = live ? needsMe(live).filter(mine) : [];
-  const finished = live ? unseenSessions(live.sessions, seenData).filter((s) => !waiting.includes(s) && mine(s) && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
+  const planeWorkers = new Set(planeJobs.map((job) => job.taskId));
+  const waiting = live ? needsMe(live).filter((s) => mine(s) && !planeWorkers.has(s.taskId ?? "")) : [];
+  const finished = live ? unseenSessions(live.sessions, seenData).filter((s) => !waiting.includes(s) && mine(s) && !planeWorkers.has(s.taskId ?? "") && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   // Seen means reviewed (我知道了, 在工作台打开, or looked at in the workbench) and it leaves at once, open or not
   // (2026-10-26: an entry kept while open looked unreviewed for half an hour after 在工作台打开, then vanished when its
   // title folded it). Opening it here no longer counts as seeing it.
   const list = [...waiting, ...finished];
-  const asks = live ? decisions.filter((d) => decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
-  const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id)]);
+  const asks = live ? decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
+  const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id), ...planeNeeds.map((job) => `plane:${job.id}:${job.state}`)]);
   const keysId = keys.join("|");
   // Forget what was handled, so it alerts again if it comes back.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the keys by content
@@ -194,7 +199,8 @@ export function FocusApp() {
   const reviewKeys = new Set(attentionKeys(toReview, [], []));
   // Green when everything new is finished work to look at.
   const calm = alerting && keys.every((k) => seen.has(k) || reviewKeys.has(k));
-  const things = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length - toReview.length;
+  const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length + planeNeeds.length;
+  const things = needs - toReview.length;
 
   // How long the oldest unacknowledged thing has waited; the clock ticks while something does.
   const firstSeen = useRef<Map<string, number>>(new Map());
@@ -257,7 +263,6 @@ export function FocusApp() {
   }
 
   const { state, link } = host;
-  const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length;
   const running = state.sessions.filter((s) => !s.archivedAt && s.status === "running" && mine(s) && !isBotConversation(s, state.tasks)).length;
   // 置顶 (2026-10-21): one session of each pinned task, on top; listed nowhere else. Its task's other sessions do not
   // show under 进行中 either (10-22).
@@ -287,6 +292,7 @@ export function FocusApp() {
     noteFocusJump(sessionId);
     goTo(sessionId, taskId);
   };
+  const goToBot = (job: (typeof planeNeeds)[number]) => void window.amo?.openInWorkbench?.({ taskId: job.botTaskId, ...(job.botSessionId ? { sessionId: job.botSessionId } : {}) });
 
   /** The robot and header count open the first thing that needs the person in the workbench. */
   const openFirst = () => {
@@ -295,6 +301,7 @@ export function FocusApp() {
     const d = asks[0];
     if (s) goToDeal(s.id, s.taskId);
     else if (d) goToDeal(d.sessionId, d.taskId);
+    else if (planeNeeds[0]) goToBot(planeNeeds[0]);
     else if (pairAsks.length || taskAsks.length) void window.amo?.openInWorkbench?.({ settings: "remote" });
     else void window.amo?.openInWorkbench?.({ taskId: "" });
   };
@@ -484,6 +491,12 @@ export function FocusApp() {
                 </button>
               </div>
             ))}
+            {planeNeeds.map((job) => <div key={job.id} className="focus-entry" data-tone="att" data-testid="focus-plane-bot">
+              <button type="button" className="focus-row" onClick={() => goToBot(job)}>
+                <StatusWord tone="att" word="Bot" />
+                <span className="focus-row-text"><span className="focus-title">{job.botName} · {job.item.number}</span><span className="focus-sub">{planeBotStatus(job)} · {job.item.title}</span></span>
+              </button>
+            </div>)}
             {asks.map((d) => {
               const s = state.sessions.find((x) => x.id === d.sessionId)!;
               return (

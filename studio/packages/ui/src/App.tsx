@@ -6,6 +6,7 @@ import { canvasTopicFor } from "./canvas/topic.js";
 import { useHostState } from "./host/useHostState.js";
 import { QuickStart } from "./newtask/QuickStart.js";
 import { BellGlyph, NeedsGlyph, RecentGlyph, ShortcutMenu, ThemeShortcut, pendingItems, recentSessions } from "./shell/WorkbenchShortcuts.js";
+import { usePlaneBotAttention } from "./teamtasks/planeBotAttention.js";
 import { useUnreadMail } from "./collab/useInbox.js";
 import { useOpenDecisions } from "./collab/DecisionPanel.js";
 import { decisionNeedsPerson } from "./focus/managedAttention.js";
@@ -51,10 +52,11 @@ const NO_LINK = { url: "", token: "" };
 
 export function App() {
   const host = useHostState();
-  useTaskbarBadge(host);
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const teamTasksEnabled = settings?.teamTasksEnabled === true;
   const botsEnabled = settings?.botsEnabled !== false;
+  const planeJobs = usePlaneBotAttention(host.kind === "ready" && teamTasksEnabled && botsEnabled ? host.link : null);
+  useTaskbarBadge(host, planeJobs);
   useEffect(() => onHostEvent((event) => {
     if (event.type !== "bot.notification") return;
     const label = { approval: "需要授权", completed: "已完成任务", failed: "未能完成任务" }[event.notice];
@@ -314,7 +316,7 @@ export function App() {
   const waiting = pendingItems(navState, openDecisions, planning ? proposals : [], locateTask, id => {
     setView({ kind: "board" });
     requestAnimationFrame(() => document.getElementById(`proposal-${id}`)?.focus());
-  });
+  }, planeJobs);
   const recent = () => recentSessions(navState, session => {
     if (session.taskId) locateTask(session.taskId, session.id);
     else if (session.topicId) {

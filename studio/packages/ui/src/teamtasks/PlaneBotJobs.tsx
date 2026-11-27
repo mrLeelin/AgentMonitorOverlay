@@ -21,10 +21,10 @@ export function PlaneBotJobs({ link, botId, onOpen }: { link: HostLink; botId: s
       <summary><strong>{job.item.number} · {job.item.title}</strong><span className="plane-bot-job-status">{planeBotStatus(job)}</span></summary>
       <div className="plane-bot-job-content">
         {job.state === "failed" && job.error && <p className="form-error">{job.error}</p>}
-        {job.state === "awaiting-approval" && <p className="settings-hint">到团队看板的原单上确认。</p>}
+        {job.state === "awaiting-approval" && !job.jobId && <p className="settings-hint">到团队看板的原单上确认。</p>}
         {job.delivery && <PlaneBotDeliveryCard key={job.delivery.resultId} link={link} job={job} onJobChange={update} onReload={reload} onOpen={open} />}
-        {job.taskId ? <button type="button" className="btn-ghost small" onClick={() => open(job.taskId!)}>打开执行任务</button>
-          : job.botTaskId && job.botSessionId ? <button type="button" className="btn-ghost small" onClick={() => open(job.botTaskId!, job.botSessionId!)}>查看 Bot 分析</button> : null}
+        {job.botTaskId && job.botSessionId && <button type="button" className="btn-ghost small" onClick={() => open(job.botTaskId!, job.botSessionId!)}>{job.jobId ? "打开 Bot 对话" : "查看 Bot 分析"}</button>}
+        {job.taskId && <button type="button" className="btn-ghost small" onClick={() => open(job.taskId!)}>打开执行任务</button>}
       </div>
     </details>)}
   </section>;

@@ -25,8 +25,13 @@
 .plane-bot-delivery-status { color: var(--text); font-size: var(--fs-sm); }
 .plane-bot-delivery-detail { color: var(--text-dim); font-size: var(--fs-cap); overflow-wrap: anywhere; }
 .plane-bot-task > .tb-error { flex-basis: 100%; }
-.plane-bot-delivery-status[data-state="review"] { color: var(--attention); }
+.plane-bot-delivery-status:is([data-state="review"], [data-state="awaiting-approval"], [data-state="awaiting-user"]) { color: var(--attention); }
 .plane-bot-delivery-status[data-state="failed"] { color: var(--error-text); }
+
+.plane-bot-conversation { display: grid; gap: 6px; padding: 6px 12px; max-height: 160px; overflow-y: auto; flex: none; }
+.plane-bot-conversation .plane-bot-delivery { flex-wrap: nowrap; }
+.plane-bot-conversation .plane-bot-delivery-copy { min-width: 0; }
+.plane-bot-conversation .plane-bot-delivery-copy > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .modal.plane-bot-intake-plan { width: 640px; }
 .plane-bot-plan { min-height: 0; max-height: 45vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }

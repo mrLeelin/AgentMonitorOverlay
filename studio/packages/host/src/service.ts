@@ -174,7 +174,10 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.relays.prepareInbox();
     this.sharedContext.watch();
     this.orchestration.prepareInbox();
-    this.sessions.inbox.validateProducerMessage = (item) => this.orchestration.validateMessage(item);
+    this.sessions.inbox.validateProducerMessage = (item) => {
+      this.orchestration.validateMessage(item);
+      this.teamTasks.planeBots.validateContinuation(item);
+    };
     this.sessions.watchReports();
     this.duty.botJob = this.bots.dutyJob();
     this.bots.recover();

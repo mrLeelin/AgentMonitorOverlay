@@ -63,6 +63,7 @@ import { TaskHeader } from "./TaskHeader.js";
 import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
 import { LocalTeamBoardTask } from "../teamtasks/StudioTeamBoard.js";
 import { PlaneBotTaskAction, usePlaneBotJob } from "../teamtasks/PlaneBot.js";
+import { PlaneBotConversation } from "../teamtasks/PlaneBotConversation.js";
 import { LinkPlaneTaskDialog } from "../teamtasks/PlaneTaskDialogs.js";
 import { TaskWorkspaceDialog } from "./TaskWorkspaceDialog.js";
 
@@ -569,6 +570,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       </div>
       </TaskHeader>
+      {teamTasksEnabled && botsEnabled && ownerBot && !copy && <PlaneBotConversation key={ownerBot.id} link={link} bot={ownerBot} session={session} sessions={own} tasks={tasks} onOpen={(id, sessionId) => onOpenTask?.(id, sessionId)} />}
       {teamTasksEnabled && !copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
       {teamTasksEnabled && !copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal}
         onDescribe={planeBotJob && task.description && !task.archivedAt ? () => setDescribing(true) : undefined}

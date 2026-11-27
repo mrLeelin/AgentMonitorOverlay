@@ -123,7 +123,7 @@ async function waitForPlan(jobs: HostService["teamTasks"]["planeBots"]) {
 async function waitForWorker(jobs: HostService["teamTasks"]["planeBots"], store: Store) {
   return vi.waitFor(async () => {
     const job = await jobs.forItem(itemId);
-    expect(job).toMatchObject({ state: "executing", taskId: expect.any(String) });
+    expect(job).toMatchObject({ taskId: expect.any(String) });
     const worker = store.listSessions({ taskId: job!.taskId! })[0];
     expect(worker?.status).toBe("idle");
     return worker!;
@@ -136,13 +136,110 @@ async function dispatchForReview({ jobs, host, store, request }: ReturnType<type
   const [analysis] = host.bots.requests(null);
   await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash });
   const worker = await waitForWorker(jobs, store);
-  // The session can first appear idle before the runtime starts its initial turn.
-  await vi.waitFor(() => {
+  // These fixtures submit the delivery explicitly after the fake worker's two text-only turns settle.
+  await vi.waitFor(async () => {
     expect(store.findItems(worker.id, "turn", {}, { newest: true, limit: 1 })[0]).toMatchObject({ state: "completed" });
     expect(store.getSession(worker.id)?.status).toBe("idle");
+    expect(await jobs.forTask(worker.taskId!)).toMatchObject({ state: "failed", canRetry: true });
   }, waitOptions);
   return { worker, analysis: analysis!, plan, taskId: worker.taskId! };
 }
+
+it("continues an approved worker that ended without a delivery in the same worktree", async () => {
+  const { jobs, host, store, servers, repo, request, git, writes, bot } = prepare();
+  const turns: Array<{ thread: string; cwd: string; text: string }> = [];
+  servers.fakes.set("test", await startFakeAppServer({ script: async (ctx) => {
+    if (ctx.thread.cwd === repo) return ctx.agentMessage("修正 fixture.txt 并验证。");
+    turns.push({ thread: ctx.thread.id, cwd: ctx.thread.cwd, text: ctx.userText });
+    if (turns.length === 1) return ctx.agentMessage("只找到了工具目录，这轮没有读取原单或修改文件。");
+    const worker = store.listSessions().find((session) => session.runtimeRef === ctx.thread.id)!;
+    await vi.waitFor(() => expect(store.getSession(worker.id)?.status).toBe("running"));
+    writeFileSync(join(ctx.thread.cwd, "fixture.txt"), "worker correction");
+    host.orchestration.submit(worker.id, "已修正 fixture.txt", "检查了工作树差异");
+    await ctx.agentMessage("已提交交付。");
+  } }));
+
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  const [botJob] = await jobs.forBot(bot.id);
+  expect(await jobs.attention()).toMatchObject([{ id: botJob!.jobId, botName: bot.name, botSessionId: botJob!.botSessionId, state: "awaiting-approval" }]);
+  await expect(jobs.decideForBot("other-bot", botJob!.jobId!, { approve: true, planHash: plan.planHash })).rejects.toMatchObject({ code: "bad_request" });
+  await jobs.decideForBot(bot.id, botJob!.jobId!, { approve: true, planHash: plan.planHash });
+  await vi.waitFor(async () => expect(await jobs.forItem(itemId)).toMatchObject({
+    state: "review", delivery: { summary: "已修正 fixture.txt" },
+  }), waitOptions);
+
+  expect(turns).toHaveLength(2);
+  expect(turns[1]).toMatchObject({ thread: turns[0]!.thread, cwd: turns[0]!.cwd });
+  expect(turns[0]!.text).toContain("工单详情。");
+  expect(turns[0]!.text).not.toContain("请勿修改文件、写入外部系统或创建任务");
+  expect(turns[1]!.text).toContain("task_submit_result");
+  expect(gitAt(turns[0]!.cwd, "rev-parse", "HEAD")).toBe(plan.baseCommit);
+  expect(git("status", "--short")).toBe("");
+  expect(writes).toEqual([]);
+}, 15_000);
+
+it("waits for a worker's business decision and continues on the answer", async () => {
+  const { jobs, host, store, servers, repo, request } = prepare();
+  let decisionId: string | undefined;
+  const turns: string[] = [];
+  servers.fakes.set("test", await startFakeAppServer({ script: async (ctx) => {
+    if (ctx.thread.cwd === repo) return ctx.agentMessage("确认文件中的称呼后修改。");
+    turns.push(ctx.userText);
+    const worker = store.listSessions().find((session) => session.runtimeRef === ctx.thread.id)!;
+    if (!decisionId) {
+      decisionId = host.collab.requestDecisionFromSession(worker.id, "使用哪个称呼？", ["甲", "乙"]).id;
+      return ctx.agentMessage("等待答复。");
+    }
+    await vi.waitFor(() => expect(store.getSession(worker.id)?.status).toBe("running"));
+    host.orchestration.submit(worker.id, "按用户答复处理", "已验证");
+    await ctx.agentMessage("已提交交付。");
+  } }));
+
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash });
+  await vi.waitFor(async () => {
+    const job = await jobs.forItem(itemId);
+    expect(job).toMatchObject({ state: "awaiting-user", decisions: [{ id: decisionId, question: "使用哪个称呼？" }] });
+    expect(store.listSessions({ taskId: job!.taskId! })[0]?.status).toBe("idle");
+  }, waitOptions);
+  expect(turns).toHaveLength(1);
+  expect(store.getDecision(decisionId!)).toMatchObject({ state: "open", question: "使用哪个称呼？" });
+  host.collab.answerDecision(decisionId!, "甲");
+  await vi.waitFor(async () => expect(await jobs.forItem(itemId)).toMatchObject({
+    state: "review", delivery: { summary: "按用户答复处理" },
+  }), waitOptions);
+  expect(turns).toHaveLength(2);
+  expect(turns[1]).toContain("我的决定：甲");
+}, 15_000);
+
+it("keeps a worker paused when the person stops it", async () => {
+  const { jobs, host, store, servers, repo, request } = prepare();
+  let workerTurns = 0;
+  servers.fakes.set("test", await startFakeAppServer({ script: async (ctx) => {
+    if (ctx.thread.cwd === repo) return ctx.agentMessage("拟定处理计划。");
+    workerTurns++;
+    await ctx.sleep(5_000);
+    await ctx.agentMessage("这是被停止的执行回合。");
+  } }));
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash });
+  const worker = await vi.waitFor(async () => {
+    const job = await jobs.forItem(itemId);
+    const active = job?.taskId ? store.listSessions({ taskId: job.taskId })[0] : undefined;
+    expect(active?.status).toBe("running");
+    return active!;
+  }, waitOptions);
+  await host.sessions.interrupt(worker.id);
+  await vi.waitFor(async () => {
+    expect(store.getSession(worker.id)?.status).toBe("idle");
+    expect(await jobs.forItem(itemId)).toMatchObject({ state: "paused" });
+  }, waitOptions);
+  expect(workerTurns).toBe(1);
+  expect(host.sessions.inbox.held(worker.id)).toEqual([]);
+}, 15_000);
 
 it("persists the analysis, waits for approval, and keeps the worker uncreated", async () => {
   const { jobs, host, git, request } = prepare();
@@ -217,7 +314,7 @@ it("rejects a stale plan hash and dispatches only once across concurrent and rep
   const approve = () => jobs.approve(itemId, { ...approvalTarget, planHash });
   await Promise.all([approve(), approve()]);
   const worker = await waitForWorker(jobs, store);
-  expect(await approve()).toMatchObject({ state: "executing", taskId: worker.taskId });
+  expect(await approve()).toMatchObject({ taskId: worker.taskId });
   expect(host.bots.sidebar().workers).toEqual([{ botId: bot.id, taskId: worker.taskId }]);
   expect(store.listSessions({ taskId: worker.taskId! }).map(({ id }) => id)).toEqual([worker.id]);
 }, 15_000);

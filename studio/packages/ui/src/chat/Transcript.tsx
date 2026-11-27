@@ -473,7 +473,7 @@ function AgentReply({ item, highlights }: { item: AgentItem; highlights: readonl
 
 const APPROVAL_TITLE: Record<ApprovalItem["kind"], string> = { command: "请求执行命令", fileChange: "请求修改文件", permissions: "请求更多权限" };
 
-function ApprovalCard({ item, busy, onApprove }: { item: ApprovalItem; busy: boolean; onApprove: TranscriptProps["onApprove"] }) {
+export function ApprovalCard({ item, busy, onApprove }: { item: ApprovalItem; busy: boolean; onApprove: TranscriptProps["onApprove"] }) {
   const Icon = item.kind === "command" ? IconTerminal : item.kind === "fileChange" ? IconEdit : IconSparkle;
   return (
     <div className="approval pending" data-testid="approval" data-state={item.state}>

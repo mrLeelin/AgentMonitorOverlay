@@ -1,4 +1,4 @@
-import type { Session, Task } from "./entities.js";
+import type { DecisionRequest, Session, SessionItem, Task } from "./entities.js";
 import type { NewTaskInput } from "./api.js";
 import type { BotRequest } from "./bots.js";
 import type { TeamTaskFile, TeamTaskFileInput, TeamTaskIdentity, TeamTaskStatus } from "./team-tasks.js";
@@ -20,15 +20,19 @@ export type PlanePersonalDraft = Pick<NewTaskInput, "title" | "lead" | "firstMes
 export type PlanePersonalTask = { task: Task; session: Session | null; existing: boolean; assignee: string };
 export type PlaneBotIntake = { source: string; viewerId: string; botId: string; workspaceId: string; topicId?: string };
 export type PlaneBotDecision = Pick<PlaneBotIntake, "source" | "viewerId"> & { planHash: string };
+export type PlaneBotPlanChoice = { planHash: string; approve: boolean };
 export type PlaneBotDelivery = { resultId: string; state: "submitted" | "accepted"; summary: string; verification: string; sessionId: string | null; baseCommit?: string };
 export type PlaneBotCheck = { resultId: string; status: BotRequest["status"]; opinion?: string; error?: string; taskId: string | null; sessionId: string | null };
 export type PlaneBotJob = {
-  botId: string; workspaceId: string; itemId: string; taskId: string | null; botTaskId: string | null; botSessionId: string | null;
-  state: "planning" | "awaiting-approval" | "starting" | "declined" | "executing" | "review" | "sending" | "sent" | "failed";
+  jobId?: string; botId: string; workspaceId: string; itemId: string; taskId: string | null; botTaskId: string | null; botSessionId: string | null;
+  state: "planning" | "awaiting-approval" | "starting" | "declined" | "executing" | "awaiting-user" | "paused" | "review" | "sending" | "sent" | "failed";
   item: { number: string; title: string }; delivery?: PlaneBotDelivery; check?: PlaneBotCheck;
   plan?: string; planHash?: string; baseCommit?: string; behind?: number;
   error?: string; failureStage?: "execution" | "writeback"; canRetry?: boolean;
+  decisions?: DecisionRequest[];
+  requests?: Array<Extract<SessionItem, { type: "approval" | "question" }>>;
 };
+export type PlaneBotAttention = Pick<PlaneBotJob, "state" | "taskId" | "item" | "failureStage"> & { id: string; botName: string; botTaskId: string; botSessionId: string | null };
 export type PlaneBoardProject = { id: string; name: string; writable: boolean; missing: string[] };
 export type PlaneBoardWorkspace = { slug: string; name: string; projects: PlaneBoardProject[] };
 export type PlaneBoardCatalog = { identity: PlaneBoardIdentity; workspaces: PlaneBoardWorkspace[] };
@@ -212,6 +216,9 @@ export interface TeamBoardHostRoutes {
   "POST /api/team-board/plane/work-items/:id/bot/approve": { req: PlaneBotDecision; res: PlaneBotJob };
   "POST /api/team-board/plane/work-items/:id/bot/decline": { req: PlaneBotDecision; res: PlaneBotJob };
   "GET /api/team-board/plane/bots/:id/jobs": { req: void; res: PlaneBotJob[] };
+  "POST /api/team-board/plane/bots/:id/jobs/:jobId/decision": { req: PlaneBotPlanChoice; res: PlaneBotJob };
+  "POST /api/team-board/plane/bots/:id/jobs/:jobId/retry": { req: void; res: PlaneBotJob };
+  "GET /api/team-board/plane/bot-attention": { req: void; res: PlaneBotAttention[] };
   "GET /api/team-board/local/:id/bot": { req: void; res: PlaneBotJob | null };
   "POST /api/team-board/local/:id/bot/retry": { req: void; res: PlaneBotJob };
   "POST /api/team-board/local/:id/bot/check": { req: { resultId: string }; res: PlaneBotJob };
