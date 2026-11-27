@@ -164,6 +164,24 @@ describe("archived task retention", () => {
   });
 });
 
+describe("filed task image cleanup", () => {
+  it("keeps shared first-message images and deletes them after the last task is purged", async () => {
+    const x = await setup();
+    const image = host.attachments.save(PNG, { name: "rider.png", mime: "image/png" });
+    const archived = (await host.tasks.createTask({ workspaceId: x.alpha.id, firstMessage: { text: "对比图片", attachments: [image.id] } })).task;
+    const live = (await host.tasks.createTask({ workspaceId: x.alpha.id, firstMessage: { text: "还要看这张图", attachments: [image.id] } })).task;
+    await host.tasks.archiveTask(archived.id);
+
+    expect(host.data.preview("task", archived.id)).toMatchObject({ attachments: 1 });
+    host.data.purge("task", archived.id);
+    expect(existsSync(image.path)).toBe(true);
+
+    await host.tasks.archiveTask(live.id);
+    host.data.purge("task", live.id);
+    expect(existsSync(image.path)).toBe(false);
+  });
+});
+
 describe("archived projects", () => {
   it("take their tasks and topic sessions along, leave every list, and come back with what went with them", async () => {
     const x = await setup();

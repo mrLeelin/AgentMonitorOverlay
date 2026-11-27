@@ -139,7 +139,7 @@ export function useTaskDraft(profiles: readonly ModelProfile[], initial?: Partia
 /**
  * Creates the task: `file` only files it in 待办 (no session, no model call); otherwise its first session starts.
  * `onCanvas`: a task in a topic also goes on that topic's canvas ("显示在画布上"). `attachments`: uploaded images that go
- * with the first message (not when only filing).
+ * with the first message, or stay with a filed task until its first session starts.
  */
 /** `resumeFrom` (接续已有会话, 2026-11-05): the outside Claude session the first session goes on from; the text may be empty then. */
 export type CreateTaskFromDraft = (input: NewTaskInput) => Promise<{ task: Task; session: Session | null; existing?: boolean }>;
@@ -165,7 +165,7 @@ export async function submitDraft(link: HostLink, draft: TaskDraft, file: boolea
     ...(worktree ? { worktree } : {}),
     // 放进待办 (2026-11-05): the sentence is kept on the task for its first session; it used to be cut to the title.
     ...(file
-      ? { firstMessage: text }
+      ? { firstMessage: attachments.length ? { text, attachments: [...attachments] } : text }
       : { firstSession: { profileId: draft.pick.profileId, ...(!goal && text ? { text } : {}), ...(Object.keys(options).length ? { options } : {}), ...(attachments.length ? { attachments: [...attachments] } : {}), ...(resumeFrom ? { resumeFrom } : {}), ...(setups.length ? { subsessions: [...setups] } : {}) } }),
   };
   const created = create ? await create(request) : { ...await call(link, "POST /api/tasks", {}, request), existing: false };

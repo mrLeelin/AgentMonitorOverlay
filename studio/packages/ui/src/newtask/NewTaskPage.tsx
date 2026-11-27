@@ -176,11 +176,10 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
     if (!resume && !draft.text.trim() && (file || attach.empty)) return setError(file ? "写一句话再放进待办。" : "写一句话或添加图片、文件再开始。");
     if (!file && !draft.pick.profileId) return setError("先选一个模型。");
-    if (file && !attach.empty) return setError("放进待办不带图片和文件：先移除它们，或者直接开始。");
     // A 子会话设定 lives with the session it is sent to: a filed task has none yet (2026-11-05).
     if (file && Object.entries(draft.refs ?? {}).some(([name, r]) => r.kind === "subsession" && draft.text.includes(`@${name}`))) return setError("放进待办不带子会话设定：直接开始，或者先去掉 @子会话。");
     if (attach.uploading) return setError("图片还在上传，稍等一下。");
-    if (attach.failed) return setError("有图片上传失败，移除后再开始。");
+    if (attach.failed) return setError("有图片上传失败，请移除或重新添加后再试。");
     setBusy(true);
     if (!file) setStarting(resume ? "正在接续会话…" : `正在启动 ${shortModel(profiles.find((p) => p.id === draft.pick.profileId))}…`);
     setError("");
@@ -196,7 +195,8 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
       onCreated(created.task, created.session);
     } catch (err) {
       if (err instanceof GoalStartError) setPendingGoal(err.pending);
-      setError(err instanceof Error ? err.message : String(err));
+      const oldHost = file && attach.images.length > 0 && err instanceof HostApiError && err.message === "firstMessage must be text";
+      setError(oldHost ? "当前运行的 Studio 后台还不支持把图片存进待办。草稿已保留，等会话结束后重启新版 Studio 再试。" : err instanceof Error ? err.message : String(err));
       setBusy(false);
       setStarting(null);
     }
@@ -547,7 +547,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
               <button type="button" className="btn-ghost draft-templates" onClick={() => mentions.askTemplate(input.current?.selectionStart ?? draft.text.length)} disabled={busy} title="打开提示词模板，选择后插入第一句话" data-testid="draft-templates">
                 提示词模板
               </button>
-              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume || !!worktree || !!draft.goal || !attach.empty || !draft.text.trim()} title={resume ? "接续的会话不能放进待办" : worktree ? "新建工作树需要直接开始" : draft.goal ? "关闭 Goal 后可以放进待办" : !attach.empty ? "移除附件后可以放进待办" : "只建任务，放进待办，不开会话"} data-testid="draft-file">
+              <button type="button" className="btn-ghost" onClick={() => void submit(true)} disabled={busy || !!resume || !!worktree || !!draft.goal || !draft.text.trim() || attach.uploading || attach.failed} title={resume ? "接续的会话不能放进待办" : worktree ? "新建工作树需要直接开始" : draft.goal ? "关闭 Goal 后可以放进待办" : attach.uploading ? "图片正在上传" : attach.failed ? "请移除或重新添加上传失败的图片" : "保存第一句话和附件，稍后再开会话"} data-testid="draft-file">
                 放进待办 {todoShortcut !== "off" && <kbd>{TODO_SHORTCUTS[todoShortcut]}</kbd>}
               </button>
             </div>

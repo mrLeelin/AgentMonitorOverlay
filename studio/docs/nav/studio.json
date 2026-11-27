@@ -581,9 +581,9 @@
     {
       "id": "ui.newTask",
       "label": "新建任务页",
-      "aliases": ["新建任务", "新任务", "创建个人任务", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建", "分支与工作树", "worktree"],
+      "aliases": ["新建任务", "新任务", "创建个人任务", "放进待办", "NewTaskPage", "接续已有会话", "ResumePicker", "远程新建", "分支与工作树", "worktree"],
       "category": "ui",
-        "purpose": "新建任务：选项目、模型、强度，第一句话；本机新开会话时，附件按钮旁可为 Codex、Claude、DSH 或 Pi 设置启动分支和独立工作树；「更多选项」中可开启 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
+        "purpose": "新建任务：选项目、模型、强度，第一句话；本机新开会话时，附件按钮旁可为 Codex、Claude、DSH 或 Pi 设置启动分支和独立工作树；「更多选项」中可开启 Goal，以第一句话作为原生目标启动 Codex、Claude、DSH，按模型显示预算，失败或刷新后使用已建会话重试，暂不支持同时带图片、接续或存为待办；底部操作行可直接打开提示词模板，右下角放进待办可保留第一句话里的图片和文件引用，之后新建会话时恢复到输入框；接续终端或 Claude 桌面版里已有的会话；给远程电脑新建任务。",
       "anchors": [
         { "label": "新建任务页", "path": "studio/packages/ui/src/newtask/NewTaskPage.tsx", "anchor": "export function NewTaskPage" },
         { "label": "新建任务与对话共用的发送和换行按键", "path": "studio/packages/ui/src/chat/inputPrefs.ts", "anchor": "export function useTaskEnter" },

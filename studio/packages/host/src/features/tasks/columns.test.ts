@@ -215,6 +215,23 @@ describe("放进待办 (2026-11-05)", () => {
     const started = await service.tasks.createTask({ workspaceId: alpha.id, firstSession: { profileId: "p-ds", text: "直接开始" }, firstMessage: "不该留下" });
     expect(started.task.firstMessage).toBeUndefined();
   });
+
+  it("files uploaded first-message images, validates them, and clears them with the first sentence", async () => {
+    const images = ["before.png", "after.png"].map((name) => service.attachments.save(Buffer.from("image"), { name, mime: "image/png" }));
+    const ids = images.map((image) => image.id);
+    const { task, session } = await service.tasks.createTask({ workspaceId: alpha.id, firstMessage: { text: "比较这两张图", attachments: ids } });
+    expect(session).toBeNull();
+    expect(task).toMatchObject({ firstMessage: "比较这两张图", firstMessageAttachments: ids });
+    expect(store.countItems([], [task.id]).attachmentIds).toEqual(ids);
+
+    service.tasks.updateTask(task.id, { firstMessage: "" });
+    expect(store.getTask(task.id)).not.toHaveProperty("firstMessage");
+    expect(store.getTask(task.id)).not.toHaveProperty("firstMessageAttachments");
+    expect(store.countItems([], [task.id]).attachmentIds).toEqual([]);
+    const before = store.listTasks().length;
+    await expect(service.tasks.createTask({ workspaceId: alpha.id, firstMessage: { text: "图片", attachments: ["att-00000000-0000-0000-0000-000000000000"] } })).rejects.toThrow(/attachment .* not found/);
+    expect(store.listTasks()).toHaveLength(before);
+  });
 });
 
 describe("进行中 ⇄ 待审阅", () => {

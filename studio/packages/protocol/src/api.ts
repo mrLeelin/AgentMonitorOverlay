@@ -77,7 +77,10 @@ export interface NewSessionInput {
 /** Either file a personal task for later, or start its first session in the selected project. */
 export type NewTaskInput = {
   title?: string; description?: string; workspaceId?: Id | null; topicId?: Id | null; managerTaskId?: Id | null;
-  column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput; firstMessage?: string; worktree?: { branch?: string; commit?: string };
+  column?: TaskColumn; lead?: boolean; firstSession?: NewSessionInput;
+  /** A plain sentence for old callers, or a filed first message with uploaded images. Older Hosts reject the object. */
+  firstMessage?: string | { text: string; attachments: Id[] };
+  worktree?: { branch?: string; commit?: string };
 };
 
 /** 接续已有会话 (2026-11-05): a Claude session started outside Studio, as GET /api/claude/outside-sessions lists it. */
@@ -733,7 +736,7 @@ export interface HostRoutes
    * only filed (column `todo` unless given); with it, the first session starts.
    */
   "POST /api/tasks": {
-    /** `firstMessage`: filed without a session (放进待办), the sentence its first session will start from. */
+    /** `firstMessage`: filed without a session (放进待办), its first-session text or text plus uploaded image ids. */
     req: NewTaskInput;
     res: { task: Task; session: Session | null };
   };

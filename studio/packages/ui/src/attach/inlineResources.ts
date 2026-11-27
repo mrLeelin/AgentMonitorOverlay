@@ -96,7 +96,7 @@ export function resourceMessage(text: string, images: readonly { key: string; id
 }
 
 /** Taking an unanswered message back must restore its actual resources, not just the visible numbered labels. */
-export function resourceDraft(message: string, images: readonly { id: string | null; path: string }[]) {
+export function resourceDraft(message: string, images: readonly { id: string | null; path?: string }[]) {
   const { text, refs } = splitFileRefItems(message);
   const restored: Array<{ key: string; name: string; id: string }> = [];
   const usedImages = new Set<number>();
@@ -118,7 +118,7 @@ export function resourceDraft(message: string, images: readonly { id: string | n
     return fileToken({ ...ref, note: ref.note?.replace(/^文中资源 \d+(?:；)?/, "") || undefined });
   });
   const extra = [
-    ...images.flatMap((i, n) => usedImages.has(n) ? [] : [image(n, baseName(i.path))].filter((s): s is string => !!s)),
+    ...images.flatMap((i, n) => usedImages.has(n) ? [] : [image(n, i.path ? baseName(i.path) : `图片 ${n + 1}`)].filter((s): s is string => !!s)),
     ...refs.filter((r) => !usedFiles.has(r)).map(fileToken),
   ];
   if (extra.length) draft += `${draft ? "\n" : ""}${extra.join(" ")}`;

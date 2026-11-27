@@ -130,7 +130,7 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
 
   private execute(k: DataKind, id: Id, set: PurgeSet): PurgeSummary {
     const summary = this.summary(k, id, set);
-    const { attachmentIds } = this.store.countItems(set.sessionIds);
+    const { attachmentIds } = this.store.countItems(set.sessionIds, set.taskIds);
     this.store.purge(set);
     for (const ws of set.workspaceIds) this.f.projects.dropHints(ws);
     this.publish({ type: "data.purged", workspaceIds: set.workspaceIds, topicIds: set.topicIds, taskIds: set.taskIds, sessionIds: set.sessionIds });
@@ -141,7 +141,7 @@ export class DataFeature extends Feature<"attachments" | "projects"> {
   }
 
   private summary(kind: DataKind, id: Id, set: PurgeSet): PurgeSummary {
-    const { items, attachmentIds } = this.store.countItems(set.sessionIds);
+    const { items, attachmentIds } = this.store.countItems(set.sessionIds, set.taskIds);
     return {
       kind,
       id,

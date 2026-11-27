@@ -51,7 +51,8 @@ import { RemoteBanner } from "./RemoteBanner.js";
 import { useStoredIds } from "../lib/storedIds.js";
 import { ALSO_MINE_KEY, PINNED_KEY } from "../focus/pins.js";
 import { readStored, writeStored } from "../lib/stored.js";
-import { writeSessionDraft } from "./sessionDraft.js";
+import { readSessionDraft, writeSessionDraft } from "./sessionDraft.js";
+import { restoreMessageDraft } from "../attach/useAttachments.js";
 import { TaskManagement } from "./TaskManagement.js";
 import { TaskContext } from "./TaskContext.js";
 import { usePrerequisites, waitingTitles, WAITING_HINT } from "./prerequisites.js";
@@ -280,10 +281,13 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       if (waiting.length) return setEarly({ input, waiting: waiting.map((t) => t.title || t.id) });
     }
     return run(starts(input.profileId, () => call(link, "POST /api/tasks/:id/sessions", { id: task.id }, confirmed ? { ...input, confirmed } : input)), (s) => {
-      const first = task.firstMessage;
-      if (first && !copy) {
-        writeSessionDraft(s.id, first);
-        void call(link, "PATCH /api/tasks/:id", { id: task.id }, { firstMessage: "" }).catch(() => undefined);
+      if ((task.firstMessage || task.firstMessageAttachments?.length) && !copy) {
+        const images = (task.firstMessageAttachments ?? []).map((id) => ({ id }));
+        const draft = restoreMessageDraft(task.firstMessage ?? "", images);
+        writeSessionDraft(s.id, draft);
+        if (readSessionDraft(s.id) === draft) {
+          void call(link, "PATCH /api/tasks/:id", { id: task.id }, { firstMessage: "" }).catch(() => undefined);
+        }
       }
       setSelected(s.id);
     });

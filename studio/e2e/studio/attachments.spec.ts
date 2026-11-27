@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import type { Session, Task, Workspace } from "@amo-studio/protocol";
+import type { Session, StateSnapshot, Task, Workspace } from "@amo-studio/protocol";
 import { TINY_PNG_BASE64 } from "@amo-studio/testkit";
 import { launchStudio, screenshot, type Studio } from "../support/studio.js";
 
@@ -130,8 +130,7 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await expect(page.getByTestId("lightbox")).toBeVisible();
   await page.getByTestId("lightbox").click();
   await expect(page.getByTestId("lightbox")).toHaveCount(0);
-  // Filing in 待办 does not take images.
-  await expect(page.getByTestId("draft-file")).toBeDisabled();
+  await expect(page.getByTestId("draft-file")).toBeEnabled();
   await screenshot(studio.app, "stage-18", "S18-newtask-image", page);
   await first.press("Enter");
 
@@ -141,6 +140,69 @@ test("pastes an image into the new-task page: it goes with the first sentence (2
   await page.getByRole("button", { name: "+ 新任务" }).click();
   await expect(page.getByTestId("inline-resource")).toHaveCount(0);
 });
+
+for (const action of ["button", "Ctrl+Shift+Enter"] as const) {
+  test(`files two images in 待办 via ${action} and sends them from the first session`, async () => {
+    studio = await launchStudio();
+    const { page } = studio;
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const settings = page.getByRole("dialog", { name: "设置", exact: true });
+    await selectSettingsPage(settings, "界面");
+    await settings.getByLabel("放进待办快捷键").selectOption("ctrlShift");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "+ 新任务" }).click();
+    const first = page.getByLabel("第一句话");
+    const description = "比较这两张图，说明右侧的区别";
+    await first.fill(description);
+    await pasteImage(page, "参考.png", first);
+    await expect(first.locator('.resource-image[data-state="ready"]')).toHaveCount(1);
+    await pasteImage(page, "改稿.png", first);
+    await expect(first.locator('.resource-image[data-state="ready"]')).toHaveCount(2);
+    const reference = join(studio.workspace("references"), "对比说明.md");
+    if (action === "Ctrl+Shift+Enter") {
+      writeFileSync(reference, "# 对比说明\n");
+      await page.getByTestId("draft-attach-input").setInputFiles(reference);
+      await expect(first.locator(".resource-file")).toHaveAttribute("title", reference);
+    }
+    const file = page.getByTestId("draft-file");
+    await expect(file).toBeEnabled();
+    await expect(file).toContainText("Ctrl+Shift+Enter");
+    if (action === "button") {
+      await screenshot(studio.app, "studio", "newtask-todo-two-images", page);
+      await file.click();
+    } else {
+      await first.press("Control+Shift+Enter");
+    }
+
+    const card = page.getByTestId("task-card").filter({ hasText: description });
+    await expect(card).toBeVisible();
+    const { tasks, sessions } = await studio.api<StateSnapshot>("GET", "/api/state");
+    const task = tasks.find((candidate) => candidate.title.includes(description))!;
+    expect(task.column).toBe("todo");
+    expect(task.firstMessageAttachments).toHaveLength(2);
+    expect(sessions.filter((session) => session.taskId === task.id)).toEqual([]);
+    // The filed task must carry the images even after the original composer's upload cache is gone.
+    await page.evaluate(() => localStorage.removeItem("amo.inlineImages"));
+    await page.reload();
+    await card.click();
+    await expect(page.getByTestId("task-first-message")).toContainText(description);
+    await page.getByTestId("new-session-toggle").click();
+    await page.getByRole("button", { name: "开始新会话" }).click();
+    const input = composer(page);
+    await expect(input).toContainText(description);
+    await expect(input.locator('.resource-image[data-state="ready"]')).toHaveCount(2);
+    if (action === "Ctrl+Shift+Enter") await expect(input.locator(".resource-file")).toHaveAttribute("title", reference);
+    if (action === "button") await screenshot(studio.app, "studio", "newtask-todo-images-restored", page);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(lastAgent(page)).toContainText(`MOCK: ${description}【图片 1：参考.png】【图片 2：改稿.png】`, { timeout: 30_000 });
+    await expect(lastAgent(page)).toContainText("[images: 2]");
+    if (action === "Ctrl+Shift+Enter") await expect(lastAgent(page)).toContainText(reference);
+    const sentImages = page.getByTestId("msg-user").first().getByTestId("msg-images").locator("img");
+    await expect(sentImages).toHaveCount(2);
+    const sentIds = await sentImages.evaluateAll((images: HTMLImageElement[]) => images.map((image) => new URL(image.src).pathname.split("/").pop()));
+    expect(sentIds).toEqual(task.firstMessageAttachments);
+  });
+}
 
 for (const start of ["button", "Enter"] as const) {
   test(`starts a new task with only an image via ${start} (2026-11-06)`, async () => {
@@ -187,10 +249,12 @@ test("an image-only new task waits for upload and refuses a failed image (2026-1
   await pasteImage(page, "截图.png", page.getByLabel("第一句话"));
   const route = await upload;
   await expect(page.getByTestId("inline-resource")).toHaveAttribute("data-state", "uploading");
+  await expect(page.getByTestId("draft-file")).toBeDisabled();
   await page.getByTestId("draft-start").click();
   await expect(page.getByRole("alert")).toContainText("图片还在上传");
   await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "internal", message: "upload rejected" } }) });
   await expect(page.getByTestId("inline-resource")).toHaveAttribute("data-state", "failed");
+  await expect(page.getByTestId("draft-file")).toBeDisabled();
   await page.getByLabel("第一句话").press("Enter");
   await expect(page.getByRole("alert")).toContainText("有图片上传失败");
   await expect(page.getByTestId("task-title")).toHaveCount(0);

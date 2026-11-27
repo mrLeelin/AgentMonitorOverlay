@@ -1,7 +1,7 @@
 import { mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { CanvasDoc, Id, NewSessionInput, OutsideSessionList, OutsideSessionPreview, Session, SessionOptions, Task, TaskColumn, TaskResult, Workspace } from "@amo-studio/protocol";
+import type { CanvasDoc, Id, NewSessionInput, NewTaskInput, OutsideSessionList, OutsideSessionPreview, Session, SessionOptions, Task, TaskColumn, TaskResult, Workspace } from "@amo-studio/protocol";
 import { inTurn, isCommon, MAIN_CANVAS_ID, removeTask, taskManagement, TASK_COLUMNS, TASK_DESCRIPTION_MAX, TASK_FIRST_MESSAGE_MAX } from "@amo-studio/protocol";
 import { HostError, sessionOptions, sessionMoving, LEGACY_COMMON_WORKSPACE_KEY, COMMON_NAME, SCHEDULER_TASK_KEY } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
@@ -220,21 +220,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
    * A task in a project (the common space when none is given), optionally in a topic. With `firstSession` its first
    * session starts at once; without, the task is only filed (待办 unless another column is given).
    */
-  async createTask(input: {
-    title?: string;
-    workspaceId?: Id | null;
-    topicId?: Id | null;
-    column?: TaskColumn;
-    lead?: boolean;
-    managerTaskId?: Id | null;
-    description?: string;
-    firstSession?: NewSessionInput;
-    worktree?: { branch?: string; commit?: string };
-    /** Filed without a session: the sentence its first session will take (2026-11-05). */
-    firstMessage?: string;
-  }, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
+  async createTask(input: NewTaskInput, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
+    if (input.firstSession && typeof input.firstMessage === "object" && input.firstMessage !== null) {
+      throw new HostError("bad_request", "首会话附件请放在 firstSession.attachments 中。");
+    }
     if (input.firstSession) {
       this.requireProfile(input.firstSession.profileId);
       if (input.firstSession.workspaceId && input.firstSession.workspaceId !== workspace.id) throw new HostError("bad_request", "a task's sessions run in the task's own workspace");
@@ -273,17 +264,19 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
-  createTaskRecord(input: Omit<Parameters<TasksFeature["createTask"]>[0], "firstSession">, link?: (task: Task) => void): Task {
+  createTaskRecord(input: Omit<NewTaskInput, "firstSession">, link?: (task: Task) => void): Task {
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
-    const firstMessage = firstMessageOf(input.firstMessage);
+    const first = firstMessageInput(input.firstMessage);
+    const firstMessage = first.text;
+    const firstMessageAttachments = this.f.sessions.images(first.attachments).map((a) => a.id);
     const title = input.title?.trim() || firstMessage.split("\n")[0]!.slice(0, 60);
     const column = input.column ?? "todo";
     const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
     const description = input.description?.trim() ?? "";
     if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
-    const create = () => this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, ...(description ? { description } : {}), ...(firstMessage ? { firstMessage } : {}) });
+    const create = () => this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, description, firstMessage, firstMessageAttachments });
     const task = link ? this.store.transaction(() => {
       const created = create();
       link(created);
@@ -321,7 +314,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     const current = this.requireTask(id);
     if (current.remote) throw new HostError("read_only", `这是 ${current.remote.name} 上的远程任务：状态、说明和专题跟着那台电脑走，这里不能改（名字可以改，会改到那边）`);
-    const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "lead" | "relayAuto" | "managerTaskId">> = {};
+    const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "firstMessageAttachments" | "lead" | "relayAuto" | "managerTaskId">> = {};
     const children = this.store.listTasks().filter((t) => t.managerTaskId === id);
     if (patch.lead === false && children.length) throw new HostError("conflict", "请先转交或解除所有直属任务，再取消主控。");
     const nextTopic = patch.topicId === undefined ? current.topicId : (patch.topicId === null || patch.topicId === "" ? null : String(patch.topicId));
@@ -332,7 +325,10 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       clean.managerTaskId = this.checkManager({ ...current, topicId: nextTopic, workspaceId: nextWorkspace }, patch.managerTaskId);
     }
     // The first session took it into its composer, or the person cleared it ("").
-    if (patch.firstMessage !== undefined) clean.firstMessage = firstMessageOf(patch.firstMessage);
+    if (patch.firstMessage !== undefined) {
+      clean.firstMessage = firstMessageOf(patch.firstMessage);
+      if (!clean.firstMessage) clean.firstMessageAttachments = [];
+    }
     if (patch.lead !== undefined) {
       if (typeof patch.lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
       if (patch.lead === true && !current.lead && this.hasStartingSession(id)) throw new HostError("conflict", "任务有会话正在创建，等待创建结束后再设置主控。");
@@ -637,4 +633,14 @@ function firstMessageOf(v: unknown): string {
   const text = v.trim();
   if (text.length > TASK_FIRST_MESSAGE_MAX) throw new HostError("bad_request", `a first message is limited to ${TASK_FIRST_MESSAGE_MAX} characters`);
   return text;
+}
+
+/** Images can accompany a filed task's first sentence without widening Task's persisted string field. */
+function firstMessageInput(value: unknown): { text: string; attachments: Id[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { text: firstMessageOf(value), attachments: [] };
+  const input = value as { text?: unknown; attachments?: unknown };
+  if (typeof input.text !== "string" || !Array.isArray(input.attachments) || input.attachments.some((id) => typeof id !== "string")) {
+    throw new HostError("bad_request", "firstMessage must be text or a text-and-attachments object");
+  }
+  return { text: firstMessageOf(input.text), attachments: input.attachments as Id[] };
 }

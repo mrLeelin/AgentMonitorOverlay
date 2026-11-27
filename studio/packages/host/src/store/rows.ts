@@ -34,6 +34,7 @@ export function toTask(r: Row): Task {
     reviewEnteredAt: strOrNull(r.review_entered_at),
     ...(typeof r.description === "string" && r.description ? { description: r.description } : {}),
     ...(typeof r.first_message === "string" && r.first_message ? { firstMessage: r.first_message } : {}),
+    ...(r.first_message_attachments ? { firstMessageAttachments: JSON.parse(str(r.first_message_attachments)) as Id[] } : {}),
     ...(Number(r.lead) === 1 ? { lead: true } : {}),
     ...(Number(r.relay_auto) === 1 ? { relayAuto: true } : {}),
     ...parseRemote(r.remote),

@@ -51,6 +51,8 @@ export interface Task {
    * until the task's first session takes it into its composer (TASK_FIRST_MESSAGE_MAX).
    */
   firstMessage?: string;
+  /** Images uploaded with a filed first message, retained until its first session takes them into the composer. */
+  firstMessageAttachments?: Id[];
   /**
    * 主控 (stage 16, from the stage 15 design): the person marks a task as the one that coordinates its topic (or its
    * project when it is in none). Its sessions get the 主控 role card and may propose tasks and relay messages.

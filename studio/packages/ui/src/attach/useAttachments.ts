@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
-import { FILE_MARK_MIME, lineSuffix, parseFileMarkDrag, type MessageImage } from "@amo-studio/protocol";
+import { FILE_MARK_MIME, lineSuffix, parseFileMarkDrag } from "@amo-studio/protocol";
 import type { HostLink } from "../host/client.js";
 import { attachable, attachmentUrl, uploadAttachment } from "../lib/attachments.js";
 import { readStoredJson, writeStoredJson } from "../lib/stored.js";
@@ -212,11 +212,7 @@ export function useAttachments(link: HostLink, inline?: { text: string; insert(t
     uploading: selectedImages.some((i) => i.state === "uploading"),
     failed: missingImage || selectedImages.some((i) => i.state === "failed"),
     missingImage,
-    restoreMessage(text: string, images: readonly MessageImage[]): string {
-      const draft = resourceDraft(text, images);
-      for (const image of draft.images) rememberImage(image.key, { id: image.id, name: image.name });
-      return draft.text;
-    },
+    restoreMessage: restoreMessageDraft,
     addImages,
     addFiles,
     addRefs,
@@ -260,3 +256,10 @@ export function useAttachments(link: HostLink, inline?: { text: string; insert(t
 }
 
 export type AttachmentsState = ReturnType<typeof useAttachments>;
+
+/** Restore the same image chips for recalled messages and first messages saved for later. */
+export function restoreMessageDraft(text: string, images: readonly { id: string | null; path?: string }[]): string {
+  const draft = resourceDraft(text, images);
+  for (const image of draft.images) rememberImage(image.key, { id: image.id, name: image.name });
+  return draft.text;
+}

@@ -485,4 +485,8 @@ export const MIGRATIONS: readonly Migration[] = [
   ALTER TABLE plane_bot_jobs ADD COLUMN check_result_id TEXT;
   ALTER TABLE plane_bot_jobs ADD COLUMN check_request_id TEXT;
   `,
+  // 41: New-task drafts can keep their uploaded images with the first sentence until the first session.
+  `
+  ALTER TABLE tasks ADD COLUMN first_message_attachments TEXT;
+  `,
 ];

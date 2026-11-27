@@ -32,6 +32,7 @@ function makeStore(path = ":memory:"): Store {
 /** These fixtures start before migration 36 and replay the Bot and Plane migrations when reopened. */
 function removeBotSchema(store: Store): void {
   store.db.exec(`
+    ALTER TABLE tasks DROP COLUMN first_message_attachments;
     DROP TABLE plane_bot_native_attempts;
     DROP TABLE plane_bot_jobs;
     DROP TABLE studio_bot_group_chats;
@@ -48,6 +49,7 @@ function removePlaneBotCheckSchema(store: Store): void {
   store.db.exec(`
     ALTER TABLE plane_bot_jobs DROP COLUMN check_result_id;
     ALTER TABLE plane_bot_jobs DROP COLUMN check_request_id;
+    ALTER TABLE tasks DROP COLUMN first_message_attachments;
     DELETE FROM schema_migrations WHERE version >= 40;
   `);
 }
@@ -114,6 +116,20 @@ describe("Store", () => {
     const migrated = makeStore(path);
     expect(migrated.schemaVersion()).toBe(MIGRATIONS.length);
     expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null });
+  });
+
+  it("adds deferred first-message attachment storage without changing existing task data", () => {
+    const path = tempDbPath();
+    const store = makeStore(path);
+    const { task } = seed(store);
+    store.updateTask(task.id, { firstMessage: "留待首个会话" });
+    store.db.exec("ALTER TABLE tasks DROP COLUMN first_message_attachments; DELETE FROM schema_migrations WHERE version >= 41;");
+    open.pop()!.close();
+
+    const migrated = makeStore(path);
+    expect(migrated.schemaVersion()).toBe(MIGRATIONS.length);
+    expect(migrated.getTask(task.id)).toMatchObject({ title: task.title, firstMessage: "留待首个会话" });
+    expect(migrated.getTask(task.id)?.firstMessageAttachments).toBeUndefined();
   });
 
   it("preserves the archived Plane reference while allowing a new draft per submission", () => {
