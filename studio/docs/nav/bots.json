@@ -4,13 +4,14 @@
     {
       "id": "studio.bots",
       "label": "Bots（主聊天、群组、值守与 Webhook）",
-      "aliases": ["Bot", "机器人", "审核员", "主聊天", "Webhook", "Bot 模板", "Bot 分享链接", "Bot 技能", "共有技能", "专用技能", "Bot 设置", "Bot 资料目录", "Bot 记忆", "巡视"],
+      "aliases": ["Bot", "机器人", "机器人主控", "Bot 接单", "主控任命", "审核员", "主聊天", "Webhook", "Bot 模板", "Bot 分享链接", "Bot 技能", "共有技能", "专用技能", "Bot 设置", "Bot 资料目录", "Bot 记忆", "巡视"],
       "category": "host",
       "purpose": "本机 Bot 可选 AMO 的 Codex、Claude 或 DSH 渠道、模型和推理强度，职责、记忆和主聊天独立保存。侧栏独立 Bots 区可折叠、搜索、排序、创建和管理 Bot 与群组。群聊可指定默认回复成员、提及成员或 @everyone，并逐条查看、停止每位成员的回复。工作台汇总历史、待办和自动运行。从任务 @ Bot 后可选主聊天、已有聊天或新会话，结论回到原会话。Webhook 经中转投递到账号绑定的设备。",
       "steps": [
-        "调整侧栏和设置时，验证折叠、筛选、工作台导航、主聊天重置与旧聊天保留。",
+        "调整侧栏和设置时，验证 Bot 名称直达主聊天、右栏标签、折叠、筛选、普通新聊天与主聊天重置。",
         "调整群聊路由时，验证普通消息、单人和 @everyone、同群历史以及 Bot 转问，核对排队消息与运行回合的停止范围。",
         "调整路由或历史时，确保请求 ID、收件箱消息和模型回合保持一一对应，重试不重复运行。",
+        "调整机器人主控接单时，核对旧执行入口的同源回执、专题和正式卡的事务、原任务交接、任期绑定会话与启动恢复。",
         "调整 Bot 权限时，验证新聊天使用 Bot 保存的权限，追问、恢复和分支保留原会话权限，旧 Bot 默认只读。",
         "调整 Bot 技能时，核对共有技能和专用技能合并去重、插件可用性、新聊天的实际工作目录和旧聊天快照。",
         "修改 Webhook 时，核对 Relay 凭据隔离、账号与设备范围及结果默认仅对本机可见。",
@@ -19,6 +20,8 @@
       ],
       "anchors": [
         { "label": "Bot 主聊天与请求", "path": "studio/packages/host/src/features/bots/service.ts", "anchor": "export class BotsFeature" },
+        { "label": "机器人接单与主控任期", "path": "studio/packages/host/src/features/botleads/service.ts", "anchor": "export class BotLeadsFeature" },
+        { "label": "指定只读会话的管理权限", "path": "studio/packages/host/src/core/bot-lead-access.ts", "anchor": "export function activeManagementTerm" },
         { "label": "侧栏 Bots 区", "path": "studio/packages/ui/src/bots/BotsNav.tsx", "anchor": "export function BotsNav" },
         { "label": "创建、模板与导入", "path": "studio/packages/ui/src/bots/BotCreation.tsx", "anchor": "export function BotCreation" },
         { "label": "设置 → Bots", "path": "studio/packages/ui/src/bots/BotsPage.tsx", "anchor": "export function BotsPage" },
@@ -27,6 +30,7 @@
         { "label": "Bot 技能配置", "path": "studio/packages/ui/src/bots/BotSkills.tsx", "anchor": "export function BotSkillsSection" },
         { "label": "Bot 技能来源与会话上下文", "path": "studio/packages/host/src/features/bots/skills.ts", "anchor": "export async function readBotSkills" },
         { "label": "Bot 工作台", "path": "studio/packages/ui/src/bots/view.tsx", "anchor": "export const botsView" },
+        { "label": "Bot 右侧栏", "path": "studio/packages/ui/src/bots/BotWorkspace.tsx", "anchor": "export function BotWorkspace" },
         { "label": "群聊与成员回复", "path": "studio/packages/ui/src/bots/BotGroupChat.tsx", "anchor": "export function BotGroupPage" },
         { "label": "同群 Bot 提问", "path": "studio/packages/host/src/features/bots/service.ts", "anchor": "async askGroupMember" },
         { "label": "Webhook 入口和事件", "path": "studio/packages/relay/src/bot-webhooks.ts", "anchor": "export class BotWebhooks" }

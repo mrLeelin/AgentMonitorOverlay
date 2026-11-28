@@ -27,7 +27,7 @@
         { "label": "依赖启动", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "isPrerequisiteCurrent" },
         { "label": "任务页共同需求", "path": "studio/packages/ui/src/task/TaskContext.tsx", "anchor": "export function TaskContext" },
         { "label": "交付依据与差异", "path": "studio/packages/ui/src/task/TaskWorkflow.tsx", "anchor": "workflow-context-basis" },
-        { "label": "画布轻量提示", "path": "studio/packages/ui/src/canvas/useContextHints.ts", "anchor": "export function contextHint" },
+        { "label": "画布轻量提示", "path": "studio/packages/ui/src/canvas/useContextHints.ts", "anchor": "export function canvasContextHints" },
         { "label": "隔离完整流程", "path": "studio/e2e/studio/shared-context.spec.ts", "anchor": "shared requirements stay explicit" }
       ],
       "related": ["studio.managedWorkflow", "studio.topics", "host.store", "runtime.common"],

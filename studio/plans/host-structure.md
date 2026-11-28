@@ -42,6 +42,8 @@
 
 做成的样子见上面的规则。核对时发现跨 feature 的路不止 `this.f`：远程的部件（grants、copies、views、uploads、requests、create、usage、comments）通过 context 拿整个 HostService，`guide/role.ts` 的函数收 HostService，`SessionInbox` 通过 `this.f.sessions` 调回它所在的 feature，`this.f` 上还用了 Host 自己的方法。这些都一起收了（远程 context 是 `FeatureHost<RemoteUses>`，`SessionInbox` 构造时直接拿 `SessionsFeature`），否则声明了也漏。
 
+2026-11-28，专题挂载由机器人任命处理，任务服务已没有到专题服务的调用。Plane 带队调用同一个任命入口建立专属根。
+
 拆掉的：relays、sessions、taskplans 不再依赖 guide（角色判断挪进 `core/role.ts`）；config ⇄ claudeaccounts（账号变化时发 `settings.updated` 挪到 `ConfigFeature.watchClaudeAccounts()`，HostService 构造时调，仍在 microtask 里，时机不变）。issues 对 duty 只有 `import type`，接值守靠 `service.ts` 里的 `duty.registerCheck(issues.dutyCheck())`。当前的依赖图以 `feature-deps.test.ts` 的 `GRAPH` 为准。
 
 **还没拆的环**（`KNOWN_CYCLES`）：一组 {collab、gitreview、projects、remote、review、sessions、tasks、viewpacks}。里面两两互相用的：tasks ⇄ sessions、sessions ⇄ collab、sessions ⇄ review、sessions ⇄ remote、tasks ⇄ remote、gitreview ⇄ remote、viewpacks ⇄ remote；projects 经 tasks → remote → gitreview → projects 进来（归档项目要归档任务；给一个文件夹打开 Review 会把它加成项目）。下一步可以拆的（都要改调用方式）：

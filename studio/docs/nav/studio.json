@@ -111,10 +111,19 @@
       "label": "专题、主控、传话和拆任务",
         "aliases": ["topic", "专题", "主控", "lead", "task_set_lead", "自行设置主控", "带队初始化", "topicTitle", "主控落卡", "topic_doc", "专题文档", "task_plan_propose", "TaskPlansFeature", "TopicDocsFeature"],
       "category": "host",
-      "purpose": "专题把相关任务（可跨项目）放在一张画布上；主控自动拆分和派工、验收下级交付并管理任务画布，可以维护 Studio 内专题文档。本地文件只读，具体实现分配给执行任务；专题会话没有任务主控身份时仍由人确认提案。逐层回报见 studio.managedWorkflow。",
+      "purpose": "专题把相关任务（可跨项目）放在一张画布上，可容纳多个独立的管理根。现任机器人在专属只读会话里拆分、派工和验收直属交付。总主控的最终交付由人确认。专题会话的提案由人确认后办理。逐层回报见 studio.managedWorkflow。",
+      "steps": [
+        "从 Bot 原对话的消息操作、专题画布、新建任务或普通任务发起任命。选明确的专题、目标和机器人，接单后从原处打开正式卡。",
+        "从旧任务或专题画布打开原主控树。选择「绑定机器人」为活动总主控和中控分配负责人，异常关系从画布菜单查看。",
+        "测试画布时核对管理虚线、依赖实线、待前置文字、同一验收编号和布局。首屏按根取摘要，展开一个分支时再取该分支的数据。"
+      ],
       "anchors": [
         { "label": "TopicsFeature", "path": "studio/packages/host/src/features/topics/service.ts", "anchor": "export class TopicsFeature" },
         { "label": "专题文档", "path": "studio/packages/host/src/features/topicdocs/service.ts", "anchor": "export class TopicDocsFeature" },
+        { "label": "机器人任命及任期", "path": "studio/packages/host/src/features/botleads/service.ts", "anchor": "export class BotLeadsFeature" },
+        { "label": "旧主控树绑定及异常", "path": "studio/packages/host/src/features/botleads/legacy.ts", "anchor": "export class LegacyLeadTrees" },
+        { "label": "Studio 任命入口", "path": "studio/packages/ui/src/bots/LeadAppointment.tsx", "anchor": "export function LeadAppointment" },
+        { "label": "画布主控详情与验收", "path": "studio/packages/ui/src/bots/LeadWorkflow.tsx", "anchor": "export function LeadWorkflowPanel" },
         { "label": "主控提议拆任务", "path": "studio/packages/host/src/features/taskplans/service.ts", "anchor": "export class TaskPlansFeature" },
         { "label": "任务自行设主控与只读会话交接", "path": "studio/packages/host/src/features/tasks/lead-promotion.ts", "anchor": "export class TaskLeadPromotion" },
           { "label": "管理线端点与既有布局保护", "path": "studio/packages/host/src/features/canvas/service.ts", "anchor": "ensureManagementCards" },
@@ -546,12 +555,13 @@
     },
     {
       "id": "ui.envPanel",
-      "label": "任务页侧栏：环境、进度和批注",
-      "aliases": ["环境与上下文", "进度和批注", "侧栏切换", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
+      "label": "任务页侧栏：环境、进度和批注、任务说明",
+      "aliases": ["环境与上下文", "进度和批注", "侧栏切换", "任务说明", "任务描述", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
       "category": "ui",
-      "purpose": "任务页右侧栏顶部切换「环境」和「进度和批注」，默认显示环境并记住选择。环境保留电脑、项目和分支、上下文占用、CLAUDE.md，以及会话的 MCP 状态和 Claude 重连；打开侧栏、每轮结束、点刷新时读取。进度和批注还包含其他会话的待决策、留言与清单。",
+      "purpose": "任务页右侧栏顶部切换「环境」「进度和批注」「任务说明」，默认显示环境并记住选择。说明可在侧栏阅读和编辑，归档及远程副本只读，处理中的 Plane Bot 任务从原单菜单查看。环境保留电脑、项目和分支、上下文占用、CLAUDE.md，以及会话的 MCP 状态和 Claude 重连；打开侧栏、每轮结束、点刷新时读取。进度和批注还包含其他会话的待决策、留言与清单。",
       "anchors": [
         { "label": "侧栏切换", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "sidebar-activity" },
+        { "label": "任务说明页签", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "data-testid=\"sidebar-description\"" },
         { "label": "面板", "path": "studio/packages/ui/src/task/EnvPanel.tsx", "anchor": "export function EnvPanel" },
         { "label": "接口类型", "path": "studio/packages/protocol/src/context-usage.ts", "anchor": "export interface SessionContextUsage" },
         { "label": "读分项和缓存", "path": "studio/packages/host/src/features/sessions/service.ts", "anchor": "async contextUsage(sessionId: Id)" },

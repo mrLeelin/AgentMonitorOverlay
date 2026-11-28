@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Free UI 移植 · 机器人主控交互原型</title>
+<style>
+  :root { color-scheme: light; font-family: "Segoe UI","Microsoft YaHei",sans-serif; color: #20302b; background: #f4f6f2; --ink: #20302b; --muted: #53665c; --line: #cbd4cb; --accent: #215d49; --amber: #895612; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  header { background: #203d32; color: #fff; padding: 14px clamp(16px,4vw,64px); display: flex; align-items: baseline; gap: 18px; }
+  header small { color: #cddecf; }
+  main { max-width: 1440px; margin: auto; padding: 22px clamp(12px,3vw,48px) 32px; }
+  .intro { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+  h1 { font-size: clamp(24px,3.2vw,40px); margin: 0; letter-spacing: -.04em; }
+  h2 { margin: 0; font-size: 19px; }
+  h3 { font-size: 15px; margin: 0 0 8px; }
+  .heading, .bar, .tabs, .buttons, .switch { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .heading { justify-content: space-between; margin-bottom: 16px; gap: 12px; }
+  button { font: inherit; font-size: 14px; cursor: pointer; border: 1px solid #acbcb0; border-radius: 6px; padding: 7px 12px; background: white; color: var(--ink); }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 3px solid #e8a83e; outline-offset: 2px; }
+  button[aria-pressed=true], button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  #scenes { margin-bottom: 14px; }
+  #scenes span { margin-right: 4px; font-size: 14px; color: var(--muted); }
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(280px,31%); align-items: start; gap: 16px; }
+  .panel { background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .bar { justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+  .legend i { display: inline-block; width: 24px; margin: 0 5px 3px 0; border-top: 2px solid #936219; }
+  .legend i.dash { border-top: 2px dashed var(--accent); }
+  .scroll { overflow-x: auto; background-color: #f9faf6; background-image: radial-gradient(#d1d9ce 1px, transparent 1px); background-size: 16px 16px; }
+  .graph { min-width: 610px; max-width: 950px; margin: auto; position: relative; height: 374px; }
+  .graph svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .node { position: absolute; transform: translate(-50%,-50%); width: 25%; min-height: 66px; padding: 7px; display: grid; gap: 3px; justify-items: center; align-content: center; background: #fff; border-color: #abbcaf; line-height: 1.3; }
+  .node.is-root { border-top: 3px solid var(--accent); width: 31%; }
+  .node[aria-pressed=true] { background: #e8f2e9; color: var(--ink); border-color: var(--accent); box-shadow: 0 0 0 2px #52957248; }
+  .node span { color: var(--muted); font-size: 12px; }
+  .node small { color: #345b48; font-size: 12px; }
+  .node small.wait { color: var(--amber); }
+  .under, .detail, .scenario { padding: 16px; }
+  .under { border-top: 1px solid var(--line); }
+  .under p, .detail p, .scenario p, .chat p { line-height: 1.7; margin: 8px 0 12px; color: var(--muted); font-size: 14px; }
+  .scenario { background: #edf3ed; border-bottom: 1px solid var(--line); }
+  .side { display: grid; gap: 14px; }
+  .side .panel { padding: 16px; }
+  .side .scenario { margin: -16px -16px 16px; }
+  .log { margin: 10px 0 0; padding-left: 20px; max-height: 165px; overflow-y: auto; font-size: 13px; color: var(--muted); }
+  .log li { padding: 3px; }
+  .chat { padding: 24px; min-height: 348px; background: #fafbf8; }
+  .bubble { width: fit-content; max-width: 92%; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+  .mine { margin-left: auto; background: #e4efe5; }
+  @media(max-width:880px) { .layout { grid-template-columns:1fr; } .side { grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); } }
+</style>
+<header><strong>AMO Studio</strong><small>机器人主控 · 交互原型</small></header>
+<main>
+  <div class="heading"><h1>Free UI 移植</h1><nav class="switch" aria-label="工作入口"><button id="toChat">Bot 对话</button><button id="toCanvas">专题画布</button></nav></div>
+  <p class="intro">试着在画布上找到卡住的任务，再回 Bot 对话验收同一份交付。演示只在本页模拟，刷新可重来。</p>
+  <div class="tabs" id="scenes" aria-label="演示场景"></div>
+  <div class="layout">
+    <section class="panel">
+      <div class="bar"><h2 id="viewTitle"></h2><div class="legend" id="legend"><span><i class="dash"></i>直属管理</span><span><i></i>前置 → 后项</span></div></div>
+      <div id="surface"></div>
+      <section class="under" aria-live="polite"><h3 id="detailTitle"></h3><p id="detailText"></p><div class="buttons" id="detailActions"></div></section>
+    </section>
+    <aside class="side">
+      <section class="panel"><div class="scenario"><h2 id="sceneTitle"></h2><p id="sceneText"></p></div><h3>推进演示</h3><div id="actions" class="buttons"></div><p id="feedback" role="status"></p></section>
+      <section class="panel"><h3>工作记录</h3><ol class="log" id="log"></ol></section>
+    </aside>
+  </div>
+</main>
+<script>
+// 模拟主控与交付状态。界面按钮和场景共用这些转换。
+const scenes = [
+  {name:'前置与交付', phase:2, view:'canvas', text:'先选「移植并验证」查看前置，推进配置交付，观察下游何时开工。'},
+  {name:'从 Bot 接单', phase:0, view:'chat', text:'从一句带队请求开始。任命生效就能打开画布，随后再拆分任务。'},
+  {name:'退回重交', phase:6, view:'chat', text:'先退回第一版，观察原任务接续和版本变化。也可以切换到画布验收。'},
+  {name:'主控换任', phase:2, view:'canvas', text:'开始交接，让子任务在交接期间提交。接任者随后处理原来的交付。'}
+];
+const progress = [
+  ['任命小鲸鱼带队','已任命小鲸鱼，创建专题和主控卡'],
+  ['模拟主控派工','主控已派工，「旧资源」已完成并验收，配置正在执行'],
+  ['模拟配置任务提交','配置交付已提交，等待直属主控验收'],
+  ['模拟主控验收配置','配置交付已验收，移植任务取得前置改动并开始执行'],
+  ['模拟移植任务提交','已提交移植结果和窄屏验证，等待主控验收'],
+  ['模拟主控验收并汇总','主控验收移植结果并提交根交付'],
+  ['我验收通过','用户已通过根交付']
+];
+function initial(index) {
+  const scene = scenes[index];
+  return {phase:scene.phase, revision:1, lead:'小鲸鱼', switching:false, transferred:false, events:[scene.phase===0?'小鲸鱼收到带队请求':'已载入场景「'+scene.name+'」']};
+}
+function transition(s, action) {
+  let changes = {}, message = '';
+  if (action==='advance' && s.phase<7) {
+    if (s.switching && [1,3,5].includes(s.phase)) return s;
+    message = progress[s.phase][1]; changes.phase = s.phase+1;
+  } else if (action==='return' && s.phase===6) {
+    changes = {phase:4, revision:s.revision+1}; message='用户退回第 '+s.revision+' 版，要求补验窄屏。原移植任务接续';
+  } else if (action==='switch' && !s.switching && !s.transferred && s.phase>0 && s.phase<6) {
+    changes.switching=true; message='进入交接，小鲸鱼停止新的管理操作';
+  } else if (action==='resume' && s.switching) {
+    changes={lead:'界面助手',switching:false,transferred:true}; message='界面助手接任，承接原任务和待验交付';
+  } else return s;
+  return {...s,...changes,events:[...s.events,message]};
+}
+</script>
+<script>
+const byId = id => document.getElementById(id);
+let sceneIndex=0, state=initial(0), view='canvas', selected='root';
+function makeButton(label, click, style='') {
+  const btn=document.createElement('button'); btn.textContent=label; btn.className=style; btn.onclick=click; return btn;
+}
+function showScene(i) { sceneIndex=i; state=initial(i); view=scenes[i].view; selected=i===0?'work':'root'; render(); }
+function act(action) { state=transition(state,action); if(!state.phase || selected==='request') selected='root'; render(); }
+function see(v) { view=v; render(); }
+function selectNode(id) {
+  selected=id; render();
+  byId('surface').querySelector('.node[aria-pressed="true"]')?.focus({preventScroll:true});
+}
+function data() {
+  const p=state.phase;
+  const rootStage=state.switching?'交接中':p===7?'人工已验收':p===6?'待你验收':p===1?'等待派工':'统筹中';
+  return {
+    root:{title:'移植旧分支 Free UI', role:'总主控 · '+state.lead, status:rootStage, x:50,y:12, detail:p>=6?'第 '+state.revision+' 版汇总包含旧资源清单、配置改动、移植结果和窄屏验证记录。':'专题包含资源、配置和移植工作，正式交付由总主控汇总后交给你。'},
+    assets:{title:'核对旧资源', role:'执行任务', status:'已验收', x:18,y:48, detail:'演示证据为旧 UI 的资源映射清单，已由直属主控验收。'},
+    config:{title:'调整配置', role:'执行任务', status:p===2?'执行中':p===3?'待主控验收':'已验收', x:82,y:48, detail:p<3?'正在调整 Free 配置。移植任务等待这项工作。':p===3?'已提交配置差异和验证记录。直属主控验收后，移植任务才能采用这份交付。':'这份已验收的配置改动已接入移植任务的演示工作目录。'},
+    work:{title:'移植并验证', role:'执行任务', status:p<4?'等待「调整配置」':p===4?'执行中':p===5?'待主控验收':'已验收', x:50,y:84, detail:p<4?'共两项前置。旧资源已验收，配置尚待验收。':p===4 && state.revision>1?'已收到用户的退回原因，正在同一任务补验窄屏。':p===4?'前置交付均已验收，开始移植并验证。':'已提交本次移植和窄屏验证结果。'}
+  };
+}
+function renderGraph(nodes) {
+  const area=byId('surface'); area.innerHTML='<div class="scroll" tabindex="0" aria-label="专题画布，可水平滚动"><div class="graph"></div></div>';
+  const graph=area.querySelector('.graph');
+  if (state.phase>=2) {
+    graph.innerHTML='<svg viewBox="0 0 1000 374" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 1L9 5L0 9" fill="none" stroke="#936219" stroke-width="1.6"/></marker></defs><g fill="none" stroke="#427561" stroke-width="2" stroke-dasharray="7 5"><path d="M500 70V111H180V150 M500 111H820V150 M500 111V281"/></g><g fill="none" stroke="#936219" stroke-width="2" marker-end="url(#arrow)"><path d="M180 205V314H374"/><path d="M820 205V314H626"/></g></svg>';
+  }
+  for(const [key,node] of Object.entries(nodes)) {
+    if(key!=='root' && state.phase<2) continue;
+    const btn=makeButton('',()=>selectNode(key),'node'+(key==='root'?' is-root':''));
+    btn.setAttribute('aria-pressed', String(selected===key)); btn.style.left=node.x+'%'; btn.style.top=node.y+'%';
+    const role=document.createElement('span'), title=document.createElement('strong'), status=document.createElement('small');
+    role.textContent=node.role; title.textContent=node.title; status.textContent=node.status;
+    if (/等|待|交接/.test(node.status)) status.className='wait';
+    btn.append(role,title,status); graph.append(btn);
+  }
+  const scroller=area.querySelector('.scroll');
+  scroller.scrollLeft=graph.clientWidth*nodes[selected].x/100-scroller.clientWidth/2;
+}
+function renderChat(nodes) {
+  const area=byId('surface'); area.innerHTML='<div class="chat"><div class="bubble mine">把旧分支的 Free UI 移过来，这件事你来带。</div><div class="bubble"><strong></strong><p></p><div class="buttons"></div></div></div>';
+  const card=area.querySelector('.bubble:last-child');
+  card.querySelector('strong').textContent=state.phase?'Free UI 移植 · '+state.lead:'小鲸鱼';
+  card.querySelector('p').textContent=state.phase?nodes.root.status+'。'+(state.phase>=6?'根交付第 '+state.revision+' 版。':'可到画布查看下辖任务和前置依赖。'):'可在当前项目为这项工作建立专题并担任总主控。';
+  card.querySelector('.buttons').append(state.phase?makeButton('打开专题画布',()=>{selected='root';see('canvas');},'primary'):makeButton('让小鲸鱼带队',()=>act('advance'),'primary'));
+}
+function render() {
+  const p=state.phase, nodes=data();
+  byId('viewTitle').textContent=view==='canvas'?'专题画布':'Bot 对话';
+  byId('legend').style.display=view==='canvas'?'flex':'none';
+  byId('toCanvas').disabled=!p;
+  for(const [id,v] of [['toCanvas','canvas'],['toChat','chat']]) byId(id).setAttribute('aria-pressed',String(view===v));
+  byId('toCanvas').onclick=()=>{selected='root';see('canvas');}; byId('toChat').onclick=()=>see('chat');
+  if(view==='canvas') renderGraph(nodes); else renderChat(nodes);
+  const key=view==='chat'?'root':selected, node=nodes[key], buttons=byId('detailActions');
+  byId('detailTitle').textContent=p?node.title+' · '+node.status:'待任命';
+  byId('detailText').textContent=p?node.detail:'任命生效后，Bot 回复会给出可定位到主控任务的画布入口。';
+  buttons.replaceChildren();
+  if(key==='work' && p>=2) buttons.append(makeButton('定位前置 · 调整配置',()=>selectNode('config')),makeButton('定位前置 · 核对旧资源',()=>selectNode('assets')));
+  if(key==='root' && p===6) buttons.append(makeButton('通过第 '+state.revision+' 版',()=>act('advance'),'primary'),makeButton('退回补验窄屏',()=>act('return')));
+  byId('sceneTitle').textContent=scenes[sceneIndex].name; byId('sceneText').textContent=scenes[sceneIndex].text;
+  const actions=byId('actions'); actions.replaceChildren();
+  if(p<7 && !(state.switching && [1,3,5].includes(p))) actions.append(makeButton(progress[p][0],()=>act('advance'),'primary'));
+  if(p===6) actions.append(makeButton('我退回补验',()=>act('return')));
+  if(state.switching) actions.append(makeButton('完成交接',()=>act('resume'),'primary'));
+  else if(p>0 && p<6 && !state.transferred) actions.append(makeButton('开始换任',()=>act('switch')));
+  actions.append(makeButton('重置本场景',()=>showScene(sceneIndex)));
+  byId('feedback').textContent=state.events.at(-1);
+  byId('log').replaceChildren(...state.events.slice().reverse().map(t=>{const li=document.createElement('li');li.textContent=t;return li;}));
+  Array.from(byId('scenes').querySelectorAll('button')).forEach((b,i)=>b.setAttribute('aria-pressed',String(i===sceneIndex)));
+}
+byId('scenes').innerHTML='<span>演示场景</span>';
+scenes.forEach((s,i)=>byId('scenes').append(makeButton(s.name,()=>showScene(i))));
+showScene(0);
+</script>
+</html>
