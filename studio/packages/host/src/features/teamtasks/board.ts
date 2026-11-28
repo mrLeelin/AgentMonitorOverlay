@@ -226,15 +226,58 @@ export class TeamBoardHost {
     this.saveLink(taskId, source, viewerId, id, context, requestId);
   }
 
+  private async withPlaneBotClient<T>(source: string, viewerId: string, operation: (client: TeamBoardClient) => Promise<T>): Promise<T> {
+    return this.request(async () => {
+      const account = this.plane.current;
+      if (!account || account.identityId !== viewerId) throw new HostError("conflict", "请切换回发起此任务时使用的 Plane 账号。");
+      const client = await this.plane.client(source);
+      if (!client || client.source !== source) throw new HostError("conflict", "机器人工单关联的 Plane 项目已变更。");
+      const validate = () => {
+        this.host.requireTeamTasks();
+        const live = this.plane.current;
+        if (live?.sealed !== account.sealed || live.server !== account.server || live.identityId !== viewerId) throw new HostError("conflict", "Plane 账号或连接已变更，请刷新团队看板。");
+      };
+      validate();
+      const result = await operation(client);
+      validate();
+      return result;
+    });
+  }
+
+  startPlaneBotItem(source: string, itemId: string, viewerId: string, resultId?: string): Promise<PlaneWorkItemDetail> {
+    return this.withPlaneBotClient(source, viewerId, async (client) => {
+      await client.startBotItem(itemId, viewerId, resultId);
+      const item = await client.workItem(itemId);
+      if (item.id !== itemId || item.archived) throw new HostError("conflict", "原单已移动或归档，请检查 Plane 原单。");
+      return item;
+    });
+  }
+
+  readPlaneBotFeedback(source: string, itemId: string, viewerId: string, resultId: string) {
+    return this.withPlaneBotClient(source, viewerId, (client) => client.botFeedback(itemId, viewerId, resultId));
+  }
+
+  private validatePlaneBotResult(taskId: string, source: string, viewerId: string, itemId: string, current: () => boolean): void {
+    const link = this.link(taskId);
+    if (!link || link.server !== source || link.account !== viewerId || link.ticket_id !== itemId) throw new HostError("conflict", "任务的 Plane 原单关联已变更。");
+    if (!current()) throw new HostError("conflict", "这份交付已变更，请重新验收。");
+  }
+
+  finishPlaneBotItem(taskId: string, source: string, viewerId: string, itemId: string, resultId: string, text: string, current: () => boolean, _reconcile = false): Promise<string> {
+    return this.withPlaneBotClient(source, viewerId, async (client) => {
+      this.validatePlaneBotResult(taskId, source, viewerId, itemId, current);
+      // Plane atomically commits the status, comment and notification, and replays the receipt for this result on retry.
+      const commentId = await client.finishBotItem(itemId, viewerId, resultId, text);
+      this.validatePlaneBotResult(taskId, source, viewerId, itemId, current);
+      return commentId;
+    });
+  }
+
   async postPlaneBotResult(taskId: string, source: string, viewerId: string, itemId: string, resultId: string, text: string, current: () => boolean, reconcile = false): Promise<string> {
     return this.request(async () => {
       const client = await this.plane.client(source);
       if (!client || this.plane.current?.identityId !== viewerId) throw new HostError("conflict", "请切换回发起此任务时使用的 Plane 账号。");
-      const validate = () => {
-        const link = this.link(taskId);
-        if (!link || link.server !== source || link.account !== viewerId || link.ticket_id !== itemId) throw new HostError("conflict", "任务的 Plane 原单关联已变更。");
-        if (!current()) throw new HostError("conflict", "这份交付已变更，请重新验收。");
-      };
+      const validate = () => this.validatePlaneBotResult(taskId, source, viewerId, itemId, current);
       validate();
       this.host.requireTeamTasks();
       const db = this.host.store.db;

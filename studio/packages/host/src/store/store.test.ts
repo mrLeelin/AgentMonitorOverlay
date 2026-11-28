@@ -31,6 +31,7 @@ function makeStore(path = ":memory:"): Store {
 
 function removePlaneManagedSchema(store: Store): void {
   store.db.exec(`
+    ALTER TABLE plane_bot_jobs DROP COLUMN manual_intake;
     DROP TABLE plane_bot_managed_members;
     DROP TABLE plane_bot_writebacks;
     DROP TABLE plane_bot_approvals;
@@ -115,7 +116,7 @@ describe("Store", () => {
     expect(old.schemaVersion()).toBe(44);
     open.pop()!.close();
     const current = makeStore(path);
-    expect(current.schemaVersion()).toBe(45);
+    expect(current.schemaVersion()).toBe(MIGRATIONS.length);
     expect(current.db.prepare("SELECT task_id, root_task_id, approved_at, plan_hash FROM plane_bot_jobs").get()).toEqual({
       task_id: task.id, root_task_id: null, approved_at: approvedAt, plan_hash: "old hash",
     });
@@ -214,7 +215,7 @@ describe("Store", () => {
 
     const migrated = makeStore(path);
     expect(migrated.schemaVersion()).toBe(MIGRATIONS.length);
-    expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null, root_task_id: null, approved_plan_hash: null, planned_project_path: null });
+    expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null, root_task_id: null, approved_plan_hash: null, planned_project_path: null, manual_intake: 0 });
   });
 
   it("adds deferred first-message attachment storage without changing existing task data", () => {

@@ -33,13 +33,15 @@ export function isBotTask(store: Store, taskId: Id | null): boolean {
   return !!taskId && !!store.db.prepare("SELECT id FROM studio_bots WHERE task_id = ?").get(taskId);
 }
 
-/** All entry points creating sessions in a Bot's task must use the owner's saved grant, including the generic task API. */
+/** New chats inherit the owner's grant. A read-only review can narrow that grant for its own session. */
 export function newChatOptions(store: Store, taskId: Id | null, profileId: Id, runtime: string, options: SessionOptions = {}): SessionOptions {
   if (!taskId) return options;
   const fallback = defaultBotPermission(runtime);
   if (store.getTask(taskId)?.lead) return { ...options, permission: fallback };
   const bot = store.db.prepare("SELECT json_extract(data, '$.profileId') AS profileId, json_extract(data, '$.permission') AS permission FROM studio_bots WHERE task_id = ?").get(taskId) as { profileId: string; permission: string | null } | undefined;
-  return bot ? { ...options, permission: bot.profileId === profileId ? bot.permission ?? fallback : fallback } : options;
+  if (!bot) return options;
+  const permission = bot.profileId === profileId && options.permission !== fallback ? bot.permission ?? fallback : fallback;
+  return { ...options, permission };
 }
 
 /** Changing a Bot's settings affects new chats. Existing chats and forks keep their launch permission. */

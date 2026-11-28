@@ -1,14 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { inTurn, isCommon, taskManagement, topicWorkspaceIds, type BotRequest, type BotLeadTopicTarget, type PlaneBotApproval, type PlaneBotAttention, type PlaneBotCheck, type PlaneBotDecision, type PlaneBotDelivery, type PlaneBotExecutionChoice, type PlaneBotIntake, type PlaneBotJob, type PlaneBotPlanChoice, type PlaneBotReplan, type PlaneBotWriteback, type PlaneWorkItemDetail, type Session, type SessionItem, type TaskResult } from "@amo-studio/protocol";
+import { activeManagementTerm, leadBotUnavailable } from "../../core/bot-lead-access.js";
 import type { FeatureHost } from "../../core/feature.js";
 import { HostError } from "../../core/shared.js";
-import { inPlaneBotWorktree, planeBotWorkerSession, planeGitHead, planeManagedScope } from "../../store/plane-bot.js";
+import { assertPlaneManagedBase, inPlaneBotWorktree, planeBotWorkerSession, planeGitHead, planeManagedScope } from "../../store/plane-bot.js";
 import { git, parseNameStatus } from "../gitreview/git.js";
 import { forkGitOptions } from "../sessions/fork-worktree.js";
 import type { TeamBoardHost } from "./board.js";
 
 type JobRow = {
+  manual_intake: number;
   id: string; request_id: string; source: string; viewer_id: string; item_id: string; bot_id: string;
   workspace_id: string; topic_id: string | null; prompt: string; item_data: string; task_id: string | null;
   sent_result_id: string | null; comment_id: string | null; error: string | null;
@@ -19,7 +21,7 @@ type JobRow = {
 type ApprovalRow = { plan_hash: string; operation_id: string; plan: string; base_commit: string; workspace_id: string; project_path: string; target: string };
 type WritebackRow = { result_id: string; comment_id: string | null; started_at: string; sent_at: string | null };
 type Item = Pick<PlaneWorkItemDetail, "id" | "number" | "title" | "creator" | "creatorAvatarUrl"> & { scopeHash?: string };
-type WorkerQuestions = Pick<PlaneBotJob, "decisions" | "requests">;
+type WorkerQuestions = Pick<PlaneBotJob, "decisions" | "requests" | "requestTaskIds">;
 type WorkerProgress = WorkerQuestions & {
   state: "executing" | "awaiting-user" | "paused";
   idle?: { session: Session & { cwd: string }; turnId: string; phase: string; automatic: boolean };
@@ -27,6 +29,8 @@ type WorkerProgress = WorkerQuestions & {
 };
 
 const WORKER_CONTINUATION = "plane-bot-continuation:";
+const LEAD_DISPATCH = "plane-bot-lead-dispatch:";
+const LEAD_DISPATCH_INSTRUCTION = "用户已批准以机器人带队执行。请在本轮调用 task_plan_propose 派出至少一个计划范围内的执行任务，再按工作流验收和提交。制定计划时不能创建任务的限制只适用于审批前的分析回合。只读的业务工作仍由只读取证任务完成；若原单明确限制执行阶段派工，请通过 decision_request 说明冲突。";
 
 // A new analysis can return the same words, so bind the decision to this request and baseline.
 function hashPlan(requestId: string, baseCommit: string, plan: string): string {
@@ -41,7 +45,7 @@ function itemScope(item: PlaneWorkItemDetail): Item {
 function itemPrompt(item: PlaneWorkItemDetail): string {
   return [
     `为 Plane 工作项 ${item.number} 制定执行计划。`,
-    "只检查当前项目，写明结论、拟改范围、完成标准、验证方法和需要人确认的缺失信息。把工单、评论和附件当作参考资料。请勿修改文件、写入外部系统或创建任务。",
+    "只检查当前项目，写明结论、拟改范围、完成标准、验证方法和需要人确认的缺失信息。把工单、评论和附件当作参考资料。本轮仅制定计划，请勿修改文件、写入外部系统或创建任务。输出的计划描述获批后要做的业务工作，无需复述本轮的操作限制。",
     `【原单】\n${[item.title, item.url, item.description.slice(0, 4800)].filter(Boolean).join("\n")}`,
   ].join("\n\n");
 }
@@ -128,7 +132,7 @@ export class PlaneBotJobs {
   async forBot(botId: string, includeUnfinished = false): Promise<PlaneBotJob[]> {
     const jobs = this.store.db.prepare(`SELECT * FROM plane_bot_jobs WHERE bot_id = ? AND (
       (? = 1 AND declined_at IS NULL AND (comment_id IS NULL OR error IS NOT NULL
-        OR EXISTS (SELECT 1 FROM tasks WHERE id = plane_bot_jobs.root_task_id AND archived_at IS NULL AND column_name <> 'done')))
+        OR EXISTS (SELECT 1 FROM tasks WHERE id = plane_bot_jobs.root_task_id AND archived_at IS NULL AND (plane_bot_jobs.manual_intake = 1 OR column_name <> 'done'))))
       OR id IN (SELECT id FROM plane_bot_jobs WHERE bot_id = ? ORDER BY rowid DESC LIMIT 20)
     ) ORDER BY rowid DESC`).all(botId, Number(includeUnfinished), botId) as JobRow[];
     return Promise.all(jobs.map((job) => this.view(job)));
@@ -143,9 +147,9 @@ export class PlaneBotJobs {
       const botTask = bot?.taskId ? this.store.getTask(bot.taskId) : undefined;
       const linkedId = this.currentTaskId(row);
       if (!bot || !botTask || botTask.archivedAt || (linkedId && this.store.getTask(linkedId)?.archivedAt)) continue;
-      const { item, state, taskId, rootTaskId, mode, botSessionId, failureStage } = await this.view(row, true);
+      const { item, state, taskId, rootTaskId, mode, botSessionId, failureStage, requesterReview, requestTaskIds } = await this.view(row, true);
       const chat = botSessionId ? this.store.getSession(botSessionId) : undefined;
-      notices.push({ id: row.id, state, taskId, rootTaskId, mode, item, botName: bot.name, botTaskId: botTask.id, botSessionId: chat && !chat.archivedAt ? chat.id : null, ...(failureStage ? { failureStage } : {}) });
+      notices.push({ id: row.id, state, taskId, rootTaskId, mode, item, botName: bot.name, botTaskId: botTask.id, botSessionId: chat && !chat.archivedAt ? chat.id : null, ...(failureStage ? { failureStage } : {}), ...(requesterReview ? { requesterReview } : {}), ...(requestTaskIds ? { requestTaskIds } : {}) });
     }
     return notices;
   }
@@ -159,30 +163,39 @@ export class PlaneBotJobs {
     if (existing?.root_task_id) return this.reopenIntake(existing);
     const legacy = existing && !existing.task_id && !existing.base_commit;
     if (existing && !existing.declined_at && !legacy) return this.reopenIntake(existing);
-    const { botId, workspaceId, topicId } = legacy ? { botId: existing.bot_id, workspaceId: existing.workspace_id, topicId: existing.topic_id } : input;
+    const { botId, workspaceId } = legacy ? { botId: existing.bot_id, workspaceId: existing.workspace_id } : input;
+    const topicId = legacy ? existing.topic_id : existing ? input.topicId : null;
     const workspace = this.store.getWorkspace(workspaceId);
     if (!workspace || workspace.archivedAt || isCommon(workspace)) throw new HostError("bad_request", "请选择一个可用的本地 Git 项目。");
     if (topicId) this.host.requireLiveTopic(topicId);
-    this.host.bots.requirePlanningBot(botId);
+    if (existing) this.host.bots.requirePlanningBot(botId);
+    else {
+      const reason = leadBotUnavailable(this.store, botId);
+      if (reason) throw new HostError("bad_request", reason);
+    }
     const base = (await forkGitOptions(workspace.path))?.head;
     if (!base) throw new HostError("bad_request", "请选择已有提交的 Git 项目。");
     const item = await this.board.planeBotItem(input.source, itemId, input.viewerId);
     this.requireTarget(input);
     const other = this.itemJob(input.source, input.viewerId, itemId);
-    if (other && (other.request_id !== existing?.request_id || (!other.declined_at && other.base_commit))) return this.view(other);
+    if (other && (other.request_id !== existing?.request_id || (!other.declined_at && other.base_commit))) return this.reopenIntake(other);
     const currentWorkspace = this.store.getWorkspace(workspaceId);
     if (!currentWorkspace || currentWorkspace.archivedAt || currentWorkspace.path !== workspace.path) throw new HostError("conflict", "本地项目已变更，请重新选择。");
     if (topicId) this.host.requireLiveTopic(topicId);
-    this.host.bots.requirePlanningBot(botId);
+    if (existing) this.host.bots.requirePlanningBot(botId);
     const id = other?.id ?? randomUUID(), request = randomUUID();
-    const prompt = itemPrompt(item), itemData = JSON.stringify(itemScope(item));
+    const itemData = JSON.stringify(itemScope(item));
     if (other) {
       this.store.db.prepare(`UPDATE plane_bot_jobs SET request_id = ?, bot_id = ?, workspace_id = ?, topic_id = ?, prompt = ?, item_data = ?,
         base_commit = ?, planned_project_path = ?, plan = NULL, plan_hash = NULL, approved_at = NULL, declined_at = NULL, error = NULL WHERE id = ?`)
-        .run(request, botId, workspaceId, topicId ?? null, prompt, itemData, base, workspace.path, id);
+        .run(request, botId, workspaceId, topicId ?? null, itemPrompt(item), itemData, base, workspace.path, id);
     } else {
-      this.store.db.prepare(`INSERT INTO plane_bot_jobs (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, topic_id, prompt, item_data, base_commit, planned_project_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, request, input.source, input.viewerId, itemId, botId, workspaceId, topicId ?? null, prompt, itemData, base, workspace.path);
+      if (this.store.db.prepare("SELECT 1 FROM plane_bot_jobs WHERE source = ? AND item_id = ? AND (manual_intake = 1 OR root_task_id IS NOT NULL)").get(input.source, itemId)) {
+        throw new HostError("conflict", "这张 Plane 原单已经接单，请使用接单时的账号。");
+      }
+      this.store.db.prepare(`INSERT INTO plane_bot_jobs (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, topic_id, prompt, item_data, base_commit, planned_project_path, manual_intake)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1)`).run(id, request, input.source, input.viewerId, itemId, botId, workspaceId, "", itemData, base, workspace.path);
+      return this.reopenIntake(this.job(id));
     }
     this.changed(itemId);
     this.schedule(id);
@@ -190,6 +203,10 @@ export class PlaneBotJobs {
   }
 
   private async reopenIntake(job: JobRow): Promise<PlaneBotJob> {
+    if (job.manual_intake && !job.root_task_id) {
+      await this.advance(job.id, true);
+      return this.view(this.job(job.id));
+    }
     if (job.error && !job.task_id && !this.advancing.has(job.id)) {
       const plan = this.host.bots.planningStatus(job.request_id);
       const restartAnalysis = !job.approved_at && (plan?.status === "failed" || plan?.status === "stopped" || (plan?.status === "completed" && !plan.result?.trim()));
@@ -259,6 +276,8 @@ export class PlaneBotJobs {
       }
     };
     requireSamePlan(job);
+    if (job.manual_intake && !job.root_task_id) throw new HostError("conflict", "机器人正在接单，请稍后查看。");
+    if (job.manual_intake && !execution) execution = { mode: "managed", baseCommit: job.base_commit!, operationId: `plane-approve:${job.id}:${planHash}` };
     if (execution?.mode === "managed") return this.approveManaged(job, execution, checkAccount);
     if (execution !== undefined && execution?.mode !== "independent") throw new HostError("bad_request", "请选择执行方式。");
     if (job.root_task_id) throw new HostError("conflict", "这张工单已绑定专属主控，请按机器人带队方式继续。");
@@ -307,7 +326,26 @@ export class PlaneBotJobs {
     return taskManagement(this.store.listTasks(), rootId).descendants;
   }
 
-  private async approveManaged(job: JobRow, execution: Extract<PlaneBotExecutionChoice, { mode: "managed" }>, checkAccount: () => void): Promise<PlaneBotJob> {
+  private async startManaged(job: JobRow): Promise<void> {
+    if (!this.sameAccount(job)) throw new HostError("conflict", "请使用接单时的 Plane 账号。");
+    await this.host.bots.home(job.bot_id);
+    const workspace = this.store.getWorkspace(job.workspace_id);
+    const base = workspace && !workspace.archivedAt ? planeGitHead(workspace.path) : null;
+    if (!base || !workspace) throw new HostError("conflict", "接单项目的 Git 基准不可用。");
+    const item = await this.board.startPlaneBotItem(job.source, job.item_id, job.viewer_id);
+    this.host.requireTeamTasks();
+    const checkAccount = () => {
+      if (!this.sameAccount(job)) throw new HostError("conflict", "Plane 账号已变更，请用接单账号重试。");
+    };
+    checkAccount();
+    const scope = [item.title, item.description].filter(Boolean).join("\n\n");
+    const planHash = hashPlan(job.request_id, base, scope);
+    this.store.db.prepare(`UPDATE plane_bot_jobs SET item_data = ?, plan = ?, plan_hash = ?, base_commit = ?, planned_project_path = ?, error = NULL
+      WHERE id = ? AND root_task_id IS NULL`).run(JSON.stringify(itemScope(item)), scope, planHash, base, workspace.path, job.id);
+    await this.approveManaged(this.job(job.id), { mode: "managed", operationId: `plane-intake:${job.id}`, baseCommit: base }, checkAccount, item);
+  }
+
+  private async approveManaged(job: JobRow, execution: Extract<PlaneBotExecutionChoice, { mode: "managed" }>, checkAccount: () => void, claimedItem?: PlaneWorkItemDetail): Promise<PlaneBotJob> {
     if (typeof execution.operationId !== "string" || !execution.operationId.trim() || execution.operationId.length > 180 || execution.baseCommit !== job.base_commit) {
       throw new HostError("conflict", "批准的计划或基准已变化，请刷新后再确认。");
     }
@@ -335,7 +373,7 @@ export class PlaneBotJobs {
     if (!workspace || workspace.archivedAt || isCommon(workspace) || job.planned_project_path !== workspace.path || planeGitHead(workspace.path) !== job.base_commit) {
       throw new HostError("conflict", "计划基准或本地项目已变化，请重新分析后批准。");
     }
-    const liveItem = await this.board.planeBotItem(job.source, job.item_id, job.viewer_id);
+    const liveItem = claimedItem ?? await this.board.planeBotItem(job.source, job.item_id, job.viewer_id);
     if (item.scopeHash !== itemScope(liveItem).scopeHash) throw new HostError("conflict", "Plane 原单范围已更新，请按原单重新分析并批准。");
     this.host.transaction(() => {
       this.host.requireTeamTasks();
@@ -352,7 +390,8 @@ export class PlaneBotJobs {
       }
       const at = new Date().toISOString();
       const text = [
-        `【用户批准的 Plane 计划 ${job.plan_hash}】\n${checkExcerpt(job.plan!, 9500)}`,
+        claimedItem ? "【Plane 机器人接单】用户已将本单交给你负责。根据原单制定计划并通过 task_plan_propose 派工，跟进、验证并汇总下级交付。" : `【用户批准的 Plane 计划 ${job.plan_hash}】\n${checkExcerpt(job.plan!, 9500)}`,
+        claimedItem ? "交付时向用户说明本轮改动、可直接验收的工程目录和验证步骤。用户只在机器人工单与你沟通，退回后沿原单修改，再提醒验收。" : LEAD_DISPATCH_INSTRUCTION,
         `【批准的执行范围】\n项目：${workspace.name}（${workspace.id}）\n目录：${workspace.path}\nGit 基准：${job.base_commit}`,
         "仅在以上项目和计划范围内派工。执行任务使用批准基准上的独立工作树。若需要改变范围、项目或基准，请先停住并通过 decision_request 提请重新批准。汇总需列各执行结果、实际改动、接入和整体验证。用户验收后由 Studio 写回 Plane。",
         "若批准计划要求检查原项目当前未提交的改动，独立工作树只包含基准提交，不能反映原项目的暂存、未暂存和未跟踪文件。派工时明确让执行者从上述批准的原项目目录只读取证（例如 git --no-optional-locks -C <原项目目录> status、diff），并在验证证据中记录实际取证目录及基准；不要复制、提交或修改原项目的改动。",
@@ -400,7 +439,7 @@ export class PlaneBotJobs {
     const current = this.botJob(botId, jobId), liveWorkspace = this.store.getWorkspace(workspace.id);
     if (current.request_id !== job.request_id || current.plan_hash !== job.plan_hash || current.approved_at !== job.approved_at || this.advancing.has(job.id) ||
       !liveWorkspace || liveWorkspace.archivedAt || liveWorkspace.path !== workspace.path || planeGitHead(workspace.path) !== base) throw new HostError("conflict", "工单或项目正在变化，请刷新后重试。");
-    this.host.bots.requirePlanningBot(botId);
+    if (!job.manual_intake) this.host.bots.requirePlanningBot(botId);
     const change = this.store.db.prepare(`UPDATE plane_bot_jobs SET request_id = ?, workspace_id = ?, base_commit = ?, planned_project_path = ?, prompt = ?, item_data = ?,
       plan = NULL, plan_hash = NULL, approved_at = NULL, declined_at = NULL, error = NULL
       WHERE id = ? AND request_id = ? AND plan_hash = ? AND approved_at IS ?`)
@@ -475,7 +514,7 @@ export class PlaneBotJobs {
   private async startCheck(job: JobRow, result: TaskResult): Promise<PlaneBotJob> {
     const existing = this.checkRequest(job, result.id);
     if (existing && existing.status !== "failed" && existing.status !== "stopped" && (existing.status !== "completed" || existing.result?.trim())) return this.view(job);
-    this.host.bots.requirePlanningBot(job.bot_id);
+    if (!job.manual_intake) this.host.bots.requirePlanningBot(job.bot_id);
     const analysis = this.host.bots.planningStatus(job.request_id);
     const plan = job.plan || analysis?.result;
     if (!plan?.trim()) throw new HostError("conflict", "找不到 Bot 当初的计划，无法对照检查。");
@@ -498,7 +537,7 @@ export class PlaneBotJobs {
 
     // Git reads can overlap a human returning or accepting the result. Save and send only while it is still submitted.
     this.requireSubmitted(result.taskId, result.id);
-    this.host.bots.requirePlanningBot(job.bot_id);
+    if (!job.manual_intake) this.host.bots.requirePlanningBot(job.bot_id);
     const original = analysis?.sessionId ? this.store.getSession(analysis.sessionId) : undefined;
     const destination = original && !original.archivedAt ? { sessionId: original.id } : "new";
     const requestId = randomUUID();
@@ -530,9 +569,17 @@ export class PlaneBotJobs {
         const taskId = event.type === "session.upserted" ? event.session.taskId
           : event.type === "decision.upserted" ? event.decision.taskId : this.store.getSession(event.item.sessionId)?.taskId;
         const job = taskId ? this.taskJob(taskId) : undefined;
-        if (!job) return;
+        if (!job) {
+          if (taskId && event.type !== "decision.upserted" && (event.type !== "session.upserted" || event.session.archivedAt)) {
+            const scope = planeManagedScope(this.store, taskId);
+            const owner = scope && this.findJob(scope.job_id);
+            if (owner?.manual_intake) this.changed(owner.item_id, null, owner.root_task_id);
+          }
+          return;
+        }
         this.changed(job.item_id, job.task_id, job.root_task_id);
-        if (job.task_id && event.type === "session.upserted" && !job.error && this.workerProgress(job).idle?.automatic) this.schedule(job.id);
+        if (event.type === "session.upserted" && !job.error
+          && (job.task_id ? this.workerProgress(job).idle?.automatic : this.leadDispatch(job))) this.schedule(job.id);
         return;
       }
       if (event.type !== "task.upserted") return;
@@ -552,11 +599,15 @@ export class PlaneBotJobs {
     // A saved plan must still wait for the user, even after enabling the feature again.
     for (const row of this.store.db.prepare("SELECT * FROM plane_bot_jobs").all() as JobRow[]) {
       if (row.declined_at || (row.error && !retryFailed)) continue;
+      if (row.manual_intake && !row.root_task_id) {
+        if (this.sameAccount(row)) void this.advance(row.id, retryFailed);
+        continue;
+      }
       const accepted = this.accepted(row);
       const start = !!row.approved_at && !row.root_task_id && (!row.task_id || this.needsWorkerSession(row));
       const continueWorker = !row.error && this.workerProgress(row).idle?.automatic;
       const analyze = !row.task_id && !row.plan && !row.declined_at && !row.error;
-      if (accepted && accepted.id !== row.sent_result_id || start || continueWorker || analyze) {
+      if (accepted && accepted.id !== row.sent_result_id || start || continueWorker || analyze || !row.error && this.leadDispatch(row)) {
         if (retryFailed && (start || accepted)) queueMicrotask(() => void this.advance(row.id, true));
         else this.schedule(row.id);
       }
@@ -578,8 +629,11 @@ export class PlaneBotJobs {
       const job = this.findJob(id);
       if (!job || !this.host.teamTasksEnabled() || job.declined_at || (job.error && !retry)) return;
       try {
-        if (job.root_task_id) {
-          if (job.approved_at) await this.publish(job);
+        if (job.manual_intake && !job.root_task_id) await this.startManaged(job);
+        else if (job.root_task_id) {
+          const dispatch = this.leadDispatch(job);
+          if (dispatch) await this.continueLead(job, dispatch);
+          else if (job.approved_at) await this.publish(job);
           else if (!job.plan) await this.plan(job);
         } else if (job.approved_at && (!job.task_id || this.needsWorkerSession(job))) await this.startWorker(job);
         else if (job.task_id) {
@@ -611,6 +665,52 @@ export class PlaneBotJobs {
     if (decisions.length || requests.length || sessions.some((s) => s.status === "awaiting-answer" || s.status === "awaiting-approval" || s.status === "awaiting-review")) {
       return { decisions, requests };
     }
+  }
+
+  /** Child business decisions go to their manager. Runtime prompts still need the person who owns the work item. */
+  private managedQuestions(job: JobRow, rootId: string, compact: boolean): WorkerQuestions | undefined {
+    const root = this.workerQuestions(rootId, this.store.listSessions({ taskId: rootId }).filter((session) => !session.archivedAt));
+    if (!job.manual_intake) return root;
+    const members = this.activeDescendants(rootId).map((task) => task.id);
+    if (!members.length) return root;
+    const pending = this.store.db.prepare(`SELECT i.id, s.task_id FROM sessions s JOIN items i ON i.session_id = s.id
+      WHERE s.task_id IN (SELECT value FROM json_each(?)) AND s.archived_at IS NULL AND i.type IN ('approval', 'question')
+      AND json_extract(i.body, '$.state') = 'pending' ORDER BY i.created_at, i.seq`).all(JSON.stringify(members)) as { id: string; task_id: string }[];
+    if (!pending.length) return root;
+    const requests = compact ? [] : pending.map(({ id }) => this.store.getItem(id)).filter((item): item is Extract<SessionItem, { type: "approval" | "question" }> =>
+      item?.type === "approval" || item?.type === "question");
+    return { ...root, requests: [...(root?.requests ?? []), ...requests], requestTaskIds: [...new Set(pending.map((item) => item.task_id))] };
+  }
+
+  private leadDispatch(job: JobRow, pendingId?: string) {
+    const rootId = job.root_task_id, planHash = job.approved_plan_hash;
+    if (!rootId || !job.approved_at || !planHash || planHash !== job.plan_hash) return;
+    const messageId = `${LEAD_DISPATCH}${job.id}:${planHash}`;
+    if (pendingId ? pendingId !== messageId : this.store.getItem(messageId)) return;
+    const root = this.store.getTask(rootId);
+    if (!root || root.column !== "doing" || root.managerTaskId || root.workspaceId !== job.workspace_id) return;
+    const sessionId = this.host.botLeads.currentTerm(rootId)?.sessionId;
+    const session = sessionId ? this.store.getSession(sessionId) : undefined;
+    if (!session || session.status !== "idle" || session.goal?.status === "active" || !activeManagementTerm(this.store, session)) return;
+    if (this.store.db.prepare("SELECT 1 FROM plane_bot_managed_members WHERE job_id = ? AND plan_hash = ? LIMIT 1").get(job.id, planHash)
+      || this.host.orchestration.results(rootId).some((result) => result.planePlanHash === planHash) || this.workerQuestions(rootId, [session])
+      || (!pendingId && this.host.sessions.inbox.held(session.id).length) || !this.sameAccount(job)) return;
+    // A later read-only inquiry neither completed the work nor superseded the approved kickoff.
+    const options = { newest: true, limit: 1 };
+    const [work] = this.store.findItems(session.id, "turn", { messagePurpose: "work" }, options);
+    const [reopen] = this.store.findItems(session.id, "turn", { messagePurpose: "reopen" }, options);
+    const turn = reopen && (!work || reopen.seq > work.seq) ? reopen : work;
+    if (turn?.type !== "turn" || turn.state !== "completed" || !turn.endedAt || turn.createdAt < job.approved_at) return;
+    return { session, messageId };
+  }
+
+  private async continueLead(job: JobRow, { session, messageId }: NonNullable<ReturnType<PlaneBotJobs["leadDispatch"]>>): Promise<void> {
+    // A stable inbox ID limits automatic recovery to one work turn per approved plan, including after restart.
+    await this.host.sessions.inbox.put(session.id, [
+      "【Studio 自动继续派工】上轮工作结束时还没有派出执行任务。",
+      LEAD_DISPATCH_INSTRUCTION,
+      `【批准的范围】\nGit 基准：${job.base_commit}\n项目目录：${job.planned_project_path}\n${checkExcerpt(job.plan!, 9500)}`,
+    ].join("\n\n"), undefined, messageId, { purpose: "work", afterTurn: true });
   }
 
   private workerPhase(taskId: string): { id: string; returnedAt?: string; review?: string; sessionId?: string } | undefined {
@@ -648,7 +748,19 @@ export class PlaneBotJobs {
   }
 
   validateContinuation(item: SessionItem): void {
-    if (item.type !== "user" || !item.id.startsWith(WORKER_CONTINUATION)) return;
+    if (item.type !== "user") return;
+    if (item.id.startsWith(LEAD_DISPATCH)) {
+      const session = this.store.getSession(item.sessionId);
+      const job = session?.taskId ? this.taskJob(session.taskId) : undefined;
+      const dispatch = job && this.leadDispatch(job, item.id);
+      const scope = job?.root_task_id ? planeManagedScope(this.store, job.root_task_id) : undefined;
+      if (!this.host.teamTasksEnabled() || dispatch?.session.id !== item.sessionId || !scope) {
+        throw new HostError("conflict", "Plane 计划或主控状态已变化，已停止自动派工。");
+      }
+      assertPlaneManagedBase(this.store, scope);
+      return;
+    }
+    if (!item.id.startsWith(WORKER_CONTINUATION)) return;
     const session = this.store.getSession(item.sessionId);
     const task = session?.taskId ? this.store.getTask(session.taskId) : undefined;
     const job = task ? this.taskJob(task.id) : undefined;
@@ -749,10 +861,13 @@ export class PlaneBotJobs {
     this.store.db.prepare("UPDATE plane_bot_jobs SET error = NULL WHERE id = ?").run(job.id);
     this.changed(job.item_id, job.task_id, job.root_task_id);
     const text = `AMO Studio · 人工验收通过\n\n交付摘要\n${result.summary}\n\n验证记录\n${result.verification}`;
-    const comment = await this.board.postPlaneBotResult(taskId, job.source, job.viewer_id, job.item_id, result.id, text, () => {
+    const currentResult = () => {
       const current = this.findJob(job.id);
       return !!current && this.accepted(current)?.id === result.id;
-    }, !fresh);
+    };
+    const comment = job.manual_intake
+      ? await this.board.finishPlaneBotItem(taskId, job.source, job.viewer_id, job.item_id, result.id, text, currentResult, !fresh)
+      : await this.board.postPlaneBotResult(taskId, job.source, job.viewer_id, job.item_id, result.id, text, currentResult, !fresh);
     this.host.transaction(() => {
       this.store.db.prepare("UPDATE plane_bot_writebacks SET comment_id = ?, sent_at = ? WHERE job_id = ? AND result_id = ?").run(comment, new Date().toISOString(), job.id, result.id);
       this.store.db.prepare("UPDATE plane_bot_jobs SET sent_result_id = ?, comment_id = ?, error = NULL WHERE id = ?").run(result.id, comment, job.id);
@@ -774,13 +889,13 @@ export class PlaneBotJobs {
     const last = taskId ? this.host.orchestration.results(taskId).at(-1) : undefined;
     const latest = job.root_task_id && (!job.approved_at || last?.planePlanHash !== approved?.plan_hash) ? undefined : last;
     const progress = job.task_id && !acceptance && latest?.state !== "submitted" ? this.workerProgress(job) : undefined;
-    const rootQuestions = !compact && job.root_task_id && !acceptance && latest?.state !== "submitted"
-      ? this.workerQuestions(job.root_task_id, this.store.listSessions({ taskId: job.root_task_id }).filter((s) => !s.archivedAt)) : undefined;
+    const rootQuestions = job.root_task_id && !acceptance && latest?.state !== "submitted"
+      ? this.managedQuestions(job, job.root_task_id, compact) : undefined;
     const error = progress?.state === "awaiting-user" ? undefined : job.error ?? progress?.error;
     const state = acceptance && acceptance.id === job.sent_result_id ? "sent"
       : error ? "failed" : acceptance ? "sending" : latest?.state === "submitted" ? "review"
       : job.task_id ? progress?.state ?? "executing" : job.root_task_id && job.approved_at ? rootQuestions ? "awaiting-user" : "executing"
-      : job.declined_at ? "declined" : job.approved_at ? "starting" : job.plan ? "awaiting-approval" : "planning";
+      : job.declined_at ? "declined" : job.approved_at || (job.manual_intake && !job.root_task_id) ? "starting" : job.plan ? "awaiting-approval" : "planning";
     let behind: number | undefined;
     const checkBase = !compact && (state === "awaiting-approval" || !!job.root_task_id && !!job.approved_at && !acceptance);
     const workspace = checkBase ? this.store.getWorkspace(job.workspace_id) : undefined;
@@ -818,8 +933,14 @@ export class PlaneBotJobs {
     const writeback: PlaneBotWriteback | undefined = acceptance && (history.find((row) => row.resultId === acceptance.id && row.state === "sent") ??
       { resultId: acceptance.id, state: "pending", ...(error ? { reason: error } : {}) });
     const questions = progress ?? rootQuestions;
+    const requesterReceipt = job.manual_intake && state === "sent" ? this.store.db.prepare("SELECT requester_comment_id FROM plane_bot_writebacks WHERE job_id = ? AND result_id = ?")
+      .get(job.id, job.sent_result_id) : undefined;
+    const bot = job.manual_intake ? this.store.db.prepare("SELECT task_id, home_session_id FROM studio_bots WHERE id = ?").get(job.bot_id) as { task_id: string | null; home_session_id: string | null } | undefined : undefined;
     const view = {
-      jobId: job.id, botId: job.bot_id, workspaceId: job.workspace_id, itemId: job.item_id, item: { number, title }, topicId: linkedTask?.topicId ?? job.topic_id, botTaskId: plan?.taskId ?? null, botSessionId: plan?.sessionId ?? null, state,
+      jobId: job.id, botId: job.bot_id, workspaceId: job.workspace_id, itemId: job.item_id, item: { number, title }, topicId: linkedTask?.topicId ?? job.topic_id, botTaskId: bot?.task_id ?? plan?.taskId ?? null, botSessionId: bot?.home_session_id ?? plan?.sessionId ?? null, state,
+      ...(job.manual_intake ? { manualIntake: true } : {}),
+      ...(rootQuestions?.requestTaskIds ? { requestTaskIds: rootQuestions.requestTaskIds } : {}),
+      ...(requesterReceipt ? { requesterReview: requesterReceipt.requester_comment_id ? "confirmed" as const : "waiting" as const } : {}),
       ...(check ? { check } : {}),
       ...(!compact && questions?.decisions?.length ? { decisions: questions.decisions } : {}),
       ...(!compact && questions?.requests?.length ? { requests: questions.requests } : {}),

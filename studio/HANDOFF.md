@@ -31,7 +31,7 @@
 - Orca Bots 迁移在 `feat/studio-bots`。本机 Bot、头像、主聊天与 `@` 路由、群组、值守、独立工作树和通用 Webhook 已接入。单个 Bot 的分区设置、独立资料目录、巡视和记忆整理已接入。群聊支持近期同群记录及 Bot 代用户向群成员提问。第三方连接器、移动端和跨设备 Bot 尚待补齐。见 `plans/studio-bots.md`。
 
 - 机器人带队已接入源码版。本地可从 Bot 原对话、专题画布或任务任命，旧树从原主控卡选「绑定机器人」。等待当前工作区会话空闲后，由人双击本工作区根目录 `restart-amo.bat` 构建并加载 Host 和界面。脚本使用 `studio/.data`，先检查运行会话，关闭后备份数据库再升级。方案见 `plans/bot-topic-leads.md`。
-- Plane 团队任务在 Studio 右侧工作区加载原生看板，支持创建个人任务和只读 MCP 核对原单。「高级设置 → 功能开关」可隐藏入口。新单在 Bot 计划确认中可选独立执行或机器人带队，带队工单有专属根，按根人工验收后回写原单。源码版同上手动加载，数据库迁移到第 45 版。真实测试单的接单、工作树证据与远端评论回执仍待业务验收。方案 `plans/done/plane-team-tasks.md`、`plans/studio-bots.md`、`plans/done/bot-work-loop.md`。
+- Plane 新工单由接单机器人直接带队，在机器人对话中接收工程验收、返工和归档提醒。源码版同上手动加载，数据库迁移到第 46 版。需配套更新 Plane API 覆盖层，团队环境中的接单、两轮验收与通知仍待业务验收。入口与更新步骤见 `integrations/plane/README.md`。
 - Studio 接入 Unity 方案待确认：首版在会话点击 `@Prefab`，打开对应工程并选中资源。方案见 `plans/studio-unity-connection.md`。
 
 - 画布点击与拖动已分开：未选中的卡片可直接拖动，详情只在点击松手后打开，拖完不再弹出；3 条新手势用例及既有框选、多选、平移、连线与详情流程共 12 条隔离 Electron 回归通过，类型检查、构建通过，已检查 `screenshots/studio/canvas-gestures-{drag,drag-dark,click}.png`。扩展检查的旧尺寸用例仍期待旧卡片高度（152，实际 178），已用原始画布代码确认同样失败，本次未改。刷新源码版窗口即可加载；未提交、发布或重启当前 Studio/Host。

@@ -327,6 +327,7 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
     const runtime = new RuntimeRouter(store, profiles, { codex, claude, dsh, pi });
     const liveStore = store;
     const service = new HostService(store, runtime, profiles, {
+      deferWorkflows: true,
       launcher: options.launcher ?? new WindowsTerminalLauncher(),
       credentials,
       localClaudeHome,
@@ -371,6 +372,8 @@ export async function startHost(options: StartHostOptions): Promise<RunningHost>
       },
     });
     mcp = { url: `${http.url}/mcp`, token: mcpToken };
+    // Recovering a queued Plane job may start the profile's app-server immediately. Its MCP URL is fixed at launch.
+    service.startWorkflows();
     if (options.teamLink) {
       service.teamLink.start(options.teamLink);
       service.teamRelay.start();

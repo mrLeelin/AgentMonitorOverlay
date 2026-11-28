@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ModelProfile, Task } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { bindLeadFixture } from "../features/botleads/lead.test-support.js";
@@ -116,6 +116,33 @@ describe("AMO MCP", () => {
         expect((await call(client, "bot_group_ask", args)).content[0]?.text).toContain("找不到本会话的群组请求");
       } finally { await service.tasks.archiveTask(chat.taskId!); }
     } finally { await client.close(); }
+  });
+
+  it("routes the person's exact Plane feedback only from the owner Bot's home chat", async () => {
+    const enabled = service.teamTasksEnabled();
+    service.config.updateSettings({ teamTasksEnabled: true });
+    const bot = service.bots.save({ name: "工单机器人", purpose: "工单验收", profileId: "p-ds", memory: "", enabled: true, workspaceId: null });
+    const chat = await service.bots.home(bot.id);
+    const client = await connect(MCP_TOKEN, identities.tokenFor(chat.id, true));
+    const submit = vi.spyOn(service.teamTasks.planeFeedback, "submit").mockResolvedValue("root");
+    const args = { jobId: "job", resultId: "result", request: "再看王工的反馈" };
+    try {
+      expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(["bot_group_ask", "plane_bot_feedback", "plane_bot_orders"]);
+      expect((await call(client, "plane_bot_orders")).data).toEqual([]);
+      const item = { sessionId: chat.id, type: "user" as const, createdAt: new Date().toISOString(), text: args.request };
+      store.appendItem({ ...item, id: "relay-feedback", raw: { runtime: "codex", method: "user/inbox" } });
+      expect((await call(client, "plane_bot_feedback", args)).isError).toBe(true);
+      store.appendItem({ ...item, id: "direct-feedback" });
+      expect((await call(client, "plane_bot_feedback", { ...args, request: "王工的反馈" })).isError).toBe(true);
+      expect(submit).not.toHaveBeenCalled();
+      expect((await call(client, "plane_bot_feedback", args)).data.jobId).toBe("job");
+      expect(submit).toHaveBeenCalledWith(bot.id, args.jobId, args.resultId, args.request);
+    } finally {
+      submit.mockRestore();
+      await client.close();
+      await service.tasks.archiveTask(chat.taskId!);
+      service.config.updateSettings({ teamTasksEnabled: enabled });
+    }
   });
 
   it("turns off only features that exist; 扩展包 (removed 2026-10-31) left in the settings is ignored", async () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BOT_GROUP_ASK_TOOL } from "../../mcp/names.js";
+import { planeBotChatTools } from "../teamtasks/plane-bot-chat.js";
 import { writeAsync, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 
 export function botsTools({ service, caller }: ToolContext): AmoTool[] {
@@ -20,5 +21,5 @@ export function botsTools({ service, caller }: ToolContext): AmoTool[] {
       const reply = post.replies[0];
       return { postId: post.id, status: reply?.status ?? "skipped", error: reply?.status === "failed" ? reply.result : undefined };
     }),
-  }];
+  }, ...planeBotChatTools(service, caller)];
 }

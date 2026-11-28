@@ -830,7 +830,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     if (!bot.taskId) this.publish({ type: "bots.changed" });
     if (task.archivedAt) throw new HostError("conflict", "请先恢复 Bot 的任务。");
     const selected = source ? this.requireLiveWorkspace(source.workspaceId) : workspace;
-    const options = await this.f.tasks.withDefaults(bot.profileId, { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission: bot.permission ?? undefined });
+    // A Plane analysis always reads the chosen project, including when this Bot normally uses wider permissions in its own chat.
+    const permission = planningWorkspace ? defaultBotPermission(this.requireProfile(bot.profileId).runtime) : bot.permission ?? undefined;
+    const options = await this.f.tasks.withDefaults(bot.profileId, { model: bot.model ?? undefined, effort: bot.effort ?? undefined, fast: bot.fast ?? undefined, permission });
     return this.f.tasks.trackSessionStart(task.id, () => this.wrap(() => this.runtime.startSession({ taskId: task.id, topicId: null, profileId: bot.profileId, workspace: selected, ...(source?.cwd ? { cwd: source.cwd } : {}), title, developerInstructions: botInstructions(bot), options })));
   }
 
@@ -840,7 +842,6 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     if (this.store.getItem(messageId)) return request.direct ? this.settled({ ...request, status: "completed" }) : this.status(request);
     try {
       const bot = this.bot(request.botId);
-      if (request.planningWorkspace) this.requirePlanningBot(bot.id);
       assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       const source = request.sourceSessionId ? this.store.getSession(request.sourceSessionId) : undefined;

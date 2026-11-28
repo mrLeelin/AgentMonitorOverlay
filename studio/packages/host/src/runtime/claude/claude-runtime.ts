@@ -18,7 +18,7 @@ import { shellHelpEnv } from "../agent-env.js";
 import { agentNetworkEnv } from "../network.js";
 import { agentsMdInstructions } from "./project-instructions.js";
 import { AMO_MCP_INSTRUCTIONS, AMO_MCP_NAME, BOT_MCP_INSTRUCTIONS, type AmoTool } from "../../mcp/tools.js";
-import { BOT_GROUP_ASK_TOOL } from "../../mcp/names.js";
+import { BOT_GROUP_ASK_TOOL, PLANE_BOT_FEEDBACK_TOOL } from "../../mcp/names.js";
 import { sameProcessPart, sdkServer, type McpLaunch, type McpSource } from "../mcp-launch.js";
 import { ClaudeAsks } from "./asks.js";
 import { BLOCKED_COMMANDS, claudeCommands } from "./commands.js";
@@ -872,7 +872,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
         canUseTool: (toolName, toolInput, ctx) => {
           const inquiry = currentMessagePurpose(this.store, session.id) === "inquiry";
           // Claude can ask for approval in plan mode even when an SDK tool is in allowedTools. The Host checks the actual turn and group.
-          if (bot && toolName === `mcp__${AMO_MCP_NAME}__${BOT_GROUP_ASK_TOOL}`) {
+          if (bot && (toolName === `mcp__${AMO_MCP_NAME}__${BOT_GROUP_ASK_TOOL}` || toolName === `mcp__${AMO_MCP_NAME}__${PLANE_BOT_FEEDBACK_TOOL}`)) {
             return Promise.resolve(inquiry ? { behavior: "deny" as const, message: LEAD_READ_ONLY_REASON } : { behavior: "allow" as const, updatedInput: toolInput });
           }
           return (this.readOnlyTask(session.id) || inquiry) && !leadToolAllowed(toolName)

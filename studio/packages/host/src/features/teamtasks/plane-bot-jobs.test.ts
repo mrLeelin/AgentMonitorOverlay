@@ -30,10 +30,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function start(root: string) {
+function start(root: string, deferWorkflows = false) {
   const store = new Store(join(root, "studio.db"));
   const servers = new FakeServers(profiles);
-  const host = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(root, "common") });
+  const host = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(root, "common"), deferWorkflows });
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -49,7 +49,7 @@ function gitAt(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { windowsHide: true, encoding: "utf8" }).trim();
 }
 
-function prepare(transport?: "overlay" | "native", projectSubdir?: string) {
+function prepare(transport?: "overlay" | "native", projectSubdir?: string, legacy = true) {
   const root = mkdtempSync(join(tmpdir(), "amo-studio-test-plane-bot-"));
   cleanup.push(() => { removeTempDir(root); });
   const repo = join(root, "project");
@@ -81,6 +81,9 @@ function prepare(transport?: "overlay" | "native", projectSubdir?: string) {
     const target = [itemId, otherItemId].find((id) => url.includes(`/work-items/${id}`));
     if (url === source + "/work-items") return Response.json({ viewerId: account, writable: true });
     if (target && url === source + `/work-items/${target}` && init?.method === "GET") return Response.json(target === itemId ? item : { ...item, id: target, number: "DEMO-4", title: "另一张 Plane 工单" });
+    if (target && url === source + `/work-items/${target}` && init?.method === "POST" && JSON.parse(String(init.body)).action === "bot-start") {
+      return Response.json({ id: target });
+    }
     if (transport && target && url === source + `/work-items/${target}` && init?.method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({ action: "bot-comment", viewerId });
@@ -118,11 +121,115 @@ function prepare(transport?: "overlay" | "native", projectSubdir?: string) {
   const workspace = store.addWorkspace({ name: "Git 夹具", path: projectDir });
   const bot = host.bots.save({ name: "审核员", purpose: "审查并计划", memory: "", profileId: "test", workspaceId: null, enabled: true });
   const request = { botId: bot.id, workspaceId: workspace.id, source, viewerId };
-  return { ...instance, root, repo, git, workspace, bot, item, request, comments, writes, writeTargets, lookups, fetchPlane, switchAccount: (id: string) => { account = id; }, revealReceipt: () => { receiptVisible = true; } };
+  // The older plan/approval and independent-worker scenarios start with an intake already on disk.
+  const seedLegacy = (id: string) => store.db.prepare(`INSERT INTO plane_bot_jobs
+    (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)`)
+    .run(`old-${id}`, `old-request-${id}`, source, viewerId, id, bot.id, workspace.id, JSON.stringify({ ...item, id }));
+  if (legacy) seedLegacy(itemId);
+  return { ...instance, root, repo, git, workspace, bot, item, request, comments, writes, writeTargets, lookups, fetchPlane, seedLegacy, switchAccount: (id: string) => { account = id; }, revealReceipt: () => { receiptVisible = true; } };
 }
 
 const approvalTarget = { source, viewerId };
 const waitOptions = { timeout: 10_000 };
+
+it("claims a new Plane item once and gives the accepting Bot its own topic and lead immediately", async () => {
+  const { host, store, request, jobs, workspace, fetchPlane } = prepare(undefined, undefined, false);
+  host.bots.save({ changes: { permission: "full-auto" } }, request.botId);
+  const unrelated = host.topics.createTopic({ title: "其他专题", workspaceIds: [workspace.id] });
+  const [first, duplicate] = await Promise.all([jobs.intake(itemId, { ...request, topicId: unrelated.id }), jobs.intake(itemId, request)]);
+  expect(first).toMatchObject({ manualIntake: true, mode: "managed", state: "executing", taskId: null, rootTaskId: expect.any(String) });
+  expect(duplicate.rootTaskId).toBe(first.rootTaskId);
+  expect(first.topicId).not.toBe(unrelated.id);
+  expect(store.getTopic(first.topicId!)?.title).toMatch(/DEMO-3/);
+  expect(host.botLeads.currentTerm(first.rootTaskId!)).toMatchObject({ botId: request.botId });
+  expect(host.bots.requests(null)).toEqual([]);
+  expect(first.botSessionId).toBe(host.bots.bot(request.botId).homeSessionId);
+  expect(store.getSession(first.botSessionId!)?.options.permission).toBe("full-auto");
+  expect(fetchPlane.mock.calls.filter(([, init]) => init?.method === "POST" && JSON.parse(String(init.body)).action === "bot-start")).toHaveLength(1);
+  await host.botLeads.flush();
+  const lead = host.botLeads.currentTerm(first.rootTaskId!);
+  expect(store.getSession(lead!.sessionId!)?.options.permission).toBe("read-only");
+});
+
+it("runs an optional Plane delivery check read-only even when the receiving Bot uses full access at home", async () => {
+  const { host, store, request, workspace } = prepare(undefined, undefined, false);
+  host.bots.save({ changes: { permission: "full-auto" } }, request.botId);
+  const home = await host.bots.home(request.botId);
+  const check = await host.bots.request(request.botId, { id: "plane-review", destination: "new", text: "核对工单的交付记录。" }, false, undefined, workspace.id);
+  expect(check.sessionId).toBeTruthy();
+  expect(store.getSession(check.sessionId!)?.options.permission).toBe("read-only");
+  expect(store.getSession(home.id)?.options.permission).toBe("full-auto");
+});
+
+it("routes a managed worker's native questions and permissions through its Bot while leaving business decisions with the manager", async () => {
+  const { host, store, request, jobs, workspace } = prepare(undefined, undefined, false);
+  const job = await jobs.intake(itemId, request);
+  await host.botLeads.flush();
+  const manager = store.createTask({ title: "任务负责人", workspaceId: workspace.id, topicId: job.topicId, managerTaskId: job.rootTaskId, lead: true });
+  const task = store.createTask({ title: "执行", workspaceId: workspace.id, topicId: job.topicId, managerTaskId: manager.id });
+  const unrelated = store.createTask({ title: "同专题其他任务", workspaceId: workspace.id, topicId: job.topicId });
+  const session = (taskId: string) => store.createSession({ taskId, topicId: null, workspaceId: workspace.id, runtime: "codex",
+    profileId: "test", kind: "main", parentId: null, title: "执行", status: "running", runtimeRef: null, writer: "workbench" });
+  const worker = session(task.id), outside = session(unrelated.id), createdAt = new Date().toISOString();
+  const decision = host.collab.requestDecisionFromSession(worker.id, "子任务的业务决策", ["一", "二"]);
+  expect(decision.routedToTaskId).toBe(manager.id);
+  const question = { type: "question" as const, source: "codex-async" as const, state: "pending" as const, questions: [], createdAt };
+  store.appendItem({ ...question, id: "outside-request", sessionId: outside.id });
+  expect(await jobs.forItem(itemId)).toMatchObject({ state: "executing" });
+  const prompt = store.appendItem({ ...question, id: "worker-request", sessionId: worker.id });
+  const approve = store.appendItem({ type: "approval", state: "pending", kind: "command", approvalId: "native-id", summary: "运行命令",
+    id: "worker-approval", sessionId: worker.id, createdAt });
+  const events = vi.fn();
+  host.on("event", events);
+  host.publish({ type: "item.appended", item: prompt });
+  expect(events).toHaveBeenCalledWith(expect.objectContaining({ type: "plane.bot.changed", rootTaskId: job.rootTaskId }));
+  const [inChat] = await jobs.forBot(request.botId, true);
+  expect(inChat).toMatchObject({ state: "awaiting-user", requests: [
+    { id: prompt.id, sessionId: worker.id }, { approvalId: "native-id", sessionId: worker.id },
+  ] });
+  expect(inChat!.decisions).toBeUndefined();
+  expect(await jobs.attention()).toMatchObject([{ state: "awaiting-user", requestTaskIds: [task.id], botSessionId: job.botSessionId }]);
+  if (prompt.type !== "question" || approve.type !== "approval") throw new Error("expected runtime prompts");
+  host.publish({ type: "item.updated", item: store.replaceItem({ ...prompt, state: "answered" }) });
+  host.publish({ type: "item.updated", item: store.replaceItem({ ...approve, state: "accepted" }) });
+  expect((await jobs.attention())[0]).toMatchObject({ state: "executing" });
+  expect((await jobs.forItem(itemId))?.requests).toBeUndefined();
+  host.off("event", events);
+});
+
+it("retries an interrupted manual intake without an independent worker or a duplicate topic", async () => {
+  const { host, store, request, jobs } = prepare(undefined, undefined, false);
+  const topicCount = store.listTopics().length;
+  const claim = vi.spyOn(host.teamTasks.board, "startPlaneBotItem").mockRejectedValueOnce(new Error("连接中断"));
+  const failed = await jobs.intake(itemId, request);
+  expect(failed).toMatchObject({ manualIntake: true, state: "failed", canRetry: true, error: "连接中断", taskId: null });
+  expect(store.listTopics()).toHaveLength(topicCount);
+  const recovered = await jobs.retryForBot(request.botId, failed.jobId!);
+  expect(recovered).toMatchObject({ mode: "managed", state: "executing", rootTaskId: expect.any(String), jobId: failed.jobId });
+  expect(store.listTopics()).toHaveLength(topicCount + 1);
+  expect(claim).toHaveBeenCalledTimes(2);
+  expect(host.bots.sidebar().workers).toEqual([]);
+  await host.botLeads.flush();
+});
+
+it("recovers a saved manual intake once the Host can start Bot sessions", async () => {
+  const previous = prepare(undefined, undefined, false);
+  vi.spyOn(previous.host.teamTasks.board, "startPlaneBotItem").mockRejectedValueOnce(new Error("disconnected"));
+  const pending = await previous.jobs.intake(itemId, previous.request);
+  expect(pending.state).toBe("failed");
+  await previous.close();
+  const restarted = start(previous.root, true);
+  const claim = vi.spyOn(restarted.host.teamTasks.board, "startPlaneBotItem");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(claim).not.toHaveBeenCalled();
+  restarted.host.startWorkflows();
+  restarted.host.startWorkflows();
+  await vi.waitFor(async () => expect(await restarted.jobs.forItem(itemId)).toMatchObject({
+    jobId: pending.jobId, state: "executing", mode: "managed", rootTaskId: expect.any(String),
+  }), waitOptions);
+  await restarted.host.botLeads.flush();
+  expect(claim).toHaveBeenCalledTimes(1);
+});
 
 async function waitForPlan(jobs: HostService["teamTasks"]["planeBots"], id = itemId) {
   return vi.waitFor(async () => {
@@ -489,6 +596,75 @@ function managedChoice(plan: { baseCommit: string }, operationId: string, topicI
   return { mode: "managed", operationId, baseCommit: plan.baseCommit, ...(topicId ? { topic: { topicId } } : {}) };
 }
 
+it("continues an approved Plane lead once after it ends without dispatching work", async () => {
+  const { jobs, host, store, servers, request, root, close, writes } = prepare();
+  const leadTurns: Array<{ thread: string; text: string }> = [];
+  const noDispatch = "本轮没有创建执行任务。";
+  const continuation = "Studio 自动继续派工";
+  servers.fakes.set("test", await startFakeAppServer({ script: async (ctx) => {
+    if (!ctx.userText.includes("【用户批准的 Plane 计划") && !ctx.userText.includes(continuation)) {
+      return ctx.agentMessage("在指定基准读取 fixture.txt，验证内容，保持项目只读。");
+    }
+    leadTurns.push({ thread: ctx.thread.id, text: ctx.userText });
+    await ctx.agentMessage(noDispatch);
+  } }));
+
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  const { rootTaskId } = await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash, execution: managedChoice(plan, "continue-lead") });
+  const lead = await vi.waitFor(() => {
+    const session = store.getSession(host.botLeads.currentTerm(rootTaskId!)?.sessionId ?? "");
+    expect(session?.status).toBe("idle");
+    expect(store.findItems(session!.id, "turn", { state: "completed" })).toHaveLength(2);
+    return session!;
+  }, waitOptions);
+
+  expect(leadTurns).toHaveLength(2);
+  expect(leadTurns[1]).toMatchObject({ thread: leadTurns[0]!.thread });
+  expect(leadTurns[1]!.text).toContain(continuation);
+  expect(leadTurns[1]!.text).toContain("task_plan_propose");
+  expect(leadTurns[1]!.text).toContain(plan.baseCommit);
+  expect(store.findItems(lead.id, "user", { messagePurpose: "work" })).toHaveLength(2);
+  expect(store.getTask(rootTaskId!)?.column).toBe("doing");
+  expect(host.orchestration.results(rootTaskId!)).toEqual([]);
+  expect(writes).toEqual([]);
+
+  host.publish({ type: "session.upserted", session: lead });
+  await host.botLeads.flush();
+  expect(store.findItems(lead.id, "user")).toHaveLength(2);
+  await close();
+  const recovered = start(root);
+  await recovered.host.botLeads.flush();
+  expect(recovered.store.findItems(lead.id, "user")).toHaveLength(2);
+}, 20_000);
+
+it("keeps a Plane lead waiting for its open decision after a dispatch-free turn", async () => {
+  const { jobs, host, store, servers, request } = prepare();
+  const question = "请确认要查看哪段调用链？";
+  servers.fakes.set("test", await startFakeAppServer({ script: async (ctx) => {
+    if (!ctx.userText.includes("【用户批准的 Plane 计划")) return ctx.agentMessage("按获批范围只读检查。");
+    const lead = await vi.waitFor(() => {
+      const session = store.listSessions().find((s) => s.runtimeRef === ctx.thread.id);
+      expect(session?.status).toBe("running");
+      return session!;
+    });
+    host.collab.requestDecisionFromSession(lead.id, question, ["入口", "提交"]);
+    await ctx.agentMessage("等待用户决定。");
+  } }));
+
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  const { rootTaskId } = await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash, execution: managedChoice(plan, "lead-decision") });
+  const lead = await vi.waitFor(() => {
+    const session = store.getSession(host.botLeads.currentTerm(rootTaskId!)?.sessionId ?? "");
+    expect(session?.status).toBe("idle");
+    expect(store.findItems(session!.id, "turn", { state: "completed" })).toHaveLength(1);
+    return session!;
+  }, waitOptions);
+  await expect(jobs.forTask(rootTaskId!)).resolves.toMatchObject({ state: "awaiting-user", decisions: [{ question }] });
+  expect(store.findItems(lead.id, "user")).toHaveLength(1);
+}, 15_000);
+
 it("keeps a Plane root in progress when its first reply has no delivery and shows how to inspect uncommitted inputs", async () => {
   const { jobs, host, store, servers, workspace, request } = prepare();
   const stopped = "模型报告无法派工，未提交交付。";
@@ -539,7 +715,8 @@ it("keeps a Plane root in progress when its first reply has no delivery and show
 }, 20_000);
 
 it("keeps two Plane roots in one topic independent and binds each comment to its human-approved result", async () => {
-  const { jobs, host, store, servers, workspace, request, writes, writeTargets, lookups, switchAccount, revealReceipt } = prepare("overlay");
+  const { jobs, host, store, servers, workspace, request, writes, writeTargets, lookups, switchAccount, revealReceipt, seedLegacy } = prepare("overlay");
+  seedLegacy(otherItemId);
   servers.fakes.set("test", await startFakeAppServer({ script: (ctx) => ctx.agentMessage("核对已批准的改动并验证。") }));
   const topic = host.topics.createTopic({ title: "同专题两张工单", workspaceIds: [workspace.id] });
   const incoming = { ...request, topicId: topic.id };
@@ -937,7 +1114,7 @@ it("checks a legacy delivery with its original analysis and replaces an orphaned
 }, 15_000);
 
 it("lists the newest twenty jobs for a Bot across Plane projects and accounts", async () => {
-  const { jobs, store, request, fetchPlane } = prepare();
+  const { jobs, store, request, fetchPlane } = prepare(undefined, undefined, false);
   const add = store.db.prepare(`INSERT INTO plane_bot_jobs
     (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)`);
   for (let index = 0; index < 22; index++) {
@@ -1018,8 +1195,8 @@ it("allows a fresh intake after the person permanently deletes the old worker", 
   expect(await jobs.forTask(taskId)).toBeNull();
   expect(await jobs.forItem(itemId)).toBeNull();
   expect(await jobs.forBot(request.botId)).toEqual([]);
-  await jobs.intake(itemId, request);
-  await waitForPlan(jobs);
-  expect(host.bots.requests(null)).toHaveLength(2);
-  expect((await jobs.forItem(itemId))?.botSessionId).not.toBe(analysis.sessionId);
+  const fresh = await jobs.intake(itemId, request);
+  expect(fresh).toMatchObject({ manualIntake: true, mode: "managed", rootTaskId: expect.any(String) });
+  expect(fresh.botSessionId).not.toBe(analysis.sessionId);
+  await host.botLeads.flush();
 }, 15_000);

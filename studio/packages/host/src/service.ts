@@ -127,11 +127,15 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     if (!this.teamTasksEnabled()) throw new HostError("read_only", "团队任务已关闭。可在「设置 → 高级设置 → 功能开关」重新开启。");
   }
 
+  private workflowsStarted = false;
+
   constructor(
     readonly store: Store,
     runtime: SessionRuntimeApi,
     readonly profiles: readonly ModelProfile[],
     readonly options: {
+      /** startHost starts persisted work after its HTTP MCP endpoint is listening. */
+      deferWorkflows?: boolean;
       launcher?: TerminalLauncher;
       credentials?: CredentialReader | CredentialStore;
       /** Where the common space lives when it is first made; default `common/` next to the database. */
@@ -193,6 +197,12 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     });
     this.tasks.latestDelivery = (id) => this.orchestration.results(id).at(-1);
     this.tasks.ensureStructure();
+    if (!options.deferWorkflows) this.startWorkflows();
+  }
+
+  startWorkflows(): void {
+    if (this.workflowsStarted) return;
+    this.workflowsStarted = true;
     this.botLeads.repairLegacyTrees();
     this.relays.prepareInbox();
     this.sharedContext.watch();

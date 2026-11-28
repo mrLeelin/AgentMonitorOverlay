@@ -35,7 +35,19 @@ export function teamTasksRoutes(service: HostService): Route[] {
     route("POST /api/team-board/plane/bots/:id/jobs/:jobId/decision", ({ params, body }) => bots.decideForBot(params.id, params.jobId, body as PlaneBotPlanChoice)),
     route("POST /api/team-board/plane/bots/:id/jobs/:jobId/retry", ({ params }) => bots.retryForBot(params.id, params.jobId)),
     route("POST /api/team-board/plane/bots/:id/jobs/:jobId/replan", ({ params, body }) => bots.replan(params.id, params.jobId, body as PlaneBotReplan)),
-    route("GET /api/team-board/plane/bot-attention", () => bots.attention()),
+    route("POST /api/team-board/plane/bots/:id/jobs/:jobId/feedback", async ({ params, body }) => {
+      const input = obj(body);
+      const root = await service.teamTasks.planeFeedback.submit(params.id, params.jobId, input.resultId, input.text);
+      const job = await bots.forTask(root);
+      if (!job) throw new HostError("not_found", "工单已归档，请刷新。");
+      return job;
+    }),
+    route("POST /api/team-board/plane/bots/:id/jobs/:jobId/archive", async ({ params, body }) => {
+      const topic = service.teamTasks.planeFeedback.topicForArchive(params.id, params.jobId, obj(body).resultId);
+      await service.topics.archiveTopic(topic);
+      return { ok: true };
+    }),
+    route("GET /api/team-board/plane/bot-attention", () => { service.teamTasks.planeFeedback.refresh(); return bots.attention(); }),
     route("GET /api/team-board/local/:id/bot", ({ params }) => bots.forTask(params.id)),
     route("POST /api/team-board/local/:id/bot/retry", ({ params }) => bots.retry(params.id)),
     route("POST /api/team-board/local/:id/bot/check", ({ params, body }) => bots.check(params.id, obj(body).resultId)),

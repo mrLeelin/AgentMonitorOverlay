@@ -49,6 +49,10 @@ TOTAL_FILES = 16 * 1024 * 1024
 FILE_COUNT = 6
 ROLLBACK_SALT = "amo-team-board-release-v1"
 ROLLBACK_SECONDS = 120
+BOT_DELIVERY_SOURCE = "AMO Studio Plane"
+BOT_START_SOURCE = "AMO Studio Plane · 接单"
+BOT_COMMENT_SOURCES = (BOT_START_SOURCE, BOT_DELIVERY_SOURCE, "AMO Studio")
+CREATOR_REVIEW_PROMPT = "请工单发起人验收。通过后请在本单单独评论「验收通过」，需要修改请直接留言说明。"
 
 
 def scoped_memberships(request):
@@ -344,6 +348,7 @@ def work_item_detail(request, issue, project, role):
         "files": [describe_asset(file) for file in files if not file.comment_id],
         "comments": [{
             "id": str(comment.id), "author": viewer_name(comment.actor), "at": millis(comment.created_at),
+            "isBotWorkflow": comment.external_source in BOT_COMMENT_SOURCES,
             "text": plain_text(comment.comment_html, comment.comment_stripped),
             "canEdit": comment.actor_id == request.user.id and role in (15, 20),
             "canDelete": role == 20 or (role == 15 and comment.actor_id == request.user.id),
@@ -444,6 +449,7 @@ class WorkItemContextView(BaseAPIView):
                 text = context_text(plain_text(row.comment_html, row.comment_stripped), size=1800)
                 return {
                     "id": str(row.id), "author": viewer_name(row.actor), "at": millis(row.created_at),
+                    "isBotWorkflow": row.external_source in BOT_COMMENT_SOURCES,
                     "editedAt": millis(row.edited_at) if row.edited_at else None,
                     "parentId": str(row.parent_id) if row.parent_id else None,
                     "text": text["text"], "textNextOffset": text["nextOffset"],
@@ -485,7 +491,8 @@ class WorkItemContextView(BaseAPIView):
             row = IssueComment.objects.filter(issue=issue, id=comment_id).first()
             if not row:
                 raise BoardProblem(404, "此工作项下没有这条评论")
-            return Response({**result, "comment": {"id": str(row.id), **context_text(plain_text(row.comment_html, row.comment_stripped), offset)}})
+            return Response({**result, "comment": {"id": str(row.id), "isBotWorkflow": row.external_source in BOT_COMMENT_SOURCES,
+                                                   **context_text(plain_text(row.comment_html, row.comment_stripped), offset)}})
         if section is not None:
             if section not in sections:
                 raise BoardProblem(400, "未知的 Plane 工作项内容分组")
@@ -599,6 +606,8 @@ class ProjectWorkItemView(BaseAPIView):
             raise BoardProblem(409, "这张工作项已被修改，请刷新后重试")
         if issue.archived_at and action not in ("restore", "delete"):
             raise BoardProblem(409, "请先恢复这张工作项")
+        if action in ("bot-start", "bot-finish", "bot-feedback"):
+            return bot_workflow(request, issue, project, action)
         if action == "bot-comment":
             return result_comment(request, issue)
         if action == "edit":
@@ -666,15 +675,29 @@ def update_issue(request, issue, project, data):
     ), robust=True)
 
 
-def result_comment(request, issue):
+def check_bot_viewer(request):
     if request.data.get("viewerId") != str(request.user.id):
         raise BoardProblem(409, "Plane 账号已变更，请用接单时的账号回写")
+
+
+def bot_result_id(request):
     result_id = request.data.get("resultId")
-    text = request.data.get("text")
     if not isinstance(result_id, str) or not fullmatch(r"result-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", result_id):
         raise BoardProblem(400, "验收编号无效")
+    return result_id
+
+
+def bot_result_text(request):
+    text = request.data.get("text")
     if not isinstance(text, str) or not text.strip() or len(text) > 40100:
         raise BoardProblem(400, "交付评论内容无效")
+    return text.strip()
+
+
+def result_comment(request, issue):
+    check_bot_viewer(request)
+    result_id = bot_result_id(request)
+    text = bot_result_text(request)
     # ProjectWorkItemView holds the issue row lock through commit, including if the client never sees our response.
     comment = IssueComment.objects.filter(issue=issue, external_source="AMO Studio", external_id=result_id).first()
     if comment is None:
@@ -684,17 +707,96 @@ def result_comment(request, issue):
     return Response({"id": str(comment.id)})
 
 
-def note(request, issue, text, *, result_id=None):
+def note(request, issue, text, *, result_id=None, source="AMO Studio"):
     if not text:
         return None
     comment = IssueComment.objects.create(
-        project_id=issue.project_id, issue=issue, actor=request.user,
+        workspace_id=issue.workspace_id, project_id=issue.project_id, issue=issue, actor=request.user,
         comment_html=text_html(text),
         comment_stripped=text,
-        **({"external_source": "AMO Studio", "external_id": result_id} if result_id else {}),
+        **({"external_source": source, "external_id": result_id} if result_id else {}),
     )
     dispatch_activity(request, issue, "comment.activity.created", {"id": str(comment.id), "comment_html": comment.comment_html})
     return comment
+
+
+def creator_confirmation(issue, delivery):
+    if not issue.created_by_id:
+        return None
+    return IssueComment.objects.filter(
+        Q(external_source__isnull=True) | Q(external_source=""),
+        issue=issue, actor_id=issue.created_by_id, created_at__gt=delivery.created_at,
+        comment_stripped__in=("验收通过", "验收成功"),
+    ).order_by("-created_at", "-id").first()
+
+
+def bot_workflow(request, issue, project, action):
+    check_bot_viewer(request)
+    deliveries = IssueComment.objects.filter(issue=issue, external_source=BOT_DELIVERY_SOURCE)
+    current = deliveries.order_by("-created_at", "-id").first()
+    starts = IssueComment.objects.filter(issue=issue, external_source=BOT_START_SOURCE)
+    intake = starts.filter(external_id="intake").first()
+    result_id = bot_result_id(request) if action != "bot-start" or "resultId" in request.data else None
+    if (intake and intake.actor_id != request.user.id) or (current and current.actor_id != request.user.id):
+        raise BoardProblem(409, "这张原单已由其他账号接单")
+    if not intake and action != "bot-start":
+        raise BoardProblem(409, "机器人尚未接单")
+    if action == "bot-feedback":
+        if not current or current.external_id != result_id:
+            raise BoardProblem(409, "当前工单的交付版本已变更，请刷新")
+        if not starts.filter(external_id=result_id).exists():
+            confirmation = creator_confirmation(issue, current)
+            if confirmation:
+                return Response({"status": "confirmed", "commentId": str(confirmation.id)})
+        return Response({"status": "waiting"})
+    lane = "doing" if action == "bot-start" else "done"
+    mapping = state_map(project.id)
+    if action == "bot-start":
+        if (current.external_id if current else None) != result_id:
+            raise BoardProblem(409, "新一轮返工须使用当前工单的最新交付编号")
+        if (intake and not result_id) or (result_id and starts.filter(external_id=result_id).exists()):
+            return Response({"id": str(issue.id)})
+        if current and creator_confirmation(issue, current):
+            raise BoardProblem(409, "发起人已经确认本轮交付，可以归档")
+    else:
+        text = bot_result_text(request)
+        # A delayed retry may arrive after a new round started. Return its original receipt
+        # without moving the issue back to Done or sending a second review request.
+        receipt = deliveries.filter(external_id=result_id).first()
+        if receipt:
+            if receipt.actor_id != request.user.id:
+                raise BoardProblem(409, "同一交付编号已有其他账号的评论")
+            return Response({"id": str(receipt.id)})
+        if current and not starts.filter(external_id=current.external_id).exists():
+            raise BoardProblem(409, "上一轮已交付，请先在机器人工单发起返工")
+        if not issue.created_by_id:
+            raise BoardProblem(409, "原单缺少发起人，无法送达验收通知")
+    state = mapping.get(lane)
+    if not state:
+        raise BoardProblem(409, "项目缺少进行中状态" if lane == "doing" else "项目缺少完成状态")
+    if issue.state_id != state.id:
+        update_issue(request, issue, project, {"state": str(state.id)})
+    if action == "bot-start":
+        note(request, issue, "机器人已接单。" if not result_id else "机器人已按反馈开始修改。",
+             result_id=result_id or "intake", source=BOT_START_SOURCE)
+        return Response({"id": str(issue.id)})
+    comment = note(request, issue, f"{text}\n\n{CREATOR_REVIEW_PROMPT}", result_id=result_id, source=BOT_DELIVERY_SOURCE)
+    # Plane's ordinary activity worker only notifies subscribers and excludes the actor.
+    # Keep the explicit review request durable even when the submitter is also the creator.
+    Notification.objects.create(
+        workspace_id=issue.workspace_id, project=project, receiver_id=issue.created_by_id,
+        triggered_by=request.user, entity_identifier=issue.id, entity_name="issue",
+        sender="in_app:issue_activities:created", title=CREATOR_REVIEW_PROMPT,
+        data={
+            "issue": {"id": str(issue.id), "identifier": project.identifier, "sequence_id": issue.sequence_id,
+                      "name": issue.name, "state_name": state.name, "state_group": state.group},
+            "issue_activity": {"id": str(comment.id), "actor": str(request.user.id), "field": "comment",
+                               "verb": "created", "new_value": comment.comment_html, "old_value": "",
+                               "new_identifier": str(comment.id), "old_identifier": None,
+                               "issue_comment": CREATOR_REVIEW_PROMPT},
+        },
+    )
+    return Response({"id": str(comment.id)})
 
 
 def decode_files(items):

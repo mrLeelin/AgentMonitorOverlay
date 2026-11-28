@@ -582,4 +582,10 @@ export const MIGRATIONS: readonly Migration[] = [
     SELECT id, sent_result_id, COALESCE(approved_at, ''), comment_id, NULL FROM plane_bot_jobs
     WHERE sent_result_id IS NOT NULL AND comment_id IS NOT NULL;
   `,
+  // 46: Existing independent jobs keep their original workflow. Requester decisions belong to one delivery.
+  `
+  ALTER TABLE plane_bot_jobs ADD COLUMN manual_intake INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE plane_bot_writebacks ADD COLUMN requester_comment_id TEXT;
+  ALTER TABLE plane_bot_writebacks ADD COLUMN rework_text TEXT;
+  `,
 ];
