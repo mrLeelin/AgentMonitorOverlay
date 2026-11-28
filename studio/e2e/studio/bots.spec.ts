@@ -434,15 +434,26 @@ test("creates a Bot from settings and routes a task mention to its own main chat
   await followUp.getByRole("button", { name: /打开 Bot 会话/ }).click();
   await expect(page.getByText("来自「测试 Bot 审查」的请求", { exact: true }).first()).toBeVisible();
   await expect(page.getByTestId("task-title").locator(".bot-avatar img")).toBeVisible();
+  const head = page.getByTestId("thread-head");
+  await expect(head.getByTestId("thread-model")).toBeVisible();
+  await expect(head.getByRole("button", { name: "会话的更多操作" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "输入消息" })).toBeVisible();
   await page.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(page.getByTestId("task-card").filter({ hasText: task.title })).toBeVisible();
   await page.getByTestId("bots-nav").getByRole("button", { name: "审核员 主聊天", exact: true }).click();
   await expect(page.getByTestId("task-title")).toContainText("审核员");
+  await expect(head).toHaveText("审核员");
+  const avatar = head.locator(".bot-avatar img");
+  await expect(avatar).toHaveAttribute("src", bot!.avatar!);
+  await expect.poll(() => avatar.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(head.getByRole("button")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "输入消息" })).toBeVisible();
   await expect(page.getByText("这条结论对应哪个文件？", { exact: true })).toHaveCount(0);
   const chats = await studio.api<Session[]>("GET", `/api/bots/${bot!.id}/chats`);
   expect(chats).toHaveLength(2);
+  await screenshot(app, "studio", "bot-home-header-dark", page);
+  await page.getByRole("button", { name: "深色模式", exact: true }).click();
+  await screenshot(app, "studio", "bot-home-header-light", page);
 });
 
 test("the project agent sends context through MCP, receives the Bot reply and answers in the origin", async () => {

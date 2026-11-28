@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type BotRequest, type PlaneBoardConnection, type PlaneBotJob, type SessionItem, type StateSnapshot, type StudioBot, type Task, type Workspace } from "@amo-studio/protocol";
 import { defaultScript, listenInStudioRange } from "@amo-studio/testkit";
+import { firstSession, items as sessionItems, resultIn, submitMessage } from "../support/bot-lead-local.js";
 import { launchStudio, screenshot } from "../support/studio.js";
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -183,8 +184,9 @@ const planeBotScenarios = [
   { name: "hands a Plane item to a Bot and retries comment writeback without repeating acceptance", approve: true, botOnly: false },
   { name: "abandons a Plane Bot plan and analyzes again without starting a worker", approve: false, botOnly: false },
   { name: "handles the Plane plan, question and acceptance from the Bot conversation", approve: true, botOnly: true },
+  { name: "approves a Plane plan for a dedicated managed root and reviews its worktree delivery", approve: true, botOnly: false, managed: true },
 ];
-for (const { name, approve, botOnly } of planeBotScenarios) test(name, async () => {
+for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, async ({}, testInfo) => {
   test.setTimeout(90_000);
   const projectId = "8af9b331-e9aa-4f1d-ae07-fcbb149ece27";
   const itemId = "9e1afba8-22ae-44c1-b4ad-223fad55ce4a";
@@ -271,6 +273,122 @@ for (const { name, approve, botOnly } of planeBotScenarios) test(name, async () 
     const pending = await getJob();
     expect(pending).toMatchObject({ state: "awaiting-approval", taskId: null, baseCommit });
     expect(methods).toEqual([]);
+
+    if (managed) {
+      const topic = await studio.api<{ id: string }>("POST", "/api/topics", { title: "发布核对专题", workspaceIds: [workspace.id] });
+      await dialog.getByLabel("执行方式").selectOption("managed");
+      await dialog.getByLabel("承接专题").selectOption(topic.id);
+      await testInfo.attach("plane-managed-approval", { path: await screenshot(app, "studio", "plane-bot-managed-approval", page), contentType: "image/png" });
+      await dialog.getByRole("button", { name: "批准并让机器人带队" }).click();
+      await expect(dialog.getByRole("button", { name: "打开专题画布" })).toBeVisible();
+      const job = await getJob();
+      expect(job).toMatchObject({ mode: "managed", taskId: null, rootTaskId: expect.any(String), topicId: topic.id, baseCommit });
+      await expect.poll(async () => (await state()).tasks.filter((task) => task.topicId === topic.id).map((task) => ({ id: task.id, lead: task.lead, manager: task.managerTaskId ?? null })))
+        .toEqual([{ id: job.rootTaskId, lead: true, manager: null }]);
+      await dialog.getByRole("button", { name: "打开专题画布" }).click();
+      await expect(page.getByTestId(`scope-topic-发布核对专题`)).toBeVisible();
+      await expect(page.getByText("DEMO-5 · 核对发布说明", { exact: true }).last()).toBeVisible();
+      await expect(page.getByText("正在更新交付状态…", { exact: true }).first()).toBeHidden();
+      await testInfo.attach("plane-managed-canvas", { path: await screenshot(app, "studio", "plane-bot-managed-canvas", page), contentType: "image/png" });
+      expect(methods).toEqual([]);
+      const own = studio, rootId = job.rootTaskId!;
+      const send = (sessionId: string, tool: string, args: object) => submitMessage(own, sessionId, `[[mcp: ${tool} ${JSON.stringify(args)}]]`);
+      const settled = async (sessionId: string) => {
+        await expect.poll(async () => (await sessionItems(own, sessionId)).filter((entry) => entry.type === "turn").at(-1)?.state).toBe("completed");
+      };
+      const lead = await firstSession(own, rootId);
+      await settled(lead.id);
+      await send(lead.id, "task_plan_propose", { summary: "落实批准的发布说明范围", tasks: [{ key: "release-note", title: "核对发布说明改动", firstMessage: "执行批准的发布说明任务" }] });
+      const findWorker = async () => (await state()).tasks.find((task) => task.managerTaskId === rootId);
+      await expect.poll(async () => (await findWorker())?.title).toBe("核对发布说明改动");
+      const worker = await firstSession(own, (await findWorker())!.id);
+      await settled(worker.id);
+      expect(worker.cwd).not.toBe(workspace.path);
+      await writeFile(join(worker.cwd!, "release.md"), "Fixture release notes\nRechecked all release links.\n");
+      await send(worker.id, "task_submit_result", { summary: "发布说明链接核对完毕", verification: "核对了独立工作树中 release.md 的实际差异" });
+      const leaf = await resultIn(own, worker.taskId!, "submitted", 25_000);
+      await settled(worker.id);
+      await send(lead.id, "task_review_result", { accept: true, resultId: leaf.id, review: "核对执行工作树证据后通过" });
+      await resultIn(own, worker.taskId!, "accepted", 25_000);
+      await send(lead.id, "task_submit_result", { summary: "发布说明最终交付", verification: "在执行工作树核对整体验证" });
+      const rootResult = await resultIn(own, rootId, "submitted", 25_000);
+      await settled(lead.id);
+      await page.getByTestId("canvas-detail").getByRole("button", { name: "打开任务", exact: true }).click();
+
+      const bar = page.getByRole("region", { name: "主控运行状态" });
+      const chat = bar.getByRole("button", { name: "打开主控对话", exact: true });
+      const append = bar.getByRole("button", { name: "追加工作", exact: true });
+      const more = bar.getByRole("button", { name: "主控更多操作", exact: true });
+      const menu = page.getByRole("menu", { name: "主控更多操作" });
+      await expect(bar.getByRole("status")).toHaveText("主控空闲");
+      await expect(bar).toContainText("试点审核员");
+      await expect(page.getByRole("region", { name: "关联的团队原单" })).toBeVisible();
+      await expect(chat).toBeVisible();
+      await expect(append).toBeVisible();
+      await expect(more).toBeVisible();
+      expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(64);
+      expect(Math.abs((await chat.boundingBox())!.y - (await append.boundingBox())!.y)).toBeLessThan(2);
+      expect((await chat.boundingBox())!.x).toBeGreaterThan((await bar.getByRole("status").boundingBox())!.x);
+      await append.click();
+      const continueLead = page.getByRole("dialog", { name: "交给已有主控" });
+      await expect(continueLead.getByLabel("追加工作", { exact: true })).toBeVisible();
+      await continueLead.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(continueLead).toBeHidden();
+
+      const originalTheme = await page.locator("html").getAttribute("data-theme");
+      for (const theme of ["dark", "light"]) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await testInfo.attach(`plane-lead-bar-${theme}`, { path: await screenshot(app, "studio", `plane-lead-bar-${theme}`, page), contentType: "image/png" });
+      }
+      const size = await app.evaluate(({ BrowserWindow }, url) => {
+        const window = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL() === url)!;
+        const original = window.getContentSize();
+        window.setContentSize(960, 700);
+        return original;
+      }, page.url());
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(1000);
+      await more.press("Enter");
+      await expect(more).toHaveAttribute("aria-expanded", "true");
+      await expect(menu.getByRole("menuitem")).toHaveText(["暂停主控", "更换机器人", "任期记录"]);
+      const menuBox = (await menu.boundingBox())!, moreBox = (await more.boundingBox())!;
+      expect(Math.abs(menuBox.x + menuBox.width - moreBox.x - moreBox.width)).toBeLessThan(2);
+      await expect(menu.getByRole("menuitem", { name: "暂停主控" })).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(menu.getByRole("menuitem", { name: "更换机器人" })).toBeFocused();
+      await testInfo.attach("plane-lead-bar-narrow-menu", { path: await screenshot(app, "studio", "plane-lead-bar-narrow-menu", page), contentType: "image/png" });
+      await page.keyboard.press("Escape");
+      await expect(menu).toBeHidden();
+      await expect(more).toBeFocused();
+      await expect(more).toHaveAttribute("aria-expanded", "false");
+      await more.press("Enter");
+      await page.keyboard.press("ArrowUp");
+      await expect(menu.getByRole("menuitem", { name: "任期记录" })).toBeFocused();
+      await page.keyboard.press("Enter");
+      const history = page.getByRole("dialog", { name: "主控任期记录" });
+      await expect(history.getByRole("button", { name: /第 1 任.*试点审核员/ })).toBeVisible();
+      await history.getByRole("button", { name: "关闭", exact: true }).click();
+      await expect(history).toBeHidden();
+      await app.evaluate(({ BrowserWindow }, [url, size]) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL() === url)!.setContentSize(size[0]!, size[1]!), [page.url(), size] as const);
+      await page.evaluate((theme) => {
+        if (theme) document.documentElement.setAttribute("data-theme", theme);
+        else document.documentElement.removeAttribute("data-theme");
+      }, originalTheme);
+
+      await page.getByRole("button", { name: "验收交付", exact: true }).click();
+      const rootReview = page.getByRole("dialog", { name: "交付与验收" });
+      await expect(rootReview.getByText("执行工作树 · 1 项")).toBeVisible();
+      await expect(rootReview.getByRole("button", { name: "查看改动", exact: true })).toBeVisible();
+      await expect(rootReview.getByTestId("workflow-result")).toContainText("发布说明最终交付");
+      await expect(rootReview.getByRole("button", { name: "验收通过", exact: true })).toBeVisible();
+      await testInfo.attach("plane-managed-review", { path: await screenshot(app, "studio", "plane-bot-managed-review", page), contentType: "image/png" });
+      expect(methods).toEqual([]);
+      rejectNative = false;
+      await rootReview.getByRole("button", { name: "验收通过", exact: true }).click();
+      await expect.poll(getJob).toMatchObject({ state: "sent", writeback: { resultId: rootResult.id, commentId: "confirmed-comment" } });
+      expect(comments).toHaveLength(1);
+      expect(comments[0]).toMatchObject({ actor: viewer, external_id: rootResult.id, comment_html: expect.stringContaining("发布说明最终交付") });
+      return;
+    }
 
     if (!approve) {
       await dialog.getByRole("button", { name: "放弃", exact: true }).click();
@@ -386,7 +504,7 @@ for (const { name, approve, botOnly } of planeBotScenarios) test(name, async () 
     await dialog.getByRole("button", { name: "关闭", exact: true }).click();
     await delegate.click();
     await expect(dialog.getByRole("status")).toHaveText("计划待确认");
-    await expect(dialog.getByText("分析后项目有 1 个新提交。开工会从分析时的提交开始改；想用最新代码，请放弃后重新交给 Bot。", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("分析后项目有 1 个新提交。独立执行仍使用计划中的基准。", { exact: false })).toBeVisible();
     await screenshot(app, "studio", "plane-bot-plan", page);
     await dialog.getByRole("button", { name: "开工", exact: true }).click();
     await expect(dialog.getByRole("button", { name: "打开执行任务" })).toBeVisible({ timeout: 45_000 });
@@ -468,7 +586,7 @@ for (const { name, approve, botOnly } of planeBotScenarios) test(name, async () 
     const reviewButton = original.getByRole("button", { name: "验收交付" });
     await expect(original.getByText("等待人工验收")).toBeVisible();
     await expect(page.getByTestId("workflow-result")).toHaveCount(0);
-    await expect(page.getByTestId("task-description")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-description")).toHaveCount(0);
     await original.getByRole("button", { name: "原单与任务说明" }).click();
     await page.getByRole("menuitem", { name: "任务说明…" }).click();
     await expect(page.getByRole("dialog", { name: "任务说明" }).getByLabel("说明内容")).toHaveValue(/已批准的计划/);

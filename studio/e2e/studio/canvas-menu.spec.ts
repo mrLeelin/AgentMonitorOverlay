@@ -103,8 +103,8 @@ test("canvas right-click: descriptions, colour marks, 连依赖, notes and group
   await menu.getByRole("menuitem", { name: "删除便签" }).click();
   await expect(notes).toHaveCount(1);
 
-  // A group from the empty canvas; marked blue; deleted from its menu — empty, it goes at once (no question), tasks untouched.
-  await page.mouse.click(vbox.x + vbox.width / 2, vbox.y + 160, { button: "right" });
+  // A group from the empty canvas. Place the center low enough that the group header clears the canvas toolbar.
+  await page.mouse.click(vbox.x + vbox.width / 2, vbox.y + 220, { button: "right" });
   await menu.getByTestId("menu-new-group").click();
   const group = page.getByTestId("canvas-group");
   await expect(group).toHaveCount(1);
@@ -126,12 +126,14 @@ test("canvas right-click: descriptions, colour marks, 连依赖, notes and group
   await menu.getByTestId("menu-fit").click();
   await expect(page.getByTestId("zoom-label")).not.toHaveText("");
 
-  // The task page shows the description, and edits it from ⋯.
+  // The task page shows the same description in its sidebar, and edits it from ⋯.
   await card("装甲车").dblclick();
+  await page.getByTestId("sidebar-description").click();
   await expect(page.getByTestId("task-description")).toHaveText(/迁移装甲车和弹射闪电/);
   await page.getByTestId("task-more").click();
   await page.getByTestId("task-describe").click();
   await dialog.getByLabel("说明内容").fill("");
   await dialog.getByTestId("description-save").click();
   await expect(page.getByTestId("task-description")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "任务说明" }).getByRole("button", { name: "添加说明" })).toBeVisible();
 });

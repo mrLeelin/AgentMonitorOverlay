@@ -100,6 +100,60 @@ test("rejects a path that is not a directory", async () => {
   await expect(page.getByRole("alert")).toContainText("not a directory");
 });
 
+test("topic groups fold per column, remember their state and exclude folded cards from a drag", async () => {
+  studio = await launchStudio({ mockModel: false });
+  const { page, app, api } = studio;
+  const ws = await api<Workspace>("POST", "/api/workspaces", { path: studio.workspace("alpha") });
+  const title = "机器人主控接单与专题画布：实现派工、换任和逐层验收";
+  const topic = await api<Topic>("POST", "/api/topics", { title });
+  await api("POST", "/api/tasks", { title: "全方案集成复核", workspaceId: ws.id, topicId: topic.id });
+  await api("POST", "/api/tasks", { title: "接入 Plane 新旧模式", workspaceId: ws.id, topicId: topic.id });
+  for (const taskTitle of ["实现 Host 接单任命", "实现本地接单入口", "实现派工与逐层验收"]) {
+    const { task } = await api<{ task: Task }>("POST", "/api/tasks", { title: taskTitle, workspaceId: ws.id, topicId: topic.id });
+    await api("PATCH", `/api/tasks/${task.id}`, { column: "doing" });
+  }
+  await api("POST", "/api/tasks", { title: "整理笔记", workspaceId: ws.id });
+  await page.getByTestId("scope-all").click();
+
+  const todo = page.getByTestId("column-todo");
+  const doing = page.getByTestId("column-doing");
+  const review = page.getByTestId("column-review");
+  const group = (column: typeof todo) => column.locator(`[data-testid="topic-group"][data-topic="${title}"]`);
+  const toggle = group(todo).getByRole("button", { name: `${title} 2`, exact: true });
+  const toggleDoing = group(doing).getByRole("button", { name: `${title} 3`, exact: true });
+  const foldedCard = group(todo).getByTestId("task-card").filter({ hasText: "全方案集成复核" });
+  const movingCard = doing.getByTestId("task-card").filter({ hasText: "实现 Host 接单任命" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await foldedCard.click({ modifiers: ["Control"] });
+  await movingCard.click({ modifiers: ["Control"] });
+  await expect(page.locator('.card[aria-pressed="true"]')).toHaveCount(2);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(group(todo).getByTestId("task-card")).toHaveCount(0);
+  await expect(todo.locator(".column-count")).toHaveText("3");
+  await expect(toggleDoing).toHaveAttribute("aria-expanded", "true");
+  await expect(todo.getByTestId("task-card")).toContainText("整理笔记");
+  await movingCard.dragTo(review);
+  await expect(review.getByTestId("task-card")).toHaveCount(1);
+  await expect(review.getByTestId("task-card")).toContainText("实现 Host 接单任命");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  await page.getByTestId("board-group-topics").uncheck();
+  await expect(todo.getByTestId("task-card")).toHaveCount(3);
+  await expect(todo.getByTestId("task-card").filter({ hasText: "全方案集成复核" })).toHaveAttribute("aria-pressed", "false");
+  await page.getByTestId("board-group-topics").check();
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(group(todo).getByTestId("task-card")).toHaveCount(0);
+  await expect(group(doing).getByTestId("task-card")).toHaveCount(2);
+  await screenshot(app, "studio", "board-topic-folded-light", page);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await screenshot(app, "studio", "board-topic-folded-dark", page);
+  await toggle.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(group(todo).getByTestId("task-card")).toHaveCount(2);
+});
+
 test("dropping a task out of review updates the board before the Host responds and rolls back a rejected move", async () => {
   studio = await launchStudio({ mockModel: false });
   const { page, app } = studio;
@@ -204,6 +258,9 @@ test("归档 on the 完成 column's head archives every finished task, the one o
   await group.hover();
   await expect(group.getByTestId("archive-done-group")).toBeVisible();
   await screenshot(app, "stage-18", "S18-board-archive-done", page);
+  const toggle = group.getByRole("button", { name: "掉落表重构 2", exact: true });
+  await toggle.click();
+  await expect(group.getByTestId("task-card")).toHaveCount(0);
   await group.getByTestId("archive-done-group").click();
   await expect(done.getByTestId("task-card")).toHaveCount(1);
   await expect(done.getByTestId("task-card")).toContainText("改日志格式");
