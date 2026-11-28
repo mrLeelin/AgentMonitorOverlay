@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 217
+      "used": 223
     },
     "claude": {
       "limit": 300,
@@ -1502,6 +1502,36 @@
       "at": "2026-11-28T06:03:43.455Z",
       "provider": "gpt",
       "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 9"
+    },
+    {
+      "at": "2026-11-28T09:47:04.253Z",
+      "provider": "gpt",
+      "note": "Plane Prefab managed-flow acceptance turn 1"
+    },
+    {
+      "at": "2026-11-28T09:48:00.514Z",
+      "provider": "gpt",
+      "note": "Plane Prefab managed-flow acceptance turn 2"
+    },
+    {
+      "at": "2026-11-28T09:48:30.353Z",
+      "provider": "gpt",
+      "note": "Plane Prefab managed-flow acceptance turn 3"
+    },
+    {
+      "at": "2026-11-28T09:53:55.702Z",
+      "provider": "gpt",
+      "note": "Plane Prefab managed-flow acceptance turn 4"
+    },
+    {
+      "at": "2026-11-28T09:56:43.427Z",
+      "provider": "gpt",
+      "note": "Plane Prefab managed-flow acceptance resumed turn 1"
+    },
+    {
+      "at": "2026-11-28T10:21:36.013Z",
+      "provider": "gpt",
+      "note": "TALUO-16 actual Studio intake using user Bot, planning turn"
     }
   ]
 }
