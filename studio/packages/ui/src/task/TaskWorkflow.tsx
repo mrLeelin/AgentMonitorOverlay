@@ -9,7 +9,7 @@ import "./context.css";
 const RESULT_LABEL = { submitted: "待主控验收", accepted: "已验收", returned: "已退回" } as const;
 
 /** The board remains inspectable while the manager handles routine decisions and verifies deliveries. */
-export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }: { link: HostLink; task: Task; tasks: readonly Task[]; onOpenTask(id: Id): void; planeBot?: boolean }) {
+export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }: { link: HostLink; task: Task; tasks: readonly Task[]; onOpenTask(id: Id): void; planeBot?: boolean | "manual" }) {
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryError, setRetryError] = useState("");
@@ -30,7 +30,8 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }
   const title = (id: Id) => tasks.find((t) => t.id === id)?.title || "未命名任务";
   return <section className="task-workflow" data-testid="task-workflow" aria-label="交付与验收">
     {!planeBot && <div className="workflow-heading"><strong>交付与验收</strong><span className="dim">{workflow.results.filter((r) => r.state === "submitted").length} 项待验收 · {workflow.decisions.length} 个问题待主控处理</span></div>}
-    <span className="side-note">{planeBot ? "验收通过后，Studio 会将交付摘要和验证记录写回 Plane 原单。" : "下级（含二级主控）的交付由直属主控验收或退回；总主控的最终交付等待你在这里明确验收或退回，通过后才完成。"}</span>
+    {planeBot === "manual" ? visibleResults[0]?.state === "submitted" && <span className="side-note">请在工程中验收。通过后原单将移到 Done，并通知发起人。</span>
+      : <span className="side-note">{planeBot ? "验收通过后，Studio 会将交付摘要和验证记录写回 Plane 原单。" : "下级（含二级主控）的交付由直属主控验收或退回；总主控的最终交付等待你在这里明确验收或退回，通过后才完成。"}</span>}
     {error && <span className="error" role="alert">交付状态读取失败：{error}</span>}
     {retryError && <span className="error" role="alert">通知重试失败：{retryError}</span>}
     {workflow.deliveryIssues?.map((issue) => <div key={issue.id} className="workflow-delivery-issue" data-testid="workflow-delivery-issue" role="status"><strong>主控通知发送失败</strong><p className="workflow-text">{issue.detail}</p><button type="button" className="link-btn" disabled={retrying === issue.id} onClick={() => { setRetryError(""); setRetrying(issue.id); void call(link, "POST /api/tasks/:id/workflow/retry-notice", { id: task.id, noticeId: issue.id }).catch((err: unknown) => setRetryError(err instanceof Error ? err.message : String(err))).finally(() => setRetrying(null)); }}>{retrying === issue.id ? "正在重试…" : "重试通知"}</button><button type="button" className="link-btn" onClick={() => onOpenTask(issue.taskId)}>进入相关任务</button></div>)}
@@ -62,7 +63,7 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }
   </section>;
 }
 
-export function UserReview({ link, result, mismatch, planeBot = false, onRefresh }: { link: HostLink; result: TaskResult; mismatch: boolean; planeBot?: boolean; onRefresh?(): void }) {
+export function UserReview({ link, result, mismatch, planeBot = false, onRefresh }: { link: HostLink; result: TaskResult; mismatch: boolean; planeBot?: boolean | "manual"; onRefresh?(): void }) {
   const [review, setReview] = useState("");
   const [explanation, setExplanation] = useState("");
   const [pending, setPending] = useState(false);
@@ -79,7 +80,7 @@ export function UserReview({ link, result, mismatch, planeBot = false, onRefresh
   return <div className="workflow-user-review" data-testid="workflow-user-review">
     {!planeBot && <><strong>等待你审核最终交付</strong>
     <p className="side-note">核对成果与验证记录后点击验收；需要修改请填写原因并退回。AI 不能自行通过这项审核。</p></>}
-    <label>验收意见或退回原因<textarea className={planeBot ? "field" : undefined} value={review} maxLength={20_000} disabled={pending} onChange={(e) => setReview(e.target.value)} placeholder="验收时可补充意见；退回时必须填写修改要求" /></label>
+    <label>验收意见或退回原因<textarea className={planeBot ? "field" : undefined} value={review} maxLength={20_000} disabled={pending} onChange={(e) => setReview(e.target.value)} placeholder={planeBot === "manual" ? "告诉机器人哪里需要修改，改好后它会再次提醒你验收" : "验收时可补充意见；退回时必须填写修改要求"} /></label>
     {mismatch && <label>依据差异处理说明<textarea value={explanation} maxLength={20_000} disabled={pending} onChange={(e) => setExplanation(e.target.value)} placeholder="如接受版本差异，说明为什么不影响此次交付；无效前置结果仍需重新交付" /></label>}
     {error && <p className="error" role="alert">审核未完成：{error}</p>}
     <div className="workflow-review-actions"><button type="button" className={planeBot ? "btn-primary small" : undefined} disabled={pending} onClick={() => void submit(true)}>{pending ? "正在处理…" : "验收通过"}</button><button type="button" className={planeBot ? "btn-ghost small" : undefined} disabled={pending || !review.trim()} onClick={() => void submit(false)}>退回修改</button></div>

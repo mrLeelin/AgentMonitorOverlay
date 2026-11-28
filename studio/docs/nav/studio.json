@@ -555,12 +555,14 @@
     },
     {
       "id": "ui.envPanel",
-      "label": "任务页侧栏：环境、进度和批注、任务说明",
-      "aliases": ["环境与上下文", "进度和批注", "侧栏切换", "任务说明", "任务描述", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
+      "label": "任务页侧栏：环境、进度和批注、主控、任务说明",
+      "aliases": ["任务侧栏", "环境与上下文", "进度和批注", "侧栏切换", "主控页签", "任务说明", "任务描述", "上下文分项", "context usage", "getContextUsage", "说明文件", "memory files", "MCP 重连", "reconnectMcpServer", "EnvPanel"],
       "category": "ui",
-      "purpose": "任务页右侧栏顶部切换「环境」「进度和批注」「任务说明」，默认显示环境并记住选择。说明可在侧栏阅读和编辑，归档及远程副本只读，处理中的 Plane Bot 任务从原单菜单查看。环境保留电脑、项目和分支、上下文占用、CLAUDE.md，以及会话的 MCP 状态和 Claude 重连；打开侧栏、每轮结束、点刷新时读取。进度和批注还包含其他会话的待决策、留言与清单。",
+      "purpose": "任务页侧栏默认显示「环境」并记住页签。任务自身有主控记录时显示「主控」页签，打开主控对话、管理任期，符合条件的总主控可以追加工作。「进度和批注」显示关联的 Plane 原单、交付与验收，以及待决策、留言与清单。说明可在侧栏阅读和编辑，归档及远程副本只读，处理中的 Plane Bot 任务从原单菜单查看。环境保留电脑、项目和分支、上下文占用、CLAUDE.md，以及会话的 MCP 状态和 Claude 重连；打开侧栏、每轮结束、点刷新时读取。",
       "anchors": [
         { "label": "侧栏切换", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "sidebar-activity" },
+        { "label": "主控页签", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "data-testid=\"sidebar-lead\"" },
+        { "label": "Plane 原单", "path": "studio/packages/ui/src/teamtasks/StudioTeamBoard.tsx", "anchor": "export function LocalTeamBoardTask" },
         { "label": "任务说明页签", "path": "studio/packages/ui/src/task/TaskPage.tsx", "anchor": "data-testid=\"sidebar-description\"" },
         { "label": "面板", "path": "studio/packages/ui/src/task/EnvPanel.tsx", "anchor": "export function EnvPanel" },
         { "label": "接口类型", "path": "studio/packages/protocol/src/context-usage.ts", "anchor": "export interface SessionContextUsage" },

@@ -1,13 +1,22 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { PLANE_BOARD_API, PLANE_WORK_ITEM_DRAG, type BotRequest, type PlaneBoardConnection, type PlaneBotJob, type SessionItem, type StateSnapshot, type StudioBot, type Task, type Workspace } from "@amo-studio/protocol";
 import { defaultScript, listenInStudioRange } from "@amo-studio/testkit";
 import { firstSession, items as sessionItems, resultIn, submitMessage } from "../support/bot-lead-local.js";
 import { launchStudio, screenshot } from "../support/studio.js";
+
+const taskSidebar = (page: Page) => page.getByRole("complementary", { name: "任务侧栏" });
+const taskSource = (page: Page) => taskSidebar(page).getByRole("region", { name: "关联的团队原单" });
+async function openTaskActivity(page: Page) {
+  const expand = page.getByTestId("sidebar-expand");
+  if (await expand.isVisible()) await expand.click();
+  await page.getByTestId("sidebar-activity").click();
+}
 
 const icon = (path: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
 const plus = icon("M8 4v8M4 8h8");
@@ -155,7 +164,8 @@ test("connects and reopens the Plane board without web sign-in", async () => {
     await studio.api("POST", `/api/team-board/local/${task.id}/link`, { url: `${origin}/taluo/projects/${projectId}/issues/${itemId}/` });
     await page.getByTestId("scope-ws-PlaneLocal").click();
     await page.getByTestId("column-todo").getByText("已关联的个人任务", { exact: true }).click();
-    await page.getByRole("button", { name: "打开 Plane 原单", exact: true }).click();
+    await openTaskActivity(page);
+    await taskSource(page).getByRole("button", { name: /^(打开 Plane 原单|查看原单)/ }).click();
     await expect(page.getByText("通过令牌读取的团队工作项说明")).toBeVisible();
     await studio.close({ keepData: true });
     webIdentity = "another-plane-member";
@@ -181,10 +191,10 @@ const planeBotPlan = [
 ].join("\n");
 
 const planeBotScenarios = [
-  { name: "hands a Plane item to a Bot and retries comment writeback without repeating acceptance", approve: true, botOnly: false },
-  { name: "abandons a Plane Bot plan and analyzes again without starting a worker", approve: false, botOnly: false },
-  { name: "handles the Plane plan, question and acceptance from the Bot conversation", approve: true, botOnly: true },
-  { name: "approves a Plane plan for a dedicated managed root and reviews its worktree delivery", approve: true, botOnly: false, managed: true },
+  { name: "resumes a legacy Plane item and retries comment writeback without repeating acceptance", approve: true, botOnly: false },
+  { name: "abandons a legacy Plane Bot plan and analyzes again without starting a worker", approve: false, botOnly: false },
+  { name: "handles a legacy Plane plan, question and acceptance from the Bot conversation", approve: true, botOnly: true },
+  { name: "approves a legacy Plane plan for a dedicated managed root and reviews its worktree delivery", approve: true, botOnly: false, managed: true },
 ];
 for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, async ({}, testInfo) => {
   test.setTimeout(90_000);
@@ -227,12 +237,12 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
   let studio: Awaited<ReturnType<typeof launchStudio>> | undefined;
   const checkOpinion = "建议验收：发布说明与变更记录一致，已核对内容和链接。";
   try {
-    studio = await launchStudio({ mockScript: (request) => {
+    const launch = (root?: string) => launchStudio({ root, mockScript: (request) => {
       const { lastUserText } = request;
       if (lastUserText.startsWith("[[mcp:") || lastUserText.startsWith("[[ask-async]]") || lastUserText.startsWith("[[shell:")) return defaultScript(request);
       return { kind: "text", text: approve && lastUserText.includes("对照检查 Plane 工作项") ? checkOpinion : lastUserText.includes("独立工作树执行") ? "已核对发布说明。" : planeBotPlan };
     } });
-    const { page, app } = studio;
+    studio = await launch();
     const repo = studio.workspace("PlaneBotRepo");
     const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { windowsHide: true });
     git("init", "--quiet", "-b", "main");
@@ -247,21 +257,34 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
     const server = `http://127.0.0.1:${remotePort}`;
     await studio.api("POST", "/api/team-board/plane/connect", { server, token });
     await studio.api("POST", "/api/team-board/plane/select", { workspace: "demo", project: projectId });
+    const requestId = randomUUID();
+    const prompt = "为 Plane 工作项制定执行计划。";
+    // One legacy intake stopped before the Bot could analyze it. The other cases already have a plan.
+    if (approve) {
+      await studio.api("POST", `/api/bots/${bot.id}/requests`, { id: requestId, text: prompt, destination: "new" });
+      const beforeUpgrade = studio;
+      await expect.poll(async () => (await beforeUpgrade.api<BotRequest[]>("GET", "/api/bot-requests")).find((row) => row.id === requestId)?.status, { timeout: 30_000 }).toBe("completed");
+    }
+    const { root, dataDir } = studio;
+    await studio.close({ keepData: true });
+    studio = undefined;
+    const db = new DatabaseSync(join(dataDir, "studio.db"));
+    try {
+      const scopeHash = createHash("sha256").update(JSON.stringify([item.title, "检查项目发布说明。"])).digest("hex");
+      const planHash = createHash("sha256").update(`${requestId}\n${baseCommit}\n${planeBotPlan}`).digest("hex");
+      if (approve) db.prepare("UPDATE studio_bot_requests SET data = json_set(data, '$.planningWorkspace', ?) WHERE id = ?").run(workspace.id, requestId);
+      db.prepare(`INSERT INTO plane_bot_jobs
+        (id,request_id,source,viewer_id,item_id,bot_id,workspace_id,prompt,item_data,base_commit,planned_project_path,plan,plan_hash)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(), requestId, server + api, viewer, item.id, bot.id, workspace.id,
+        prompt, JSON.stringify({ id: item.id, title: item.title, number: item.number, creator: "团队成员", scopeHash }), baseCommit, repo, approve ? planeBotPlan : null, approve ? planHash : null);
+    } finally { db.close(); }
+    studio = await launch(root);
+    const { page, app } = studio;
     await page.getByRole("navigation", { name: "范围" }).getByRole("button", { name: "团队任务", exact: true }).click();
     await page.getByRole("button", { name: /核对发布说明/ }).click();
     const delegate = page.getByRole("button", { name: "交给 Bot", exact: true });
     await delegate.click();
     const dialog = page.getByRole("dialog", { name: "交给 Bot" });
-    const botSelect = dialog.getByLabel("只读 Bot");
-    const projectSelect = dialog.getByLabel("本地 Git 项目");
-    if (!approve) {
-      await expect(projectSelect.locator("option")).toHaveCount(3);
-      await expect(projectSelect).toHaveValue("");
-    }
-    await botSelect.selectOption(bot.id);
-    await projectSelect.selectOption(workspace.id);
-    if (approve) await screenshot(app, "studio", "plane-bot-intake", page);
-    await dialog.getByRole("button", { name: "开始接单" }).click();
     await expect(dialog.getByRole("status")).toHaveText("计划待确认", { timeout: 45_000 });
     await expect(dialog.locator("strong").filter({ hasText: "完成标准" })).toBeVisible();
     await expect(dialog.getByText(baseCommit.slice(0, 7))).toBeVisible();
@@ -315,20 +338,28 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
       await settled(lead.id);
       await page.getByTestId("canvas-detail").getByRole("button", { name: "打开任务", exact: true }).click();
 
-      const bar = page.getByRole("region", { name: "主控运行状态" });
-      const chat = bar.getByRole("button", { name: "打开主控对话", exact: true });
-      const append = bar.getByRole("button", { name: "追加工作", exact: true });
-      const more = bar.getByRole("button", { name: "主控更多操作", exact: true });
+      const sidebar = taskSidebar(page);
+      const leadPanel = sidebar.getByRole("region", { name: "主控运行状态" });
+      const chat = leadPanel.getByRole("button", { name: "打开主控对话", exact: true });
+      const append = leadPanel.getByRole("button", { name: "追加工作", exact: true });
+      const more = leadPanel.getByRole("button", { name: "主控更多操作", exact: true });
       const menu = page.getByRole("menu", { name: "主控更多操作" });
-      await expect(bar.getByRole("status")).toHaveText("主控空闲");
-      await expect(bar).toContainText("试点审核员");
-      await expect(page.getByRole("region", { name: "关联的团队原单" })).toBeVisible();
+      await sidebar.getByTestId("sidebar-environment").click();
+      await expect(page.getByRole("region", { name: "主控运行状态" })).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "关联的团队原单" })).toHaveCount(0);
+      await openTaskActivity(page);
+      await expect(taskSource(page).getByRole("button", { name: /^(打开 Plane 原单|查看原单)/ })).toBeVisible();
+      await expect(taskSource(page).getByRole("button", { name: "验收交付", exact: true })).toBeVisible();
+      await expect(page.getByRole("region", { name: "主控运行状态" })).toHaveCount(0);
+      await testInfo.attach("plane-sidebar-activity", { path: await screenshot(app, "studio", "plane-sidebar-activity", page), contentType: "image/png" });
+      await sidebar.getByTestId("sidebar-lead").click();
+      await expect(page.getByRole("region", { name: "关联的团队原单" })).toHaveCount(0);
+      await expect(leadPanel.getByRole("status")).toHaveText("主控空闲");
+      await expect(leadPanel).toContainText("试点审核员");
       await expect(chat).toBeVisible();
       await expect(append).toBeVisible();
       await expect(more).toBeVisible();
-      expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(64);
-      expect(Math.abs((await chat.boundingBox())!.y - (await append.boundingBox())!.y)).toBeLessThan(2);
-      expect((await chat.boundingBox())!.x).toBeGreaterThan((await bar.getByRole("status").boundingBox())!.x);
+      expect((await leadPanel.boundingBox())!.width).toBeLessThanOrEqual((await sidebar.boundingBox())!.width);
       await append.click();
       const continueLead = page.getByRole("dialog", { name: "交给已有主控" });
       await expect(continueLead.getByLabel("追加工作", { exact: true })).toBeVisible();
@@ -338,7 +369,7 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
       const originalTheme = await page.locator("html").getAttribute("data-theme");
       for (const theme of ["dark", "light"]) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await testInfo.attach(`plane-lead-bar-${theme}`, { path: await screenshot(app, "studio", `plane-lead-bar-${theme}`, page), contentType: "image/png" });
+        await testInfo.attach(`plane-sidebar-lead-${theme}`, { path: await screenshot(app, "studio", `plane-sidebar-lead-${theme}`, page), contentType: "image/png" });
       }
       const size = await app.evaluate(({ BrowserWindow }, url) => {
         const window = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL() === url)!;
@@ -350,12 +381,11 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
       await more.press("Enter");
       await expect(more).toHaveAttribute("aria-expanded", "true");
       await expect(menu.getByRole("menuitem")).toHaveText(["暂停主控", "更换机器人", "任期记录"]);
-      const menuBox = (await menu.boundingBox())!, moreBox = (await more.boundingBox())!;
-      expect(Math.abs(menuBox.x + menuBox.width - moreBox.x - moreBox.width)).toBeLessThan(2);
+      await expect(menu).toBeInViewport({ ratio: 1 });
       await expect(menu.getByRole("menuitem", { name: "暂停主控" })).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(menu.getByRole("menuitem", { name: "更换机器人" })).toBeFocused();
-      await testInfo.attach("plane-lead-bar-narrow-menu", { path: await screenshot(app, "studio", "plane-lead-bar-narrow-menu", page), contentType: "image/png" });
+      await testInfo.attach("plane-sidebar-lead-narrow-menu", { path: await screenshot(app, "studio", "plane-sidebar-lead-narrow-menu", page), contentType: "image/png" });
       await page.keyboard.press("Escape");
       await expect(menu).toBeHidden();
       await expect(more).toBeFocused();
@@ -374,9 +404,12 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
         else document.documentElement.removeAttribute("data-theme");
       }, originalTheme);
 
-      await page.getByRole("button", { name: "验收交付", exact: true }).click();
+      await openTaskActivity(page);
+      await taskSource(page).getByRole("button", { name: "验收交付", exact: true }).click();
       const rootReview = page.getByRole("dialog", { name: "交付与验收" });
       await expect(rootReview.getByText("执行工作树 · 1 项")).toBeVisible();
+      const evidence = rootReview.locator("details").filter({ has: page.locator("summary").filter({ hasText: "执行工作树 · 1 项" }) });
+      if (await evidence.getAttribute("open") === null) await evidence.locator("summary").first().click();
       await expect(rootReview.getByRole("button", { name: "查看改动", exact: true })).toBeVisible();
       await expect(rootReview.getByTestId("workflow-result")).toContainText("发布说明最终交付");
       await expect(rootReview.getByRole("button", { name: "验收通过", exact: true })).toBeVisible();
@@ -398,11 +431,11 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
       await expect(dialog).toHaveCount(0);
       await delegate.click();
       await expect(dialog.getByRole("status")).toHaveText("已放弃");
-      await expect(botSelect).toHaveValue(bot.id);
-      await expect(projectSelect).toHaveValue(workspace.id);
+      await expect(dialog.getByLabel(/(只读 Bot|接单机器人)/)).toHaveValue(bot.id);
+      await expect(dialog.getByLabel("本地 Git 项目")).toHaveValue(workspace.id);
       await screenshot(app, "studio", "plane-bot-declined", page);
       await dialog.getByRole("button", { name: "重新交给 Bot" }).click();
-      await expect(dialog.getByRole("status")).toHaveText("计划待确认", { timeout: 45_000 });
+      await expect.poll(getJob, { timeout: 45_000 }).toMatchObject({ state: "awaiting-approval" });
       const renewed = await getJob();
       expect(renewed).toMatchObject({ state: "awaiting-approval", taskId: null, botId: bot.id, workspaceId: workspace.id });
       expect(renewed.botSessionId).toBeTruthy();
@@ -582,11 +615,13 @@ for (const { name, approve, botOnly, managed } of planeBotScenarios) test(name, 
     await screenshot(app, "studio", "plane-bot-workbench", page);
     await planeJobs.getByRole("button", { name: "打开执行任务", exact: true }).click();
 
-    const original = page.getByRole("region", { name: "关联的团队原单" });
+    await openTaskActivity(page);
+    const original = taskSource(page);
     const reviewButton = original.getByRole("button", { name: "验收交付" });
     await expect(original.getByText("等待人工验收")).toBeVisible();
     await expect(page.getByTestId("workflow-result")).toHaveCount(0);
     await expect(page.getByTestId("sidebar-description")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-lead")).toHaveCount(0);
     await original.getByRole("button", { name: "原单与任务说明" }).click();
     await page.getByRole("menuitem", { name: "任务说明…" }).click();
     await expect(page.getByRole("dialog", { name: "任务说明" }).getByLabel("说明内容")).toHaveValue(/已批准的计划/);
@@ -723,16 +758,12 @@ test("Plane replaces the right work area and Studio keeps its title bar and side
     await scope.click();
     await page.getByTestId("column-todo").getByText("本地任务详情", { exact: true }).click();
     await expect(page.getByTestId("task-title")).toHaveText("本地任务详情");
-    const source = page.getByRole("region", { name: "关联的团队原单" });
+    await openTaskActivity(page);
+    const source = taskSource(page);
     const creator = source.getByRole("img", { name: "提出人 测试成员" });
-    const original = source.getByRole("button", { name: "打开 Plane 原单" });
+    const original = source.getByRole("button", { name: /^(打开 Plane 原单|查看原单)/ });
     await expect.poll(() => creator.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
-    const centers = await source.locator(".tb-source-row").evaluate((row) => Array.from(row.children, (child) => {
-      const bounds = child.getBoundingClientRect();
-      return bounds.top + bounds.height / 2;
-    }));
-    expect(centers).toHaveLength(4);
-    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(1);
+    expect(await source.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
     const planePage = (url: string) => app.evaluate(async ({ BrowserWindow, WebContentsView }, url) => {
       const win = BrowserWindow.getAllWindows()[0]!;
       const view = win.contentView.children.find((child) => child instanceof WebContentsView && child.webContents.getURL() === url);

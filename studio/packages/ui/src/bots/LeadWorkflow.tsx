@@ -29,9 +29,9 @@ export function leadRunLabel(task: Task) {
   return "";
 }
 
-export function LeadRun({ link, task, sessions, directory, botsEnabled = true, toolbar = false, onAppendWork, onChooseUpgrade, onRepair, onOpen }: {
+export function LeadRun({ link, task, sessions, directory, botsEnabled = true, sidebar = false, onAppendWork, onChooseUpgrade, onRepair, onOpen }: {
   link: HostLink; task: Task; sessions: readonly Session[]; directory?: LeadDirectory; botsEnabled?: boolean;
-  toolbar?: boolean; onAppendWork?(): void;
+  sidebar?: boolean; onAppendWork?(): void;
   onChooseUpgrade?(): void; onRepair?(): void; onOpen(taskId: Id, sessionId?: Id): void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -74,9 +74,9 @@ export function LeadRun({ link, task, sessions, directory, botsEnabled = true, t
   const replace = controllable && botsEnabled && directory && { label: "更换机器人", icon: <IconPeople />, run: () => setDialog("replace") };
   const history = term && directory && { label: "任期记录", icon: <IconClock />, run: () => setDialog("history") };
   const hasMenu = !!(pause || replace || history);
-  const actions = <div className={toolbar ? "lead-run-actions" : "lead-actions"}>
-    {sessionId && <button type="button" className={toolbar ? "btn-ghost with-icon lead-run-open" : "btn-ghost small"} title={toolbar && canAsk ? "打开主控对话，询问任务进度" : undefined} onClick={() => onOpen(task.id, sessionId)}>
-      {toolbar && <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2zM5.5 7h5" /></svg>}
+  const actions = <div className={sidebar ? "lead-run-actions" : "lead-actions"}>
+    {sessionId && <button type="button" className={sidebar ? "btn-primary with-icon" : "btn-ghost small"} title={sidebar && canAsk ? "打开主控对话，询问任务进度" : undefined} onClick={() => onOpen(task.id, sessionId)}>
+      {sidebar && <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2zM5.5 7h5" /></svg>}
       打开主控对话
     </button>}
     {live && handoff && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void control({ action: "cancel-handoff", expectedTerm: termRef, handoffOperationId: handoff.operationId })}>取消此次切换</button>}
@@ -85,20 +85,15 @@ export function LeadRun({ link, task, sessions, directory, botsEnabled = true, t
     {legacy && live && botsEnabled && !legacy.issue && task.lead && directory && <button type="button" className="btn-primary small" onClick={() => setDialog("legacy")}>绑定机器人</button>}
     {legacy && live && botsEnabled && !task.lead && !legacy.issue && onChooseUpgrade && <button type="button" className="btn-primary small" onClick={onChooseUpgrade}>选择机器人继续交接</button>}
     {legacy?.issue && live && <button type="button" className="link-btn" onClick={onRepair ?? (() => onOpen(task.id))}>打开管理关系</button>}
-    {onAppendWork && <button type="button" className="btn-ghost with-icon lead-run-append" onClick={onAppendWork}><IconPlus />追加工作</button>}
-    {toolbar ? hasMenu && <button type="button" className="btn-ghost lead-run-more" aria-label="主控更多操作" title="主控更多操作"
-      aria-haspopup="menu" aria-expanded={!!menu} onClick={(event) => {
-        const trigger = event.currentTarget;
-        const bounds = trigger.getBoundingClientRect();
-        setMenu(menu ? undefined : { x: bounds.right, y: bounds.bottom + 4, trigger });
-      }}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="12.5" cy="8" r="1" /></svg></button> : <>
+    {onAppendWork && <button type="button" className="btn-ghost with-icon" onClick={onAppendWork}><IconPlus />追加工作</button>}
+    {!sidebar && <>
       {pause && <button type="button" className="btn-ghost small" disabled={pause.disabled} onClick={pause.run}>{pause.label}</button>}
       {replace && <button type="button" className="btn-ghost small" onClick={replace.run}>{replace.label}</button>}
       {history && <button type="button" className="link-btn" onClick={history.run}>{history.label}</button>}
     </>}
   </div>;
   const details = <>
-    {toolbar && reason && <p className="side-note" role="status">{reason}</p>}
+    {sidebar && reason && <p className="side-note" role="status">{reason}</p>}
     {legacy?.summary && <p className="workflow-text">{legacy.summary}</p>}
     {live && !botsEnabled && <p className="side-note">在「设置 → 工具与自动化 → Bots」启用后可继续管理这棵树。</p>}
     {!!handoff?.blockers.length && <ul className="lead-handoff-blockers">{handoff.blockers.map((blocker, index) => <li key={`${blocker.kind}:${blocker.sessionId}:${index}`}>
@@ -115,16 +110,27 @@ export function LeadRun({ link, task, sessions, directory, botsEnabled = true, t
       }}>取消待发消息</button>}
     </li>)}</ul>}
   </>;
-  return <section className={toolbar ? "lead-run lead-run-toolbar" : "lead-run"} aria-label="主控运行状态">
-    {toolbar ? <>
-      <div className="lead-run-row">
-        <div className="lead-run-identity">
-          {term && <><BotAvatar name={term.name} avatar={term.avatar} size={32} /><span className="lead-run-role">{role}</span><strong title={term.name}>{term.name}</strong></>}
-          <span className="lead-run-status" data-state={runState} role="status">{status}</span>
+  return <section className={sidebar ? "lead-run lead-run-sidebar" : "lead-run"} aria-label="主控运行状态">
+    {sidebar ? <>
+      <div className="lead-run-identity">
+        {term && <BotAvatar name={term.name} avatar={term.avatar} size={40} />}
+        <div className="lead-run-person">
+          {term && <strong title={term.name}>{term.name}</strong>}
+          <div className="lead-run-meta">
+            {term && <span>{role}</span>}
+            <span className="lead-run-status" data-state={runState} role="status">{status}</span>
+          </div>
         </div>
-        {actions}
+        {hasMenu && <button type="button" className="btn-ghost lead-run-more" aria-label="主控更多操作" title="主控更多操作"
+          aria-haspopup="menu" aria-expanded={!!menu} onClick={(event) => {
+            const trigger = event.currentTarget;
+            const bounds = trigger.getBoundingClientRect();
+            setMenu(menu ? undefined : { x: bounds.right, y: bounds.bottom + 4, trigger });
+          }}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="12.5" cy="8" r="1" /></svg></button>}
       </div>
       {details}
+      {actions}
+      {onAppendWork && canAsk && sessionId && <p className="side-note">对话问进度，新增需求用「追加工作」。</p>}
       {menu && hasMenu && createPortal(<ActionMenu label="主控更多操作" at={menu} trigger={menu.trigger} focus alignEnd groups={[[pause, replace], [history]]} onClose={() => {
         if (document.activeElement?.closest(".action-menu")) menu.trigger.focus({ preventScroll: true });
         setMenu(undefined);

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>AMO Studio · Plane 原单、主控与交付</title>
+<style>
+:root{color-scheme:dark;font-family:"Microsoft YaHei UI","Noto Sans SC","Segoe UI",sans-serif;--bg:#141513;--panel:#1b1d19;--deep:#171915;--line:#353a30;--strong:#57624c;--text:#f1f0e7;--dim:#b6beae;--muted:#a4ae9d;--accent:#c9ee97;--ink:#192211;--active:#283421}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,a{font:inherit;color:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}button:disabled{cursor:default}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}p{margin:0;line-height:1.7}h1,h2,h3{margin:0}img{display:block}.muted{color:var(--muted)}[hidden]{display:none!important}
+.masthead{height:55px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 max(24px,calc((100vw - 1152px)/2));font-size:13px;white-space:nowrap}.logo{width:31px;height:31px;display:grid;place-items:center;border-radius:8px;background:var(--accent);color:var(--ink)}.masthead strong{font-weight:700}.masthead span:last-child{color:var(--dim);border-left:1px solid var(--line);padding-left:12px}
+main{width:min(1152px,calc(100% - 48px));margin:40px auto 32px}.intro{margin-bottom:27px}.intro h1{font-size:30px;line-height:1.26;letter-spacing:-.025em;font-weight:670;margin-bottom:11px}.intro p{max-width:690px;color:var(--dim);font-size:14px}.intro strong{color:var(--accent);font-weight:650}
+.workbench{display:grid;grid-template-columns:390px minmax(0,1fr);border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}.diagram{padding:23px 22px;background:var(--deep);border-right:1px solid var(--line);min-width:0}.diagram h2,.detail h2{font-size:15px;font-weight:650}.diagram>p{font-size:12px;color:var(--dim);margin:5px 0 21px}.tree,.tree ul{margin:0;padding:0;list-style:none}.tree ul{margin-left:15px;padding-left:20px;position:relative}.tree li{position:relative}.tree ul>li{padding-top:10px}.tree ul>li::before{content:"";position:absolute;top:0;left:-20px;height:100%;width:19px;border-left:1px solid var(--strong);pointer-events:none}.tree ul>li:last-child::before{height:39px}.tree ul>li::after{content:"";position:absolute;left:-20px;top:38px;width:20px;border-top:1px solid var(--strong);pointer-events:none}.tree-button{width:100%;min-height:58px;display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;text-align:left;background:var(--panel);color:var(--text)}.tree-button:hover{border-color:var(--strong)}.tree-button[aria-current=true]{background:var(--active);border-color:#809d64}.tree-icon{display:grid;place-items:center;width:27px;height:27px;border-radius:6px;background:#282d24;color:var(--dim);flex:none}.tree-button[aria-current=true] .tree-icon,.tree-icon.bot{color:var(--accent)}.tree-label{flex:1;min-width:0;display:grid;gap:4px}.tree-label strong{font-size:13px;font-weight:640;line-height:1.35}.tree-label small{font-size:11px;color:var(--dim);line-height:1.25}.tree-role{white-space:nowrap;font-size:11px;color:var(--dim);flex:none}.tree-button[aria-current=true] .tree-role{color:var(--accent)}.diagram .legend{display:flex;align-items:center;gap:8px;margin:20px 0 0;color:var(--dim);font-size:12px}.legend::before{content:"";width:24px;height:1px;background:var(--strong)}
+.detail{padding:23px 24px 24px;min-width:0}.detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}.detail-heading span{color:var(--dim);font-size:12px}.preview{background:var(--deep);border:1px solid var(--line);border-radius:10px;overflow:hidden}.task-header{padding:14px 15px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}.task-header strong{font-size:14px;font-weight:650}.task-header span{font-size:11px;color:var(--dim);white-space:nowrap}.task-main{padding:15px;display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.95fr);gap:16px;align-items:start}.task-facts{margin:4px 0 0;display:grid;gap:15px}.fact dt{font-size:12px;color:var(--muted);margin-bottom:5px}.fact dd{margin:0;font-size:13px;line-height:1.55;overflow-wrap:anywhere}.task-link{background:none;border:0;padding:0;color:var(--accent);text-align:left;text-decoration:underline;text-underline-offset:3px}.task-link:hover{color:#e9ffc9}
+.task-side{border-left:1px solid var(--line);padding-left:15px;min-width:0}.side-title{color:var(--dim);font-size:12px;margin:4px 0 12px}.bot-panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}.identity{display:flex;align-items:center;gap:9px;min-width:0}.avatar,.initial{width:35px;height:35px;border-radius:8px;object-fit:cover;flex:none}.initial{display:grid;place-items:center;background:#394731;color:#def8c2;font-size:15px;font-weight:650}.bot-label{flex:1;min-width:0}.bot-label strong{font-size:14px;font-weight:650}.bot-label small{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;margin-top:5px;white-space:nowrap}.dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}.ident-more{width:28px;height:27px;padding:0;display:grid;place-items:center;border:0;border-radius:5px;background:transparent;color:var(--dim)}.ident-more:hover{background:#30382a;color:var(--text)}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.action{display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;min-height:31px;padding:5px 7px;border:1px solid var(--strong);border-radius:6px;background:transparent;color:var(--text);font-size:11px}.action:hover{background:#30382a}.action.primary{background:var(--accent);border-color:var(--accent);color:var(--ink);font-weight:650}.action.primary:hover{background:#ddfac2}.action svg{width:14px;height:14px}.control-note{border-top:1px solid var(--line);margin-top:10px;padding-top:9px;font-size:11px;color:var(--dim)}.worker-note{color:var(--dim);font-size:12px;margin-top:2px}.worker-note strong{display:block;color:var(--text);margin-bottom:6px;font-weight:600}.side-placeholder{padding:12px 0 0;border-top:1px solid var(--line);margin-top:12px}
+.explain{margin-top:15px;padding:13px 15px;background:#232a1f;border-radius:8px;border:1px solid #384531;font-size:13px;color:var(--dim)}.explain strong{color:var(--accent)}.summary{margin-top:20px;display:grid;grid-template-columns:auto 1fr;gap:10px;padding:0 2px;font-size:13px;color:var(--dim)}.summary svg{color:var(--accent);margin-top:3px}.summary strong{color:var(--text);font-weight:650}
+.side-tabs{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 11px}.side-tab{min-height:29px;padding:4px 8px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dim);font-size:12px}.side-tab:hover{background:var(--panel)}.side-tab[aria-selected=true]{color:var(--accent);border-color:var(--strong);background:var(--active);font-weight:600}
+.plane-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}.plane-card h3{font-size:12px;font-weight:600;color:var(--dim);margin-bottom:10px}.plane-row{display:flex;justify-content:space-between;align-items:center;gap:10px}.plane-row strong{font-size:15px;letter-spacing:.01em}.plane-row span{font-size:11px;color:var(--dim)}.plane-title{margin-top:4px;font-size:12px;color:var(--text)}.plane-card .actions{margin-top:10px}
+.flow{margin-top:23px;padding:17px 20px;background:var(--deep);border:1px solid var(--line);border-radius:10px}.flow h2{font-size:14px;font-weight:650;margin-bottom:14px}.flow ol{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;list-style:none;padding:0;margin:0}.flow li{display:flex;align-items:flex-start;gap:9px;min-width:0}.flow li+li{border-left:1px solid var(--line);padding-left:12px}.flow svg{color:var(--accent);margin-top:2px}.flow strong{display:block;font-size:12px;margin-bottom:4px}.flow li span{font-size:12px;line-height:1.55;color:var(--dim)}
+.demo-dialog{width:min(475px,calc(100% - 32px));color:var(--text);background:var(--panel);border:1px solid var(--strong);border-radius:12px;padding:21px;box-shadow:0 20px 45px #0007}.demo-dialog::backdrop{background:#0008}.demo-dialog h2{font-size:17px}.demo-dialog .demo-label{margin:6px 0 17px;color:var(--muted);font-size:12px}.demo-dialog dl{margin:0;display:grid;gap:13px}.demo-dialog .dialog-tip{color:var(--dim);font-size:12px;margin-top:15px}.dialog-close{display:flex;justify-content:flex-end;margin-top:18px}.dialog-close button{padding-inline:13px}
+@media(max-width:1000px){.workbench{grid-template-columns:310px minmax(0,1fr)}.diagram{padding-inline:16px}.detail{padding-inline:17px}.task-main{grid-template-columns:minmax(0,1fr)}.task-side{border-left:0;border-top:1px solid var(--line);padding:10px 0 0}.bot-panel{max-width:350px}.tree-role{font-size:10px}}
+@media(max-width:700px){main{width:calc(100% - 28px);margin-top:26px}.masthead{padding-inline:14px}.intro h1{font-size:24px}.workbench{grid-template-columns:1fr}.diagram{border-right:0;border-bottom:1px solid var(--line)}.tree ul{margin-left:13px}.detail{padding:19px 14px}.task-header strong{font-size:13px}.task-main{padding:12px}.summary{font-size:12px}}
+@media(max-width:700px){.flow ol{grid-template-columns:1fr;gap:9px}.flow li+li{border-left:0;border-top:1px solid var(--line);padding:9px 0 0}}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+ <symbol id="mark" viewBox="0 0 24 24"><path d="M7 4H4v5m13-5h3v5M4 15v5h5m11-5v5h-5"/><rect x="8" y="8" width="8" height="8" rx="3"/><path d="M12 10v4m-2-2h4"/></symbol>
+ <symbol id="bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 7V4m-4 9h.02m7.98 0h.02M10 17h4"/></symbol>
+ <symbol id="file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM13 3v5h5M9 12h6m-6 4h6"/></symbol>
+ <symbol id="chat" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H10l-5 4v-4H3V6a2 2 0 0 1 2-2zM7 10h10"/></symbol>
+ <symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+ <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+ <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/></symbol>
+ <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+ <symbol id="return" viewBox="0 0 24 24"><path d="M9 6l-5 5 5 5m-5-5h11a5 5 0 0 1 5 5v2"/></symbol>
+</svg>
+<header class="masthead"><span class="logo"><svg aria-hidden="true"><use href="#mark"/></svg></span><strong>AMO Studio</strong><span>Plane 原单与任务 · 离线演示</span></header>
+<main>
+ <header class="intro"><h1>Plane 原单和 Studio 任务是什么关系？</h1><p><strong>Plane 记团队提出的需求，Studio 负责把需求执行完。</strong> 以 TALUO-14 为例，点右侧「查看原单」和「查看交付」，再点左侧任务看谁负责执行和验收。</p></header>
+ <div class="workbench">
+  <section class="diagram" aria-labelledby="treeHeading">
+   <h2 id="treeHeading">任务关系</h2><p>以项目变更检查为例</p>
+   <ul class="tree" id="tree" aria-label="管理关系示例">
+    <li><button class="tree-button" data-task="root" aria-current="true" aria-controls="taskPreview"><span class="tree-icon bot"><svg aria-hidden="true"><use href="#bot"/></svg></span><span class="tree-label"><strong>TALUO-14 · 检查项目改动</strong><small>带队机器人：小鲸鱼</small></span><span class="tree-role">总主控</span></button>
+     <ul>
+      <li><button class="tree-button" data-task="worker" aria-controls="taskPreview"><span class="tree-icon"><svg aria-hidden="true"><use href="#file"/></svg></span><span class="tree-label"><strong>A · 检查脚本改动</strong><small>回报给小鲸鱼</small></span><span class="tree-role">执行任务</span></button></li>
+      <li><button class="tree-button" data-task="middle" aria-controls="taskPreview"><span class="tree-icon bot"><svg aria-hidden="true"><use href="#bot"/></svg></span><span class="tree-label"><strong>B · 统筹资源检查</strong><small>带队机器人：资源审核员</small></span><span class="tree-role">中控</span></button>
+       <ul><li><button class="tree-button" data-task="leaf" aria-controls="taskPreview"><span class="tree-icon"><svg aria-hidden="true"><use href="#file"/></svg></span><span class="tree-label"><strong>B1 · 核对 UI 资源</strong><small>回报给资源审核员</small></span><span class="tree-role">执行任务</span></button></li></ul>
+      </li>
+     </ul>
+    </li>
+   </ul>
+   <p class="legend">连线表示直属管理关系</p>
+  </section>
+  <section class="detail" id="taskPreview" aria-labelledby="previewHeading">
+   <div class="detail-heading"><h2 id="previewHeading">任务页示意</h2><span id="roleLabel"></span></div>
+   <article class="preview"><header class="task-header"><strong id="taskTitle"></strong><span>进行中</span></header><div class="task-main"><dl class="task-facts" id="facts"></dl><aside class="task-side" id="sidebar" aria-label="任务侧栏"></aside></div></article>
+   <p class="explain" id="explain" aria-live="polite"></p>
+  </section>
+ </div>
+ <section class="flow" aria-labelledby="flowHeading"><h2 id="flowHeading">TALUO-14 的处理流程</h2><ol>
+  <li><svg aria-hidden="true"><use href="#file"/></svg><div><strong>在 Plane 提需求</strong><span>原单记录要查什么。</span></div></li>
+  <li><svg aria-hidden="true"><use href="#bot"/></svg><div><strong>在 Studio 做任务</strong><span>小鲸鱼派工并汇总结果。</span></div></li>
+  <li><svg aria-hidden="true"><use href="#check"/></svg><div><strong>在 Studio 验收</strong><span>你确认总主控的最终交付。</span></div></li>
+  <li><svg aria-hidden="true"><use href="#return"/></svg><div><strong>写回 Plane 原单</strong><span>摘要和验证记录发到工单评论。</span></div></li>
+ </ol></section>
+ <p class="summary"><svg aria-hidden="true"><use href="#info"/></svg><span>执行任务交给<strong>直属主控</strong>验收。在机器人<strong>自己带队的任务</strong>上，可以打开它的主控面板。</span></p>
+</main>
+<dialog class="demo-dialog" id="planeDialog" aria-labelledby="dialogTitle"><h2 id="dialogTitle"></h2><p class="demo-label">TALUO-14 · 离线示例</p><div id="dialogBody"></div><form method="dialog" class="dialog-close"><button class="action">关闭</button></form></dialog>
+<script>
+const avatarSource='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAADnUlEQVR4nI2UfWxTVRjG39Pb29vbMtt1Ldp2XdusY2PANocRxgbBiOjQEIOIGkBiIALBP+YCfg0VdZhookFCsmA005jIIn4ETJirwfExBo37oOjsltGNtYxt/e7a3dvee8+95mZmdDMSn/Pv+3ufk+d9z0EWiwXma82jG+u3PG8uXgZ0HgYlAhEx8cmRQfeZ05fd53IrUS5sthc3vNNc4KrCQCzoCAAkEiLD3uMfvnfbP7gQrq57ZH/TUVFjhHuKYMInjrx+3dMFAIo5zwNvfsAiDc9n7w1jjemVIx8VFpfddX7jk5bOru5A4BYBBEmpHq5ZX7fxKZVa/V8tkjd7X9v9ggyve2LzaDTpWlJUv2n1rbGp3y4NcJksO5202hwrqleVlFeQlApLYjoSy2QZiqTMdodGTbY2H5Th3YfeDobGGg/u6O8funixv6rS1d7p43guk05nWQZzvCSJCJCS1mIuAyIWBeGxJ7eW2YxKAJiKTyMFUtPUV22dBn1+UaFxz/a1Pd7Rvj8C2gK9KAAGSUIIYeHx9RV2sw4h5fFjpyzPvSg7N3zaevaHbw7s3cJiPi9PU1klh8HMsPFwciwwzvGYYXgAyWo1LKK1p3/2LC+3BkfvhKY42Xnpytpez5XPTnxX7LI4nTaKJF1L7BotHQ8n2n/tURPo1UM7NVoaAK5d9f41Ely7pmSQYShahwptti/Oe3mk8g94T319MitiV6nz5V0bHE6rIAjT8ZQECEDKsOzwUMDpsE5Mhm54/R0d1/Y3vqUUMcZsCjQFn3/8rspsXZRfEI2lSAIBgFKpNJjyAWDIN3y46UtKQagN+ploorSsfE9Dk8Nmla89OeJbvLyO1udjnpMUCoNBQ1PzJjweDAMWn961b8VDNTzHkSoVAEz82SXD7jPfa3/3YgS00SRJUiiSnmEYAxjm4MoHl1pcPW2tLdOJeO2GTfKSAm7/sU1ez8vuc1NBv4iRMJPJsizHpviskOuMACitmlhs+uWnbyOhSQCI3rzefd79z27f9t0gCczGQgokbNtca3WYc+FENBkbj0EqxUlIyGYVTOTY+4fvPozwnYBORap09y0rtVdXlVBqKhfuvupLxxJGnb5mdZ2RhpajTRNjfjnRuYpBzyWTpahi6zqT2SiBfGaVSqb6+gYqV6569qW9Ub+3uXHfLLnwM5hV/Y7t1TUV9z+gp0giy/Hujl6Px7dz2zN9Vy5caD87L4t/w/9ffwOs0Y15eh7q4wAAAABJRU5ErkJggg==';
+const icons=name=>`<svg aria-hidden="true"><use href="#${name}"/></svg>`;
+const tasks={
+  root:{title:'TALUO-14 · 检查项目改动',role:'总主控',bot:'小鲸鱼',children:'A · 检查脚本改动、B · 统筹资源检查',review:'由你验收最终交付',explain:'<strong>这里有总主控面板。</strong> 小鲸鱼在 TALUO-14 上派工、验收直属交付，再向你汇总。加新要求时，在这张任务上点「追加工作」。'},
+  worker:{title:'A · 检查脚本改动',role:'执行任务',manager:'root',review:'交给小鲸鱼验收',explain:'<strong>这里显示直属主控。</strong> A 自己执行脚本检查，完成后交给小鲸鱼。要操作小鲸鱼的主控面板，请打开 TALUO-14。'},
+  middle:{title:'B · 统筹资源检查',role:'中控',bot:'资源审核员',manager:'root',children:'B1 · 核对 UI 资源',review:'将资源检查结果汇总给小鲸鱼验收',explain:'<strong>这里有中控面板。</strong> 资源审核员在 B 上带队，验收 B1 的交付，再把汇总结果交给自己的直属主控小鲸鱼。'},
+  leaf:{title:'B1 · 核对 UI 资源',role:'执行任务',manager:'middle',review:'交给资源审核员验收',explain:'<strong>这里显示直属主控。</strong> B1 的结果首先交给资源审核员。要打开资源审核员的主控面板，请进入 B。'},
+};
+const $=id=>document.getElementById(id);
+const buttons=[...document.querySelectorAll('.tree-button')];
+const fact=(label,value)=>`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`;
+const help={chat:'打开这个机器人在当前任务上的主控对话，可以问进度和看回复。',append:'在总主控任务上追加新的执行要求，机器人会按新要求继续组织工作。',more:'可以暂停或恢复主控、更换负责机器人，或查看任期记录。'};
+const leadPanel=(key,task)=>`<p class="side-title">主控面板</p><div class="bot-panel"><div class="identity">${key==='root'?`<img class="avatar" src="${avatarSource}" alt="">`:'<span class="initial" aria-hidden="true">资</span>'}<div class="bot-label"><strong>${task.bot}</strong><small><span class="dot"></span>${task.role} · 主控空闲</small></div><button type="button" class="ident-more" data-help="more" aria-label="主控更多操作" aria-controls="controlNote" aria-expanded="false">${icons('more')}</button></div><div class="actions"><button class="action primary" data-help="chat" aria-controls="controlNote" aria-expanded="false">${icons('chat')}打开主控对话</button>${key==='root'?`<button class="action" data-help="append" aria-controls="controlNote" aria-expanded="false">${icons('plus')}追加工作</button>`:''}</div><p id="controlNote" class="control-note" aria-live="polite" hidden></p></div>`;
+const planeCard=`<section class="plane-card" aria-label="关联的 Plane 原单"><h3>Plane 原单</h3><div class="plane-row"><strong>TALUO-14</strong><span>机器人带队</span></div><p class="plane-title">检查项目中未提交都改了什么</p><div class="actions"><button class="action" data-plane="source" aria-haspopup="dialog">查看原单</button><button class="action" data-plane="delivery" aria-haspopup="dialog">查看交付</button></div></section>`;
+const planeExplain='<strong>这块卡片关联到团队看板里的工单。</strong> TALUO-14 是 Plane 工单编号。「机器人带队」是执行方式，负责带队的是谁，可以点「主控」查看。';
+const planeContents={
+  source:{title:'Plane 原单',body:`<dl>${fact('工单标题','检查项目中未提交都改了什么')}${fact('需求示例','检查 JellybeanUnity 项目中尚未提交的改动，汇总改动内容并附上核对依据。')}</dl><p class="dialog-tip">在实际 Studio 里，「查看原单」打开 Plane 工单，可继续查看需求说明和原单讨论。</p>`},
+  delivery:{title:'Studio · 交付与验收',body:`<dl>${fact('当前阶段','机器人带队执行中，尚未提交最终交付。')}${fact('提交以后','这里会显示总主控的汇总、验证记录和验收状态。')}${fact('人工验收通过以后','摘要和验证记录会写回 Plane 原单评论。')}</dl>`},
+};
+function showRootPane(pane, focus=false){
+  const sidebar=$('sidebar');
+  sidebar.innerHTML=`<div class="side-tabs" role="tablist" aria-label="任务侧栏页签"><button class="side-tab" id="tabLead" data-pane="lead" role="tab" aria-selected="${pane==='lead'}" aria-controls="rootSide" tabindex="${pane==='lead'?0:-1}">主控</button><button class="side-tab" id="tabPlane" data-pane="plane" role="tab" aria-selected="${pane==='plane'}" aria-controls="rootSide" tabindex="${pane==='plane'?0:-1}">进度和批注</button></div><div id="rootSide" role="tabpanel" aria-labelledby="${pane==='lead'?'tabLead':'tabPlane'}">${pane==='lead'?leadPanel('root',tasks.root):planeCard}</div>`;
+  $('explain').innerHTML=pane==='lead'?tasks.root.explain:planeExplain;
+  if(focus)sidebar.querySelector('[aria-selected=true]').focus();
+}
+function show(key,rootPane='plane'){
+  const task=tasks[key];
+  const manager=tasks[task.manager];
+  buttons.forEach(button=>{if(button.dataset.task===key)button.setAttribute('aria-current','true');else button.removeAttribute('aria-current');});
+  $('roleLabel').textContent=task.role;
+  $('taskTitle').textContent=task.title;
+  $('facts').innerHTML=(manager?fact('直属主控',`<button class="task-link" data-jump="${task.manager}">${manager.bot} · ${manager.title}</button>`):'')+(task.children?fact('直属下级',task.children):'')+fact('交付去向',task.review);
+  if(key==='root'){showRootPane(rootPane);return;}
+  $('sidebar').innerHTML=task.bot?leadPanel(key,task):`<p class="side-title">任务侧栏</p><div class="side-placeholder"><p class="worker-note"><strong>进度和批注</strong>这里查看本执行任务的进度和批注。</p></div>`;
+  $('explain').innerHTML=task.explain;
+}
+document.addEventListener('click',event=>{
+  const button=event.target.closest('button');
+  if(!button)return;
+  if(button.dataset.task)show(button.dataset.task);
+  if(button.dataset.jump){show(button.dataset.jump,'lead');buttons.find(item=>item.dataset.task===button.dataset.jump)?.focus();}
+  if(button.dataset.pane)showRootPane(button.dataset.pane,true);
+  if(button.dataset.plane){const content=planeContents[button.dataset.plane];$('dialogTitle').textContent=content.title;$('dialogBody').innerHTML=content.body;$('planeDialog').showModal();}
+  if(button.dataset.help){const note=$('controlNote');const close=button.getAttribute('aria-expanded')==='true';document.querySelectorAll('[data-help]').forEach(item=>item.setAttribute('aria-expanded','false'));if(!close){button.setAttribute('aria-expanded','true');note.textContent=help[button.dataset.help];}note.hidden=close;}
+});
+document.addEventListener('keydown',event=>{const pane=event.target.dataset?.pane;if(pane&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();showRootPane(pane==='lead'?'plane':'lead',true);}});
+show('root');
+</script>
+</body>
+</html>

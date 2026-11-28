@@ -1,7 +1,7 @@
 import type { PlaneBotJob } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
-import { PlaneBotDeliveryCard, PlaneBotRootLinks, PlaneBotWritebackHistory, planeBotCheckChanged, planeBotStatus } from "./PlaneBot.js";
+import { PlaneBotCanvasLink, PlaneBotDeliveryCard, PlaneBotWritebackHistory, planeBotCheckChanged, planeBotStatus } from "./PlaneBot.js";
 
 export function PlaneBotJobs({ link, botId, onOpen }: { link: HostLink; botId: string; onOpen(taskId: string, sessionId?: string, botId?: string): void }) {
   const [jobs, setJobs, reload] = useLiveResource<PlaneBotJob[]>({
@@ -24,8 +24,8 @@ export function PlaneBotJobs({ link, botId, onOpen }: { link: HostLink; botId: s
         {job.state === "awaiting-approval" && !job.jobId && <p className="settings-hint">到团队看板的原单上确认。</p>}
         {job.delivery && <PlaneBotDeliveryCard key={job.delivery.resultId} link={link} job={job} onJobChange={update} onReload={reload} onOpen={open} />}
         <PlaneBotWritebackHistory job={job} />
-        <PlaneBotRootLinks job={job} onOpen={(id) => onOpen(id)} />
-        {job.botTaskId && job.botSessionId && <button type="button" className="btn-ghost small" onClick={() => open(job.botTaskId!, job.botSessionId!)}>{job.jobId ? "打开 Bot 对话" : "查看 Bot 分析"}</button>}
+        <PlaneBotCanvasLink job={job} />
+        {job.botTaskId && <button type="button" className="btn-ghost small" onClick={() => open(job.botTaskId!, job.botSessionId ?? undefined)}>{job.jobId ? "打开 Bot 对话" : "查看 Bot 分析"}</button>}
         {job.taskId && <button type="button" className="btn-ghost small" onClick={() => open(job.taskId!)}>打开执行任务</button>}
       </div>
     </details>)}

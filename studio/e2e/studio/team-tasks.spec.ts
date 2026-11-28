@@ -93,8 +93,9 @@ test("browser team board shares claims, review notices and comments with the Stu
     expect(claimed).toMatchObject({ status: "doing", assignee: "林舟" });
     await expect(colleagueApi.claim(ticket.id, claimed.revision)).rejects.toMatchObject({ status: 409 });
     await local.click();
-    await app.getByRole("button", { name: "团队原单", exact: true }).click();
-    const linked = app.getByRole("region", { name: "关联的团队原单" });
+    await app.getByTestId("sidebar-activity").click();
+    const linked = app.getByRole("complementary", { name: "任务侧栏" }).getByRole("region", { name: "关联的团队原单" });
+    await linked.getByRole("button", { name: "团队原单", exact: true }).click();
     await linked.getByRole("button", { name: "送审", exact: true }).click();
     await linked.getByLabel("处理说明（选填）").fill("连续两局已验证。");
     await linked.locator("form").getByRole("button", { name: "送审", exact: true }).click();
@@ -115,7 +116,8 @@ test("browser team board shares claims, review notices and comments with the Stu
     await claim();
     await expect(app.getByTestId("task-title")).toContainText(title);
     expect((await studio.api<StateSnapshot>("GET", "/api/state")).tasks.filter((entry) => entry.title === title).map((entry) => entry.id)).toEqual([task.id]);
-    await app.getByRole("button", { name: "团队原单", exact: true }).click();
+    await app.getByTestId("sidebar-activity").click();
+    await linked.getByRole("button", { name: "团队原单", exact: true }).click();
     await expect(linked).toContainText("请补一次断网测试");
     await screenshot(studio.app, "studio", "team-board-local-task", app);
     await linked.getByRole("button", { name: "送审", exact: true }).click();

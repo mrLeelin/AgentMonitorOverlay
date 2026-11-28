@@ -186,7 +186,7 @@ export function StudioTeamBoard({ link, scope, workspaces, topics, tasks, sessio
 }
 
 export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal, actions, onDescribe }: {
-  link: HostLink; taskId: string; archived: boolean; onOpenPlaneOriginal?(url: string): void; actions?: ReactNode; onDescribe?(): void;
+  link: HostLink; taskId: string; archived: boolean; onOpenPlaneOriginal?(url: string): void; actions?(openOriginal: ReactNode): ReactNode; onDescribe?(): void;
 }) {
   const [data, setData] = useState<LinkedTeamBoardTicket | null>(null);
   const [open, setOpen] = useState(false);
@@ -214,10 +214,7 @@ export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal
   );
   if (actions) return <section className="tb-panel tb-local plane-bot-task" aria-label="关联的团队原单">
     <div className="plane-bot-source">
-      {reference ? <button type="button" className="link-btn plane-bot-source-link" title={reference.title} disabled={!onOpenPlaneOriginal}
-        aria-label={`打开 Plane 原单 ${reference.number ?? ""}`.trim()} onClick={() => onOpenPlaneOriginal?.(reference.url)}>
-        <span>Plane 原单</span><strong>{reference.number ?? "打开原单"}</strong>
-      </button> : <span className="dim">{reference === null ? "Plane 原单链接不可用" : "Plane 原单"}</span>}
+      <h3>Plane 原单</h3>
       {!archived && (onDescribe || reference) && <button type="button" className="btn-ghost small plane-bot-options" aria-label="原单与任务说明" aria-haspopup="menu"
         aria-expanded={!!options} onClick={(event) => setOptions(options ? null : below(event.currentTarget))}>
         <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="13" cy="8" r="1.2"/></svg>
@@ -227,7 +224,13 @@ export function LocalTeamBoardTask({ link, taskId, archived, onOpenPlaneOriginal
         {reference && <button type="button" role="menuitem" onClick={() => { setOptions(null); unlink(); }}>移除 Plane 原单链接</button>}
       </PopMenu>}
     </div>
-    {actions}
+    {reference && <div className="plane-bot-reference">
+      {reference.number && <strong>{reference.number}</strong>}
+      <p>{reference.title}</p>
+    </div>}
+    {reference === null && <p className="side-note">Plane 原单链接不可用</p>}
+    {actions(reference && <button type="button" className="btn-ghost small" title={reference.title} disabled={!onOpenPlaneOriginal}
+      aria-label={reference.number ? `查看原单 ${reference.number}` : undefined} onClick={() => onOpenPlaneOriginal?.(reference.url)}>查看原单</button>)}
     {error && <p className="tb-error" role="alert">{error}</p>}
   </section>;
   return <section className="tb-panel tb-local" aria-label="关联的团队原单">

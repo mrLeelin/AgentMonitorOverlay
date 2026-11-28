@@ -9,11 +9,14 @@
 .session-list-rail { flex: 0 0 34px; display: flex; justify-content: center; align-items: flex-start; padding-top: 10px; border-right: 1px solid var(--border); background: var(--panel-raised); }
 .sidebar-rail { border-right: 0; border-left: 1px solid var(--border); }
 .task-sidebar { flex: 0 0 300px; min-width: 0; min-height: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel-raised); }
-.task-sidebar-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--divider); }
+.task-sidebar-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--divider); }
 .task-sidebar-views { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
-.task-sidebar-views .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-color: var(--border); white-space: nowrap; }
+.task-sidebar-views .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding-inline: 7px; border-color: var(--border); white-space: nowrap; }
 .task-sidebar-views .btn-ghost[aria-pressed="true"] { background: var(--tint); color: var(--primary-hover); border-color: var(--primary); }
 .task-sidebar-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; }
+#task-sidebar-activity :is(.tt-local, .tb-local:not(.plane-bot-task)) { margin-block-end: 14px; padding: 0 0 12px; background: transparent; }
+#task-sidebar-activity .tb-source-row { flex-wrap: wrap; }
+#task-sidebar-activity :is(.tt-local-content, .tb-local .tb-detail) { max-height: none; }
 .task-sidebar-description:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .task-sidebar-description-actions { display: flex; justify-content: flex-end; padding: 10px 16px 0; }
 .task-sidebar-description .task-sidebar-body:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }

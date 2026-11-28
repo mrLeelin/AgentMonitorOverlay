@@ -1,30 +1,27 @@
 .tb-local.plane-bot-task {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  column-gap: 24px;
-  row-gap: 8px;
-  padding: 8px 18px;
-  background: var(--panel-raised);
+  display: grid;
+  gap: 10px;
+  margin-block-end: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-l);
+  background: var(--panel);
+  overflow-wrap: anywhere;
 }
-.plane-bot-source { display: flex; align-items: center; gap: 8px; flex: none; }
-.plane-bot-source-link { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.plane-bot-source-link > span { color: var(--text-dim); }
+.plane-bot-source { display: flex; min-height: var(--ctl-s); align-items: center; justify-content: space-between; gap: 8px; }
+.plane-bot-source h3 { color: var(--text-dim); font-size: var(--fs-cap); font-weight: 600; }
+.plane-bot-reference { display: grid; gap: 3px; font-size: var(--fs-sm); }
+.plane-bot-reference > strong { font-size: var(--fs-title); font-variant-numeric: tabular-nums; }
 .plane-bot-options { display: inline-grid; place-items: center; padding-inline: 5px; }
 .plane-bot-delivery {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex: 0 1 auto;
-  margin-inline-start: auto;
+  display: grid;
+  gap: 8px;
   min-width: 0;
 }
-.plane-bot-delivery-actions { display: flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; }
+.plane-bot-delivery-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .plane-bot-delivery-copy { display: grid; gap: 2px; min-width: 0; }
 .plane-bot-delivery-status { color: var(--text); font-size: var(--fs-sm); }
 .plane-bot-delivery-detail { color: var(--text-dim); font-size: var(--fs-cap); overflow-wrap: anywhere; }
-.plane-bot-task > .tb-error { flex-basis: 100%; }
 .plane-bot-delivery-status:is([data-state="review"], [data-state="awaiting-approval"], [data-state="awaiting-user"]) { color: var(--attention); }
 .plane-bot-delivery-status[data-state="failed"] { color: var(--error-text); }
 
@@ -85,3 +82,6 @@
 .plane-bot-worktrees ul, .plane-bot-writeback ul { margin: 4px 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
 .plane-bot-worktrees li + li { margin-top: 6px; }
 .plane-bot-worktrees li > button { margin-inline-end: 8px; }
+.plane-bot-review-location { display: grid; justify-items: start; gap: 5px; margin-block-end: 8px; }
+.plane-bot-feedback { display: grid; gap: 8px; margin-block: 12px; }
+.plane-bot-feedback button { justify-self: start; }

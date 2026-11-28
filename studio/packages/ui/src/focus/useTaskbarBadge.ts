@@ -14,7 +14,7 @@ import { needsPerson } from "../lib/status.js";
 import { useStoredIds } from "../lib/storedIds.js";
 import { ALSO_MINE_KEY } from "./pins.js";
 import { decisionNeedsPerson, replyNeedsPerson } from "./managedAttention.js";
-import { planeBotNeedsAttention } from "../teamtasks/planeBotAttention.js";
+import { planeBotNeedsAttention, planeBotTaskIds } from "../teamtasks/planeBotAttention.js";
 import { useLeadAttention } from "./leadAttention.js";
 
 const NO_LINK = { url: "", token: "" };
@@ -44,13 +44,13 @@ export function useTaskbarBadge(host: HostState, planeJobs: readonly PlaneBotAtt
   const held = remoteHeldTasks(remote, clock);
   const mine = (s: { taskId?: string | null }) => !s.taskId || !held.has(s.taskId) || alsoMine.has(s.taskId);
   const seen = live ? withGrants(seenHere, live.tasks, live.sessions) : seenHere;
-  const planeWorkers = new Set(planeJobs.map((job) => job.taskId));
+  const planeWorkers = planeBotTaskIds(planeJobs);
   const waiting = live?.sessions.filter((s) => !s.archivedAt && needsPerson(s.status) && mine(s) && !planeWorkers.has(s.taskId ?? "")) ?? [];
   const finished = live ? unseenSessions(live.sessions, seen).filter((s) => !waiting.includes(s) && mine(s) && !planeWorkers.has(s.taskId ?? "") && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   const count = live ? waiting.length + finished.length
-    + leadReviews.filter((item) => mine({ taskId: item.task.id })).length
+    + leadReviews.filter((item) => !planeWorkers.has(item.task.id) && mine({ taskId: item.task.id })).length
     + decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)).length
-    + planeJobs.filter((job) => planeBotNeedsAttention(job) && !(job.rootTaskId && job.state === "review")).length
+    + planeJobs.filter(planeBotNeedsAttention).length
     + (settings?.disabledFeatures.includes("planning") ? 0 : proposals.length)
     + plans.filter((p) => p.state === "open").length + relays.filter((r) => r.state === "pending").length
     + sends.filter((s) => s.state === "pending").length

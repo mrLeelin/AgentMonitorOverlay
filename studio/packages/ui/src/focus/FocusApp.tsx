@@ -7,7 +7,7 @@ import { toggleTheme } from "../lib/theme.js";
 import { hangsUnderOf, interruptedSince, noteSeen, runningSubs, subsByParent, unseenSessions, useSessionSeen, withGrants } from "../lib/sessionSeen.js";
 import { DecisionCard, useOpenDecisions } from "../collab/DecisionPanel.js";
 import { planeBotStatus } from "../teamtasks/PlaneBot.js";
-import { planeBotNeedsAttention, usePlaneBotAttention } from "../teamtasks/planeBotAttention.js";
+import { planeBotNeedsAttention, planeBotTaskIds, usePlaneBotAttention } from "../teamtasks/planeBotAttention.js";
 import { usePendingProposals } from "../planning/ProposalsPanel.js";
 import { useTaskPlans } from "../taskplans/TaskPlans.js";
 import { RelayCard, useRelays } from "../relays/Relays.js";
@@ -72,7 +72,8 @@ export function FocusApp() {
   const pending = usePendingProposals(host.kind === "ready" ? host.link : NO_LINK);
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const planeJobs = usePlaneBotAttention(host.kind === "ready" && settings?.teamTasksEnabled === true && settings.botsEnabled !== false ? host.link : null);
-  const planeNeeds = planeJobs.filter((job) => planeBotNeedsAttention(job) && !(job.rootTaskId && job.state === "review"));
+  const planeNeeds = planeJobs.filter(planeBotNeedsAttention);
+  const planeWorkers = planeBotTaskIds(planeJobs);
   // Scheduler proposals belong to the planning feature (设置 → 功能).
   const proposals = settings?.disabledFeatures.includes("planning") ? [] : pending;
   // 拆任务提案 (stage 16): a 主控 waits for the person to accept or dismiss them.
@@ -148,7 +149,7 @@ export function FocusApp() {
 
   const seenHere = useSessionSeen();
   const live = host.kind === "ready" ? host.state : null;
-  const leadReviews = useLeadAttention(host.kind === "ready" ? host.link : NO_LINK, live).filter((item) => mine({ taskId: item.task.id }));
+  const leadReviews = useLeadAttention(host.kind === "ready" ? host.link : NO_LINK, live).filter((item) => !planeWorkers.has(item.task.id) && mine({ taskId: item.task.id }));
   // A granted task's sessions: what they had before the grant is not to review here (lib/sessionSeen.ts withGrants).
   const seenData = live ? withGrants(seenHere, live.tasks, live.sessions) : seenHere;
   // 置顶 and which sessions show their subagents (2026-10-21); forgotten once their task or session is gone.
@@ -163,7 +164,6 @@ export function FocusApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the ids by content
   useEffect(() => void (liveSessionsId !== null && subsOpen.keepOnly(new Set(liveSessionsId.split("|")))), [liveSessionsId]);
   const subs = live ? subsByParent(live.sessions) : new Map<string, Session[]>();
-  const planeWorkers = new Set(planeJobs.map((job) => job.taskId));
   const waiting = live ? needsMe(live).filter((s) => mine(s) && !planeWorkers.has(s.taskId ?? "")) : [];
   const finished = live ? unseenSessions(live.sessions, seenData).filter((s) => !waiting.includes(s) && mine(s) && !planeWorkers.has(s.taskId ?? "") && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   // Seen means reviewed (我知道了, 在工作台打开, or looked at in the workbench) and it leaves at once, open or not
@@ -172,6 +172,7 @@ export function FocusApp() {
   const list = [...waiting, ...finished];
   const asks = live ? decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
   const leadKeys = leadReviews.map((item) => `result:${item.resultId}`);
+  const planeReviews = planeNeeds.filter((job) => job.state === "review" || job.requesterReview === "confirmed");
   const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id), ...planeNeeds.map((job) => `plane:${job.id}:${job.state}`), ...leadKeys]);
   const keysId = keys.join("|");
   // Forget what was handled, so it alerts again if it comes back.
@@ -192,6 +193,7 @@ export function FocusApp() {
       })),
       ...asks.map((d) => ({ key: `d:${d.id}`, sessionId: d.sessionId, taskId: d.taskId ?? null, label: "等你决定" })),
       ...leadReviews.map((item) => ({ key: `result:${item.resultId}`, sessionId: item.sessionId, taskId: item.task.id, label: "待你验收" })),
+      ...planeReviews.flatMap((job) => job.botSessionId ? [{ key: `plane:${job.id}:${job.state}`, sessionId: job.botSessionId, taskId: job.botTaskId, label: planeBotStatus(job) }] : []),
     ];
     setHistory((h) => {
       const next = updateHistory(h, now, undefined, (r) => live.sessions.some((s) => s.id === r.sessionId && (s.status === "running" || runningSubs(s.id, subs).length > 0)));
@@ -201,11 +203,11 @@ export function FocusApp() {
   }, [keysId, !!live]); // eslint-disable-line react-hooks/exhaustive-deps -- follows the keys by content
   const alerting = shouldAlert(keys, seen);
   const toReview = [...waiting, ...finished].filter((s) => isToReview(s, waiting));
-  const reviewKeys = new Set(attentionKeys(toReview, [], leadKeys));
+  const reviewKeys = new Set(attentionKeys(toReview, [], [...leadKeys, ...planeReviews.map((job) => `plane:${job.id}:${job.state}`)]));
   // Green when everything new is finished work to look at.
   const calm = alerting && keys.every((k) => seen.has(k) || reviewKeys.has(k));
   const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length + planeNeeds.length + leadReviews.length;
-  const reviewCount = toReview.length + leadReviews.length;
+  const reviewCount = toReview.length + leadReviews.length + planeReviews.length;
   const things = needs - reviewCount;
 
   // How long the oldest unacknowledged thing has waited; the clock ticks while something does.
