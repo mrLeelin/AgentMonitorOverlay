@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 
 // Stage 16: 传话 — a 主控's message for another task's session: confirmed by the person (or not asked), delivered.
 
@@ -23,10 +24,13 @@ let leadSession: Session;
 let target: Task;
 let workerSession: Session;
 
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "amo-studio-test-relays-"));
   store = new Store(join(root, "studio.db"));
   servers = new FakeServers(PROFILES);
+  // 主控会话有了只读凭据（bindLeadFixture），给它的回执会真的送到 app-server：先起好这个渠道唯一的 fake app-server，
+  // 免得回执和任务首个会话同时启动、各起一个（FakeServers.ensure 不排队），线程落在另一个 server 上。
+  await servers.ensure("p-ds");
   service = new HostService(store, new CodexRuntime({ store, servers, profiles: PROFILES }), PROFILES, { commonDir: join(root, "common") });
   mkdirSync(join(root, "alpha"));
   alpha = store.addWorkspace({ path: join(root, "alpha"), name: "alpha" });
@@ -34,7 +38,8 @@ beforeEach(() => {
   const lead = store.createTask({ title: "迁移主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
   target = store.createTask({ title: "装甲车", workspaceId: alpha.id, topicId: topic.id, managerTaskId: lead.id });
   const other = store.createTask({ title: "别处", workspaceId: alpha.id });
-  const session = (taskId: string) => store.createSession({ taskId, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: alpha.id, title: "", status: "idle", writer: "workbench", runtimeRef: `thr-${taskId}` });
+  // 主控会话要有现任机器人任期才算主控、才能传话（core/bot-lead-access.ts）；「别处」不是主控任务，会话原样返回。
+  const session = (taskId: string) => bindLeadFixture(service, store.createSession({ taskId, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: alpha.id, title: "", status: "idle", writer: "workbench", runtimeRef: `thr-${taskId}` }));
   leadSession = session(lead.id);
   workerSession = session(other.id);
 });
@@ -114,7 +119,13 @@ describe("relays (传话)", () => {
     let release!: () => void, entered!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const ready = new Promise<void>((resolve) => { entered = resolve; });
-    vi.spyOn(service.runtime, "startSession").mockImplementationOnce(async (input) => { entered(); await gate; return start(input); });
+    vi.spyOn(service.runtime, "startSession").mockImplementationOnce(async (input) => {
+      // Let runtime validate and persist the session first, while the task's start reservation is still held.
+      const session = await start(input);
+      entered();
+      await gate;
+      return session;
+    });
     const starting = service.tasks.addSession(target.id, { profileId: "p-ds" });
     await ready;
     const relay = service.relays.send(leadSession.id, { taskId: target.id, text: "旧主控要求" });

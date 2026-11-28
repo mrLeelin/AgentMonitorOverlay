@@ -47,6 +47,26 @@ const session = (id: string) => store.getSession(id)!;
 const lastAgent = (sessionId: string) => items(sessionId).filter((i): i is Extract<SessionItem, { type: "agent" }> => i.type === "agent").at(-1);
 const idle = (id: string) => () => session(id).status === "idle" && !items(id).some((i) => i.type === "agent" && i.streaming);
 
+async function pendingNativeApproval() {
+  const s = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace, text: "[[shell: cmd /c echo x]]" });
+  await until(() => session(s.id).status === "awaiting-approval", "awaiting-approval");
+  const approval = items(s.id).find((item) => item.type === "approval")!;
+  const client = servers.handles.get("p-ds")!.client;
+  return { s, approval, client, requestId: runtime.pendingApprovals(s.id)[0]! };
+}
+
+function blockApprovalLookup() {
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const ensure = servers.ensure.bind(servers);
+  const lookup = vi.spyOn(servers, "ensure").mockImplementation(async (profileId) => {
+    const handle = await ensure(profileId);
+    await barrier;
+    return handle;
+  });
+  return { lookup, release };
+}
+
 describe("CodexRuntime", () => {
   it("reports transport delivery only after the app-server echoes the context input", async () => {
     const received = vi.fn();
@@ -233,6 +253,93 @@ describe("CodexRuntime", () => {
     expect(items(s.id).find((i) => i.type === "tool")).toMatchObject({ name: "shell", status: "completed" });
     expect(lastAgent(s.id)!.markdown).toBe("FAKE-RAN");
     await expect(runtime.respondApproval(s.id, "0", "decline")).rejects.toThrow(/not pending/);
+  });
+
+  it("answers one native approval only once across simultaneous user actions", async () => {
+    const { s, approval, client, requestId } = await pendingNativeApproval();
+    const respond = vi.spyOn(client, "respond");
+    const { lookup, release } = blockApprovalLookup();
+    const settling = Promise.allSettled([
+      runtime.respondApproval(s.id, approval.approvalId, "accept"),
+      runtime.respondApproval(s.id, approval.approvalId, "decline"),
+    ]);
+    try {
+      expect(lookup).toHaveBeenCalledTimes(2);
+      expect(respond).toHaveBeenCalledTimes(0);
+    } finally { release(); }
+    const replies = await settling;
+    expect(replies[0]).toMatchObject({ status: "fulfilled" });
+    expect(replies[1]).toMatchObject({ status: "rejected", reason: { code: "conflict", message: expect.stringContaining("审批已通过") } });
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(String(respond.mock.calls[0]![0])).toBe(requestId);
+    expect(respond.mock.calls[0]![1]).toEqual({ decision: "accept" });
+    expect(store.getItem(approval.id)).toMatchObject({ state: "accepted" });
+    await until(() => lastAgent(s.id)?.markdown === "FAKE-RAN" && idle(s.id)(), "one reply observed by app-server");
+  });
+
+  it("sends no Host response when the native approval resolves during the lookup", async () => {
+    const { s, approval, client, requestId } = await pendingNativeApproval();
+    const respond = vi.spyOn(client, "respond");
+    const { lookup, release } = blockApprovalLookup();
+    const checking = Promise.allSettled([runtime.respondApproval(s.id, approval.approvalId, "accept")]);
+    const fake = servers.fakes.get("p-ds")!;
+    const tui = await CodexRpcClient.connect({ url: fake.url, token: fake.token });
+    const externalRespond = vi.spyOn(tui, "respond");
+    tui.on("request", (request) => { if (String(request.id) === requestId) tui.respond(request.id, { decision: "decline" }); });
+    try {
+      expect(lookup).toHaveBeenCalledOnce();
+      await tui.request("thread/resume", { threadId: s.runtimeRef! } as never);
+      await until(() => items(s.id).some((item) => item.type === "approval" && item.id === approval.id && item.state === "resolved-elsewhere"), "expired original request");
+    } finally { release(); tui.close(); }
+    expect((await checking)[0]).toMatchObject({ status: "rejected", reason: { code: "conflict", message: expect.stringContaining("审批已过期或由其他入口处理") } });
+    expect(respond).toHaveBeenCalledTimes(0);
+    expect(externalRespond).toHaveBeenCalledTimes(1);
+    await until(() => lastAgent(s.id)?.markdown === "FAKE-DENIED" && idle(s.id)(), "external reply observed by app-server");
+  });
+
+  it("cannot send an old approval to a replacement session after lookup begins", async () => {
+    const { s, approval, client } = await pendingNativeApproval();
+    const successor = await runtime.startSession({ taskId, topicId: null, profileId: "p-ds", workspace });
+    const respond = vi.spyOn(client, "respond");
+    const { lookup, release } = blockApprovalLookup();
+    const checking = Promise.allSettled([runtime.respondApproval(s.id, approval.approvalId, "accept")]);
+    try {
+      expect(lookup).toHaveBeenCalledOnce();
+      expect(store.archiveSubtree(s.id)).toHaveLength(1);
+    } finally { release(); }
+    expect((await checking)[0]).toMatchObject({ status: "rejected", reason: { code: "conflict", message: expect.stringContaining("审批原会话或 Codex 连接已变更") } });
+    await expect(runtime.respondApproval(successor.id, approval.approvalId, "accept")).rejects.toMatchObject({ code: "conflict" });
+    expect(respond).toHaveBeenCalledTimes(0);
+    expect(store.getItem(approval.id)).toMatchObject({ sessionId: s.id, state: "resolved-elsewhere" });
+    expect(items(successor.id).filter((item) => item.type === "approval")).toHaveLength(0);
+  });
+
+  it("allows retry after a known pre-send lookup failure and sends only one wire response", async () => {
+    const { s, approval, client, requestId } = await pendingNativeApproval();
+    const respond = vi.spyOn(client, "respond");
+    vi.spyOn(servers, "ensure").mockRejectedValueOnce(new Error("连接暂时不可用，尚未发送"));
+    await expect(runtime.respondApproval(s.id, approval.approvalId, "accept")).rejects.toThrow("尚未发送");
+    expect(respond).toHaveBeenCalledTimes(0);
+    expect(store.getItem(approval.id)).toMatchObject({ state: "pending" });
+    await runtime.respondApproval(s.id, approval.approvalId, "accept");
+    await until(() => lastAgent(s.id)?.markdown === "FAKE-RAN" && idle(s.id)(), "retried response observed by app-server");
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(String(respond.mock.calls[0]![0])).toBe(requestId);
+  });
+
+  it("reconciles an uncertain send without issuing a second native reply", async () => {
+    const { s, approval, client, requestId } = await pendingNativeApproval();
+    const send = client.respond.bind(client);
+    const respond = vi.spyOn(client, "respond").mockImplementationOnce((...input) => {
+      send(...input);
+      throw new Error("transport outcome unavailable after send");
+    });
+    await expect(runtime.respondApproval(s.id, approval.approvalId, "accept")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("无法确认 Codex 是否收到") });
+    await expect(runtime.respondApproval(s.id, approval.approvalId, "decline")).rejects.toMatchObject({ code: "conflict" });
+    await until(() => lastAgent(s.id)?.markdown === "FAKE-RAN" && idle(s.id)(), "original answer observed by app-server");
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(String(respond.mock.calls[0]![0])).toBe(requestId);
+    expect(store.getItem(approval.id)).toMatchObject({ state: "resolved-elsewhere" });
   });
 
   it("完全访问 chosen mid-turn accepts what the turn waits for, and what it asks next (2026-10-22)", async () => {
@@ -478,14 +585,19 @@ describe("CodexRuntime", () => {
     const first = items(s.id).find((i) => i.type === "approval")!;
     servers.handles.get("p-ds")!.client.close();
     await until(() => (store.getItem(first.id) as { state: string }).state === "resolved-elsewhere", "closed after drop");
-    await servers.ensure("p-ds");
+    const reconnected = await servers.ensure("p-ds");
     // The fake replays the still-pending request to the new subscriber; it becomes a fresh pending card.
     await until(() => items(s.id).filter((i) => i.type === "approval").length === 2, "replayed approval");
     const replay = items(s.id).filter((i): i is Extract<SessionItem, { type: "approval" }> => i.type === "approval")[1]!;
     expect(replay.state).toBe("pending");
+    expect(replay.approvalId).not.toBe(first.approvalId);
     expect(session(s.id).status).toBe("awaiting-approval");
+    const respond = vi.spyOn(reconnected.client, "respond");
+    await expect(runtime.respondApproval(s.id, first.approvalId, "decline")).rejects.toMatchObject({ code: "conflict" });
+    expect(respond).toHaveBeenCalledTimes(0);
     await runtime.respondApproval(s.id, replay.approvalId, "accept");
     await until(idle(s.id), "idle after replayed approval");
+    expect(respond).toHaveBeenCalledTimes(1);
   });
 });
 

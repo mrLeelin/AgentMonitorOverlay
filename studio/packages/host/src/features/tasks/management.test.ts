@@ -11,6 +11,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture, startLeadFixture } from "../botleads/lead.test-support.js";
 
 const PROFILES: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let root: string;
@@ -37,7 +38,7 @@ afterEach(async () => {
 });
 
 const task = (title: string, lead = false, managerTaskId: string | null = null) => store.createTask({ title, workspaceId: workspace.id, topicId: topic.id, lead, managerTaskId });
-const session = (owner: Task | null) => store.createSession({ taskId: owner?.id ?? null, topicId: owner ? null : topic.id, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId: workspace.id, title: "", status: "idle", writer: "workbench", runtimeRef: null });
+const session = (owner: Task | null) => bindLeadFixture(service, store.createSession({ taskId: owner?.id ?? null, topicId: owner ? null : topic.id, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId: workspace.id, title: "", status: "idle", writer: "workbench", runtimeRef: null }));
 
 describe("stored management ownership", () => {
   it("lets an executor recover the complete multiline contract beyond its role-card preview", async () => {
@@ -219,18 +220,18 @@ describe("stored management ownership", () => {
     expect(originalResend.mock.calls.filter(([id]) => id === targetSession.id)).toEqual([]);
   });
 
-  it("revokes cached automatic management after demotion or archive", async () => {
+  it("rejects legacy demotion of an appointed lead and revokes cached management after archive", async () => {
     const top = task("主控", true);
-    const topSession = session(top);
+    const topSession = await startLeadFixture(service, top, "test");
     const cached = amoToolsFor(service, { sessionId: topSession.id });
     const createGroup = cached.find((t) => t.name === "canvas_group_create")!;
-    service.tasks.updateTask(top.id, { lead: false });
+    expect(() => service.tasks.updateTask(top.id, { lead: false })).toThrow(/已有机器人任期/);
+    await service.tasks.archiveTask(top.id);
     expect(await createGroup.run({ title: "失效自动批准" })).toHaveProperty("isError", true);
     expect(service.canvases.canvas(topic.id).groups).toEqual([]);
-    const workerTools = amoToolsFor(service, { sessionId: topSession.id });
-    expect(workerTools.find((t) => t.name === "canvas_group_create")?.autoApprove).toBe(false);
-    await service.tasks.archiveTask(top.id);
-    expect(await workerTools.find((t) => t.name === "task_update")!.run({ title: "归档后改写" })).toHaveProperty("isError", true);
+    const archivedTools = amoToolsFor(service, { sessionId: topSession.id });
+    expect(archivedTools.find((t) => t.name === "canvas_group_create")?.autoApprove).not.toBe(true);
+    expect(await cached.find((t) => t.name === "task_update")!.run({ title: "归档后改写" })).toHaveProperty("isError", true);
     expect(store.getTask(top.id)?.title).toBe("主控");
   });
 

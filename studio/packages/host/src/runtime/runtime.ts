@@ -4,7 +4,7 @@ import { inTurn, parseRemoteProfileId, type MessagePurpose } from "@amo-studio/p
 import { newId, type HostEventInput, type SessionItemInput, type Store } from "../store/store.js";
 import { unreadDelivery, withDelivery } from "./items.js";
 import { profileGone } from "./profiles.js";
-import { consumeMessagePurpose, currentMessagePurpose, isBotConversationInput, joinsPurpose, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
+import { consumeMessagePurpose, currentMessagePurpose, isBotConversationInput, joinsPurpose, keepsAcceptance, queueMessagePurpose, startTurnPurpose } from "./message-purpose.js";
 import { botSessionPromptKey } from "../features/bots/data.js";
 import type { SessionGoalState, SessionGoalUpdate, ContextBreakdown } from "@amo-studio/protocol";
 
@@ -21,6 +21,8 @@ export interface ForkTarget {
 
 /** `now` (立即发送, 2026-11-02): while a turn runs, the model reads the message at once (the turn's step gives way). */
 export interface SendOptions {
+  /** Set by the authenticated user's composer route, never by model or HTTP body. */
+  fromPerson?: boolean;
   /** Host-only original composer text, before role/shared context is appended. */
   skillText?: string;
   now?: boolean;
@@ -29,6 +31,8 @@ export interface SendOptions {
   purpose?: MessagePurpose;
   /** Host-only frozen-input guard, not accepted from HTTP. */
   beforeDispatch?: () => void;
+  /** Exact unfinished prerequisites approved by the user in the task's REST start operation. */
+  confirmedEarly?: readonly Id[];
   /** Host-only routing fields for a persisted message waiting at a purpose boundary. */
   deferredItemId?: Id;
   boundaryDispatch?: boolean;
@@ -69,8 +73,11 @@ export interface SessionRuntimeApi {
   clearGoal?(sessionId: Id): Promise<SessionGoalState>;
   /** Host-owned dispatch guard, rechecked after native asynchronous recovery and immediately before transport. */
   setDispatchValidation?(validate: (sessionId: Id, itemId: Id) => boolean): void;
+  /** Current execution eligibility can change without expiring a saved message. */
+  setExecutionValidation?(validate: (sessionId: Id, purpose: MessagePurpose, confirmedEarly?: readonly Id[]) => void): void;
+  hasPendingDispatch?(sessionId: Id): boolean;
   /** `resumeFrom` (Claude only, 接续已有会话 2026-11-05): an outside Claude session the new one goes on from (a copy of it). */
-  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; beforeDispatch?: () => void; developerInstructions?: string; botSkillPrompt?: string }): Promise<Session>;
+  startSession(input: { taskId: Id | null; topicId: Id | null; profileId: Id; workspace: Workspace; cwd?: string; title?: string; text?: string; skillText?: string; options?: SessionOptions; resumeFrom?: string; firstMessagePurpose?: MessagePurpose; beforeStart?: () => void; beforeDispatch?: () => void; confirmedEarly?: readonly Id[]; developerInstructions?: string; botSkillPrompt?: string; leadSessionId?: Id; reopenSessionId?: Id }, checkReplacement?: () => void): Promise<Session>;
   /** Claude only (接续已有会话, 2026-11-05): sessions started outside Studio that a new task can go on from. */
   outsideSessions?(): Promise<OutsideSessionList>;
   /** Claude only: the end of one of those, to recognise it; null when it has no conversation. */
@@ -114,6 +121,8 @@ export interface SessionRuntimeApi {
   resend?(sessionId: Id, itemId: Id, images: readonly Attachment[], options?: SendOptions): Promise<{ mode: SendMode }>;
   fork(sessionId: Id, profileId?: Id, target?: ForkTarget): Promise<Session>;
   archive(sessionId: Id): Promise<Session[]>;
+  /** Release native resources for sessions archived by a larger Host transaction. */
+  finishArchive?(sessions: readonly Session[]): Promise<void>;
   unarchive(sessionId: Id): Promise<Session[]>;
   respondApproval(sessionId: Id, approvalId: string, decision: ApprovalDecision): Promise<void>;
   /** Answers a pending `question` item (stage 12): the reply must fit its source (see QuestionReply). */
@@ -169,7 +178,12 @@ const OPTIONAL = ["usage", "cachedUsage", "handoff", "reclaim", "listCommands", 
  * step 2) — 2026-11-05, plans/host-structure.md 8a: it used to be a wrapper around the router.
  */
 export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements SessionRuntimeApi {
-  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; goal?: (sessionId: Id) => string; startup?: (taskId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
+  checkLeadStart: (input: Parameters<SessionRuntimeApi["startSession"]>[0]) => void = () => undefined;
+  checkLeadTurn: (sessionId: Id) => void = () => undefined;
+  checkTaskWorktree: (taskId: Id, cwd: string | undefined, work: boolean) => void = () => undefined;
+  checkTaskDependencies: (taskId: Id, purpose: MessagePurpose, sessionId?: Id, confirmedEarly?: readonly Id[]) => void = () => undefined;
+  checkLeadBoundary: (sessionId: Id) => void = () => undefined;
+  private context: { task: (taskId: Id) => string; session: (sessionId: Id) => string; goal?: (sessionId: Id) => string; startup?: (taskId: Id) => string; validate: (sessionId: Id, itemId: Id) => boolean; checkStart?: (taskId: Id, freeze: boolean, sessionId?: Id) => void; defer?: (sessionId: Id, text: string, images: readonly Attachment[], options: SendOptions) => Promise<{ mode: SendMode }> } | null = null;
   private readonly purposeBoundaries = new Map<Id, Id>();
   private readonly dispatching = new Map<Id, { purpose: MessagePurpose; done: Promise<void> }>();
   private readonly goalStopVersions = new Map<Id, number>();
@@ -178,7 +192,12 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   /** One Host-owned context assembler for every runtime, including first messages and resumed sessions. */
   setMessageContext(context: NonNullable<RuntimeRouter["context"]>): void {
     this.context = context;
-    for (const runtime of [...Object.values(this.runtimes), ...(this.fallback ? [this.fallback] : [])]) runtime.setDispatchValidation?.(context.validate);
+    for (const runtime of [...Object.values(this.runtimes), ...(this.fallback ? [this.fallback] : [])]) this.wireRuntimeChecks(runtime);
+  }
+
+  private wireRuntimeChecks(runtime: SessionRuntimeApi): void {
+    if (this.context) runtime.setDispatchValidation?.(this.context.validate);
+    runtime.setExecutionValidation?.((sessionId, purpose, confirmedEarly) => this.checkSessionStart(sessionId, purpose, confirmedEarly));
   }
 
   private botSkills?: (input: Parameters<SessionRuntimeApi["startSession"]>[0]) => Promise<{ prompt?: string; unavailable: string[] } | undefined>;
@@ -220,7 +239,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
   register(name: SessionRuntime, runtime: SessionRuntimeApi): void {
     if (this.runtimes[name]) throw new Error(`the ${name} runtime is there already`);
     this.runtimes[name] = runtime;
-    if (this.context) runtime.setDispatchValidation?.(this.context.validate);
+    if (this.context) this.wireRuntimeChecks(runtime);
     this.listen(runtime);
   }
 
@@ -267,6 +286,10 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return !!s && s.runtime !== "remote" && !!(this.runtimes[s.runtime] ?? this.fallback)?.betweenTurns?.(sessionId);
   }
 
+  hasPendingDispatch(sessionId: Id): boolean {
+    return this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || this.goalPreparing.has(sessionId);
+  }
+
   /** The runtime of a profile: its own, "remote" for a remote copy's model (remoteProfileId), or the one runtime. */
   private forProfile(profileId: Id): SessionRuntimeApi | undefined {
     const profile = this.profiles.find((p) => p.id === profileId);
@@ -295,16 +318,31 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.runtimes.claude ?? this.fallback ?? undefined;
   }
 
-  startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]) {
-    if (input.taskId) this.context?.checkStart?.(input.taskId, true);
+  startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0], checkReplacement?: () => void) {
+    const purpose = input.firstMessagePurpose ?? (input.text?.trim() ? "work" : undefined);
+    if ((checkReplacement && (input.text || purpose !== "reopen" || !input.taskId)) || (input.reopenSessionId && (!checkReplacement || input.leadSessionId))) {
+      throw new Error("A replacement must be provisioned before sending its first message");
+    }
+    const checkStart = (freeze: boolean) => {
+      this.checkLeadStart(input);
+      if (!input.taskId) return;
+      // A reserved read-only lead uses the project directory. A prior execution checkout stays with the handoff.
+      if (!input.leadSessionId) this.checkTaskWorktree(input.taskId, input.cwd, !!purpose && !keepsAcceptance(purpose));
+      if (purpose) this.checkTaskDependencies(input.taskId, purpose, undefined, input.confirmedEarly);
+      if (checkReplacement) checkReplacement();
+      else this.context?.checkStart?.(input.taskId, freeze);
+    };
+    checkStart(true);
     const context = input.taskId ? this.context?.task(input.taskId) ?? "" : "";
     const startup = input.text && input.taskId ? this.context?.startup?.(input.taskId) ?? "" : "";
     const text = input.text ? this.withContext(this.withContext(input.text, startup), context) : input.text;
-    const beforeDispatch = this.frozenInputGuard(text ?? "", context, () => input.taskId ? this.context?.task(input.taskId) ?? "" : "", () => { if (input.taskId) this.context?.checkStart?.(input.taskId, false); }, input.beforeDispatch);
+    const beforeDispatch = this.frozenInputGuard(text ?? "", context, () => input.taskId ? this.context?.task(input.taskId) ?? "" : "", () => checkStart(false), input.beforeDispatch);
+    const beforeStart = () => { beforeDispatch(); input.beforeStart?.(); };
     const runtime = this.requireProfileRuntime(input.profileId);
-    const launch = { ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeDispatch };
+    const launch = { ...input, ...(text !== undefined ? { text, skillText: input.skillText ?? input.text ?? "" } : {}), beforeStart, beforeDispatch };
     if (!input.taskId || !this.botSkills) return runtime.startSession(launch);
     return this.botSkills(input).then(async (skills) => {
+      this.checkLeadStart(input);
       const session = await runtime.startSession({ ...launch, ...(skills?.prompt ? { botSkillPrompt: skills.prompt } : {}) });
       if (skills?.unavailable.length) {
         const message = `这个聊天未加载以下 Bot 技能，请检查当前工作目录、渠道或插件状态：${skills.unavailable.join("、")}`;
@@ -318,20 +356,29 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const goalSession = this.store.getSession(sessionId);
     if (goalSession?.goal?.status === "active" && (options.purpose === "inquiry" || options.purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
     const taskId = goalSession?.taskId;
-    if (taskId) this.context?.checkStart?.(taskId, false);
+    const purpose = options.purpose ?? "work";
+    this.checkSessionStart(sessionId, purpose, options.confirmedEarly);
     const work = !options.purpose || options.purpose === "work" || options.purpose === "reopen";
     const startup = taskId && goalSession.runtime !== "remote" && work ? this.context?.startup?.(taskId) ?? "" : "";
     const context = this.context?.session(sessionId) ?? "";
     const input = this.withContext(startup && !this.store.hasWorkInput(sessionId) ? this.withContext(text, startup) : text, context);
     options = { ...options, skillText: options.skillText ?? text };
-    const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => { if (taskId) this.context?.checkStart?.(taskId, false); }, options.beforeDispatch);
-    const session = this.store.getSession(sessionId), purpose = options.purpose ?? "work";
+    const beforeDispatch = this.frozenInputGuard(input, context, () => this.context?.session(sessionId) ?? "", () => this.checkSessionStart(sessionId, purpose, options.confirmedEarly), options.beforeDispatch);
+    const session = this.store.getSession(sessionId);
     const waitsForTurn = session && this.inNativeTurn(session) && (options.afterTurn || !joinsPurpose(purpose, currentMessagePurpose(this.store, sessionId)));
     if (session?.runtime !== "remote" && (waitsForTurn || this.dispatching.has(sessionId) || this.purposeBoundaries.has(sessionId) || options.queuedFromDevice)) {
       if (!this.context?.defer) throw Object.assign(new Error("当前回合用途不同，请等这一轮结束后再发送。"), { code: "conflict" });
       return this.context.defer(sessionId, input, images, { ...options, purpose });
     }
     return this.dispatchMessage(sessionId, purpose, () => this.forSession(sessionId).sendMessage(sessionId, input, images, { ...options, purpose, beforeDispatch }));
+  }
+  private checkSessionStart(sessionId: Id, purpose: MessagePurpose, confirmedEarly?: readonly Id[]): void {
+    this.checkLeadTurn(sessionId);
+    const session = this.store.getSession(sessionId);
+    if (!session?.taskId) return;
+    if (!session.botLeadTerm) this.checkTaskWorktree(session.taskId, session.cwd ?? undefined, !keepsAcceptance(purpose));
+    this.checkTaskDependencies(session.taskId, purpose, sessionId, confirmedEarly);
+    this.context?.checkStart?.(session.taskId, false, sessionId);
   }
   private frozenInputGuard(input: string, context: string, currentContext: () => string, checkStart: () => void, previous?: () => void): () => void {
     const tokens = (value: string) => [...value.matchAll(/^\[AMO_SHARED_CONTEXT:([^\]]+)\]\r?$/gm)].map((match) => match[1]);
@@ -402,17 +449,16 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const r = this.forSession(sessionId);
     if (!r.sendNow) throw Object.assign(new Error("这种会话不能立即发送：消息会在这一轮结束后发出"), { code: "bad_request" });
     if (this.context && !this.context.validate(sessionId, itemId)) throw Object.assign(new Error("共同需求通知已失效，请读取当前任务的共同需求。"), { code: "conflict" });
-    const taskId = this.store.getSession(sessionId)?.taskId;
-    if (taskId) this.context?.checkStart?.(taskId, false);
+    this.checkSessionStart(sessionId, item?.type === "user" ? item.messagePurpose ?? "work" : "work");
     return r.sendNow(sessionId, itemId);
   }
   resend(sessionId: Id, itemId: Id, images: readonly Attachment[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const r = this.forSession(sessionId);
     if (!r.resend) throw Object.assign(new Error("这种会话不能重新发送消息"), { code: "bad_request" });
     if (this.context && !this.context.validate(sessionId, itemId)) throw Object.assign(new Error("共同需求通知已失效，请读取当前任务的共同需求。"), { code: "conflict" });
-    const taskId = this.store.getSession(sessionId)?.taskId;
-    if (taskId) this.context?.checkStart?.(taskId, false);
     const item = this.store.getItem(itemId);
+    const purpose = item?.type === "user" ? item.messagePurpose ?? "work" : options.purpose ?? "work";
+    this.checkSessionStart(sessionId, purpose, options.confirmedEarly);
     if (item?.type === "user" && item.delivery === "expired") throw Object.assign(new Error(item.deliveryReason || "这条消息已过期，不能重新发送。"), { code: "conflict" });
     const session = this.store.getSession(sessionId);
     const pendingDispatch = session?.runtime !== "remote" ? this.dispatching.get(sessionId) : undefined;
@@ -431,10 +477,13 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
       }
     }
     if (item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent")) {
-      const text = item.text.includes("[AMO_SHARED_CONTEXT:") ? item.text : this.withContext(item.text, this.context?.session(sessionId) ?? "");
+      const text = /^\[AMO_SHARED_CONTEXT:[^\]]+\]\r?$/m.test(item.text) ? item.text : this.withContext(item.text, this.context?.session(sessionId) ?? "");
       if (text !== item.text) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...item, text }) }));
     }
-    const send = () => r.resend!(sessionId, itemId, images, { ...options, skillText: item?.type === "user" ? item.queuedSkillText : undefined, purpose: item?.type === "user" ? item.messagePurpose ?? "work" : options.purpose ?? "work" });
+    const send = () => r.resend!(sessionId, itemId, images, { ...options, skillText: item?.type === "user" ? item.queuedSkillText : undefined, purpose, beforeDispatch: () => {
+      options.beforeDispatch?.();
+      this.checkSessionStart(sessionId, purpose, options.confirmedEarly);
+    } });
     return (item?.type === "user" && item.sessionId === sessionId && (item.delivery === "held" || item.delivery === "unsent") ? this.dispatchMessage(sessionId, item.messagePurpose ?? "work", send) : send()).catch((error: unknown) => {
       const latest = this.store.getItem(itemId);
       if (latest?.type === "user" && (latest.delivery === "held" || latest.delivery === "unsent")) this.emit("event", this.store.appendEvent({ type: "item.updated", item: this.store.replaceItem({ ...latest, delivery: "unsent", deliveryReason: error instanceof Error ? error.message : String(error) }) }));
@@ -466,6 +515,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.requireProfileRuntime(profileId).choices(profileId);
   }
   setOptions(sessionId: Id, options: SessionOptions) {
+    this.checkLeadBoundary(sessionId);
     return this.forSession(sessionId).setOptions(sessionId, options);
   }
   async usage(profileId: Id, refresh: boolean): Promise<AccountUsage | AccountUsage[] | null> {
@@ -484,6 +534,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.forSession(sessionId).interrupt(sessionId, options);
   }
   fork(sessionId: Id, profileId?: Id, target?: ForkTarget) {
+    this.checkLeadBoundary(sessionId);
     return this.forSession(sessionId).fork(sessionId, profileId, target);
   }
   archive(sessionId: Id) {
@@ -495,7 +546,20 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     for (const id of descendants) this.cancelGoalPreparation(id);
     return this.forSession(sessionId).archive(sessionId);
   }
+  async finishArchive(sessions: readonly Session[]) {
+    const byRuntime = new Map<SessionRuntimeApi, Session[]>();
+    for (const session of sessions) {
+      this.cancelGoalPreparation(session.id);
+      const runtime = this.byRuntime(session.runtime);
+      const own = byRuntime.get(runtime) ?? [];
+      own.push(session);
+      byRuntime.set(runtime, own);
+    }
+    await Promise.all([...byRuntime].map(([runtime, own]) => runtime.finishArchive?.(own)));
+  }
   unarchive(sessionId: Id) {
+    const session = this.store.getSession(sessionId);
+    if (session?.taskId && !session.botLeadTerm) this.checkLeadBoundary(sessionId);
     return this.forSession(sessionId).unarchive(sessionId);
   }
   respondApproval(sessionId: Id, approvalId: string, decision: ApprovalDecision) {
@@ -505,12 +569,15 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return this.forSession(sessionId).answerQuestion(sessionId, itemId, reply);
   }
   attachInfo(sessionId: Id) {
+    this.checkLeadBoundary(sessionId);
     return this.forSession(sessionId).attachInfo(sessionId);
   }
   setWriter(sessionId: Id, writer: Session["writer"]) {
+    if (writer === "terminal-shared" || writer === "terminal-handoff") this.checkLeadBoundary(sessionId);
     return this.forSession(sessionId).setWriter(sessionId, writer);
   }
   handoff(sessionId: Id) {
+    this.checkLeadBoundary(sessionId);
     const r = this.forSession(sessionId);
     if (!r.handoff) throw new Error("this runtime does not hand sessions to a terminal");
     return r.handoff(sessionId);
@@ -528,6 +595,8 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return r.listProfileCommands ? r.listProfileCommands(profileId, workspace, botSkills) : { commands: [], note: "这个模型的技能列表需在会话启动后读取" };
   }
   runCommand(sessionId: Id, name: string, args: string): Promise<SlashCommandResult> {
+    this.checkLeadBoundary(sessionId);
+    this.checkSessionStart(sessionId, name === "compact" ? "inquiry" : "work");
     const r = this.forSession(sessionId);
     if (!r.runCommand) throw new Error("this runtime has no commands");
     return r.runCommand(sessionId, name, args);
@@ -538,6 +607,10 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     return r.stopBackground(sessionId, taskId);
   }
   setWakeChoice(sessionId: Id, choice: { stopLoop?: boolean; autoContinue?: boolean }): Promise<Session> {
+    if (choice.autoContinue) {
+      this.checkLeadBoundary(sessionId);
+      this.checkSessionStart(sessionId, "work");
+    }
     const r = this.forSession(sessionId);
     if (!r.setWakeChoice) throw new Error("this runtime has no loop");
     return r.setWakeChoice(sessionId, choice);
@@ -551,6 +624,7 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     if (!r.setGoal) throw Object.assign(new Error("这个 Agent 尚未接入原生 Goal。"), { code: "bad_request" });
     if (this.store.getSession(sessionId)?.kind === "sub") throw Object.assign(new Error("子 agent 的生命周期由父会话管理，不能单独控制 Goal。"), { code: "bad_request" });
     const activates = input.status !== "paused";
+    if (activates) this.checkLeadBoundary(sessionId);
     if (!activates) this.cancelGoalPreparation(sessionId);
     const stopVersion = this.goalStopVersions.get(sessionId) ?? 0;
     const context = activates ? this.context?.session(sessionId) ?? "" : "";
@@ -559,12 +633,13 @@ export class RuntimeRouter extends EventEmitter<RuntimeEvents> implements Sessio
     const reservation = { purpose: "work" as const, done: new Promise<void>((resolve) => { finish = resolve; }) };
     const check = this.frozenInputGuard(context, context, () => activates ? this.context?.session(sessionId) ?? "" : "", () => {}, () => {
       beforeDispatch?.();
+      if (activates) this.checkLeadBoundary(sessionId);
       const s = this.store.getSession(sessionId);
       if (activates && stopVersion !== (this.goalStopVersions.get(sessionId) ?? 0)) throw Object.assign(new Error("会话已停止，这次待开启的 Goal 已取消。"), { code: "conflict" });
       if (!s || s.archivedAt || s.writer === "archived" || s.writer === "terminal-handoff") throw Object.assign(new Error("会话不可写，这次待开启的 Goal 已取消。"), { code: "read_only" });
       const pending = this.dispatching.get(sessionId);
       if (activates && ((pending && pending !== reservation) || this.purposeBoundaries.has(sessionId))) throw Object.assign(new Error("当前消息还在发送，请等发送完成后再开启 Goal。"), { code: "bad_request" });
-      if (input.status !== "paused" && s?.taskId) this.context?.checkStart?.(s.taskId, false);
+      if (activates) this.checkSessionStart(sessionId, "reopen");
       // A read-only inquiry must finish before the person starts autonomous work in this thread.
       if (activates && !preparing && this.inNativeTurn(s) && ["inquiry", "notification"].includes(currentMessagePurpose(this.store, sessionId))) throw Object.assign(new Error("当前询问或通知尚未结束，请等这一轮结束后再开启 Goal。"), { code: "bad_request" });
     });
@@ -683,6 +758,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type NewItemBody = DistributiveOmit<SessionItemInput, "id" | "sessionId" | "createdAt">;
 
 export interface NewSessionInput {
+  id?: Id;
   taskId: Id | null;
   topicId: Id | null;
   parentId: Id | null;
@@ -724,8 +800,11 @@ export const STOP_GRACE_MS = 15_000;
  */
 export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
   private dispatchValidation: ((sessionId: Id, itemId: Id) => boolean) | null = null;
+  private executionValidation: ((sessionId: Id, purpose: MessagePurpose, confirmedEarly?: readonly Id[]) => void) | null = null;
   setDispatchValidation(validate: (sessionId: Id, itemId: Id) => boolean): void { this.dispatchValidation = validate; }
-  protected assertCurrentMessage(sessionId: Id, itemId: Id): void {
+  setExecutionValidation(validate: NonNullable<RuntimeBase["executionValidation"]>): void { this.executionValidation = validate; }
+  protected assertExecutionReady(sessionId: Id, purpose: MessagePurpose = "work", confirmedEarly?: readonly Id[]): void { this.executionValidation?.(sessionId, purpose, confirmedEarly); }
+  protected assertCurrentMessage(sessionId: Id, itemId: Id, confirmedEarly?: readonly Id[]): void {
     const row = this.store.getItem(itemId);
     let reason = row?.type === "user" && row.delivery === "expired" ? row.deliveryReason || "这条消息已过期，不能重新发送。" : "";
     if (row?.type !== "user" || row.sessionId !== sessionId) reason = "这条待送消息已不存在或不属于当前会话。";
@@ -733,7 +812,10 @@ export abstract class RuntimeBase extends EventEmitter<RuntimeEvents> {
       try { if (!this.dispatchValidation(sessionId, itemId)) reason = "这条待送消息已失效或过期，请按当前任务要求重新发送。"; }
       catch (error) { reason = error instanceof Error ? error.message : String(error); }
     }
-    if (!reason) return;
+    if (!reason) {
+      this.assertExecutionReady(sessionId, row?.type === "user" ? row.messagePurpose : undefined, confirmedEarly);
+      return;
+    }
     if (row?.type === "user" && row.sessionId === sessionId && row.delivery !== "expired") this.updateItem(itemId, (current) => current.type === "user" && current.delivery !== "expired" ? { ...current, delivery: "expired", deliveryReason: reason, deliveryEndedAt: new Date().toISOString() } : current);
     throw Object.assign(new Error(reason), { code: "conflict" });
   }

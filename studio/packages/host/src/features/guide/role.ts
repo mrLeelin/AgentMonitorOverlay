@@ -23,7 +23,7 @@ const oneLine = (s: string, max: number) => s.replace(/\s+/g, " ").slice(0, max)
 /** A topic's 主控 tasks, as text. */
 function leadsOf(service: CardHost, topicId: Id): string {
   const leads = service.store.listTasks().filter((t) => t.topicId === topicId && !t.archivedAt && t.lead);
-  return leads.length ? leads.map((t) => `${taskName(t)}（${t.id}）`).join("、") : "还没有（任务主会话可用 task_set_lead 自行设置，人也可以在任务页标记）";
+  return leads.length ? leads.map((t) => `${taskName(t)}（${t.id}）`).join("、") : "还没有（可在任务或专题页选择机器人带队）";
 }
 
 /** The role card as text (Markdown), for the instructions and amo_whoami. */
@@ -52,7 +52,7 @@ function cardOf(service: CardHost, f: RoleFacts): string {
     if (!root && isPlaneBotWorker(service.store, f.task.id)) lines.push("- Plane Bot 执行任务：完成后调用 task_submit_result 提交摘要和验证证据，等待用户在 Studio 验收。验收通过后由 Studio 回写原单评论。");
     if (root) {
       lines.push(`- 统一沟通入口：${taskName(root)}（${root.id}）。业务问题用 decision_request 交直属主控，只有总主控向人提问；命令授权和工具原生问答照常。`);
-      lines.push(f.task.lead ? "- 分工与验收：task_plan_propose 自动创建并启动下级任务；负责人用 lead: true 建二级主控。用 task_workflow 读取交付和待决问题，用 task_review_result 验收或退回、task_decision_answer 回答直属问题。全部下辖验收完成后用 task_submit_result 汇总交付，不能把会话停止当成任务完成。" : "- 工作完成后必须用 task_submit_result 提交摘要和实际验证证据，自动回报直属主控；等待验收或按退回意见修改。handoff_submit 和普通回复不代替交付。不要自己用 task_update 标记完成。");
+      lines.push(f.task.lead ? "- 分工与验收：task_plan_propose 自动创建并启动下级任务；通过 task_lead_bots 查看可用机器人，为中控项填写 leadBotId。用 task_workflow 读取交付和待决问题，用 task_review_result 验收或退回、task_decision_answer 回答直属问题。全部下辖验收完成后用 task_submit_result 汇总交付，不能把会话停止当成任务完成。" : "- 工作完成后必须用 task_submit_result 提交摘要和实际验证证据，自动回报直属主控；等待验收或按退回意见修改。handoff_submit 和普通回复不代替交付。不要自己用 task_update 标记完成。");
       if (f.task.lead) lines.push(f.task.managerTaskId ? "- 汇总交付提交给直属主控，等待直属主控验收或退回；二级主控不能自行验收。" : "- 最终交付提交给用户：task_submit_result 后保持待审阅，等待用户在 Studio「交付与验收」中明确验收或退回。不能自行 task_review_result 验收，也不能用 task_update 标记完成。");
       if (f.task.lead) lines.push("- 派工后如果没有其他独立工作，结束当前回合，不要 sleep 或轮询等待；下级交付和业务问题会经收件箱自动唤醒你。主控的普通进度回复不会自动唤醒上级，需要上级处理时用 decision_request 提出业务问题、task_submit_result 提交正式交付，或 task_message 主动传话。收到截断提示时用 task_read_reply 分页读取完整回复。");
       if (f.task.lead) lines.push(WORKFLOW_READING_GUIDE);

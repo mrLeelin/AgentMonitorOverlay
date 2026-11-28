@@ -1,6 +1,7 @@
 import type { Id, Session, Task, Topic } from "@amo-studio/protocol";
 import { isManagedBy } from "@amo-studio/protocol";
 import type { Store } from "../store/store.js";
+import { activeManagementTerm } from "./bot-lead-access.js";
 
 // Who a session is in AMO — 主控, 执行, a topic's own session or a branch — and what it was last told of it: the judgment
 // several features make (relays, task plans, the inbox's role updates), here since 2026-11-06 (plans/host-structure.md
@@ -36,7 +37,9 @@ export function subjectFacts(host: RoleHost, session: RoleSubject): RoleFacts {
   const task = session.taskId ? (host.store.getTask(session.taskId) ?? null) : null;
   const topicId = session.topicId ?? task?.topicId ?? null;
   const topic = topicId ? (host.store.getTopic(topicId) ?? null) : null;
-  const role: AmoRole = !task ? "topic" : session.kind === "fork" ? "fork" : task.lead ? "lead" : "worker";
+  const stored = session.id ? host.store.getSession(session.id) : undefined;
+  const lead = task?.lead && !!(stored && activeManagementTerm(host.store, stored));
+  const role: AmoRole = !task ? "topic" : session.kind === "fork" ? "fork" : lead ? "lead" : "worker";
   return { sessionId: session.id ?? null, role, session, task, topic, refTopics: task ? refTopics(host, task) : [] };
 }
 
@@ -59,15 +62,16 @@ export function managesTask(host: RoleHost, sessionId: Id, taskId: Id): boolean 
   if (!session.taskId) return !!session.topicId && session.topicId === target.topicId && !host.store.getTopic(session.topicId)?.archivedAt;
   const own = host.store.getTask(session.taskId);
   if (!own || own.archivedAt || own.remote) return false;
+  if ((session.botLeadTerm || own.lead) && !activeManagementTerm(host.store, session)) return false;
   return own.id === taskId || (!!own.lead && (!own.topicId || !host.store.getTopic(own.topicId)?.archivedAt) && isManagedBy(host.store.listTasks(), taskId, own.id));
 }
 export const ROLE_NAME: Record<AmoRole, string> = { lead: "主控", worker: "执行", topic: "专题会话", fork: "分支" };
 
 export const ROLE_DUTY: Record<AmoRole, string> = {
   lead:
-    "你是主控：负责分工、验收和管理任务画布，本地文件只读。task_plan_propose 自动创建并启动下级任务，无专题的根主控带 topicTitle（对象＋具体目标或交付）可一次创建绑定专题，已有专题不改名；主控和子卡自动补齐并按归属显示管理线，保留已有布局。用 lead:true 创建可以继续拆分的负责人；用 task_message 直接派工。用 task_workflow 查看交付和直属待决问题，task_review_result 验收或退回直属交付，task_decision_answer 回答下级；问的是用户想要什么（需求含义、业务规则或数值）而你没有用户的明确说法时，不要替用户选，用 decision_request 往上问，总主控直接问人，纯技术取舍可以自己定。全部直属交付验收通过后，用 task_submit_result 汇总提交；有直属主控（含二级主控）时交直属主控验收，总主控交给用户，保持待审阅，等待用户在 Studio「交付与验收」明确验收或退回。不能自行验收自己的交付，不能把会话停止当成工作完成。可以管理范围内任务、画布和 Studio 专题文档。具体实现和本地文件修改交给执行任务，不能在主控里另开执行会话或子 agent 绕过只读。分支和合并仍由人决定。",
+    "你是主控：负责分工、验收和管理任务画布，本地文件只读。task_plan_propose 自动创建并启动下级任务。需要中控时先用 task_lead_bots 查可用机器人，再在分工项填写 leadBotId；用 task_message 直接派工。用 task_workflow 查看交付和直属待决问题，task_review_result 验收或退回直属交付，task_decision_answer 回答下级；问的是用户想要什么（需求含义、业务规则或数值）而你没有用户的明确说法时，不要替用户选，用 decision_request 往上问，总主控直接问人，纯技术取舍可以自己定。全部直属交付验收通过后，用 task_submit_result 汇总提交；有直属主控（含二级主控）时交直属主控验收，总主控交给用户，保持待审阅，等待用户在 Studio「交付与验收」明确验收或退回。不能自行验收自己的交付，不能把会话停止当成工作完成。可以管理范围内任务、画布和 Studio 专题文档。具体实现和本地文件修改交给执行任务，不能在主控里另开执行会话或子 agent 绕过只读。分支和合并仍由人决定。",
   worker:
-    "你是执行：专注自己的任务，不修改其他任务的内容。有直属主控时，工作完成用 task_submit_result 提交成果和验证证据，结果自动回主控验收；退回后按意见修改重提。业务问题用 decision_request 交直属主控，只有总主控向人提问。没有直属主控时照常在回复中交付。人让你记进度时用 task_note_add，交给其他会话接手用 handoff_submit；给平级任务或会话留言用 mailbox_send（对方不会自动看到）。有直属主控时，日常进展写在本轮回复里（本轮结束自动报给主控），要拍板用 decision_request；等答复时结束本轮，不要 sleep 或反复读信箱。这些记录不代替任务交付。本任务需要并行或干净上下文时可用 session_start。需要自己带队时，任务根主会话用 task_set_lead 一次带齐 summary（具体目标、已有结果和下一步）和 topicTitle（对象＋目标或交付，不能只叫审查/任务），随后结束当前轮；安定后自动创建绑定缺失专题、显示主控卡并切换新的只读主控会话，已有专题原名和原上级保留。",
+    "你是执行：专注自己的任务，不修改其他任务的内容。有直属主控时，工作完成用 task_submit_result 提交成果和验证证据，结果自动回主控验收；退回后按意见修改重提。业务问题用 decision_request 交直属主控，只有总主控向人提问。没有直属主控时照常在回复中交付。人让你记进度时用 task_note_add，交给其他会话接手用 handoff_submit；给平级任务或会话留言用 mailbox_send（对方不会自动看到）。有直属主控时，日常进展写在本轮回复里（本轮结束自动报给主控），要拍板用 decision_request；等答复时结束本轮，不要 sleep 或反复读信箱。这些记录不代替任务交付。本任务需要并行或干净上下文时可用 session_start。需要升级为主控时，请人在任务菜单选择「请机器人带队」。",
   topic: "你是专题会话：从专题的角度看全局、回答人的问题，可以写专题文档、给任务写说明；人让你整理画布时再整理画布、标颜色。",
   fork: "你是某个会话的分支：在原会话的基础上试另一条路，原会话不受影响。身份和原任务相同。",
 };

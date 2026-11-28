@@ -90,6 +90,7 @@ export function toSession(r: Row): Session {
     title: str(r.title),
     status: str(r.status) as Session["status"],
     ...(r.bot_conversation === 1 ? { botConversation: true } : {}),
+    ...(r.lead_term_id ? { botLeadTerm: { termId: str(r.lead_term_id), generation: Number(r.lead_generation), botId: str(r.lead_bot_id), name: str(r.lead_name) } } : {}),
     writer: str(r.writer) as Session["writer"],
     runtimeRef: strOrNull(r.runtime_ref),
     options: parseOptions(r.options),

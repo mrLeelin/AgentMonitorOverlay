@@ -9,6 +9,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 // The direct manager's work 传话 and answers join the child's running Codex work turn (2026-11-17,
 // plans/done/lead-instructions-mid-turn.md). In the Free 专题 one 传话 waited out a 23-minute turn and arrived 10 minutes
@@ -26,7 +27,7 @@ beforeEach(async () => {
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: top.id });
-  manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  manager = await startLeadFixture(service, top, "test");
   worker = await service.tasks.addSession(child.id, { profileId: "test", options: { permission: "workspace-write" } });
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
@@ -150,7 +151,7 @@ it("one going in does not take the others with it: they wait for the turn to end
 
 it("a 传话 from a manager further up waits for the turn to end", async () => {
   const top = store.getTask(manager.taskId!)!;
-  const middle = store.createTask({ title: "分主控", workspaceId: top.workspaceId, lead: true, managerTaskId: top.id });
+  const middle = store.createTask({ title: "分主控", workspaceId: top.workspaceId, topicId: top.topicId, lead: true, managerTaskId: top.id });
   store.updateTask(worker.taskId!, { managerTaskId: middle.id });
   await service.sessions.sendMessage(worker.id, "[[busy:1500]] 做事");
   await running(worker);

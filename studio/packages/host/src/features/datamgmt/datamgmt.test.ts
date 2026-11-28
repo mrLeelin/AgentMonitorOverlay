@@ -154,7 +154,7 @@ describe("archived task retention", () => {
 
   it("keeps a manager while any retained task still belongs to it", async () => {
     const x = await setup();
-    const manager = (await host.tasks.createTask({ title: "主控", workspaceId: x.alpha.id, lead: true })).task;
+    const manager = store.createTask({ title: "主控", workspaceId: x.alpha.id, lead: true });
     host.tasks.setManager(x.t2.id, manager.id);
     const at = new Date().toISOString();
     store.updateTask(manager.id, { archivedAt: at });

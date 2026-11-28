@@ -133,18 +133,20 @@ export class CodexRuntime extends RuntimeBase {
 
   /** Creates a main session in a task and starts its Codex thread; sends `text` as the first turn when given. */
   async startSession(input: Parameters<SessionRuntimeApi["startSession"]>[0]): Promise<Session> {
+    if (input.reopenSessionId && !input.beforeDispatch) throw Object.assign(new Error("重开恢复缺少当前任务校验。"), { code: "conflict" });
     const profile = this.profile(input.profileId);
     const handle = await this.handleFor(profile.id);
     const bot = isBotTask(this.store, input.taskId);
     const token = this.options.identities?.issue(bot);
     const options = newChatOptions(this.store, input.taskId, profile.id, "codex", input.options);
-    const role = token && !bot ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
+    const role = token && !bot && !input.leadSessionId ? this.options.roleInstructions?.({ taskId: input.taskId, topicId: input.topicId, workspaceId: input.workspace.id }) : undefined;
     const persona = input.developerInstructions ?? role ?? botTaskInstructions(this.store, input.taskId);
     const developerInstructions = [persona, input.botSkillPrompt].filter(Boolean).join("\n\n");
     const params = this.threadParams(profile, token);
     const cwd = input.cwd ?? input.workspace.path;
     const lead = await this.leadConfig(handle, input.taskId, cwd);
     const permissions = this.permissions(options, input.taskId);
+    input.beforeStart?.();
     const started = await handle.client.request("thread/start", {
       cwd,
       ...permissions,
@@ -153,7 +155,21 @@ export class CodexRuntime extends RuntimeBase {
       ...(options.model ? { model: options.model } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     });
-    const session = this.findByThread(started.thread.id) ?? this.createSession({
+    // A relayed reopen whose first input was never queued can bind a newly subscribed thread to its existing Studio session.
+    let recovered: Session | undefined;
+    if (input.reopenSessionId) {
+      const empty = this.requireSession(input.reopenSessionId);
+      input.beforeDispatch?.();
+      if (input.text || input.leadSessionId || empty.botLeadTerm || empty.archivedAt || empty.writer !== "workbench" || empty.status !== "idle" ||
+          empty.taskId !== input.taskId || empty.profileId !== profile.id || empty.workspaceId !== input.workspace.id ||
+          this.store.findItems(empty.id, "user", {}, { limit: 1 }).length || this.store.findItems(empty.id, "turn", {}, { limit: 1 }).length) {
+        throw Object.assign(new Error("重开恢复只可绑定原先未投递过输入的空会话。"), { code: "conflict" });
+      }
+      this.blockedRestores.delete(empty.id);
+      recovered = this.updateSession(empty.id, { runtimeRef: started.thread.id, options });
+    }
+    const session = recovered ?? this.findByThread(started.thread.id) ?? this.createSession({
+      id: input.leadSessionId,
       taskId: input.taskId,
       topicId: input.topicId,
       parentId: null,
@@ -168,7 +184,7 @@ export class CodexRuntime extends RuntimeBase {
     if (lead.config && permissions.sandbox === "read-only" && permissions.approvalPolicy === "never") this.store.setKv(`codex-lead-readonly:${session.id}`, started.thread.id);
     if (token) this.options.identities!.bind(token, session.id);
     if (role) this.options.roleGiven?.(session.id);
-    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
+    if (input.text) await this.sendMessage(session.id, input.text, [], { purpose: input.firstMessagePurpose, beforeDispatch: input.beforeDispatch, confirmedEarly: input.confirmedEarly, ...(input.skillText !== undefined ? { skillText: input.skillText } : {}) });
     return this.store.getSession(session.id)!;
   }
 
@@ -188,13 +204,14 @@ export class CodexRuntime extends RuntimeBase {
 
   private async sendUnlocked(sessionId: Id, text: string, images: readonly Attachment[], extra: readonly codex.v2.UserInput[], options: SendOptions, again?: Id): Promise<{ mode: "start" | "steer" }> {
     const session = this.writable(sessionId);
+    if (!options.beforeDispatch) this.assertExecutionReady(sessionId, options.purpose, options.confirmedEarly);
     this.checkGoalPurpose(session, options.purpose);
     this.requireLeadThread(session);
     const handle = await this.handleFor(session.profileId);
+    if (this.blockedRestores.has(sessionId)) await this.resumeThread(handle, session, options.purpose ?? "work");
     this.requireLeadThread(this.writable(sessionId));
     this.checkGoalPurpose(this.requireSession(sessionId), options.purpose);
-    options.beforeDispatch?.();
-    if (again) this.assertCurrentMessage(sessionId, again);
+    if (again) this.assertCurrentMessage(sessionId, again, options.confirmedEarly);
     const st = this.sessionState(sessionId);
     // Mentions inserted by either composer must carry the same native skill input as /skill commands.
     // RuntimeRouter supplies the original composer text; examples in appended role/business data are not selections.
@@ -222,12 +239,12 @@ export class CodexRuntime extends RuntimeBase {
       if (row) setDelivery(row, "waiting");
       else {
         const pictures = images.map((a) => ({ id: a.id, path: a.path }));
-        row = this.appendItem(sessionId, { type: "user", text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(pictures.length ? { images: pictures } : {}), delivery: "waiting" }, { method: "user/steer", turnId: st.activeTurnId }).id;
+        row = this.appendItem(sessionId, { type: "user", text, ...(options.fromPerson ? { fromPerson: true } : {}), ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(pictures.length ? { images: pictures } : {}), delivery: "waiting" }, { method: "user/steer", turnId: st.activeTurnId }).id;
       }
       const entry = { itemId: row, kind: "steer" as const, input };
       st.sent.set(clientId, entry);
       try {
-        this.assertCurrentMessage(sessionId, row);
+        this.assertCurrentMessage(sessionId, row, options.confirmedEarly);
         options.beforeDispatch?.();
         await handle.client.request("turn/steer", { threadId: session.runtimeRef!, expectedTurnId: st.activeTurnId, input, clientUserMessageId: clientId });
         // An async question answered while its turn still runs: the session runs again (unless something else waits).
@@ -247,6 +264,8 @@ export class CodexRuntime extends RuntimeBase {
       }
     }
     // A row shown already goes with an id, so its echo settles it rather than adding another.
+    if (!row && options.fromPerson) row = this.appendItem(sessionId, { type: "user", text, fromPerson: true, messagePurpose: options.purpose ?? "work",
+      ...(images.length ? { images: images.map((a) => ({ id: a.id, path: a.path })) } : {}), delivery: "waiting" }, { method: "user" }).id;
     const clientId = row ? randomUUID() : undefined;
     if (row && clientId) {
       st.sent.set(clientId, { itemId: row, kind: "start", input });
@@ -256,7 +275,8 @@ export class CodexRuntime extends RuntimeBase {
     try {
       const tier = await this.serviceTier(session);
       this.requireLeadThread(this.writable(sessionId));
-      if (row) { this.assertCurrentMessage(sessionId, row); setDelivery(row, undefined); }
+      if (row) { this.assertCurrentMessage(sessionId, row, options.confirmedEarly); setDelivery(row, undefined); }
+      else if (!options.beforeDispatch) this.assertExecutionReady(sessionId, options.purpose, options.confirmedEarly);
       options.beforeDispatch?.();
       const purpose = options.purpose ?? "work";
       queueMessagePurpose(this.store, sessionId, purpose, false, !!row && isBotConversationInput(this.store.getItem(row)));
@@ -398,6 +418,8 @@ export class CodexRuntime extends RuntimeBase {
       s = this.goalWritable(sessionId);
       check();
       if (input.status !== "paused") {
+        if (this.blockedRestores.has(sessionId)) await this.resumeThread(handle, s, "work");
+        check();
         await this.syncGoalSettings(handle, s);
         this.goalWritable(sessionId);
         check();
@@ -663,7 +685,12 @@ export class CodexRuntime extends RuntimeBase {
     }
     for (const id of ids) if (!this.store.getSession(id)?.archivedAt) await this.pauseGoal(id);
     const changed = this.archiveTree(sessionId);
-    for (const s of changed) {
+    await this.finishArchive(changed);
+    return changed;
+  }
+
+  async finishArchive(sessions: readonly Session[]): Promise<void> {
+    for (const s of sessions) {
       if (!s.runtimeRef || s.kind === "sub") continue;
       try {
         const handle = await this.handleFor(s.profileId);
@@ -672,7 +699,6 @@ export class CodexRuntime extends RuntimeBase {
         this.emit("log", `thread/archive failed for ${s.id}: ${String(err)}`);
       }
     }
-    return changed;
   }
 
   async unarchive(sessionId: Id): Promise<Session[]> {
@@ -682,8 +708,7 @@ export class CodexRuntime extends RuntimeBase {
       try {
         const handle = await this.handleFor(s.profileId);
         await handle.client.request("thread/unarchive", { threadId: s.runtimeRef });
-        await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
-        await this.readGoal(handle, s);
+        await this.resumeThread(handle, s);
       } catch (err) {
         this.emit("log", `thread/unarchive failed for ${s.id}: ${String(err)}`);
       }
@@ -769,6 +794,7 @@ export class CodexRuntime extends RuntimeBase {
     if (name === "compact" || name === "code-review") {
       if (st.activeTurnId) throw Object.assign(new Error("回复还在生成，这一轮结束后再运行这个命令"), { code: "conflict" });
       const handle = await this.handleFor(session.profileId);
+      this.assertExecutionReady(sessionId, name === "compact" ? "inquiry" : "work");
       // The person's command opens the turn in the conversation (Codex writes no message of its own for it).
       this.appendItem(sessionId, { type: "user", text: `/${name}${args ? ` ${args}` : ""}` }, { method: "command" });
       if (name === "compact") {
@@ -867,28 +893,47 @@ export class CodexRuntime extends RuntimeBase {
     return pending;
   }
 
+  private readonly blockedRestores = new Set<Id>();
+
   private async resubscribe(handle: CodexServerHandle): Promise<void> {
     for (const s of this.store.listSessions()) {
       if (s.profileId !== handle.profileId || !s.runtimeRef || s.archivedAt || s.kind === "sub") continue;
       try {
-        // A restarted app-server loads the thread again; only then does the identity header need setting again.
-        const r = await handle.client.request("thread/resume", { threadId: s.runtimeRef, ...(await this.resumeConfig(handle, s)), ...this.permissions(s.options, s.taskId) });
-        await this.readGoal(handle, s);
-        // Turn events may have been missed while disconnected; take the status from the server's view.
-        const active = (r.thread as { status?: { type?: string } }).status?.type === "active";
-        const st = this.sessionState(s.id);
-        if (!active) {
-          st.activeTurnId = null;
-          this.settleTurn(s.id, true);
-        }
-        const current = this.store.getSession(s.id)!.status;
-        if (active && !inTurn(current)) this.setStatus(s.id, "running");
-        // Cut off from outside (the Host or the app-server went down mid-turn): red until a message carries it on.
-        if (!active && inTurn(current)) this.setStatus(s.id, "interrupted");
+        await this.resumeThread(handle, s);
       } catch (err) {
         this.emit("log", `thread/resume failed for ${s.id}: ${String(err)}`);
       }
     }
+  }
+
+  private async resumeThread(handle: CodexServerHandle, session: Session, purpose?: SendOptions["purpose"]): Promise<void> {
+    const config = await this.resumeConfig(handle, session);
+    const current = this.store.getSession(session.id);
+    if (!current || current.archivedAt || !current.runtimeRef || current.runtimeRef !== session.runtimeRef) return;
+    // An automatic reattachment may resume an active Goal. If blocked, an eligible explicit action retries reattachment.
+    try {
+      const recoveringWork = current.goal?.status === "active" || (!purpose && inTurn(current.status));
+      this.assertExecutionReady(current.id, recoveringWork ? "work" : purpose ?? "inquiry");
+    } catch (error) {
+      this.blockedRestores.add(current.id);
+      throw error;
+    }
+    const r = await handle.client.request("thread/resume", { threadId: current.runtimeRef, ...config, ...this.permissions(current.options, current.taskId) }).catch((error: unknown) => {
+      // A thread created without a turn can still be live in the app-server but have no rollout to resume.
+      if (error instanceof Error && /no rollout found/i.test(error.message) && !this.store.findItems(current.id, "turn", {}, { limit: 1 }).length) return null;
+      throw error;
+    });
+    this.blockedRestores.delete(current.id);
+    if (!r) return;
+    await this.readGoal(handle, current);
+    const active = (r.thread as { status?: { type?: string } }).status?.type === "active";
+    if (!active) {
+      this.sessionState(current.id).activeTurnId = null;
+      this.settleTurn(current.id, true);
+    }
+    const status = this.requireSession(current.id).status;
+    if (active && !inTurn(status)) this.setStatus(current.id, "running");
+    if (!active && inTurn(status)) this.setStatus(current.id, "interrupted");
   }
 
   // ---- helpers ----------------------------------------------------------------------------------------------------

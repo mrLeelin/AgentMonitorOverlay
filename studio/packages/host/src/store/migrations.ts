@@ -493,4 +493,93 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   DELETE FROM plane_bot_jobs WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT id FROM tasks);
   `,
+  // 43: A Bot may lead several tasks. Keep each appointment, including its original identity and configuration.
+  `
+  CREATE TABLE studio_bot_lead_terms (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES studio_bots(id),
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    snapshot TEXT NOT NULL,
+    handoff TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    UNIQUE(task_id, generation)
+  );
+  CREATE UNIQUE INDEX studio_bot_lead_current_task ON studio_bot_lead_terms(task_id) WHERE ended_at IS NULL;
+  CREATE UNIQUE INDEX studio_bot_lead_session ON studio_bot_lead_terms(session_id) WHERE session_id IS NOT NULL;
+  CREATE INDEX studio_bot_lead_current_bot ON studio_bot_lead_terms(bot_id) WHERE ended_at IS NULL;
+  `,
+  // 44: Durable local acceptance, handoff, and the identity reserved before crossing the runtime boundary.
+  `
+  ALTER TABLE studio_bot_lead_terms ADD COLUMN source TEXT NOT NULL DEFAULT '{"kind":"legacy-binding"}';
+  ALTER TABLE studio_bot_lead_terms ADD COLUMN run_state TEXT NOT NULL DEFAULT 'needs-reconciliation';
+  ALTER TABLE studio_bot_lead_terms ADD COLUMN reason TEXT;
+  ALTER TABLE studio_bot_lead_terms ADD COLUMN launch_session_id TEXT;
+  ALTER TABLE studio_bot_lead_terms ADD COLUMN launch_operation_id TEXT;
+  CREATE TABLE studio_bot_lead_sessions (
+    session_id TEXT PRIMARY KEY,
+    term_id TEXT NOT NULL REFERENCES studio_bot_lead_terms(id) ON DELETE CASCADE
+  );
+  INSERT INTO studio_bot_lead_sessions SELECT session_id, id FROM studio_bot_lead_terms WHERE session_id IS NOT NULL;
+  CREATE TABLE studio_bot_lead_operations (
+    id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    bot_id TEXT REFERENCES studio_bots(id),
+    receipt TEXT,
+    upgrade TEXT,
+    delivery TEXT,
+    control TEXT
+  );
+  CREATE UNIQUE INDEX studio_bot_lead_pending_upgrade ON studio_bot_lead_operations(task_id) WHERE upgrade IS NOT NULL;
+  CREATE INDEX studio_bot_lead_task_delivery ON studio_bot_lead_operations(task_id) WHERE delivery IS NOT NULL;
+  CREATE TABLE studio_bot_lead_acceptances (
+    source_key TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES studio_bot_lead_operations(id) ON DELETE CASCADE
+  );
+  CREATE TABLE studio_bot_lead_continuations (
+    source_key TEXT NOT NULL,
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL REFERENCES studio_bot_lead_operations(id) ON DELETE CASCADE,
+    PRIMARY KEY(source_key, topic_id)
+  );
+  `,
+  // 45: Plane managed roots keep approved plans and per-delivery writeback receipts.
+  `
+  ALTER TABLE plane_bot_jobs ADD COLUMN root_task_id TEXT REFERENCES tasks(id);
+  ALTER TABLE plane_bot_jobs ADD COLUMN approved_plan_hash TEXT;
+  ALTER TABLE plane_bot_jobs ADD COLUMN planned_project_path TEXT;
+  CREATE UNIQUE INDEX plane_bot_root ON plane_bot_jobs(root_task_id) WHERE root_task_id IS NOT NULL;
+  CREATE UNIQUE INDEX plane_bot_managed_item ON plane_bot_jobs(source, item_id) WHERE root_task_id IS NOT NULL;
+  CREATE TABLE plane_bot_approvals (
+    job_id TEXT NOT NULL REFERENCES plane_bot_jobs(id) ON DELETE CASCADE,
+    plan_hash TEXT NOT NULL,
+    operation_id TEXT NOT NULL UNIQUE,
+    plan TEXT NOT NULL,
+    base_commit TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    target TEXT NOT NULL,
+    approved_at TEXT NOT NULL,
+    PRIMARY KEY(job_id, plan_hash)
+  );
+  CREATE TABLE plane_bot_writebacks (
+    job_id TEXT NOT NULL REFERENCES plane_bot_jobs(id) ON DELETE CASCADE,
+    result_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    comment_id TEXT,
+    sent_at TEXT,
+    PRIMARY KEY(job_id, result_id)
+  );
+  CREATE TABLE plane_bot_managed_members (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES plane_bot_jobs(id) ON DELETE CASCADE,
+    plan_hash TEXT NOT NULL
+  );
+  INSERT INTO plane_bot_writebacks (job_id, result_id, started_at, comment_id, sent_at)
+    SELECT id, sent_result_id, COALESCE(approved_at, ''), comment_id, NULL FROM plane_bot_jobs
+    WHERE sent_result_id IS NOT NULL AND comment_id IS NOT NULL;
+  `,
 ];

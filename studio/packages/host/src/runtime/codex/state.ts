@@ -1,6 +1,6 @@
 import type { codex, Id, ModelProfile, QuestionPrompt, Session } from "@amo-studio/protocol";
 import type { RuntimeCore } from "../runtime.js";
-import type { ServerRequest } from "./rpc-client.js";
+import type { CodexRpcClient, ServerRequest } from "./rpc-client.js";
 import type { CodexServerHandle } from "./server-manager.js";
 
 // What the Codex runtime keeps per session and per pending request (stage 16 split out of codex-runtime.ts), and what
@@ -50,8 +50,12 @@ export interface PendingApproval {
   kind: "approval" | "elicitation";
   sessionId: Id;
   itemId: Id;
+  approvalId: Id;
   profileId: string;
   requestId: ServerRequest["id"];
+  threadId: string;
+  client: CodexRpcClient;
+  claimed?: true;
 }
 
 /** request_user_input or an MCP form waiting for the person (a `question` item). */

@@ -27,12 +27,16 @@ export function sessionsRoutes(service: HostService): Route[] {
       // 子会话设定 named in the message (2026-11-05): kept for this session's session_start before it reads the message.
       const setups = checkSetups(b.subsessions);
       if (setups.length) service.sessions.rememberSetups(params.id!, setups);
-      return service.sessions.sendMessage(params.id!, b.text === undefined && (attachments.length || annotations.length) ? "" : str(b.text, "text"), attachments as string[], annotations as string[], { now: b.now === true, afterTurn: b.afterTurn === true, ...(purpose ? { purpose } : {}) });
+      return service.sessions.sendMessage(params.id!, b.text === undefined && (attachments.length || annotations.length) ? "" : str(b.text, "text"), attachments as string[], annotations as string[], { fromPerson: true, now: b.now === true, afterTurn: b.afterTurn === true, ...(purpose ? { purpose } : {}) });
     }, { remoteCopy: "forward" }),
     // 立即发送 / 重新发送 (2026-11-02): on a copy, done on A, like a message.
     route("POST /api/sessions/:id/items/:itemId/send-now", async ({ params }) => (await service.sessions.sendNow(params.id!, params.itemId!), { ok: true }), { remoteCopy: "forward" }),
     route("PATCH /api/sessions/:id/items/:itemId/queued", ({ params, body }) => { const b = obj(body); service.sessions.inbox.changeQueued(params.id!, params.itemId!, { text: str(b.text, "text"), originalText: str(b.originalText, "originalText") }); return { ok: true }; }),
-    route("DELETE /api/sessions/:id/items/:itemId/queued", ({ params }) => { service.sessions.inbox.changeQueued(params.id!, params.itemId!); return { ok: true }; }),
+    route("DELETE /api/sessions/:id/items/:itemId/queued", ({ params, query }) => {
+      if (query.get("retain") === "lead-handoff") service.sessions.inbox.retainForLeadHandoff(params.id!, params.itemId!);
+      else service.sessions.inbox.changeQueued(params.id!, params.itemId!);
+      return { ok: true };
+    }),
     route("POST /api/sessions/:id/items/:itemId/resend", ({ params }) => service.sessions.resend(params.id!, params.itemId!), { remoteCopy: "forward" }),
     route("POST /api/sessions/:id/wake", ({ params, body }) => service.sessions.setWakeChoice(params.id!, body)),
     route("POST /api/sessions/:id/interrupt", async ({ params }) => (await service.sessions.interrupt(params.id!), { ok: true }), { remoteCopy: "forward" }),

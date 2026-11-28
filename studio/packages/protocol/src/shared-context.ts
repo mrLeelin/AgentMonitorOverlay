@@ -25,6 +25,25 @@ export interface SharedContextView {
   receipts: ContextReceipt[];
   prerequisiteResultIds: Id[];
 }
+
+/** Small display projection of the task's explicit requirement, shared by board snapshots and task updates. */
+export type TaskContextHint =
+  | { kind: "invalid-binding" }
+  | { kind: "awaiting-adoption"; version: number };
+
+export interface TaskContextHintEvidence {
+  binding: Pick<TaskContextBinding, "id" | "taskId" | "contextId" | "version"> | null;
+  validBinding: boolean;
+  receipts: readonly Pick<ContextReceipt, "requirementId" | "taskId" | "contextId" | "version" | "adoptedAt">[];
+}
+
+export function projectTaskContextHint({ binding, validBinding, receipts }: TaskContextHintEvidence): TaskContextHint | null {
+  if (!binding) return null;
+  if (!validBinding) return { kind: "invalid-binding" };
+  const adopted = receipts.some((receipt) => receipt.requirementId === binding.id && receipt.taskId === binding.taskId
+    && receipt.contextId === binding.contextId && receipt.version === binding.version && receipt.adoptedAt);
+  return adopted ? null : { kind: "awaiting-adoption", version: binding.version };
+}
 export interface ContextSaveInput extends ContextDraft { rootTaskId: Id; baseRevision: number; title: string }
 export interface ContextApplyInput extends ContextBasis { taskIds: Id[] }
 export interface ContextSubmissionInput { contextBasis?: ContextBasis; prerequisiteResultIds?: Id[] }

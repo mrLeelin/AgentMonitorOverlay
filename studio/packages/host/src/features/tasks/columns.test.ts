@@ -9,6 +9,7 @@ import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
 import { SCHEDULER_TASK_KEY } from "../../core/shared.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 // 进行中 ⇄ 待审阅 by the sessions (2026-10-26): Studio moves the card when the task's sessions all stop, and back when
 // one starts again.
@@ -70,12 +71,13 @@ it("changes the workspace for future sessions without interrupting an existing s
 
 describe("主控等待下辖任务返回", () => {
   const lead = () => store.createTask({ title: "总主控", workspaceId: alpha.id, column: "doing", lead: true });
-  const child = (manager: Task, input: Partial<Task> = {}) => store.createTask({ title: "执行任务", workspaceId: alpha.id, managerTaskId: manager.id, column: "doing", ...input });
+  const child = (manager: Task, input: Partial<Task> = {}) => store.createTask({ title: "执行任务", workspaceId: alpha.id, topicId: store.getTask(manager.id)?.topicId, managerTaskId: manager.id, column: "doing", ...input });
+  const holdNotices = () => vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: false, waiting: 0 });
 
   it("keeps an idle lead doing while a child has not delivered, even if that child's turn has stopped", async () => {
     const top = lead();
     const worker = child(top);
-    const main = await service.tasks.addSession(top.id, { profileId: "p-ds", text: "[[slow]]" });
+    const main = await startLeadFixture(service, top, "p-ds", "[[slow]]");
     service.sessions.inbox.pause(main.id);
     const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds", text: "已结束本轮" });
     await until(() => column(worker) === "review");
@@ -90,13 +92,14 @@ describe("主控等待下辖任务返回", () => {
     const top = lead();
     const domain = child(top, { title: "二级主控", lead: true, column: "review" });
     const worker = child(domain);
-    const main = await service.tasks.addSession(top.id, { profileId: "p-ds", text: "[[slow]]" });
-    const coordinator = await service.tasks.addSession(domain.id, { profileId: "p-ds" });
+    holdNotices();
+    const main = await startLeadFixture(service, top, "p-ds", "[[slow]]");
+    const coordinator = await startLeadFixture(service, domain, "p-ds");
     const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds" });
-    service.sessions.inbox.pause(main.id);
-    service.sessions.inbox.pause(coordinator.id);
-    service.sessions.inbox.pause(execution.id);
     await service.sessions.interrupt(main.id);
+    const term = service.botLeads.currentTerm(top.id)!;
+    service.botLeads.control(top.id, { action: "resume", operationId: "resume-review", expectedTerm: term });
+    await until(() => service.botLeads.currentTerm(top.id)?.runState === "idle");
     await pause(250);
     expect(column(top)).toBe("doing");
     expect(column(domain)).toBe("doing");
@@ -158,9 +161,9 @@ describe("主控等待下辖任务返回", () => {
   it("preserves a lead's submitted final delivery when an accepted child starts a read-only inquiry", async () => {
     const top = lead();
     const worker = child(top);
-    const main = await service.tasks.addSession(top.id, { profileId: "p-ds" });
+    holdNotices();
+    const main = await startLeadFixture(service, top, "p-ds");
     const execution = await service.tasks.addSession(worker.id, { profileId: "p-ds" });
-    service.sessions.inbox.pause(main.id);
     const delivery = service.orchestration.submit(execution.id, "实现完成", "测试通过");
     service.orchestration.review(main.id, delivery.id, true, "验收通过");
     const final = service.orchestration.submit(main.id, "最终汇总", "所有下级已验收");
@@ -175,8 +178,8 @@ describe("主控等待下辖任务返回", () => {
 
   it("invalidates an old submitted final delivery when startup repairs its premature review column", async () => {
     const top = lead();
-    const main = await service.tasks.addSession(top.id, { profileId: "p-ds" });
-    service.sessions.inbox.pause(main.id);
+    holdNotices();
+    const main = await startLeadFixture(service, top, "p-ds");
     const final = service.orchestration.submit(main.id, "旧汇总", "旧证据");
     child(top, { column: "todo" });
     service.removeAllListeners("event");
@@ -195,11 +198,14 @@ describe("主控等待下辖任务返回", () => {
 
 describe("放进待办 (2026-11-05)", () => {
   it("moves a waiting task into doing when its first session starts with work", async () => {
-    const { task } = await service.tasks.createTask({ workspaceId: alpha.id, title: "待办主控", lead: true });
-    const session = await service.tasks.addSession(task.id, { profileId: "p-ds", text: "[[slow]]" });
-    expect(column(task)).toBe("doing");
-    await service.sessions.interrupt(session.id);
-    await until(() => column(task) === "review");
+    const bot = service.bots.save({ name: "待办负责人", purpose: "验收工作", memory: "", workspaceId: alpha.id, profileId: "p-ds", enabled: true });
+    const { taskId } = service.botLeads.appoint({ intent: "create", start: false, source: { kind: "manual" }, operationId: "queue-lead", workspaceId: alpha.id, title: "待办主控", firstMessage: "[[slow]]", topic: { topicTitle: "验证待办开工" }, botId: bot.id });
+    expect(store.getTask(taskId)?.column).toBe("todo");
+    const term = service.botLeads.currentTerm(taskId)!;
+    service.botLeads.control(taskId, { action: "resume", operationId: "start-lead", expectedTerm: term });
+    await until(() => store.getTask(taskId)?.column === "doing" && service.botLeads.currentTerm(taskId)?.runState === "running");
+    await service.sessions.interrupt(service.botLeads.currentTerm(taskId)!.sessionId!);
+    await until(() => store.getTask(taskId)?.column === "review");
   });
 
   it("keeps the first sentence on the task (the title from its first line) until it is cleared", async () => {

@@ -12,6 +12,7 @@ import { newId } from "../../store/store.js";
 import type { ContextBreakdown, SessionContextUsage, SessionForkOptions, SessionForkRequest, SessionGoalState, SessionGoalUpdate } from "@amo-studio/protocol";
 import { createForkWorktree, forkGitOptions } from "./fork-worktree.js";
 import { assertBotTaskEnabled, isBotHome, isBotTask } from "../bots/data.js";
+import { hasLeadAppointment } from "../../core/bot-lead-access.js";
 
 /** Most images one message can carry. */
 const MAX_MESSAGE_IMAGES = 10;
@@ -134,7 +135,6 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
   async sendMessage(sessionId: Id, text: string, attachments: readonly Id[] = [], annotations: readonly Id[] = [], options: SendOptions = {}): Promise<{ mode: SendMode }> {
     const session = this.requireSession(sessionId);
     assertBotTaskEnabled(this.store, session.taskId);
-    this.f.tasks.leadPromotion.assertAvailable(session.taskId);
     if (options.afterTurn && session.writer === "terminal-handoff") throw new HostError("read_only", "会话已交给终端，工作台暂时只读。");
     const referenced = annotations.length ? this.f.review.referencedAnnotations(sessionId, annotations) : null;
     if (referenced) {
@@ -179,12 +179,13 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
       this.inbox.checkSource(row);
       if (row.delivery === "unsent") this.publish({ type: "item.updated", item: this.store.replaceItem({ ...row, delivery: "held" }) });
     }
-    // A new one comes through sendMessage, the person's: marked so (2026-11-17), it counts as theirs, not an agent's.
+    // A new one comes through sendMessage, which already appended the role update. It counts as the person's only when
+    // the caller says so (the composer, an answer or comments the person sent): an agent's 派工 queued here is not theirs.
     await this.inbox.put(sessionId, text, undefined, itemId, {
       purpose: options.purpose ?? "work",
       images: images.map((image) => ({ id: image.id, path: image.path })),
       ...(options.deferredItemId ? {} : {
-        fromPerson: true, afterTurn: options.afterTurn, queuedFromDevice: options.queuedFromDevice,
+        fromPerson: options.fromPerson, roleIncluded: true, afterTurn: options.afterTurn, queuedFromDevice: options.queuedFromDevice,
         queuedSkillText: options.skillText?.includes("$") || options.skillText?.startsWith("/") ? options.skillText : undefined,
       }),
     });
@@ -270,12 +271,22 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     }
   }
 
+  private readonly interrupting = new Map<Id, Promise<void>>();
+
+  isInterrupting(sessionId: Id): boolean {
+    return this.interrupting.has(sessionId);
+  }
+
   /** 停止, the person's (here or from another device): the inbox holds what comes until they write again (2026-11-04, the user). */
   async interrupt(sessionId: Id): Promise<void> {
     this.requireSession(sessionId);
-    this.f.tasks.leadPromotion.cancel(sessionId);
+    const pending = this.interrupting.get(sessionId);
+    if (pending) return pending;
     this.inbox.pause(sessionId);
-    await this.wrap(() => this.runtime.interrupt(sessionId, { person: true }));
+    const stopped = this.wrap(() => this.runtime.interrupt(sessionId, { person: true }))
+      .finally(() => this.interrupting.delete(sessionId));
+    this.interrupting.set(sessionId, stopped);
+    return stopped;
   }
 
   /** Stage 15: `{ stopLoop: true }` stops the session's loop; `{ autoContinue }` switches going on after a usage limit. */
@@ -375,7 +386,7 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
     }
     await this.wrap(() => this.runtime.answerQuestion(sessionId, itemId, reply), "conflict");
     // Codex's async questions: the answer is the person's next message (the turn did not wait for it).
-    if (item.source === "codex-async" && reply.action === "answer") await this.sendMessage(sessionId, asyncAnswerText(item.questions ?? [], reply.answers));
+    if (item.source === "codex-async" && reply.action === "answer") await this.sendMessage(sessionId, asyncAnswerText(item.questions ?? [], reply.answers), [], [], { fromPerson: true });
   }
 
   /**
@@ -384,10 +395,12 @@ export class SessionsFeature extends Feature<"attachments" | "collab" | "config"
    */
   async terminal(sessionId: Id, launch: boolean): Promise<TerminalAttach> {
     const s = this.requireSession(sessionId);
+    if (hasLeadAppointment(this.store, s.taskId)) throw new HostError("read_only", "任命主控会话不能交给终端。");
     if (isBotTask(this.store, s.taskId)) throw new HostError("read_only", "Bot 聊天由 Studio 管理，不能交给终端。");
     if (s.archivedAt) throw new HostError("read_only", "archived sessions cannot be opened in a terminal");
     if (s.runtime === "claude") return this.handToTerminal(s, launch);
     const info = await this.wrap(() => this.runtime.attachInfo(sessionId));
+    if (hasLeadAppointment(this.store, s.taskId) || this.requireSession(sessionId).archivedAt) throw new HostError("read_only", "这条会话已归档或已完成主控交接。");
     const command = `codex --remote ${info.url} --remote-auth-token-env ${TERMINAL_TOKEN_ENV} resume ${info.threadId}`;
     if (launch) {
       if (!this.options.launcher) throw new HostError("bad_request", "no terminal launcher configured");

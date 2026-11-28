@@ -239,8 +239,10 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     // Fail early (missing provider, key or login) rather than on the first message.
     const home = this.newHome(profile);
     claudeEnv(profile, this.options.providers, this.options.credentials, home, this.options.baseEnv);
+    input.beforeStart?.();
     // Studio picks the Claude session id up front (SDK option `sessionId`), so the session is addressable at once.
     const session = this.createSession({
+      id: input.leadSessionId,
       taskId: input.taskId,
       topicId: input.topicId,
       parentId: null,
@@ -251,9 +253,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
       title: input.title ?? "",
       runtimeRef: randomUUID(),
       options: newChatOptions(this.store, input.taskId, profile.id, "claude", input.options),
-    }, input.botSkillPrompt);
+    }, [input.developerInstructions, input.botSkillPrompt].filter(Boolean).join("\n\n") || undefined);
     rememberSessionLogin(this.store, session.id, home.login);
-    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
+    if (input.text) await this.sendMessage(session.id, input.text, [], { purpose: input.firstMessagePurpose, beforeDispatch: input.beforeDispatch, confirmedEarly: input.confirmedEarly });
     return this.store.getSession(session.id)!;
   }
 
@@ -298,11 +300,11 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
    * sits beside the original (its folder is the original's); the CLI finds it by id from the project folder Studio runs
    * it in (checked 2026-11-05). The conversation since its last compaction is imported, as the model will see it.
    */
-  private async resumeOutside(input: { taskId: Id | null; topicId: Id | null; workspace: Workspace; title?: string; text?: string; options?: SessionOptions; beforeDispatch?: () => void }, profile: ModelProfile, ref: string): Promise<Session> {
+  private async resumeOutside(input: Parameters<SessionRuntimeApi["startSession"]>[0], profile: ModelProfile, ref: string): Promise<Session> {
     const { home, info } = await this.outsideSource(profile.id, ref);
     const original = (info.customTitle || info.summary || info.firstPrompt || "").trim().slice(0, 100);
     const title = (input.title?.trim() || original || "接续的会话").slice(0, 100);
-    const forked = await withConfigDir(home, () => forkSession(ref, { title }));
+    const forked = await withConfigDir(home, () => { input.beforeStart?.(); return forkSession(ref, { title }); });
     const session = this.createSession({
       taskId: input.taskId,
       topicId: input.topicId,
@@ -326,7 +328,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     ];
     this.appendItem(session.id, { type: "notice", level: "info", message: parts.filter(Boolean).join("") });
     importTranscript(this.core, session.id, input.workspace.path, messages.filter((m) => !isCompactSummary(m)));
-    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
+    if (input.text) await this.sendMessage(session.id, input.text, [], { purpose: input.firstMessagePurpose, beforeDispatch: input.beforeDispatch, confirmedEarly: input.confirmedEarly });
     return this.store.getSession(session.id)!;
   }
 
@@ -342,7 +344,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
     return this.deliver(session, content, options, (mode, delivery) => {
       const shown = images.map((a) => ({ id: a.id, path: a.path }));
-      return this.appendItem(sessionId, { type: "user", text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) }, { method: mode === "queue" ? "user/queued" : "user" }).id;
+      return this.appendItem(sessionId, { type: "user", text, ...(options.fromPerson ? { fromPerson: true } : {}), ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) }, { method: mode === "queue" ? "user/queued" : "user" }).id;
     });
   }
 
@@ -355,8 +357,9 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const sessionId = session.id;
     if (session.goal?.status === "active" && (options.purpose === "inquiry" || options.purpose === "notification")) throw Object.assign(new Error("Goal 正在持续执行，请先暂停续跑，再发起只读询问或通知。"), { code: "bad_request" });
     await this.closing.get(sessionId);
+    this.assertExecutionReady(sessionId, options.purpose, options.confirmedEarly);
     options.beforeDispatch?.();
-    if (again) this.assertCurrentMessage(sessionId, again);
+    if (again) this.assertCurrentMessage(sessionId, again, options.confirmedEarly);
     const live = this.ensureLive(this.writable(sessionId));
     const mode: SendMode = live.running ? "queue" : "start";
     if (!live.running) {
@@ -371,13 +374,13 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     // Goes in once the permission mode is in force, without waiting for it here: a new session's process takes a few
     // seconds to come up, and the caller (开始, 新会话) is not held for it (2026-10-23). Sends queue up in order on it.
     void live.ready.then(() => {
-      this.assertCurrentMessage(sessionId, itemId);
+      this.assertCurrentMessage(sessionId, itemId, options.confirmedEarly);
       options.beforeDispatch?.();
       this.updateItem(itemId, (row) => {
         if (row.type !== "user") return row;
         const sent = withDelivery(row, delivery);
-        return mode === "start" && live.turn && itemId.startsWith("bot-request:")
-          ? { ...sent, raw: { runtime: "claude", method: "bot/request", itemId: uuid, turnId: live.turn.id } } : sent;
+        return mode === "start" && live.turn && (itemId.startsWith("bot-request:") || itemId.startsWith("lead-input-"))
+          ? { ...sent, raw: { runtime: "claude", method: row.raw?.method ?? "user/inbox", itemId: uuid, turnId: live.turn.id } } : sent;
       });
       live.push({ content, uuid });
       // Older CLIs have no consumed-message acknowledgement: report transport delivery only after the process is ready.
@@ -640,8 +643,12 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     for (let size = -1; size !== ids.size;) { size = ids.size; for (const s of this.store.listSessions()) if (s.parentId && ids.has(s.parentId)) ids.add(s.id); }
     for (const id of ids) { this.goals.invalidate(id); if (this.goals.activeOrPending(id)) await this.goals.pause(id); }
     const changed = this.archiveTree(sessionId);
-    await Promise.all(changed.map((s) => this.close(s.id)));
+    await this.finishArchive(changed);
     return changed;
+  }
+
+  async finishArchive(sessions: readonly Session[]): Promise<void> {
+    await Promise.all(sessions.map((s) => this.close(s.id)));
   }
 
   async unarchive(sessionId: Id): Promise<Session[]> {
@@ -809,7 +816,7 @@ export class ClaudeRuntime extends RuntimeBase implements SessionRuntimeApi {
     const ref = session.runtimeRef!;
     const home = this.homeOf(session.id);
     const bot = isBotTask(this.store, session.taskId);
-    const agentsMd = bot ? [botTaskInstructions(this.store, session.taskId), botSessionPrompt(this.store, session.id)].filter(Boolean).join("\n\n") : agentsMdInstructions(cwd);
+    const agentsMd = [bot ? botTaskInstructions(this.store, session.taskId) : agentsMdInstructions(cwd), botSessionPrompt(this.store, session.id)].filter(Boolean).join("\n\n");
     // Before anything is set up: without a Claude Code the person is told so, not a spawn error.
     const exe = requireClaudeCode();
 

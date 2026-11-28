@@ -1,6 +1,8 @@
 import type { DecisionRequest, Session, SessionItem, Task } from "./entities.js";
 import type { NewTaskInput } from "./api.js";
 import type { BotRequest } from "./bots.js";
+import type { BotLeadTopicTarget } from "./bot-leads.js";
+import type { TaskWorktreeEvidence } from "./worktree-integrations.js";
 import type { TeamTaskFile, TeamTaskFileInput, TeamTaskIdentity, TeamTaskStatus } from "./team-tasks.js";
 
 export const TEAM_BOARD_PORT = 47121;
@@ -19,20 +21,48 @@ export type PlaneTaskReference = { url: string; number?: string; title?: string;
 export type PlanePersonalDraft = Pick<NewTaskInput, "title" | "lead" | "firstMessage" | "firstSession" | "worktree">;
 export type PlanePersonalTask = { task: Task; session: Session | null; existing: boolean; assignee: string };
 export type PlaneBotIntake = { source: string; viewerId: string; botId: string; workspaceId: string; topicId?: string };
+/** Missing selection preserves the independent workflow for existing clients and approved work. */
+export type PlaneBotExecutionChoice =
+  | { mode: "independent" }
+  | { mode: "managed"; operationId: string; baseCommit: string; topic?: BotLeadTopicTarget };
 export type PlaneBotDecision = Pick<PlaneBotIntake, "source" | "viewerId"> & { planHash: string };
-export type PlaneBotPlanChoice = { planHash: string; approve: boolean };
+export type PlaneBotApproval = PlaneBotDecision & { execution?: PlaneBotExecutionChoice };
+export type PlaneBotPlanChoice = { planHash: string } & (
+  | { approve: true; execution?: PlaneBotExecutionChoice }
+  | { approve: false; execution?: never }
+);
 export type PlaneBotDelivery = { resultId: string; state: "submitted" | "accepted"; summary: string; verification: string; sessionId: string | null; baseCommit?: string };
 export type PlaneBotCheck = { resultId: string; status: BotRequest["status"]; opinion?: string; error?: string; taskId: string | null; sessionId: string | null };
 export type PlaneBotJob = {
-  jobId?: string; botId: string; workspaceId: string; itemId: string; taskId: string | null; botTaskId: string | null; botSessionId: string | null;
+  jobId?: string; botId: string; workspaceId: string; itemId: string; botTaskId: string | null; botSessionId: string | null;
   state: "planning" | "awaiting-approval" | "starting" | "declined" | "executing" | "awaiting-user" | "paused" | "review" | "sending" | "sent" | "failed";
-  item: { number: string; title: string }; delivery?: PlaneBotDelivery; check?: PlaneBotCheck;
+  item: { number: string; title: string }; check?: PlaneBotCheck;
   plan?: string; planHash?: string; baseCommit?: string; behind?: number;
+  project?: { name: string; path: string };
+  baseDrift?: { head: string | null; reason: string };
+  reapproval?: { planHash: string; baseCommit: string; plan: string; workspaceId: string; projectPath: string; remainingTasks: number };
   error?: string; failureStage?: "execution" | "writeback"; canRetry?: boolean;
+  writeback?: PlaneBotWriteback;
+  writebackHistory?: PlaneBotWriteback[];
+  topicId?: string | null;
   decisions?: DecisionRequest[];
   requests?: Array<Extract<SessionItem, { type: "approval" | "question" }>>;
+} & (
+  | { mode?: "independent"; taskId: string | null; rootTaskId?: never; delivery?: PlaneBotDelivery }
+  | { mode: "managed"; taskId: null; rootTaskId: string | null; planHash: string; baseCommit: string; delivery?: PlaneBotManagedDelivery }
+);
+export type PlaneBotManagedDelivery = PlaneBotDelivery & {
+  rootTaskId: string;
+  sessionId: null;
+  worktrees: TaskWorktreeEvidence[];
+  integratedWorktree?: TaskWorktreeEvidence;
 };
-export type PlaneBotAttention = Pick<PlaneBotJob, "state" | "taskId" | "item" | "failureStage"> & { id: string; botName: string; botTaskId: string; botSessionId: string | null };
+export type PlaneBotWriteback = { resultId: string; startedAt?: string } & (
+  | { state: "pending"; reason?: string }
+  | { state: "sent"; commentId: string; sentAt?: string }
+);
+export type PlaneBotReplan = { planHash: string; workspaceId?: string };
+export type PlaneBotAttention = Pick<PlaneBotJob, "state" | "taskId" | "item" | "failureStage" | "mode" | "rootTaskId"> & { id: string; botName: string; botTaskId: string; botSessionId: string | null };
 export type PlaneBoardProject = { id: string; name: string; writable: boolean; missing: string[] };
 export type PlaneBoardWorkspace = { slug: string; name: string; projects: PlaneBoardProject[] };
 export type PlaneBoardCatalog = { identity: PlaneBoardIdentity; workspaces: PlaneBoardWorkspace[] };
@@ -213,11 +243,12 @@ export interface TeamBoardHostRoutes {
   "POST /api/team-board/plane/work-items/:id/copy": { req: { source: string; workspaceId: string | null; viewerId: string; topicId?: string; draft?: PlanePersonalDraft; requestId?: string }; res: PlanePersonalTask };
   "GET /api/team-board/plane/work-items/:id/bot": { req: void; res: PlaneBotJob | null };
   "POST /api/team-board/plane/work-items/:id/bot": { req: PlaneBotIntake; res: PlaneBotJob };
-  "POST /api/team-board/plane/work-items/:id/bot/approve": { req: PlaneBotDecision; res: PlaneBotJob };
+  "POST /api/team-board/plane/work-items/:id/bot/approve": { req: PlaneBotApproval; res: PlaneBotJob };
   "POST /api/team-board/plane/work-items/:id/bot/decline": { req: PlaneBotDecision; res: PlaneBotJob };
   "GET /api/team-board/plane/bots/:id/jobs": { req: void; res: PlaneBotJob[] };
   "POST /api/team-board/plane/bots/:id/jobs/:jobId/decision": { req: PlaneBotPlanChoice; res: PlaneBotJob };
   "POST /api/team-board/plane/bots/:id/jobs/:jobId/retry": { req: void; res: PlaneBotJob };
+  "POST /api/team-board/plane/bots/:id/jobs/:jobId/replan": { req: PlaneBotReplan; res: PlaneBotJob };
   "GET /api/team-board/plane/bot-attention": { req: void; res: PlaneBotAttention[] };
   "GET /api/team-board/local/:id/bot": { req: void; res: PlaneBotJob | null };
   "POST /api/team-board/local/:id/bot/retry": { req: void; res: PlaneBotJob };

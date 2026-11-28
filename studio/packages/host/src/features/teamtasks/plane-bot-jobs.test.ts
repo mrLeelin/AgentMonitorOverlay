@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dpapi } from "@amo-studio/account";
-import { PLANE_BOARD_API, type ModelProfile } from "@amo-studio/protocol";
+import { PLANE_BOARD_API, type ModelProfile, type PlaneBotExecutionChoice } from "@amo-studio/protocol";
 import { removeTempDir, startFakeAppServer } from "@amo-studio/testkit";
 import { afterEach, expect, it, vi } from "vitest";
 import * as gitReview from "../gitreview/git.js";
@@ -18,6 +18,7 @@ import { amoToolsFor } from "../../mcp/tools.js";
 const origin = "https://plane.test";
 const project = "71eac826-1d93-4182-9832-b640d4ca1369";
 const itemId = "21eac826-1d93-4182-9832-b640d4ca1369";
+const otherItemId = "31eac826-1d93-4182-9832-b640d4ca1369";
 const projectPath = `/workspaces/demo/projects/${project}`;
 const source = origin + PLANE_BOARD_API + projectPath;
 const viewerId = "plane-account";
@@ -61,41 +62,52 @@ function prepare(transport?: "overlay" | "native", projectSubdir?: string) {
   gitAt(projectDir, "add", "fixture.txt");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture");
 
-  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({
-    server: origin, sealed: "fixture-encrypted-key", selected: { workspace: "demo", project }, identityId: viewerId,
-  });
+  let account = viewerId;
+  vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockImplementation(() => ({
+    server: origin, sealed: "fixture-encrypted-key", selected: { workspace: "demo", project }, identityId: account,
+  }));
   vi.spyOn(dpapi, "unprotect").mockResolvedValue("fixture-plane-key");
   const item = { id: itemId, number: "DEMO-3", title: "修正处理流程", description: "工单详情。".repeat(800), url: origin + "/demo/browse/DEMO-3/", creator: "测试成员", archived: false };
   const comments = new Map<string, string>();
+  const commentIds = new Map<string, string>();
   const writes: string[] = [];
-  const nativeComments = origin + "/api/v1" + projectPath + `/work-items/${itemId}/comments/`;
+  const writeTargets = new Map<string, string>();
+  const lookups: string[] = [];
+  const nativeComments = origin + "/api/v1" + projectPath;
   let receiptVisible = false;
   const fetchPlane = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     expect(new Headers(init?.headers).get("x-api-key")).toBe("fixture-plane-key");
     const url = String(input);
-    if (url === source + "/work-items") return Response.json({ viewerId, writable: true });
-    if (url === source + `/work-items/${itemId}` && init?.method === "GET") return Response.json(item);
-    if (transport && url === source + `/work-items/${itemId}` && init?.method === "POST") {
+    const target = [itemId, otherItemId].find((id) => url.includes(`/work-items/${id}`));
+    if (url === source + "/work-items") return Response.json({ viewerId: account, writable: true });
+    if (target && url === source + `/work-items/${target}` && init?.method === "GET") return Response.json(target === itemId ? item : { ...item, id: target, number: "DEMO-4", title: "另一张 Plane 工单" });
+    if (transport && target && url === source + `/work-items/${target}` && init?.method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({ action: "bot-comment", viewerId });
       if (transport === "native") return Response.json({ message: "不支持的工作项操作" }, { status: 400 });
       writes.push(body.resultId);
-      if (comments.has(body.resultId)) return Response.json({ id: "plane-comment" });
+      writeTargets.set(body.resultId, target);
+      if (comments.has(body.resultId)) return Response.json({ id: commentIds.get(body.resultId) });
+      const otherComments = [...comments.keys()].filter((key) => writeTargets.get(key) === target).length;
+      commentIds.set(body.resultId, otherComments ? `plane-comment-${otherComments + 1}` : "plane-comment");
       comments.set(body.resultId, body.text);
       throw new Error("connection lost after Plane created the comment");
     }
-    if (transport === "native" && url.startsWith(nativeComments)) {
+    if (transport && target && url.startsWith(nativeComments)) {
       if (init?.method === "POST") {
         const body = JSON.parse(String(init.body));
         expect(body).toMatchObject({ access: "INTERNAL", external_source: "AMO Studio" });
         writes.push(body.external_id);
+        writeTargets.set(body.external_id, target);
         comments.set(body.external_id, body.comment_html);
+        commentIds.set(body.external_id, "plane-comment");
         throw new Error("connection lost after Plane created the comment");
       }
+      lookups.push(target);
       const cursor = new URL(url).searchParams.get("cursor");
       if (!cursor) return Response.json({ results: [], next_page_results: true, next_cursor: "next" });
       expect(cursor).toBe("next");
-      const results = receiptVisible ? [...comments.keys()].map((id) => ({ id: "plane-comment", actor: viewerId, external_id: id, external_source: "AMO Studio" })) : [];
+      const results = receiptVisible ? [...comments.keys()].filter((id) => writeTargets.get(id) === target).map((id) => ({ id: commentIds.get(id), actor: viewerId, external_id: id, external_source: "AMO Studio" })) : [];
       return Response.json({ results, next_page_results: false, next_cursor: null });
     }
     throw new Error(`Unexpected Plane request ${url}`);
@@ -106,15 +118,15 @@ function prepare(transport?: "overlay" | "native", projectSubdir?: string) {
   const workspace = store.addWorkspace({ name: "Git 夹具", path: projectDir });
   const bot = host.bots.save({ name: "审核员", purpose: "审查并计划", memory: "", profileId: "test", workspaceId: null, enabled: true });
   const request = { botId: bot.id, workspaceId: workspace.id, source, viewerId };
-  return { ...instance, root, repo, git, workspace, bot, item, request, comments, writes, fetchPlane, revealReceipt: () => { receiptVisible = true; } };
+  return { ...instance, root, repo, git, workspace, bot, item, request, comments, writes, writeTargets, lookups, fetchPlane, switchAccount: (id: string) => { account = id; }, revealReceipt: () => { receiptVisible = true; } };
 }
 
 const approvalTarget = { source, viewerId };
 const waitOptions = { timeout: 10_000 };
 
-async function waitForPlan(jobs: HostService["teamTasks"]["planeBots"]) {
+async function waitForPlan(jobs: HostService["teamTasks"]["planeBots"], id = itemId) {
   return vi.waitFor(async () => {
-    const job = await jobs.forItem(itemId);
+    const job = await jobs.forItem(id);
     expect(job).toMatchObject({ state: "awaiting-approval", plan: expect.any(String), planHash: expect.any(String), baseCommit: expect.any(String), behind: expect.any(Number) });
     return { text: job!.plan!, planHash: job!.planHash!, baseCommit: job!.baseCommit! };
   }, waitOptions);
@@ -467,11 +479,251 @@ it.each(["overlay", "native"] as const)("isolates execution, requires user accep
   await close();
   const recovered = start(root).host.teamTasks.planeBots;
   await vi.waitFor(async () => expect((await recovered.forTask(id))?.state).toBe("sent"));
-  expect(writes).toEqual(transport === "native" ? [accepted.id] : [accepted.id, accepted.id]);
+  expect(writes).toEqual([accepted.id]);
   expect(comments.size).toBe(1);
   await recovered.retry(id);
-  expect(fetchPlane.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+  expect(fetchPlane.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(transport === "native" ? 2 : 1);
 }, 30_000);
+
+function managedChoice(plan: { baseCommit: string }, operationId: string, topicId?: string): PlaneBotExecutionChoice {
+  return { mode: "managed", operationId, baseCommit: plan.baseCommit, ...(topicId ? { topic: { topicId } } : {}) };
+}
+
+it("keeps a Plane root in progress when its first reply has no delivery and shows how to inspect uncommitted inputs", async () => {
+  const { jobs, host, store, servers, workspace, request } = prepare();
+  const stopped = "模型报告无法派工，未提交交付。";
+  servers.fakes.set("test", await startFakeAppServer({ script: (ctx) => ctx.agentMessage(ctx.userText.includes("【用户批准的 Plane 计划") ? stopped : "检查原项目的未提交改动。") }));
+  host.tasks.reviewSettleMs = 30;
+  const movedToReview = vi.fn();
+  host.on("event", (event) => {
+    if (event.type === "task.upserted" && event.task.lead && event.task.column === "review") movedToReview();
+  });
+  await jobs.intake(itemId, request);
+  const plan = await waitForPlan(jobs);
+  writeFileSync(join(workspace.path, "fixture.txt"), "uncommitted input");
+  const { rootTaskId } = await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash, execution: managedChoice(plan, "inspect-source") });
+  const session = await vi.waitFor(() => {
+    const current = store.getSession(host.botLeads.currentTerm(rootTaskId!)?.sessionId ?? "");
+    expect(current?.status).toBe("idle");
+    expect(store.findItems(current!.id, "agent")).toContainEqual(expect.objectContaining({ markdown: stopped }));
+    return current!;
+  }, waitOptions);
+  await new Promise((resolve) => setTimeout(resolve, host.tasks.reviewSettleMs * 3));
+  expect(movedToReview).not.toHaveBeenCalled();
+  expect(store.getTask(rootTaskId!)?.column).toBe("doing");
+  expect(await jobs.forItem(itemId)).toMatchObject({ state: "executing" });
+  expect(store.findItems(session.id, "user")).toContainEqual(expect.objectContaining({ text: expect.stringContaining("从上述批准的原项目目录只读取证") }));
+  expect(host.orchestration.results(rootTaskId!)).toEqual([]);
+  expect(host.tasks.updateTask(rootTaskId!, { column: "review" }).column).toBe("doing");
+
+  // Existing cards advanced by the old timer should also recover without inventing a delivery.
+  store.updateTask(rootTaskId!, { column: "review" });
+  host.tasks.recoverColumns();
+  expect(store.getTask(rootTaskId!)?.column).toBe("doing");
+
+  const proposal = await host.taskPlans.propose(session.id, { summary: "原项目只读取证", tasks: [{ key: "inspect", title: "检查改动", firstMessage: `只读检查 ${workspace.path}` }] });
+  const worker = await vi.waitFor(() => {
+    const current = store.listSessions({ taskId: proposal.created![0]!.taskId })[0];
+    expect(current?.status).toBe("idle");
+    return current!;
+  }, waitOptions);
+  const at = (path: string) => readFileSync(join(path, "fixture.txt"), "utf8");
+  expect(at(worker.cwd!)).toBe("committed");
+  expect(at(workspace.path)).toBe("uncommitted input");
+  const evidence = `只读核对原目录 ${workspace.path} 与 ${plan.baseCommit}`;
+  const report = host.orchestration.submit(worker.id, "fixture.txt 存在未提交改动", evidence);
+  host.orchestration.review(session.id, report.id, true, "核对过原目录证据");
+  const final = await vi.waitFor(() => host.orchestration.submit(session.id, report.summary, evidence), waitOptions);
+  expect(final.worktrees).toMatchObject([{ changedPaths: [], workingTreeDirty: false }]);
+  expect(await jobs.forItem(itemId)).toMatchObject({ state: "review", delivery: { resultId: final.id } });
+}, 20_000);
+
+it("keeps two Plane roots in one topic independent and binds each comment to its human-approved result", async () => {
+  const { jobs, host, store, servers, workspace, request, writes, writeTargets, lookups, switchAccount, revealReceipt } = prepare("overlay");
+  servers.fakes.set("test", await startFakeAppServer({ script: (ctx) => ctx.agentMessage("核对已批准的改动并验证。") }));
+  const topic = host.topics.createTopic({ title: "同专题两张工单", workspaceIds: [workspace.id] });
+  const incoming = { ...request, topicId: topic.id };
+  await jobs.intake(itemId, incoming);
+  const otherIntake = await jobs.intake(otherItemId, incoming);
+  const plans = [await waitForPlan(jobs), await waitForPlan(jobs, otherItemId)];
+  const approval = { ...approvalTarget, planHash: plans[0]!.planHash, execution: managedChoice(plans[0]!, "managed-first", topic.id) };
+  const [first, replay] = await Promise.all([jobs.approve(itemId, approval), jobs.approve(itemId, approval)]);
+  const other = await jobs.decideForBot(request.botId, otherIntake.jobId!, { approve: true, planHash: plans[1]!.planHash, execution: managedChoice(plans[1]!, "managed-other", topic.id) });
+  expect(first).toMatchObject({ mode: "managed", taskId: null, rootTaskId: expect.any(String) });
+  expect(first.rootTaskId).toBe(replay.rootTaskId);
+  expect(first.rootTaskId).not.toBe(other.rootTaskId);
+  expect(store.listTasks().filter((task) => task.topicId === topic.id && task.lead)).toHaveLength(2);
+  expect(store.getCanvas(topic.id)?.nodes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "task", taskId: first.rootTaskId }), expect.objectContaining({ kind: "task", taskId: other.rootTaskId })]));
+  expect(host.botLeads.currentTerm(first.rootTaskId!)?.source).toMatchObject({ kind: "plane", jobId: first.jobId });
+  await expect(jobs.approve(itemId, { ...approvalTarget, planHash: plans[0]!.planHash })).rejects.toThrow("专属主控");
+  expect(writes).toEqual([]);
+
+  async function ready(rootTaskId: string, workerName: string) {
+    const lead = await vi.waitFor(() => {
+      const session = store.getSession(host.botLeads.currentTerm(rootTaskId)?.sessionId ?? "");
+      expect(session?.status).toBe("idle");
+      return session!;
+    }, waitOptions);
+    const proposal = await host.taskPlans.propose(lead.id, { summary: "执行批准范围", tasks: [{ key: "worker", title: workerName, firstMessage: "执行并验证" }] });
+    const worker = await vi.waitFor(() => {
+      const task = proposal.created![0]!.taskId;
+      const session = store.listSessions({ taskId: task })[0];
+      expect(session?.status).toBe("idle");
+      expect(session?.cwd).not.toBe(workspace.path);
+      return session!;
+    }, waitOptions);
+    writeFileSync(join(worker.cwd!, workerName), "verified bytes in isolated checkout");
+    const delivery = host.orchestration.submit(worker.id, "执行完成", "从工作树读取实际变更");
+    host.orchestration.review(lead.id, delivery.id, true, "通过");
+    const result = await vi.waitFor(() => host.orchestration.submit(lead.id, "根交付", "核对工作树和执行证据"), waitOptions);
+    return { lead, worker, result };
+  }
+  const a = await ready(first.rootTaskId!, "first.txt");
+  const b = await ready(other.rootTaskId!, "other.txt");
+  expect(a.worker.cwd).not.toBe(b.worker.cwd);
+  expect((await jobs.forTask(first.rootTaskId!))?.delivery).toMatchObject({ worktrees: [{ taskId: a.worker.taskId, changedPaths: ["first.txt"], changeDigest: expect.any(String), resultId: expect.any(String) }] });
+  await jobs.check(first.rootTaskId!, a.result.id);
+  await vi.waitFor(async () => expect(await jobs.forTask(first.rootTaskId!)).toMatchObject({ state: "review", check: { resultId: a.result.id, status: "completed" } }), waitOptions);
+  expect(writes).toEqual([]);
+  host.orchestration.reviewByUser(first.rootTaskId!, a.result.id, false, "补充整体验证");
+  expect((await jobs.forTask(other.rootTaskId!))?.state).toBe("review");
+  expect(writes).toEqual([]);
+  switchAccount("other-plane-account");
+  host.orchestration.reviewByUser(other.rootTaskId!, b.result.id, true, "用户通过另一张原单");
+  await vi.waitFor(async () => expect(await jobs.forTask(other.rootTaskId!)).toMatchObject({ state: "failed", failureStage: "writeback", writeback: { resultId: b.result.id, state: "pending" } }));
+  expect(writes).toEqual([]);
+  switchAccount(viewerId);
+  await jobs.retry(other.rootTaskId!);
+  expect(writes).toEqual([b.result.id]);
+  expect(writeTargets.get(b.result.id)).toBe(otherItemId);
+  revealReceipt();
+  await jobs.retry(other.rootTaskId!);
+  expect(await jobs.forTask(other.rootTaskId!)).toMatchObject({ state: "sent", writebackHistory: [{ resultId: b.result.id, state: "sent", commentId: "plane-comment" }] });
+  expect(writes).toEqual([b.result.id]);
+  expect(lookups.every((target) => target === otherItemId)).toBe(true);
+
+  const revised = await vi.waitFor(() => host.orchestration.submit(a.lead.id, "补齐后的根交付", "整体验证已补齐"), waitOptions);
+  expect(revised.id).not.toBe(a.result.id);
+  host.orchestration.reviewByUser(first.rootTaskId!, revised.id, true, "用户通过第一张原单");
+  await vi.waitFor(async () => expect(await jobs.forTask(first.rootTaskId!)).toMatchObject({ state: "failed", failureStage: "writeback" }));
+  await jobs.retry(first.rootTaskId!);
+  expect(await jobs.forTask(first.rootTaskId!)).toMatchObject({ state: "sent", writeback: { resultId: revised.id, state: "sent" } });
+  expect(writes).toEqual([b.result.id, revised.id]);
+  expect(writeTargets.get(revised.id)).toBe(itemId);
+  host.tasks.updateTask(other.rootTaskId!, { column: "doing" });
+  const later = host.orchestration.submit(b.lead.id, "后续修订交付", "再次核对现有执行证据");
+  await vi.waitFor(() => host.orchestration.reviewByUser(other.rootTaskId!, later.id, true, "用户通过后续修订"), waitOptions);
+  await vi.waitFor(async () => expect(await jobs.forTask(other.rootTaskId!)).toMatchObject({ state: "failed", failureStage: "writeback" }));
+  await jobs.retry(other.rootTaskId!);
+  expect(await jobs.forTask(other.rootTaskId!)).toMatchObject({ writebackHistory: [
+    { resultId: later.id, state: "sent", commentId: "plane-comment-2" },
+    { resultId: b.result.id, state: "sent", commentId: "plane-comment" },
+  ] });
+  expect(host.orchestration.results(other.rootTaskId!).find((result) => result.id === b.result.id)?.userReview?.state).toBe("accepted");
+  expect(writes).toEqual([b.result.id, revised.id, later.id]);
+}, 60_000);
+
+it("holds dependent work until its accepted commit is actually integrated and holds stale Git baselines for reapproval", async () => {
+  const { jobs, host, store, servers, workspace, request, git, repo } = prepare();
+  servers.fakes.set("test", await startFakeAppServer({ script: (ctx) => ctx.agentMessage("修改 fixture.txt 并在接入后验证。") }));
+  await jobs.intake(itemId, request);
+  const old = await waitForPlan(jobs);
+  writeFileSync(join(repo, "fixture.txt"), "changed before approval");
+  git("add", "--", "fixture.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "drift");
+  await expect(jobs.approve(itemId, { ...approvalTarget, planHash: old.planHash, execution: managedChoice(old, "stale") })).rejects.toThrow("基准");
+  expect(await jobs.forItem(itemId)).toMatchObject({ state: "awaiting-approval", baseDrift: { head: git("rev-parse", "HEAD") } });
+  expect(store.db.prepare("SELECT count(*) AS n FROM plane_bot_approvals").get()).toEqual({ n: 0 });
+  const planJob = (await jobs.forItem(itemId))!;
+  await jobs.replan(planJob.botId, planJob.jobId!, { planHash: old.planHash });
+  const plan = await waitForPlan(jobs);
+  expect(plan.baseCommit).not.toBe(old.baseCommit);
+  expect(plan.planHash).not.toBe(old.planHash);
+  const job = await jobs.approve(itemId, { ...approvalTarget, planHash: plan.planHash, execution: managedChoice(plan, "current") });
+  const rootId = job.rootTaskId!;
+  const lead = await vi.waitFor(() => {
+    const session = store.getSession(host.botLeads.currentTerm(rootId)?.sessionId ?? "");
+    expect(session?.status).toBe("idle");
+    return session!;
+  }, waitOptions);
+  const wrongWorkspace = store.addWorkspace({ name: "未批准目录", path: repo + "-outside" });
+  await expect(host.taskPlans.propose(lead.id, { summary: "越界派工", tasks: [{ title: "错误项目", project: wrongWorkspace.id }] })).rejects.toThrow("已批准范围");
+  const proposal = await host.taskPlans.propose(lead.id, { summary: "逐项接入改动", tasks: [
+    { key: "up", title: "产出代码", firstMessage: "修改文件" },
+    { key: "down", title: "集成验证", firstMessage: "接入后运行验证", dependsOn: ["up"] },
+  ] });
+  const [up, down] = proposal.created!.map((row) => row.taskId) as [string, string];
+  const firstWorker = await vi.waitFor(() => {
+    const session = store.listSessions({ taskId: up })[0];
+    expect(session?.status).toBe("idle");
+    return session!;
+  }, waitOptions);
+  expect(store.listSessions({ taskId: down })).toHaveLength(0);
+  writeFileSync(join(firstWorker.cwd!, "fixture.txt"), "actual change from the approved baseline\n");
+  gitAt(firstWorker.cwd!, "add", "--", "fixture.txt");
+  gitAt(firstWorker.cwd!, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "worker change");
+  const commit = gitAt(firstWorker.cwd!, "rev-parse", "HEAD");
+  const submission = host.orchestration.submit(firstWorker.id, "上游改动", "实际提交与文件核验");
+  expect(submission.worktrees?.[0]).toMatchObject({ headCommit: commit, baseCommit: plan.baseCommit, changedPaths: ["fixture.txt"], workingTreeDirty: false });
+  host.orchestration.review(lead.id, submission.id, true, "通过");
+  const waiting = await vi.waitFor(() => {
+    const data = host.taskPlans.worktreeIntegrations(down);
+    expect(data.waiting).toEqual([{ prerequisiteTaskId: up, prerequisiteResultId: submission.id }]);
+    expect(data.worktree).not.toBeNull();
+    return data.worktree!;
+  }, waitOptions);
+  const receipt = { operationId: "integrate", prerequisiteTaskId: up, prerequisiteResultId: submission.id, worktreeId: waiting.id, evidence: { kind: "commit" as const, commit } };
+  expect(() => host.taskPlans.worktrees.add(down, receipt)).toThrow("已接入");
+  expect(store.listSessions({ taskId: down })).toHaveLength(0);
+  gitAt(waiting.cwd, "merge", "--ff-only", commit);
+  expect(host.taskPlans.worktrees.add(down, receipt)).toMatchObject({ verification: "git" });
+  expect(host.taskPlans.worktrees.add(down, receipt)).toMatchObject({ operationId: "integrate" });
+  const secondWorker = await vi.waitFor(() => {
+    const session = store.listSessions({ taskId: down })[0];
+    expect(session?.status).toBe("idle");
+    expect(store.findItems(session!.id, "turn", {}, { newest: true, limit: 1 })[0]).toMatchObject({ state: "completed" });
+    return session!;
+  }, waitOptions);
+  expect(secondWorker.cwd).toBe(waiting.cwd);
+  const integrated = host.orchestration.submit(secondWorker.id, "已集成提交", "实际工作树验证");
+  expect(integrated.worktrees?.[0]?.integrations?.[0]).toMatchObject({ prerequisiteResultId: submission.id, verification: "git" });
+  host.orchestration.review(lead.id, integrated.id, true, "通过");
+  expect(store.getTask(down)?.column).toBe("done");
+  expect(host.orchestration.results(down).at(-1)).toMatchObject({ state: "accepted", prerequisiteResultIds: [submission.id], planePlanHash: plan.planHash });
+  expect(host.sharedContext.isResultCurrent(down, host.orchestration.results(down).at(-1)!)).toBe(true);
+  const final = await vi.waitFor(() => host.orchestration.submit(lead.id, "已完成集成", "提交和工作树核验"), waitOptions);
+  expect((await jobs.forTask(rootId))?.delivery).toMatchObject({ integratedWorktree: { taskId: down } });
+  writeFileSync(join(secondWorker.cwd!, "fixture.txt"), "changes after the reviewed execution evidence");
+  expect(() => host.orchestration.reviewByUser(rootId, final.id, true, "通过已变化的工作树")).toThrow("工作树改动与已提交的证据不同");
+  writeFileSync(join(secondWorker.cwd!, "fixture.txt"), "actual change from the approved baseline\n");
+  writeFileSync(join(repo, "fixture.txt"), "second drift");
+  git("add", "--", "fixture.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "second drift");
+  expect(() => host.orchestration.reviewByUser(rootId, final.id, true, "旧版通过")).toThrow("Git 基准已变化");
+  const alternate = wrongWorkspace.path;
+  mkdirSync(alternate);
+  gitAt(alternate, "init", "--quiet", "-b", "main");
+  writeFileSync(join(alternate, "alternate.txt"), "prepared new approved repository\n");
+  gitAt(alternate, "add", "alternate.txt");
+  gitAt(alternate, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "new approved repository");
+  host.topics.updateTopic(job.topicId!, { workspaceIds: [workspace.id, wrongWorkspace.id] });
+  await jobs.replan(job.botId, job.jobId!, { planHash: plan.planHash, workspaceId: wrongWorkspace.id });
+  const newPlan = await waitForPlan(jobs);
+  const revised = { ...approvalTarget, planHash: newPlan.planHash, execution: managedChoice(newPlan, "reapproval", job.topicId!) };
+  await expect(jobs.approve(itemId, revised)).rejects.toThrow("归档旧版下级");
+  await host.tasks.archiveTask(down);
+  await host.tasks.archiveTask(up);
+  const reapproved = await jobs.approve(itemId, revised);
+  expect(reapproved).toMatchObject({ rootTaskId: rootId, mode: "managed", baseCommit: newPlan.baseCommit, workspaceId: wrongWorkspace.id });
+  await vi.waitFor(() => {
+    const term = host.botLeads.currentTerm(rootId), session = term?.sessionId ? store.getSession(term.sessionId) : undefined;
+    expect(term).toMatchObject({ generation: 2, source: { kind: "plane", jobId: job.jobId } });
+    expect(session).toMatchObject({ workspaceId: wrongWorkspace.id });
+  }, waitOptions);
+  expect(host.orchestration.results(up).at(-1)?.id).toBe(submission.id);
+  await expect(host.tasks.unarchiveTask(up)).rejects.toThrow("旧版 Plane 计划");
+  expect(store.db.prepare("SELECT count(*) AS n FROM plane_bot_approvals").get()).toEqual({ n: 2 });
+}, 60_000);
 
 it("shows the latest delivery without requesting a check, then checks in the original read-only Bot chat on demand", async () => {
   const fixture = prepare(undefined, "registered-project");
@@ -751,8 +1003,9 @@ it("rejects Plane worker promotion before changing sessions, including a saved r
   store.setKv("tasks.lead-promotions", JSON.stringify({ [taskId]: {
     taskId, sourceSessionId: worker.id, state: "switching", oldSessionIds: [worker.id], summary: "旧的切换申请",
   } }));
-  await host.tasks.leadPromotion.flush();
-  expect(host.tasks.leadPromotion.status(taskId)).toMatchObject({ state: "failed" });
+  await host.botLeads.flush();
+  expect(host.tasks.leadPromotion.status(taskId)).toMatchObject({ state: "switching", summary: "旧的切换申请" });
+  expect(host.botLeads.taskView(taskId).state).toBeNull();
   expect(store.getSession(worker.id)?.archivedAt).toBeNull();
 }, 15_000);
 

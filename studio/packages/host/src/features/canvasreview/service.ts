@@ -139,7 +139,7 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
     const text = boundedText(input.text, "text", CALLOUT_DETAIL_MAX);
     const session = current.sessionId ? this.store.getSession(current.sessionId) : undefined;
     let sent: NonNullable<CanvasCallout["answer"]>["sent"] = "none";
-    if (session && !session.archivedAt) sent = (await this.f.sessions.sendMessage(session.id, this.answerMessage(current, text))).mode;
+    if (session && !session.archivedAt) sent = (await this.f.sessions.sendMessage(session.id, this.answerMessage(current, text), [], [], { fromPerson: true })).mode;
     const next: CanvasCallout = { ...this.getCallout(id), state: "answered", answer: { text, at: new Date().toISOString(), sent }, updatedAt: new Date().toISOString() };
     this.store.putCallout(next);
     this.publish({ type: "callout.upserted", callout: next });
@@ -211,7 +211,7 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
     const lastOfTask = this.store.listSessions().filter((s) => s.taskId === task.id && !s.archivedAt && s.kind !== "sub").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     const profileId = typeof input.profileId === "string" && input.profileId ? input.profileId : (poster?.profileId ?? lastOfTask?.profileId);
     if (!profileId) throw new HostError("bad_request", "pick a model for the new session");
-    this.requireProfile(profileId);
+    const profile = this.requireProfile(profileId);
     const text = [
       `【就这条展开聊】专题「${topic.title}」画布上的审阅条目 #${item.num}「${item.title}」（条目 id ${item.id}）。人想就这一条单独深谈，这个会话就是为它开的，人会在这里和你一起推进。`,
       "",
@@ -225,7 +225,10 @@ export class CanvasReviewFeature extends Feature<"canvases" | "sessions" | "task
       "",
       `先用几句话说说你对这一条的理解和需要人确认的点，然后等人说话。聊出结论后，用 canvas_item_update（item: "#${item.num}"）写回结论、改状态。Studio 会自动将确认结果回传来源会话，同一来源、同一分组的条目全部确认、完成或搁置后会自动通知它继续；不要再为同一个结论调用 mailbox_send。`,
     ].join("\n");
-    const started = await this.f.tasks.startSession({ taskId: task.id, topicId: null }, this.requireLiveWorkspace(task.workspaceId), { profileId, text });
+    if (task.lead && !["codex", "claude", "dsh"].includes(profile.runtime)) throw new HostError("bad_request", "请选择支持只读讨论的模型。");
+    const owner = task.lead ? { taskId: null, topicId: topic.id } : { taskId: task.id, topicId: null };
+    const options = task.lead ? { permission: profile.runtime === "claude" ? "plan" as const : "read-only" as const } : undefined;
+    const started = await this.f.tasks.startSession(owner, this.requireLiveWorkspace(task.workspaceId), { profileId, text, options });
     const session = await this.f.sessions.renameSession(started.id, `#${item.num} ${item.title}`.slice(0, 100)).catch(() => started);
     this.f.canvases.mutateCanvas(topicId, (doc) => ({ ...doc, nodes: doc.nodes.map((n) => (n.id === item.id && n.kind === "item" ? { ...n, threads: [...(n.threads ?? []), session.id] } : n)) }));
     return session;

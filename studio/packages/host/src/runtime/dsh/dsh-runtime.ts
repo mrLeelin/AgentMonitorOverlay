@@ -391,15 +391,18 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const permission = dshPermissionMode(options.permission);
     const cwd = input.cwd ?? input.workspace.path;
     const extra = bot || readOnly ? { list: [], key: "" } : this.extraMcp({ workspaceId: input.workspace.id, cwd, ...(options.mcp ? { mcp: options.mcp } : {}) });
+    input.beforeStart?.();
     const token = this.options.identities?.issue(bot);
     const conn = this.spawn(cwd, profile, permission, `new-${Date.now()}`, options.model);
     let session: Session;
     let image = false;
     try {
       image = (await this.initialize(conn)).image;
+      input.beforeDispatch?.();
       const created = await conn.request<{ sessionId: string; configOptions?: ConfigOption[] }>("session/new", { cwd, mcpServers: [...this.mcpServers(token), ...extra.list] });
       this.remember(created.configOptions, profile);
       session = this.createSession({
+        id: input.leadSessionId,
         taskId: input.taskId,
         topicId: input.topicId,
         parentId: null,
@@ -410,7 +413,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
         title: input.title ?? "",
         runtimeRef: created.sessionId,
         options,
-      }, input.botSkillPrompt);
+      }, [input.developerInstructions, input.botSkillPrompt].filter(Boolean).join("\n\n") || undefined);
     } catch (err) {
       conn.kill();
       throw this.explain(err);
@@ -422,7 +425,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     const live = this.adopt(session, conn, {}, permission, image, options.model);
     live.mcpKey = extra.key;
     await this.applyOptions(session.id, live);
-    if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
+    if (input.text) await this.sendMessage(session.id, input.text, [], { purpose: input.firstMessagePurpose, beforeDispatch: input.beforeDispatch, confirmedEarly: input.confirmedEarly });
     return this.store.getSession(session.id)!;
   }
 
@@ -434,7 +437,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
     const shown = images.map((a) => ({ id: a.id, path: a.path }));
     return this.deliver(session, blocks, text, options, (mode, live, delivery) => {
-      const item = { type: "user" as const, text, ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) };
+      const item = { type: "user" as const, text, ...(options.fromPerson ? { fromPerson: true } : {}), ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(shown.length ? { images: shown } : {}), ...(delivery ? { delivery } : {}) };
       // Queued: shown in the running turn (as Claude's queued messages are), so that turn still reads as running.
       return this.appendItem(sessionId, item, mode === "queue" ? { method: "user/queued", ...live.transcript.turnRef() } : { method: "user" }).id;
     });
@@ -448,7 +451,8 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   private async deliver(session: Session, blocks: ImageBlock[], text: string, options: SendOptions, item: (mode: SendMode, live: Live, delivery: UserDelivery | undefined) => Id): Promise<{ mode: SendMode }> {
     this.checkGoalPurpose(session, options.purpose);
     const sessionId = session.id;
-    let live = await this.ensureLive(session);
+    this.assertExecutionReady(sessionId, options.purpose, options.confirmedEarly);
+    let live = await this.ensureLive(session, options.purpose ?? "work", options.confirmedEarly);
     if (blocks.length) live = await this.takesImages(session, live);
     options.beforeDispatch?.();
     this.checkGoalPurpose(this.requireSession(session.id), options.purpose);
@@ -461,7 +465,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     // DSH going on by itself: that turn ends here; DSH takes the message in when its step is done.
     if (live.auto) this.endAuto(sessionId, live, "end_turn", true);
     const itemId = item("start", live, "held");
-    await this.prompt(sessionId, live, text, blocks, [itemId], options.beforeDispatch);
+    await this.prompt(sessionId, live, text, blocks, [itemId], options.beforeDispatch, options.confirmedEarly);
     return { mode: "start" };
   }
 
@@ -633,8 +637,12 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     for (let size = -1; size !== ids.size;) { size = ids.size; for (const s of this.store.listSessions()) if (s.parentId && ids.has(s.parentId)) ids.add(s.id); }
     for (const id of ids) if (this.live.has(id)) await this.pauseNativeGoal(id);
     const changed = this.archiveTree(sessionId);
-    for (const s of changed) await this.release(s.id);
+    await this.finishArchive(changed);
     return changed;
+  }
+
+  async finishArchive(sessions: readonly Session[]): Promise<void> {
+    for (const s of sessions) await this.release(s.id);
   }
 
   async unarchive(sessionId: Id): Promise<Session[]> {
@@ -768,7 +776,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
   }
 
   /** The session's process, started and resumed when there is none. */
-  private ensureLive(session: Session): Promise<Live> {
+  private ensureLive(session: Session, purpose?: SendOptions["purpose"], confirmedEarly?: readonly Id[]): Promise<Live> {
     if (!this.readOnlyTask(session) && this.store.getKv(`dsh-lead-readonly:${session.id}`)?.value) {
       this.store.setKv(`dsh-lead-readonly:${session.id}`, "");
     }
@@ -790,6 +798,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       let image = false;
       try {
         image = (await this.initialize(conn)).image;
+        if (purpose || session.goal?.status === "active") this.assertExecutionReady(session.id, session.goal?.status === "active" ? "work" : purpose, confirmedEarly);
         const token = this.options.identities?.tokenFor(session.id, isBotTask(this.store, session.taskId));
         const resumed = await conn.request<{ configOptions?: ConfigOption[] }>("session/resume", { sessionId: session.runtimeRef, cwd, mcpServers: [...this.mcpServers(token), ...extra.list] });
         this.remember(resumed.configOptions, this.profile(session.profileId));
@@ -1044,7 +1053,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
 
   // ---- turns ------------------------------------------------------------------------------------------------------
 
-  private async prompt(sessionId: Id, live: Live, text: string, images: readonly ImageBlock[] = [], sent: readonly Id[] = [], beforeDispatch?: () => void): Promise<void> {
+  private async prompt(sessionId: Id, live: Live, text: string, images: readonly ImageBlock[] = [], sent: readonly Id[] = [], beforeDispatch?: () => void, confirmedEarly?: readonly Id[]): Promise<void> {
     live.inflight = true;
     live.killedOnStop = false;
     if (live.idleTimer) clearTimeout(live.idleTimer);
@@ -1052,7 +1061,7 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     // Role or archive may have changed while the CLI was applying options. Check again with no await before prompt.
     try {
       const current = this.writable(sessionId);
-      for (const id of sent) this.assertCurrentMessage(sessionId, id);
+      for (const id of sent) this.assertCurrentMessage(sessionId, id, confirmedEarly);
       beforeDispatch?.();
       for (const id of sent) { const row = this.store.getItem(id); this.checkGoalPurpose(current, row?.type === "user" ? row.messagePurpose : undefined); }
       if (sent.length) {
@@ -1079,8 +1088,8 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
     for (const id of sent) this.updateItem(id, (it) => (it.type === "user" ? withDelivery(it, undefined) : it));
     for (const id of sent) this.messagePurposeConsumed(sessionId, id);
     live.transcript.openTurn();
-    for (const id of sent.filter((id) => id.startsWith("bot-request:"))) {
-      this.updateItem(id, (it) => ({ ...it, raw: { runtime: "dsh", method: "bot/request", itemId: id, ...live.transcript.turnRef() } }));
+    for (const id of sent.filter((id) => id.startsWith("bot-request:") || id.startsWith("lead-input-"))) {
+      this.updateItem(id, (it) => ({ ...it, raw: { runtime: "dsh", method: it.raw?.method ?? "user/inbox", itemId: id, ...live.transcript.turnRef() } }));
     }
     const persona = botTaskInstructions(this.store, this.requireSession(sessionId).taskId);
     if (persona && !sent.some((id) => id.startsWith("bot-request:"))) text = `${persona}\n\n${text}`;
@@ -1130,7 +1139,9 @@ export class DshRuntime extends RuntimeBase implements SessionRuntimeApi {
       await this.release(sessionId);
       if (!queued.length) return this.setStatus(sessionId, "idle");
       try {
-        const fresh = await this.ensureLive(session);
+        for (const pending of queued) this.assertCurrentMessage(sessionId, pending.itemId);
+        const first = this.store.getItem(queued[0]!.itemId);
+        const fresh = await this.ensureLive(session, first?.type === "user" ? first.messagePurpose ?? "work" : "work");
         fresh.queue.push(...queued);
         const next = takeQueue(fresh)!;
         await this.prompt(sessionId, fresh, next.text, next.images, next.items);

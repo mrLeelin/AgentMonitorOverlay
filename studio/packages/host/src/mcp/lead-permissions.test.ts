@@ -9,6 +9,7 @@ import { FakeServers } from "../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../service.js";
 import { Store } from "../store/store.js";
 import { roleCard } from "../features/guide/role.js";
+import { bindLeadFixture } from "../features/botleads/lead.test-support.js";
 import { amoToolsFor } from "./tools.js";
 
 const PROFILES: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
@@ -19,6 +20,10 @@ let service: HostService;
 let taskId: string;
 let sessionId: string;
 let topicSessionId: string;
+const appoint = () => {
+  store.updateTask(taskId, { lead: true });
+  return bindLeadFixture(service, store.getSession(sessionId)!);
+};
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "amo-studio-test-lead-permissions-"));
@@ -41,11 +46,11 @@ afterEach(async () => {
 
 describe("主控文件只读、分配工作与管理任务画布", () => {
   it("exposes management tools without approval while keeping execution and settings tools hidden", async () => {
-    store.updateTask(taskId, { lead: true });
+    appoint();
     const tools = amoToolsFor(service, { sessionId });
     expect(tools.filter((t) => !t.readOnly).map((t) => t.name).sort()).toEqual([
       "bot_ask", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place",
-      "checklist_check", "context_adopt", "context_apply", "context_publish", "context_save", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_decision_answer", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "topic_doc_write",
+      "checklist_check", "context_adopt", "context_apply", "context_publish", "context_save", "decision_request", "handoff_submit", "mailbox_read", "mailbox_send", "task_decision_answer", "task_describe", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_review_result", "task_submit_result", "task_update", "topic_doc_write",
     ]);
     expect(tools.every((t) => t.autoApprove)).toBe(true);
     expect(tools.some((t) => t.name === "topic_docs")).toBe(true);
@@ -63,25 +68,23 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     for (const name of ["session_start", "session_send", "session_archive", "prompt_template_save", "duty_save", "issue_reply", "mcp_server_save"]) {
       const result = await cached.find((t) => t.name === name)!.run({});
       expect(result.isError, name).toBe(true);
-      expect(result.content[0]?.text, name).toContain("本地文件只读");
+      expect(result.content[0]?.text, name).toContain("待绑定机器人");
     }
     expect(service.collab.taskNotes(taskId)).toEqual([]);
   });
 
   it("also restricts forks and subagents in a lead task", () => {
-    store.updateTask(taskId, { lead: true });
-    const main = store.getSession(sessionId)!;
+    const main = appoint();
     for (const kind of ["fork", "sub"] as const) {
-      const session = store.createSession({ ...main, id: undefined, kind, parentId: sessionId });
+      const session = store.createSession({ ...main, id: undefined, kind, parentId: sessionId, runtimeRef: null });
       const tools = amoToolsFor(service, { sessionId: session.id });
       expect(tools.some((t) => t.name === "session_start")).toBe(false);
-      expect(tools.find((t) => t.name === "canvas_move")?.autoApprove).toBe(true);
-      expect(roleCard(service, session.id)).toContain("本地文件只读");
+      expect(tools.some((t) => t.name === "canvas_move")).toBe(false);
     }
   });
 
   it("manages task metadata and Studio documents within its topic without changing role or permissions", async () => {
-    store.updateTask(taskId, { lead: true });
+    appoint();
     const lead = store.getTask(taskId)!;
     const worker = store.createTask({ title: "实现", workspaceId: lead.workspaceId, topicId: lead.topicId, managerTaskId: lead.id });
     const otherTopic = service.topics.createTopic({ title: "其他专题" });
@@ -105,7 +108,7 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     expect(await update.run({ taskId: worker.id, column: "done" })).toHaveProperty("isError", true);
   });
 
-  it("allows canvas mutations through cached handles but keeps worker management approval and scope", async () => {
+  it("rejects pre-appointment handles and allows the designated session to mutate the canvas", async () => {
     const cached = amoToolsFor(service, { sessionId });
     expect(cached.find((t) => t.name === "canvas_group_create")?.autoApprove).toBe(false);
     expect(cached.find((t) => t.name === "task_update")?.autoApprove).toBe(false);
@@ -113,10 +116,13 @@ describe("主控文件只读、分配工作与管理任务画布", () => {
     const sibling = store.createTask({ title: "其他任务", workspaceId: task.workspaceId, topicId: task.topicId });
     expect(await cached.find((t) => t.name === "task_update")!.run({ taskId: sibling.id, column: "done" })).toHaveProperty("isError", true);
     store.updateTask(taskId, { lead: true });
-    expect(await cached.find((t) => t.name === "canvas_group_create")!.run({ title: "本周计划" })).not.toHaveProperty("isError", true);
+    const next = bindLeadFixture(service, store.createSession({ ...store.getSession(sessionId)!, id: undefined }));
+    expect(await cached.find((t) => t.name === "canvas_group_create")!.run({ title: "旧窗口" })).toHaveProperty("isError", true);
+    const current = amoToolsFor(service, { sessionId: next.id });
+    expect(await current.find((t) => t.name === "canvas_group_create")!.run({ title: "本周计划" })).not.toHaveProperty("isError", true);
     expect(service.canvases.canvas(task.topicId!).groups[0]?.title).toBe("本周计划");
-    expect(await cached.find((t) => t.name === "canvas_place")!.run({ taskId })).not.toHaveProperty("isError", true);
-    expect(await cached.find((t) => t.name === "canvas_color")!.run({ target: taskId, color: "blue" })).not.toHaveProperty("isError", true);
+    expect(await current.find((t) => t.name === "canvas_place")!.run({ taskId })).not.toHaveProperty("isError", true);
+    expect(await current.find((t) => t.name === "canvas_color")!.run({ target: taskId, color: "blue" })).not.toHaveProperty("isError", true);
     expect(service.canvases.canvas(task.topicId!).nodes[0]?.color).toBe("blue");
   });
 

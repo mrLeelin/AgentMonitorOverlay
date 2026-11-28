@@ -14,10 +14,12 @@ export function tasksRoutes(service: HostService): Route[] {
     // The person starting a task whose prerequisites are not finished confirms it first (2026-11-17, plans/done/task-dependencies.md).
     route("GET /api/prerequisites", () => service.taskPlans.waitingMap()),
     route("GET /api/tasks/:id/prerequisites", ({ params }) => service.taskPlans.waitingFor(params.id!)),
-    route("POST /api/tasks/:id/sessions", ({ params, body }) => {
+    route("POST /api/tasks/:id/sessions", async ({ params, body }) => {
       const input = obj(body);
-      service.taskPlans.checkPersonStart(params.id!, input.confirmed === true);
-      return service.tasks.addSession(params.id!, input as never);
+      const waiting = service.taskPlans.checkPersonStart(params.id!, input.confirmed === true);
+      const session = await service.tasks.addSession(params.id!, input as never, undefined, waiting.map((task) => task.id));
+      service.taskPlans.recordPersonEarlyStart(params.id!, session.id, waiting);
+      return session;
     }, { remoteCopy: "forward" }),
     route("POST /api/tasks/:id/archive", ({ params }) => service.tasks.archiveTask(params.id!), { remoteCopy: "forward" }),
     route("POST /api/tasks/:id/unarchive", ({ params }) => service.tasks.unarchiveTask(params.id!)),

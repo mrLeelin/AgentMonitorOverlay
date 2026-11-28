@@ -101,7 +101,7 @@ export class RemoteComments {
         if (!session || session.taskId !== task.id) throw new HostError("bad_request", "只能发到这个远程任务自己的对话里");
         if (session.archivedAt) throw new HostError("read_only", "这个对话已经归档了");
         const drafts = this.drafts(list, b.ids, "no comments to send");
-        const result = await this.host().sessions.sendMessage(session.id, composeRemoteReviewMessage(drafts, task.remote?.name ?? "", false));
+        const result = await this.host().sessions.sendMessage(session.id, composeRemoteReviewMessage(drafts, task.remote?.name ?? "", false), [], [], { fromPerson: true });
         // Read again: comments written while it was on its way stay.
         return { mode: result.mode, sent: this.markSent(task.id, this.list(task.id), drafts, session.id) };
       }

@@ -1,4 +1,5 @@
 import type { Id, Session, Task, Timestamp } from "./entities.js";
+import type { BotLeadOperationReceipt } from "./bot-leads.js";
 
 export interface BotInput {
   name: string;
@@ -78,6 +79,8 @@ export type BotDraftContent = Pick<BotInput, "name" | "purpose" | "memory" | "av
 export interface BotSidebarData {
   previews: Record<Id, string>;
   workers: { botId: Id; taskId: Id }[];
+  /** Recent session snippets, when a single Bot is selected. */
+  chatPreviews?: Record<Id, string>;
 }
 
 export type BotDestination = "home" | "new" | { sessionId: Id };
@@ -96,6 +99,8 @@ export interface BotRequest {
   destination: BotDestination;
   sessionId: Id | null;
   taskId?: Id;
+  /** First acceptance of the request. taskId/sessionId above continue to identify the Bot conversation. */
+  acceptance?: BotLeadOperationReceipt;
   text: string;
   createdAt: Timestamp;
   settledAt?: Timestamp;
@@ -168,6 +173,7 @@ export interface BotRoutes {
   "GET /api/bots/:id/notes/:name": { req: void; res: { text: string } };
   "PUT /api/bots/:id/notes/:name": { req: { text: string; expected: string | null }; res: BotFiles };
   "POST /api/bots/:id/home": { req: { reset?: boolean }; res: Session };
+  "POST /api/bots/:id/chat": { req: Pick<BotRouteInput, "id" | "text">; res: Session };
   "POST /api/bots/:id/requests": { req: BotRouteInput; res: BotRequest };
   "GET /api/bot-requests": { req: void; res: BotRequest[] };
   "GET /api/bot-groups": { req: void; res: BotGroup[] };
@@ -181,5 +187,5 @@ export interface BotRoutes {
   "GET /api/bots/:id/webhooks": { req: void; res: BotWebhook[] };
   "POST /api/bots/:id/webhooks": { req: { allowResult?: boolean }; res: BotWebhook & { token: string } };
   "DELETE /api/bots/:id/webhooks/:hookId": { req: void; res: { ok: true } };
-  "POST /api/bot-requests/:id/worker": { req: void; res: { task: Task; session: Session | null } };
+  "POST /api/bot-requests/:id/worker": { req: void | { operationId: Id }; res: { task: Task; session: Session | null; receipt?: Extract<BotLeadOperationReceipt, { action: "worker" }> } };
 }

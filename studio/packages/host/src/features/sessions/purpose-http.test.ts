@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 import { sessionsRoutes } from "./routes.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test" }];
@@ -19,7 +20,7 @@ beforeEach(async () => {
   const workspace = store.addWorkspace({ name: "隔离", path: folder });
   const root = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "已验收", workspaceId: workspace.id, managerTaskId: root.id });
-  const manager = await service.tasks.addSession(root.id, { profileId: "test" });
+  const manager = await startLeadFixture(service, root, "test");
   worker = await service.tasks.addSession(child.id, { profileId: "test" });
   const result = service.orchestration.submit(worker.id, "交付", "证据");
   service.orchestration.review(manager.id, result.id, true, "通过");

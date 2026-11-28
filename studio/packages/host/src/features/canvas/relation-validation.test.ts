@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 import { toolContext } from "../../mcp/tool-kit.js";
 import { HostError } from "../../core/shared.js";
 import { canvasTools } from "./mcp.js";
@@ -32,7 +33,7 @@ beforeEach(() => {
   tasks = [lead, store.createTask({ title: "执行乙", workspaceId: workspace.id, topicId, managerTaskId: lead.id }), store.createTask({ title: "执行丙", workspaceId: workspace.id, topicId, managerTaskId: lead.id }), store.createTask({ title: "独立丁", workspaceId: workspace.id, topicId })];
   const session = { parentId: null, kind: "main" as const, runtime: "codex" as const, profileId: "test", workspaceId: workspace.id, title: "", status: "idle" as const, writer: "workbench" as const, runtimeRef: null };
   topicSessionId = store.createSession({ ...session, taskId: null, topicId }).id;
-  leadSessionId = store.createSession({ ...session, taskId: lead.id, topicId: null }).id;
+  leadSessionId = bindLeadFixture(service, store.createSession({ ...session, taskId: lead.id, topicId: null })).id;
   service.canvases.saveCanvas(topicId, {
     ...emptyCanvas(topicId),
     nodes: tasks.map((task, i) => ({ id: ["a", "b", "c", "d"][i]!, kind: "task", taskId: task.id, groupId: null, pos: { x: i * 300, y: 40 } })),
@@ -111,14 +112,14 @@ describe("canvas relationship validation at Host boundaries", () => {
 
   it("MCP rejects dependency self, reverse, long cycles and duplicate without partial writes", async () => {
     const depend = canvasTools(toolContext(service, { sessionId: topicSessionId })).find((t) => t.name === "canvas_depend")!;
-    for (const [from, to] of [[0, 1], [1, 2]]) expect(await depend.run({ fromTaskId: tasks[from!]!.id, toTaskId: tasks[to!]!.id })).not.toHaveProperty("isError", true);
+    for (const [from, to] of [[1, 2], [2, 3]]) expect(await depend.run({ fromTaskId: tasks[from!]!.id, toTaskId: tasks[to!]!.id })).not.toHaveProperty("isError", true);
     const before = current();
-    for (const [from, to] of [[0, 0], [1, 0], [2, 0], [0, 1]]) {
+    for (const [from, to] of [[1, 1], [2, 1], [3, 1], [1, 2]]) {
       expect(await depend.run({ fromTaskId: tasks[from!]!.id, toTaskId: tasks[to!]!.id })).toHaveProperty("isError", true);
       expect(current()).toEqual(before);
     }
     expect(await depend.run({ fromTaskId: tasks[0]!.id, toTaskId: tasks[3]!.id })).not.toHaveProperty("isError", true);
-    expect(await depend.run({ fromTaskId: tasks[2]!.id, toTaskId: tasks[3]!.id })).not.toHaveProperty("isError", true);
+    expect(await depend.run({ fromTaskId: tasks[1]!.id, toTaskId: tasks[0]!.id })).not.toHaveProperty("isError", true);
   });
 
   it("reads historical duplicates and cycles, saves movement and labels, and repairs one line at a time", () => {

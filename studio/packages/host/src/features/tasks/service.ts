@@ -9,17 +9,20 @@ import { managesTask } from "../../core/role.js";
 import { fillDefaults, readModelPrefs } from "../../core/model-prefs.js";
 import { checkSetups } from "../sessions/setups.js";
 import { assertBotTaskEnabled, isBotTask } from "../bots/data.js";
-import { isPlaneBotWorker, planeBotWorkerSession, planeBotWorkspaceId } from "../../store/plane-bot.js";
+import { assertPlaneManagedBase, isPlaneBotWorker, planeBotWorkerSession, planeBotWorkspaceId, planeManagedMemberVersion, planeManagedScope } from "../../store/plane-bot.js";
 import { supportsBotRuntime } from "@amo-studio/protocol";
 import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { TaskLeadPromotion } from "./lead-promotion.js";
 import { currentMessagePurpose, keepsAcceptance } from "../../runtime/message-purpose.js";
 import { publicMessagePurpose } from "../../core/public-message-purpose.js";
+import { BotLeadStore, leadSessionShape } from "../../store/bot-leads.js";
+import { appointmentRequired, assertDistinctLeadChain } from "../../core/bot-lead-access.js";
 
 /** Tasks: creating, renaming, moving, archiving, their sessions; bringing older data into structure v2. */
-export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions" | "topics"> {
+export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remote" | "sessions"> {
   latestDelivery: (taskId: Id) => TaskResult | undefined = () => undefined;
-  readonly leadPromotion = new TaskLeadPromotion(this.host, this);
+  readonly leadPromotion = new TaskLeadPromotion(this.host);
+  leadHandoffsUnblocked?: () => void;
   private readonly sessionStarts = new Map<Id, number>();
   private readonly workSessionStarts = new Map<Id, number>();
   private readonly sessionStartWaiters = new Map<Id, Set<() => void>>();
@@ -102,13 +105,21 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   private refreshLeadColumn(taskId: Id, allowEmpty = false): void {
     const task = this.store.getTask(taskId);
     if (!task?.lead || task.archivedAt || task.remote) return;
-    if (this.hasPendingManagedWork(taskId)) {
+    if (this.hasPendingManagedWork(taskId) || (task.column === "review" && this.planeRootNeedsDelivery(taskId))) {
       clearTimeout(this.settling.get(taskId));
       this.settling.delete(taskId);
       if (this.followsSessions(taskId, "review") || this.followsSessions(taskId, "done")) this.updateTask(taskId, { column: "doing" });
     } else if (this.followsSessions(taskId, "doing") && (allowEmpty || taskManagement(this.store.listTasks(), taskId).descendants.length)) {
       this.sessionStopped(taskId);
     }
+  }
+
+  /** Plane roots are reviewed against a specific approved delivery, even when the lead stops before allocating work. */
+  private planeRootNeedsDelivery(taskId: Id): boolean {
+    const plane = planeManagedScope(this.store, taskId);
+    if (plane?.root_task_id !== taskId || !plane.approved_at) return false;
+    const result = this.latestDelivery(taskId);
+    return result?.planePlanHash !== plane.plan_hash || !["submitted", "accepted"].includes(result.state);
   }
 
   private refreshManagerColumns(taskId: Id, previousManagerId?: Id | null): void {
@@ -134,7 +145,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       this.settling.delete(taskId);
       try {
         if (!this.followsSessions(taskId, "doing")) return;
-        if (this.hasStartingSession(taskId) || this.store.listSessions({ taskId }).some(sessionMoving) || this.hasPendingManagedWork(taskId)) return;
+        if (this.hasStartingSession(taskId) || this.store.listSessions({ taskId }).some(sessionMoving) || this.hasPendingManagedWork(taskId) || this.planeRootNeedsDelivery(taskId)) return;
         this.updateTask(taskId, { column: "review" });
       } catch {
         // The Host is closing (its database already is).
@@ -221,6 +232,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
    * session starts at once; without, the task is only filed (待办 unless another column is given).
    */
   async createTask(input: NewTaskInput, link?: (task: Task) => void): Promise<{ task: Task; session: Session | null }> {
+    if (input.lead === true) appointmentRequired();
+    if (input.managerTaskId && planeManagedScope(this.store, input.managerTaskId)) throw new HostError("conflict", "请在 Plane 主控的已批准计划下派工。");
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.firstSession && typeof input.firstMessage === "object" && input.firstMessage !== null) {
@@ -264,7 +277,8 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
   }
 
   /** The same task creation rules, without a runtime await: plans can file their whole split atomically. */
-  createTaskRecord(input: Omit<NewTaskInput, "firstSession">, link?: (task: Task) => void): Task {
+  createTaskRecord(input: Omit<NewTaskInput, "firstSession">, link?: (task: Task) => void, planePlanHash?: string): Task {
+    if (input.lead === true && !link) appointmentRequired();
     const workspace = input.workspaceId ? this.requireLiveWorkspace(input.workspaceId) : this.commonWorkspace();
     const topic = input.topicId ? this.requireLiveTopic(input.topicId) : null;
     if (input.column !== undefined && !TASK_COLUMNS.includes(input.column)) throw new HostError("bad_request", `unknown column ${String(input.column)}`);
@@ -274,12 +288,20 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const title = input.title?.trim() || firstMessage.split("\n")[0]!.slice(0, 60);
     const column = input.column ?? "todo";
     const managerTaskId = this.checkManager({ id: "", workspaceId: workspace.id, topicId: topic?.id ?? null }, input.managerTaskId ?? null);
+    const plane = managerTaskId ? planeManagedScope(this.store, managerTaskId) : undefined;
+    if (plane && (plane.plan_hash !== planePlanHash || plane.workspace_id !== workspace.id)) throw new HostError("conflict", "Plane 工单下级须从已批准的本地项目和派工计划创建。");
     const description = input.description?.trim() ?? "";
     if (description.length > TASK_DESCRIPTION_MAX) throw new HostError("bad_request", "任务说明过长。");
     const create = () => this.store.createTask({ title, workspaceId: workspace.id, topicId: topic?.id ?? null, column, lead: input.lead === true, managerTaskId, description, firstMessage, firstMessageAttachments });
-    const task = link ? this.store.transaction(() => {
+    const appointments = new BotLeadStore(this.store);
+    let managedCard = false;
+    for (let id = managerTaskId; id && !managedCard; id = this.store.getTask(id)?.managerTaskId ?? null) managedCard = !!appointments.currentTerm(id);
+    const task = managedCard || link ? this.host.transaction(() => {
       const created = create();
-      link(created);
+      if (plane) this.store.db.prepare("INSERT INTO plane_bot_managed_members (task_id, job_id, plan_hash) VALUES (?, ?, ?)").run(created.id, plane.job_id, plane.plan_hash);
+      link?.(created);
+      if (created.lead && !appointments.currentTerm(created.id)) appointmentRequired(created.id);
+      if (managedCard) this.f.canvases.ensureManagementCards(created.id);
       return this.store.getTask(created.id)!;
     }) : create();
     this.publish({ type: "task.upserted", task });
@@ -314,11 +336,25 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     const current = this.requireTask(id);
     if (current.remote) throw new HostError("read_only", `这是 ${current.remote.name} 上的远程任务：状态、说明和专题跟着那台电脑走，这里不能改（名字可以改，会改到那边）`);
+    if (patch.lead === true && !new BotLeadStore(this.store).currentTerm(id)) appointmentRequired(id);
     const clean: Partial<Pick<Task, "title" | "column" | "workspaceId" | "topicId" | "description" | "firstMessage" | "firstMessageAttachments" | "lead" | "relayAuto" | "managerTaskId">> = {};
     const children = this.store.listTasks().filter((t) => t.managerTaskId === id);
     if (patch.lead === false && children.length) throw new HostError("conflict", "请先转交或解除所有直属任务，再取消主控。");
     const nextTopic = patch.topicId === undefined ? current.topicId : (patch.topicId === null || patch.topicId === "" ? null : String(patch.topicId));
     const nextWorkspace = patch.workspaceId === undefined ? current.workspaceId : (patch.workspaceId ? String(patch.workspaceId) : this.commonWorkspace().id);
+    const plane = planeManagedScope(this.store, id);
+    if (plane && (nextWorkspace !== current.workspaceId || nextTopic !== current.topicId || (patch.managerTaskId !== undefined && (patch.managerTaskId || null) !== (current.managerTaskId ?? null)))) {
+      throw new HostError("conflict", "Plane 专属主控和下级的项目、专题及归属由已批准计划绑定。");
+    }
+    if (!plane && typeof patch.managerTaskId === "string" && planeManagedScope(this.store, patch.managerTaskId)) throw new HostError("conflict", "Plane 工单的执行任务须由主控按批准计划派工。");
+    const assignments = new BotLeadStore(this.store);
+    if (patch.column === "done" && current.lead && !current.managerTaskId && assignments.currentTerm(id)) {
+      const result = this.latestDelivery(id);
+      if (result?.state !== "accepted" || result.reviewedBy !== "user") throw new HostError("conflict", "请在「交付与验收」中验收当前最终交付后再完成任务。");
+    }
+    if (assignments.currentTerm(id) && (patch.lead === false || nextTopic !== current.topicId || nextWorkspace !== current.workspaceId)) {
+      throw new HostError("conflict", "已有机器人任期，请在主控卡处理任期后再调整任务范围。");
+    }
     if ((nextTopic !== current.topicId || (!nextTopic && nextWorkspace !== current.workspaceId)) && (children.length || current.managerTaskId)) throw new HostError("conflict", "请先转交或解除直属主控和直属任务，再移动专题或项目。");
     if (patch.managerTaskId !== undefined) {
       if (current.archivedAt) throw new HostError("read_only", "请先恢复任务，再设置直属主控。");
@@ -331,18 +367,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     if (patch.lead !== undefined) {
       if (typeof patch.lead !== "boolean") throw new HostError("bad_request", "lead must be true or false");
-      if (patch.lead === true && !current.lead && this.hasStartingSession(id)) throw new HostError("conflict", "任务有会话正在创建，等待创建结束后再设置主控。");
-      // A running CLI keeps the tools and permissions of its current turn. Do not claim the task is read-only before
-      // that turn (or its terminal writer) has ended; changing role must never silently interrupt the person's work.
-      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && (sessionMoving(s) || this.store.findItems(s.id, "background", { state: "running" }).length > 0))) {
-        throw new HostError("conflict", "请先停止这个任务里正在运行的会话，并收回终端中的会话，再标记主控；主控管理任务和画布，具体实现和文件修改需分配给执行任务。");
-      }
-      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtimeRef && (s.runtime === "codex" || s.runtime === "dsh"))) {
-        throw new HostError("conflict", "已有 Codex 或 DSH 会话不能安全切成主控；请先归档这些旧会话，再标记主控并新开只读会话。旧对话仍可读取。");
-      }
-      if (patch.lead === true && !current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt && s.runtime === "pi")) {
-        throw new HostError("conflict", "Pi 暂不支持只读主控会话；请先归档 Pi 会话，再标记主控并选择支持只读的模型。旧对话仍可读取。");
-      }
+      if (patch.lead === false && current.lead && this.store.listSessions({ taskId: id }).some((s) => !s.archivedAt)) throw new HostError("conflict", "请先归档原主控会话，再取消主控。");
       clean.lead = patch.lead;
     }
     if (patch.relayAuto !== undefined) {
@@ -360,7 +385,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     if (patch.column !== undefined) {
       if (!TASK_COLUMNS.includes(patch.column as TaskColumn)) throw new HostError("bad_request", `unknown column ${String(patch.column)}`);
       clean.column = patch.column as TaskColumn;
-      if (clean.column === "review" && current.lead && this.hasPendingManagedWork(id)) clean.column = "doing";
+      if (clean.column === "review" && current.lead && (this.hasPendingManagedWork(id) || this.planeRootNeedsDelivery(id))) clean.column = "doing";
     }
     if (patch.workspaceId !== undefined) {
       const workspaceId = patch.workspaceId === null || patch.workspaceId === "" ? this.commonWorkspace().id : this.requireLiveWorkspace(String(patch.workspaceId)).id;
@@ -374,23 +399,26 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     }
     if (patch.topicId !== undefined) {
       const topicId = patch.topicId === null || patch.topicId === "" ? null : this.requireLiveTopic(String(patch.topicId)).id;
-      if (topicId !== current.topicId) {
-        clean.topicId = topicId;
-        if (current.topicId) this.f.canvases.leaveCanvas(current.topicId, id);
-      }
+      if (topicId !== current.topicId) clean.topicId = topicId;
     }
-    const task = this.store.updateTask(id, clean);
-    // A former lead can load writable tools as a worker. Its old isolation proof must not survive another promotion.
-    if (clean.lead === false && current.lead) {
-      for (const session of this.store.listSessions({ taskId: id })) {
-        this.store.setKv(`codex-lead-readonly:${session.id}`, "");
-        this.store.setKv(`dsh-lead-readonly:${session.id}`, "");
+    const reassigning = clean.managerTaskId !== undefined && clean.managerTaskId !== (current.managerTaskId ?? null);
+    if (reassigning) this.checkManagementPlacement({ ...current, ...clean });
+    const update = () => {
+      if (clean.topicId !== undefined && current.topicId) this.f.canvases.leaveCanvas(current.topicId, id);
+      const task = this.store.updateTask(id, clean);
+      // A former lead can load writable tools as a worker. Its old isolation proof must not survive another promotion.
+      if (clean.lead === false && current.lead) {
+        for (const session of this.store.listSessions({ taskId: id })) {
+          this.store.setKv(`codex-lead-readonly:${session.id}`, "");
+          this.store.setKv(`dsh-lead-readonly:${session.id}`, "");
+        }
       }
-    }
-    this.publish({ type: "task.upserted", task });
-    // A reference card to it on its new topic's canvas becomes its own card there.
-    if (clean.topicId) this.f.canvases.joinCanvas(clean.topicId, id);
-    return task;
+      this.publish({ type: "task.upserted", task });
+      if (clean.topicId) this.f.canvases.joinCanvas(clean.topicId, id);
+      if (reassigning && task.topicId) this.f.canvases.ensureAppointedCards(task.topicId);
+      return task;
+    };
+    return reassigning || clean.topicId !== undefined ? this.host.transaction(update) : update();
   }
 
   /** Archives the task with all its sessions (forks and subagents included). */
@@ -403,8 +431,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       this.f.remote.dropCopy(task);
       return { ...task, archivedAt: new Date().toISOString() };
     }
-    const archived = this.store.updateTask(id, { archivedAt: new Date().toISOString() });
-    this.publish({ type: "task.upserted", task: archived });
+    this.host.transaction(() => {
+      const terms = new BotLeadStore(this.store);
+      const term = terms.currentTerm(id);
+      if (term) terms.setRunState(term.termId, "paused", "任务归档前已暂停主控，恢复后可手动继续。");
+      const archived = this.store.updateTask(id, { archivedAt: new Date().toISOString() });
+      this.publish({ type: "task.upserted", task: archived });
+    });
     await this.archiveSessions(this.store.listSessions({ taskId: id }));
     return this.store.getTask(id)!;
   }
@@ -448,20 +481,53 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     return manager.id;
   }
 
+  private checkManagementPlacement(task: Task): void {
+    this.f.canvases.checkManagementWait(task);
+    assertDistinctLeadChain(this.store, task);
+  }
+
+  /** Preflight before the topic or any of its sessions are restored. */
+  checkTopicRestore(topicId: Id, restoringTaskIds: ReadonlySet<Id>): void {
+    this.f.canvases.checkManagementRestore(topicId, restoringTaskIds);
+    const topicTasks = this.store.listTasks().filter((task) => task.topicId === topicId && (!task.archivedAt || restoringTaskIds.has(task.id)));
+    const tasks = new Map(topicTasks.map((task) => [task.id, task]));
+    const appointments = new BotLeadStore(this.store);
+    const botIds = new Map(topicTasks.filter((task) => task.lead).map((task) => [task.id, appointments.currentTerm(task.id)?.botId]));
+    for (const task of topicTasks) {
+      if (!restoringTaskIds.has(task.id)) continue;
+      const owners = new Set([task.id]), bots = new Set<Id>();
+      const bot = botIds.get(task.id);
+      if (bot) bots.add(bot);
+      for (let id = task.managerTaskId; id; id = tasks.get(id)?.managerTaskId) {
+        const manager = tasks.get(id), managerBot = botIds.get(id);
+        if (!manager?.lead || manager.remote || owners.has(id)) throw new HostError("conflict", "管理链异常，请先修复或单独恢复直属主控。");
+        if (managerBot && bots.has(managerBot)) throw new HostError("conflict", "恢复会让同一机器人同时担任上下级主控，请先处理相关任期。");
+        owners.add(id);
+        if (managerBot) bots.add(managerBot);
+      }
+    }
+  }
+
   /** Restores the task and the sessions that were archived with it (not the ones archived earlier on their own). */
   async unarchiveTask(id: Id): Promise<Task> {
     const task = this.requireTask(id);
     if (!task.archivedAt) return task;
+    const plane = planeManagedScope(this.store, id);
+    if (plane && plane.root_task_id !== id && planeManagedMemberVersion(this.store, id) !== plane.plan_hash) throw new HostError("conflict", "此任务属于旧版 Plane 计划，历史结果及工作树仍可查看。");
     if (task.managerTaskId) this.checkManager(task, task.managerTaskId);
     if (task.topicId && this.store.getTopic(task.topicId)?.archivedAt) throw new HostError("conflict", "its topic is archived; restore the topic or move the task out of it first");
     const since = task.archivedAt;
-    const restored = this.store.updateTask(id, { archivedAt: null });
-    this.publish({ type: "task.upserted", task: restored });
-    await this.unarchiveSessions(this.store.listSessions({ taskId: id }), since);
+    this.checkManagementPlacement({ ...task, archivedAt: null });
+    this.host.transaction(() => {
+      const restored = this.store.updateTask(id, { archivedAt: null });
+      this.publish({ type: "task.upserted", task: restored });
+      if (restored.topicId) this.f.canvases.ensureAppointedCards(restored.topicId);
+    });
+    if (!task.lead) await this.unarchiveSessions(this.store.listSessions({ taskId: id }), since);
     return this.store.getTask(id)!;
   }
 
-  async addSession(taskId: Id, input: NewSessionInput): Promise<Session> {
+  async addSession(taskId: Id, input: NewSessionInput, beforeDispatch?: () => void, confirmedEarly?: readonly Id[]): Promise<Session> {
     const task = this.requireTask(taskId);
     if (task.archivedAt) throw new HostError("read_only", "archived tasks cannot get new sessions");
     // A copy of a remote task (远程 step 2): the session starts where the task runs, on a model allowed there.
@@ -471,7 +537,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     this.firstImages(input);
     const first = this.store.listSessions({ taskId }).length === 0;
     return this.trackSessionStart(taskId, async () => {
-      const session = await this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input);
+      const session = await this.startSession({ taskId: task.id, topicId: null }, this.requireWorkspace(task.workspaceId), input, undefined, beforeDispatch, confirmedEarly);
       // Keep first-turn initialization active through the column event: the same frozen requirement is already
       // in the initial input, so the inbox must not race it with another automatic notification.
       if (first && (input.text?.trim() || input.attachments?.length) && this.followsSessions(taskId, "todo")) {
@@ -511,7 +577,7 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     for (const s of sessions.filter((x) => !x.parentId && x.archivedAt && x.archivedAt >= since)) await this.wrap(() => this.runtime.unarchive(s.id));
   }
 
-  async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
+  async startSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string, beforeDispatch?: () => void, confirmedEarly?: readonly Id[]): Promise<Session> {
     assertBotTaskEnabled(this.store, owner.taskId);
     if (isBotTask(this.store, owner.taskId) && !supportsBotRuntime(this.requireProfile(input.profileId).runtime)) throw new HostError("bad_request", "请选择支持 Bot 的模型渠道。");
     const planeWorkspace = owner.taskId ? planeBotWorkspaceId(this.store, owner.taskId) : undefined;
@@ -521,12 +587,13 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       cwd ??= planeBotWorkerSession(this.store, owner.taskId, planeWorkspace)?.cwd ?? undefined;
       if (!cwd || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new HostError("conflict", "执行任务的独立工作树不可用，请检查原执行会话的工作目录。");
     }
-    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd), publicMessagePurpose(input.purpose) === "inquiry");
+    return this.trackSessionStart(owner.taskId, () => this.startPreparedSession(owner, workspace, input, cwd, beforeDispatch, confirmedEarly), publicMessagePurpose(input.purpose) === "inquiry");
   }
 
   /** Includes forks: an in-flight runtime request may not have saved its session yet. */
   async trackSessionStart<T>(taskId: Id | null, start: () => Promise<T>, preservesAcceptance = false): Promise<T> {
-    this.leadPromotion.assertAvailable(taskId);
+    if (taskId && new BotLeadStore(this.store).currentTerm(taskId)) throw new HostError("read_only", "任命主控使用任务上指定的只读会话。");
+    if (taskId && this.store.getTask(taskId)?.lead) appointmentRequired(taskId);
     if (taskId) {
       this.sessionStarts.set(taskId, (this.sessionStarts.get(taskId) ?? 0) + 1);
       if (!preservesAcceptance) this.workSessionStarts.set(taskId, (this.workSessionStarts.get(taskId) ?? 0) + 1);
@@ -550,13 +617,28 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
           for (const resolve of waiters ?? []) resolve();
         }
         this.refreshManagerColumns(taskId);
-        void this.leadPromotion.flush();
+        this.leadHandoffsUnblocked?.();
       }
     }
   }
 
   hasStartingSession(taskId: Id): boolean {
     return this.sessionStarts.has(taskId);
+  }
+
+  /** Provision an empty replacement using the worker's actual execution settings; the relay commits its basis and first input. */
+  startRelayReplacement<T>(previous: Session, check: () => void, installed: (session: Session) => Promise<T>, reopenSessionId?: Id): Promise<T> {
+    const task = this.requireTask(previous.taskId!);
+    const workspace = this.requireLiveWorkspace(previous.workspaceId);
+    this.requireProfile(previous.profileId);
+    check();
+    return this.trackSessionStart(task.id, async () => {
+      const session = await this.wrap(() => this.runtime.startSession({
+        taskId: task.id, topicId: null, profileId: previous.profileId, workspace, cwd: previous.cwd ?? undefined, options: previous.options, firstMessagePurpose: "reopen",
+        reopenSessionId,
+      }, check));
+      return installed(session);
+    }, true);
   }
 
   /** Await starts that have not persisted their session yet, including a failed runtime request. */
@@ -576,6 +658,12 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
       while (this.hasStartingSession(taskId)) await this.waitForSessionStarts(taskId);
       const task = this.requireTask(taskId);
       if (task.archivedAt) throw new HostError("read_only", "任务已归档，不能接收新消息。");
+      const term = new BotLeadStore(this.store).currentTerm(taskId);
+      if (term) {
+        const session = term.sessionId ? this.store.getSession(term.sessionId) : undefined;
+        if (!session || !leadSessionShape(this.store, session, term)) throw new HostError("conflict", "正在等待主控专属会话启动。");
+        return session;
+      }
       const session = this.store.listSessions({ taskId }).filter((s) => s.kind === "main" && !s.archivedAt && s.writer !== "archived").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
       return session ?? this.addSession(taskId, { profileId });
     })().finally(() => this.mainSessionStarts.delete(taskId));
@@ -583,9 +671,27 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     return pending;
   }
 
-  private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string): Promise<Session> {
+  prepareWorktree?: (taskId: Id, beforeAllocate?: () => void) => Promise<{ cwd: string } | null>;
+
+  private async startPreparedSession(owner: { taskId: Id | null; topicId: Id | null }, workspace: Workspace, input: NewSessionInput, cwd?: string, beforeDispatch?: () => void, confirmedEarly?: readonly Id[]): Promise<Session> {
     const purpose = publicMessagePurpose(input.purpose);
-    this.leadPromotion.assertAvailable(owner.taskId);
+    const original = owner.taskId ? this.requireTask(owner.taskId) : undefined;
+    const check = () => {
+      if (original) {
+        const current = this.requireTask(original.id);
+        const plane = planeManagedScope(this.store, current.id);
+        if (plane && !current.lead && purpose !== "inquiry") assertPlaneManagedBase(this.store, plane);
+        if (current.archivedAt || current.remote || current.workspaceId !== original.workspaceId || current.topicId !== original.topicId || current.managerTaskId !== original.managerTaskId) {
+          throw new HostError("conflict", "会话启动前任务归属已变化，请刷新后重试。");
+        }
+        this.requireLiveWorkspace(workspace.id);
+        if (current.topicId) this.requireLiveTopic(current.topicId);
+        if (new BotLeadStore(this.store).currentTerm(current.id)) throw new HostError("read_only", "任命主控使用任务上指定的只读会话。");
+        if (current.lead) appointmentRequired(current.id);
+      }
+      beforeDispatch?.();
+    };
+    check();
     const options = await this.withDefaults(input.profileId, sessionOptions(input.options));
     // MCP 设置 (2026-11-04): no level of its own for a task; a new session goes on with the task's latest choices.
     if (!options.mcp) {
@@ -595,10 +701,19 @@ export class TasksFeature extends Feature<"canvases" | "config" | "mcp" | "remot
     const images = this.firstImages(input);
     // A first message with images goes as an ordinary message once the session exists (the runtimes start with text only).
     const resumeFrom = this.resumeFrom(input);
-    this.leadPromotion.assertAvailable(owner.taskId);
+    check();
+    if (owner.taskId && this.prepareWorktree) {
+      const checkout = await this.prepareWorktree(owner.taskId, check);
+      if (checkout) {
+        if (resumeFrom) throw new HostError("conflict", "已分配工作树的任务须在该目录开启 Studio 会话。");
+        cwd ??= checkout.cwd;
+      }
+    }
+    check();
     const deferredFirst = purpose === "inquiry" || purpose === "reopen" || images.length > 0;
-    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, ...(cwd ? { cwd } : {}), ...(input.text && !deferredFirst ? { text: input.text } : {}), options, ...(resumeFrom ? { resumeFrom } : {}) }));
-    if (deferredFirst && (input.text?.trim() || images.length)) await this.f.sessions.sendMessage(session.id, input.text ?? "", images, [], purpose ? { purpose } : {});
+    const firstMessagePurpose = input.text?.trim() || images.length ? purpose ?? "work" : undefined;
+    const session = await this.wrap(() => this.runtime.startSession({ ...owner, profileId: input.profileId, workspace, cwd, ...(input.text && !deferredFirst ? { text: input.text } : {}), options, resumeFrom, firstMessagePurpose, beforeDispatch: check, confirmedEarly }));
+    if (deferredFirst && firstMessagePurpose) await this.f.sessions.sendMessage(session.id, input.text ?? "", images, [], { purpose: firstMessagePurpose, beforeDispatch: check, confirmedEarly });
     // The owner's updatedAt moves with its sessions so the board can sort by activity.
     if (owner.taskId) this.publish({ type: "task.upserted", task: this.store.updateTask(owner.taskId, {}) });
     else if (owner.topicId) this.publish({ type: "topic.upserted", topic: this.store.updateTopic(owner.topicId, {}) });

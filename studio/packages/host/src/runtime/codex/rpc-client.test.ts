@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { startFakeAppServer, type FakeAppServer } from "@amo-studio/testkit";
@@ -63,6 +64,28 @@ describe("CodexRpcClient", () => {
   it("refuses a bad token", async () => {
     server = await startFakeAppServer();
     await expect(CodexRpcClient.connect({ url: server.url, token: "wrong" })).rejects.toThrow(/refused|401/);
+  });
+
+  it("aborts initialization and closes the socket when startup is cancelled", async () => {
+    const http = createServer();
+    await listenInStudioRange(http);
+    const silent = new WebSocketServer({ server: http });
+    const connected = once(silent, "connection");
+    const controller = new AbortController();
+    try {
+      const connecting = CodexRpcClient.connect({ url: `ws://127.0.0.1:${(http.address() as AddressInfo).port}`, token: "t", signal: controller.signal });
+      const cancelled = expect(connecting).rejects.toThrow("startup cancelled");
+      const [socket] = await connected;
+      const closed = once(socket, "close");
+      await once(socket, "message"); // initialize, deliberately unanswered
+      controller.abort(new Error("startup cancelled"));
+      await cancelled;
+      await closed;
+      expect(silent.clients.size).toBe(0);
+    } finally {
+      for (const c of silent.clients) c.terminate();
+      await new Promise<void>((resolve) => silent.close(() => http.close(() => resolve())));
+    }
   });
 
   it("delivers server requests and sends answers back", async () => {

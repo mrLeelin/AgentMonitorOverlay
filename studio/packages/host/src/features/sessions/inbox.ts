@@ -6,6 +6,7 @@ import { Feature, type FeatureHost } from "../../core/feature.js";
 import type { SessionsFeature } from "./service.js";
 import { HostError, isRemoteCopy } from "../../core/shared.js";
 import { managesTask } from "../../core/role.js";
+import { BotLeadStore } from "../../store/bot-leads.js";
 
 // 会话收件箱 (2026-11-04, plans/done/message-delivery.md): messages from agents and from Studio itself — a 中转 reply, 值守
 // going on in a session, 传话 (task_message), a forwarded mail, session_send, session_start's report — go into the
@@ -33,12 +34,16 @@ interface InboxMessageOptions {
   images?: MessageImage[];
   answersDecisionId?: Id;
   fromPerson?: boolean;
+  /** The text already ends with the session's role update (SessionsFeature.sendMessage wrote it); not stored. */
+  roleIncluded?: boolean;
   afterTurn?: boolean;
   queuedSkillText?: string;
   queuedFromDevice?: { account: string; device: string };
 }
 
 export class SessionInbox extends Feature<"sharedContext"> {
+  /** Keep durable messages held while a managed session's runtime is blocked or being reconciled. */
+  canAutoDispatch: (sessionId: Id) => boolean = () => true;
   /** Durable producers recheck ownership/state immediately before dispatch or manual retry. */
   validateProducerMessage: (item: SessionItem) => void = () => undefined;
   constructor(
@@ -122,8 +127,8 @@ export class SessionInbox extends Feature<"sharedContext"> {
     // Durable producers may retry after a Host restart: the same inbox row must not start another turn.
     const existing = messageId ? this.store.getItem(messageId) : undefined;
     if (existing && (existing.sessionId !== sessionId || existing.type !== "user")) throw new HostError("conflict", "inbox message id belongs to another message");
-    // The person's message already passed through SessionsFeature.sendMessage with the current role appended.
-    const role = options.fromPerson ? undefined : this.sessions.roleUpdate(sessionId);
+    // The person's message, and any message SessionsFeature.sendMessage queued, already has the current role appended.
+    const role = options.fromPerson || options.roleIncluded ? undefined : this.sessions.roleUpdate(sessionId);
     // A durable id freezes its text, purpose and requirement. A replacement always has a new id and source link.
     const item = existing ?? this.append(s, this.sessions.withContext(sessionId, role ? this.sessions.withRole(text, role.lines) : text), relayFromSessionId, messageId, options);
     if (!existing) role?.told();
@@ -161,6 +166,21 @@ export class SessionInbox extends Feature<"sharedContext"> {
     if (!edit.text.trim()) throw new HostError("bad_request", "消息不能为空。");
     if (item.images?.length || item.queuedSkillText || splitAnnotationRefs(own).refs.length || splitFileRefItems(own).refs.length || /\n\n(?:提到的(?:任务|会话|项目)：|子会话的(?:开法|设定)（|「@快速提交」)|\[AMO_SHARED_CONTEXT:/u.test(own) || !item.text.startsWith(own)) throw new HostError("bad_request", "含附件或特殊引用的排队消息暂不支持编辑。");
     this.publish({ type: "item.updated", item: this.store.replaceItem({ ...item, text: edit.text + item.text.slice(own.length) }) });
+  }
+
+  retainForLeadHandoff(sessionId: Id, itemId: Id): void {
+    const session = this.requireSession(sessionId);
+    const task = session.taskId ? this.store.getTask(session.taskId) : undefined;
+    const terms = new BotLeadStore(this.store);
+    if (!task || task.archivedAt || session.archivedAt || session.writer !== "workbench" ||
+        (!terms.pendingUpgrade(task.id) && (!task.lead || terms.currentTerm(task.id)))) {
+      throw new HostError("conflict", "该会话当前没有待交接的主控。");
+    }
+    const item = this.store.getItem(itemId);
+    if (item?.type !== "user" || item.sessionId !== sessionId || !item.fromPerson || (item.delivery !== "held" && item.delivery !== "unsent") || this.dispatchingItems.has(itemId)) {
+      throw new HostError("conflict", "请选择尚未送出的用户消息。");
+    }
+    this.expire(itemId, "留作主控交接。");
   }
 
   cancelBotRequest(sessionId: Id, itemId: Id): void {
@@ -208,9 +228,15 @@ export class SessionInbox extends Feature<"sharedContext"> {
   }
 
   private queueContext(session: Session): void {
-    if (session.kind !== "main" || session.archivedAt || session.writer === "archived" || isRemoteCopy(session) || this.sessions.startingTaskSession(session.taskId) || this.contextQueueing.has(session.id)) return;
+    if (session.kind !== "main" || session.archivedAt || session.writer === "archived" || isRemoteCopy(session) || this.sessions.startingTaskSession(session.taskId) || this.contextQueueing.has(session.id) || !this.canAutoDispatch(session.id)) return;
     const notices = this.f.sharedContext.pendingNotifications(session.id);
     if (!notices.length) return;
+    // The first work input can carry the same frozen context while its native echo is still on the way.
+    if (inTurn(session.status) || this.runtime.hasPendingDispatch?.(session.id)) {
+      const [first] = this.store.findItems(session.id, "user", {}, { limit: 1 });
+      if (first?.type === "user" && (first.delivery === undefined || first.delivery === "waiting") &&
+          !first.id.startsWith("i-context-") && notices.every((notice) => first.text.includes(notice.text))) return;
+    }
     this.contextQueueing.add(session.id);
     void (async () => {
       for (const notice of notices) {
@@ -254,7 +280,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
       for (const it of held) this.mark(it.id, "unsent");
       return this.forget(sessionId);
     }
-    if (this.pauses().has(sessionId)) return;
+    if (this.pauses().has(sessionId) || !this.canAutoDispatch(sessionId)) return;
     const busy = !free(s) && !(withTurn && s.status === "running" && writable(s));
     if (!busy) this.refused.delete(sessionId);
     // Busy: only the direct manager's work 传话 and answers go in, into a running work turn the runtime can steer
@@ -271,6 +297,7 @@ export class SessionInbox extends Feature<"sharedContext"> {
     // that would not be a steer.
     let before: number | null = null;
     for (const it of held) {
+      if (!this.canAutoDispatch(sessionId)) break;
       if (!goes(this.store.getItem(it.id))) continue; // without waiting for the last one's turn (2026-11-17)
       if (before !== null) await this.turnSeen(sessionId, before);
       const current = this.store.getItem(it.id);

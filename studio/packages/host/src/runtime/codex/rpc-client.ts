@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { ClientRequest, IncomingMessage } from "node:http";
 import WebSocket from "ws";
 import type { codex } from "@amo-studio/protocol";
 
@@ -69,6 +70,7 @@ export interface ConnectOptions {
   clientName?: string;
   clientVersion?: string;
   connectTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
@@ -90,23 +92,52 @@ export class CodexRpcClient extends EventEmitter<CodexRpcClientEvents> {
   }
 
   private async open(options: ConnectOptions): Promise<void> {
+    const signal = options.signal;
+    signal?.throwIfAborted();
     const ws = new WebSocket(options.url, { headers: { Authorization: `Bearer ${options.token}` }, handshakeTimeout: options.connectTimeoutMs ?? 5000 });
     this.ws = ws;
-    await new Promise<void>((resolve, reject) => {
-      ws.once("open", () => resolve());
-      ws.once("error", (err) => reject(err));
-      ws.once("unexpected-response", (_req, res) => reject(new Error(`app-server refused the connection: HTTP ${res.statusCode}`)));
-    });
     ws.on("message", (data) => this.onMessage(String(data)));
     ws.on("close", () => this.onClose());
     ws.on("error", () => {
       // 'close' follows and does the cleanup.
     });
-    await this.request("initialize", {
-      clientInfo: { name: options.clientName ?? "amo-studio", title: "AMO Studio", version: options.clientVersion ?? "0.0.0" },
-      capabilities: { experimentalApi: true },
-    } as ParamsOf<"initialize">);
-    this.notify("initialized");
+    const terminate = () => {
+      ws.terminate();
+      this.onClose();
+    };
+    const abort = terminate;
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const opened = () => { cleanup(); resolve(); };
+        const failed = (error: Error) => { cleanup(); reject(error); };
+        const closed = () => failed(new ConnectionClosedError("connect"));
+        const refused = (_req: ClientRequest, res: IncomingMessage) => failed(new Error(`app-server refused the connection: HTTP ${res.statusCode}`));
+        const cleanup = () => {
+          ws.off("open", opened);
+          ws.off("error", failed);
+          ws.off("close", closed);
+          ws.off("unexpected-response", refused);
+        };
+        ws.once("open", opened);
+        ws.once("error", failed);
+        ws.once("close", closed);
+        ws.once("unexpected-response", refused);
+      });
+      signal?.throwIfAborted();
+      await this.request("initialize", {
+        clientInfo: { name: options.clientName ?? "amo-studio", title: "AMO Studio", version: options.clientVersion ?? "0.0.0" },
+        capabilities: { experimentalApi: true },
+      } as ParamsOf<"initialize">);
+      signal?.throwIfAborted();
+      this.notify("initialized");
+    } catch (error) {
+      terminate();
+      signal?.throwIfAborted();
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
   }
 
   request<M extends ClientMethod>(method: M, params: ParamsOf<M>, options: { timeoutMs?: number } = {}): Promise<ResponseOf<M>> {

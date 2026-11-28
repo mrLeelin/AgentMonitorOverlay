@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 import { amoToolsFor } from "../../mcp/tools.js";
 
 // 画布审阅 (2026-10-27): items laid out on a topic's canvas, bubbles on its cards, the person's answers back to the
@@ -34,7 +35,7 @@ beforeEach(async () => {
   alpha = store.addWorkspace({ path: join(root, "alpha"), name: "alpha" });
   topic = store.createTopic({ title: "relay 审阅" });
   task = store.createTask({ title: "主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
-  caller = await service.tasks.addSession(task.id, { profileId: "p-ds" });
+  caller = await startLeadFixture(service, task, "p-ds");
   await service.sessions.renameSession(caller.id, "主会话");
   events = [];
   service.on("event", (e) => events.push(e));
@@ -142,7 +143,7 @@ describe("画布审阅", () => {
     expect(service.canvasReview.closeFor(topic.id, { target: "#1" }).closed).toHaveLength(2);
   });
 
-  it("就这条展开聊: a session in the laying session's task, seeded with the item, listed on it", async () => {
+  it("就这条展开聊: a lead's review opens a read-only topic session seeded with the item", async () => {
     await run("canvas_items_post", { group: "审阅", items: [{ title: "协议改了", body: "客户端要一起升", refs: ["packages/relay/src/protocol.ts"] }] });
     const item = items()[0]!;
     await run("canvas_items_post", { items: [{ title: "兼容约束", body: "至少保留一个版本", status: "confirmed" }] });
@@ -150,7 +151,7 @@ describe("画布审阅", () => {
     const related = items()[1]!;
     service.canvases.mutateCanvas(topic.id, (doc) => ({ ...doc, links: [{ id: "context-link", from: related.id, to: item.id, fromSide: "right", toSide: "left", label: "参考" }] }));
     const session = await service.canvasReview.discuss(topic.id, "#1", {});
-    expect(session).toMatchObject({ taskId: task.id, profileId: "p-ds", title: "#1 协议改了" });
+    expect(session).toMatchObject({ taskId: null, topicId: topic.id, profileId: "p-ds", title: "#1 协议改了", options: { permission: "read-only" } });
     expect(store.getSession(session.id)?.startedBy ?? null).toBeNull();
     expect(items()[0]!.threads).toEqual([session.id]);
     await until(() => userTexts(session.id).length > 0);
@@ -235,7 +236,7 @@ describe("画布审阅", () => {
   });
 
   it("separates groups and sources; parked cards do not block the round", async () => {
-    const other = await service.tasks.addSession(task.id, { profileId: "p-ds" });
+    const other = await service.topics.addTopicSession(topic.id, { profileId: "p-ds", workspaceId: alpha.id });
     service.canvasReview.postItems(caller.id, topic.id, { group: "A", items: [{ title: "颜色" }, { title: "以后" }] });
     service.canvasReview.postItems(caller.id, topic.id, { group: "B", items: [{ title: "独立" }] });
     service.canvasReview.postItems(other.id, topic.id, { group: "A", items: [{ title: "另一个来源" }] });
@@ -297,7 +298,8 @@ describe("画布审阅", () => {
     await until(() => service.canvasReview.returns.status(topic.id).rounds[0]?.state === "queued");
     expect(store.getSession(caller.id)?.status).toBe("idle");
     expect(service.sessions.inbox.held(caller.id)).toHaveLength(1);
-    service.sessions.inbox.resume(caller.id);
+    const term = service.botLeads.currentTerm(caller.taskId!)!;
+    service.botLeads.control(caller.taskId!, { action: "resume", operationId: "resume-review-source", expectedTerm: term });
     await until(() => service.sessions.inbox.held(caller.id).length === 0);
   });
 

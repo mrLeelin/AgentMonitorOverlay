@@ -64,6 +64,28 @@ it("keeps notes in the owning Bot folder and rejects stale writes and traversal"
   expect(host.bots.files(other.id).notes).toEqual([]);
 });
 
+it("retries a Bot chat's first direct message in the same session and keeps the home chat", async () => {
+  const { host, store } = start();
+  const bot = host.bots.save(input);
+  const home = await host.bots.home(bot.id);
+  const message = { id: "direct-first", text: "请先用中文给我结论。" };
+  vi.spyOn(host.sessions.inbox, "put").mockRejectedValueOnce(new Error("fixture inbox unavailable"));
+  await expect(host.bots.newChat(bot.id, message)).rejects.toThrow("fixture inbox unavailable");
+  const draft = host.bots.chats(bot.id).find((chat) => chat.id !== home.id)!;
+  const [chat, retry] = await Promise.all([host.bots.newChat(bot.id, message), host.bots.newChat(bot.id, message)]);
+  expect(chat.id).toBe(draft.id);
+  expect(retry.id).toBe(chat.id);
+  expect(host.bots.bot(bot.id).homeSessionId).toBe(home.id);
+  expect(host.bots.chats(bot.id)).toHaveLength(2);
+  await vi.waitFor(() => expect(store.findItems(chat.id, "turn")).toMatchObject([{ state: "completed" }]));
+  expect(store.findItems(chat.id, "user")).toMatchObject([{ text: message.text, fromPerson: true }]);
+  expect(host.bots.requests(null)).toHaveLength(0);
+  await expect(host.bots.newChat(bot.id, { ...message, text: "另一条消息" })).rejects.toThrow("请求编号已用于另一条");
+  await host.bots.patch(bot.id, { enabled: false });
+  await expect(host.bots.newChat(bot.id, { ...message, id: "paused-new" })).rejects.toThrow("这个 Bot 已停用");
+  expect(host.bots.chats(bot.id)).toHaveLength(2);
+});
+
 it("organizes direct chats with the Bot's model once a day and consumes them after writing", async () => {
   const { host, store, servers, runtime } = start();
   const bot = host.bots.save(input);

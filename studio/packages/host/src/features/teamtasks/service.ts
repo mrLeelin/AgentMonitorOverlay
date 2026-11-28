@@ -7,7 +7,7 @@ import { PlaneBotJobs } from "./plane-bot-jobs.js";
 
 type Link = { task_id: string; server: string; ticket_id: string; started: number; awaiting_review: number };
 
-export class TeamTasksFeature extends Feature<"tasks" | "bots" | "orchestration" | "sessions"> {
+export class TeamTasksFeature extends Feature<"tasks" | "bots" | "orchestration" | "sessions" | "botLeads"> {
   readonly board = new TeamBoardHost(this.host);
   readonly planeBots = new PlaneBotJobs(this.host, this.board);
   private client(server?: string): RelayClient {

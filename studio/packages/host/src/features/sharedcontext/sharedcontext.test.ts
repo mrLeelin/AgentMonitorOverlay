@@ -9,6 +9,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, workspaceId: string, topicId: string;
@@ -23,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
 const task = (title: string, lead = false, managerTaskId: string | null = null) => store.createTask({ title, lead, managerTaskId, workspaceId, topicId });
-const session = (owner: Task) => store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "idle", writer: "workbench", runtimeRef: null });
+const session = (owner: Task) => bindLeadFixture(service, store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "idle", writer: "workbench", runtimeRef: null }));
 function setup() {
   const root = task("总主控", true), worker = task("投币", false, root.id), lead = session(root), executor = session(worker);
   const draft: ContextSaveInput = { rootTaskId: root.id, baseRevision: 0, title: "投币需求", body: "初始三枚金币", changeNote: "用户明确目标", sources: [{ kind: "user_requirement", source: "用户本轮要求" }] };
@@ -82,6 +83,29 @@ describe("explicit shared requirements", () => {
     expect(adopted.adoptedAt).toEqual(expect.any(String));
     expect(service.sharedContext.captureBasis(executor.id)).toMatchObject({ contextBasis: basis });
     expect(service.sharedContext.captureBasis(executor.id).contextMismatch).toBeUndefined();
+  });
+
+  it("projects the same compact hint in snapshots and events, including a descendant that loses its original root", () => {
+    const { root, lead, basis } = setup();
+    const branch = task("二级", true, root.id), child = task("执行卡", false, branch.id), executor = session(child);
+    const other = task("另一棵树", true), independent = task("独立卡");
+    const projection = (id: string) => service.snapshot().tasks.find((t) => t.id === id)?.contextHint;
+    const updates: Array<Task["contextHint"]> = [];
+    service.on("event", (event) => { if (event.type === "task.upserted" && event.task.id === child.id) updates.push(event.task.contextHint); });
+    expect(projection(independent.id)).toBeNull();
+    service.sharedContext.apply(lead.id, { ...basis, taskIds: [child.id] });
+    expect(projection(child.id)).toEqual({ kind: "awaiting-adoption", version: 1 });
+    expect(updates.at(-1)).toEqual(projection(child.id));
+    const notice = service.sharedContext.pendingNotifications(executor.id)[0]!;
+    service.sharedContext.markQueued(executor.id, notice.id);
+    service.sharedContext.markDelivered(executor.id, notice.text);
+    expect(projection(child.id)).toEqual({ kind: "awaiting-adoption", version: 1 });
+    service.sharedContext.adopt(executor.id, basis);
+    expect(projection(child.id)).toBeNull();
+    expect(updates.at(-1)).toBeNull();
+    service.tasks.setManager(branch.id, other.id);
+    expect(projection(child.id)).toEqual({ kind: "invalid-binding" });
+    expect(updates.at(-1)).toEqual(projection(child.id));
   });
 
   it("records tool reads separately and supplies the task's frozen release after publishing newer content", () => {
@@ -291,7 +315,8 @@ describe("explicit shared requirements", () => {
     const [binding] = service.sharedContext.apply(own.id, { ...basis, taskIds: [middle.id] });
     const row = service.sharedContext.pendingNotifications(own.id)[0]!;
     expect(binding?.appliedByTaskId).toBe(middle.id);
-    service.tasks.updateTask(middle.id, { lead: false });
+    expect(() => service.tasks.updateTask(middle.id, { lead: false })).toThrow(/已有机器人任期/);
+    store.updateTask(middle.id, { lead: false });
     expect(service.sharedContext.validateMessage(own.id, row.id)).toBe(false);
     expect(service.sharedContext.get(middle.id).validBinding).toBe(false);
     service.sharedContext.apply(lead.id, { ...basis, taskIds: [middle.id] });

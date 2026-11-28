@@ -37,6 +37,7 @@ import { TeamTasksFeature } from "./features/teamtasks/service.js";
 import { IssuesFeature } from "./features/issues/service.js";
 import { DutyFeature } from "./features/duty/service.js";
 import { BotsFeature } from "./features/bots/service.js";
+import { BotLeadsFeature } from "./features/botleads/service.js";
 import { OrchestrationFeature } from "./features/orchestration/service.js";
 import { SharedContextFeature } from "./features/sharedcontext/service.js";
 import { ChatFilesFeature } from "./features/chatfiles/service.js";
@@ -108,6 +109,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   /** 值守 (2026-10-31): items that start a session, run a command or one of Studio's jobs at set times. */
   readonly duty: DutyFeature = new DutyFeature(this);
   readonly bots: BotsFeature = new BotsFeature(this);
+  readonly botLeads: BotLeadsFeature = new BotLeadsFeature(this);
   /** The runtimes of this computer, plus "remote" for copies of tasks paired devices granted it (远程 step 2). */
   readonly runtime: SessionRuntimeApi;
 
@@ -158,8 +160,28 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     const router = runtime instanceof RuntimeRouter ? runtime : RuntimeRouter.around(store, runtime);
     router.register("remote", new RemoteRuntime(() => this.remote.copies));
     this.runtime = router;
+    this.wireTaskWorkflow(router);
+    router.checkLeadStart = (input) => this.botLeads.assertStart(input);
+    router.checkLeadTurn = (sessionId) => this.botLeads.assertTurn(sessionId);
+    router.checkLeadBoundary = (sessionId) => this.botLeads.assertOrdinarySession(sessionId);
     router.setBotSkillContext((input) => this.bots.chatSkillContext(input));
-    router.setMessageContext({ task: (id) => this.sharedContext.taskContext(id), session: (id) => this.sharedContext.sessionContext(id), goal: (id) => this.sharedContext.goalContext(id), startup: (id) => this.teamTasks.board.contextInstruction(id), validate: (sessionId, itemId) => { const item = this.store.getItem(itemId); if (!item || item.sessionId !== sessionId) return false; this.sessions.inbox.checkSource(item); return this.sharedContext.validateMessage(sessionId, itemId); }, checkStart: (taskId, freeze) => this.sharedContext.assertStartable(taskId, freeze), defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options) });
+    router.setMessageContext({
+      task: (id) => this.sharedContext.taskContext(id),
+      session: (id) => this.sharedContext.sessionContext(id),
+      goal: (id) => this.sharedContext.goalContext(id),
+      startup: (id) => this.teamTasks.board.contextInstruction(id),
+      validate: (sessionId, itemId) => {
+        const item = this.store.getItem(itemId);
+        if (!item || item.sessionId !== sessionId) return false;
+        this.sessions.inbox.checkSource(item);
+        return this.sharedContext.validateMessage(sessionId, itemId);
+      },
+      checkStart: (taskId, freeze, sessionId) => {
+        if (sessionId) this.relays.assertSessionReady(sessionId);
+        this.sharedContext.assertStartable(taskId, freeze, sessionId);
+      },
+      defer: (sessionId, text, images, options) => this.sessions.deferMessage(sessionId, text, images, options),
+    });
     router.on("message-delivered", (sessionId, text) => this.sharedContext.markDelivered(sessionId, text));
     router.on("event", (e) => this.emit("event", e));
     router.on("log", (line) => this.log(line));
@@ -171,12 +193,19 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     });
     this.tasks.latestDelivery = (id) => this.orchestration.results(id).at(-1);
     this.tasks.ensureStructure();
+    this.botLeads.repairLegacyTrees();
     this.relays.prepareInbox();
     this.sharedContext.watch();
     this.orchestration.prepareInbox();
+    this.sessions.inbox.canAutoDispatch = (id) => {
+      if (!this.relays.canAutoDispatch(id)) return false;
+      try { this.botLeads.assertTurn(id); return true; }
+      catch { return false; }
+    };
     this.sessions.inbox.validateProducerMessage = (item) => {
       this.orchestration.validateMessage(item);
       this.teamTasks.planeBots.validateContinuation(item);
+      this.relays.validateMessage(item);
     };
     this.sessions.watchReports();
     this.duty.botJob = this.bots.dutyJob();
@@ -184,13 +213,33 @@ export class HostService extends EventEmitter<HostServiceEvents> {
     this.collab.watchAnswers();
     this.canvasReview.returns.watch();
     this.tasks.watchColumns();
-    this.tasks.leadPromotion.watch();
+    this.botLeads.watch();
     this.orchestration.watch();
     this.teamTasks.planeBots.watch();
     this.taskPlans.watch();
     this.relays.watch();
     this.duty.registerCheck(this.issues.dutyCheck());
     this.tasks.recoverColumns();
+  }
+
+  private wireTaskWorkflow(router: RuntimeRouter): void {
+    const currentTerm = (id: Id) => this.botLeads.currentTerm(id);
+    const assertManagementSession: typeof this.botLeads.assertManagementSession = (id, expected) => this.botLeads.assertManagementSession(id, expected);
+    for (const feature of [this.taskPlans, this.orchestration, this.canvases, this.sharedContext]) {
+      feature.currentTerm = currentTerm;
+      feature.assertManagementSession = assertManagementSession;
+    }
+    this.orchestration.projectBotLead = (id) => {
+      const task = this.store.getTask(id);
+      return task ? this.botLeads.projectTask(task).botLead ?? null : null;
+    };
+    this.orchestration.verifyWorktrees = (task, session, input) => this.taskPlans.verifyWorktrees(task, session, input);
+    this.orchestration.assertPlaneEvidence = (worktrees) => this.taskPlans.worktrees.assertPlaneEvidence(worktrees);
+    this.taskPlans.appointPlannedLead = (task, bot, plan, key, run) => this.botLeads.appointPlannedLead(task, bot, plan, key, run);
+    this.tasks.leadHandoffsUnblocked = () => { void this.botLeads.flush(); };
+    this.tasks.prepareWorktree = (taskId, beforeAllocate) => this.taskPlans.worktrees.prepare(taskId, beforeAllocate);
+    router.checkTaskWorktree = (taskId, cwd, work) => this.taskPlans.worktrees.assertStartable(taskId, cwd ?? "", work);
+    router.checkTaskDependencies = (taskId, purpose, sessionId, confirmed) => this.taskPlans.assertDependencyExecution(taskId, purpose, sessionId, confirmed);
   }
 
   /** The common space: where tasks without a project, the scheduler and topic sessions without a project run. */
@@ -201,11 +250,12 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   }
 
   snapshot(): StateSnapshot {
+    const sessions = this.store.listSessions();
     return {
       workspaces: this.store.listWorkspaces(),
       topics: this.store.listTopics(),
-      tasks: this.store.listTasks(),
-      sessions: this.store.listSessions(),
+      tasks: this.botLeads.projectTasks(this.sharedContext.projectTasks(this.store.listTasks(), sessions)),
+      sessions,
       profiles: this.allProfiles(),
       eventSeq: this.store.lastEventSeq(),
     };
@@ -303,6 +353,7 @@ export class HostService extends EventEmitter<HostServiceEvents> {
   }
 
   publish(event: HostEventInput): HostEvent {
+    if (event.type === "task.upserted") event = { ...event, task: this.botLeads.projectTask(this.sharedContext.projectTask(event.task)) };
     const persisted = this.store.appendEvent(event);
     if (this.transactionEvents) this.transactionEvents.push(persisted);
     else this.emit("event", persisted);

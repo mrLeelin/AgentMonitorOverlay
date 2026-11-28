@@ -28,7 +28,7 @@ export interface PiOptions {
 
 type Value = Record<string, any>;
 type Image = { type: "image"; data: string; mimeType: string };
-type Queued = { itemId: Id; text: string; images: Image[]; stopVersion: number; beforeDispatch?: () => void };
+type Queued = { itemId: Id; text: string; images: Image[]; stopVersion: number; beforeDispatch?: () => void; confirmedEarly?: readonly Id[] };
 type Dialog = { requestId: string; method: string; itemId: Id; timer: NodeJS.Timeout | null };
 type Live = {
   conn: PiRpc;
@@ -84,12 +84,13 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     const options: SessionOptions = { ...(profile.model ? { model: profile.model } : {}), ...(input.options ?? {}), permission: input.options?.permission ?? "full-access" };
     this.checkAccess(input.taskId, options);
     if (input.resumeFrom) throw unsupported("Pi 暂不支持接续 Studio 外的会话。");
+    input.beforeStart?.();
     const session = this.createSession({ taskId: input.taskId, topicId: input.topicId, parentId: null, kind: "main", profileId: profile.id, workspaceId: input.workspace.id, ...(input.cwd ? { cwd: input.cwd } : {}), title: input.title ?? "", runtimeRef: randomUUID(), options });
     const stopVersion = this.stopVersions.get(session.id) ?? 0;
     try {
       await this.ensureLive(session);
       this.checkStopVersion(session.id, stopVersion);
-      if (input.text) await this.sendMessage(session.id, input.text, [], { beforeDispatch: input.beforeDispatch });
+      if (input.text) await this.sendMessage(session.id, input.text, [], { purpose: input.firstMessagePurpose, beforeDispatch: input.beforeDispatch, confirmedEarly: input.confirmedEarly });
       return this.requireSession(session.id);
     } catch (error) {
       this.setStatus(session.id, (this.stopVersions.get(session.id) ?? 0) !== stopVersion ? "idle" : "error");
@@ -125,13 +126,14 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     return this.serial(sessionId, async () => {
       const session = this.writable(sessionId);
       this.checkAccess(session.taskId, session.options, options.purpose);
+      this.assertExecutionReady(sessionId, options.purpose, options.confirmedEarly);
       const live = await this.ensureLive(session);
       this.checkStopVersion(sessionId, stopVersion);
       options.beforeDispatch?.();
       this.checkAccess(session.taskId, this.writable(sessionId).options, options.purpose);
       if (!session.title) this.updateSession(sessionId, { title: (text || "图片").slice(0, 60) });
       const item = this.appendItem(sessionId, { type: "user", text, delivery: live.inflight ? "waiting" : "held", ...(options.purpose ? { messagePurpose: options.purpose } : {}), ...(images.length ? { images: images.map((image) => ({ id: image.id, path: image.path })) } : {}) }, { method: live.inflight ? "user/queued" : "user", ...live.transcript.turnRef() });
-      const queued: Queued = { itemId: item.id, text, images: blocks, stopVersion, beforeDispatch: options.beforeDispatch };
+      const queued: Queued = { itemId: item.id, text, images: blocks, stopVersion, beforeDispatch: options.beforeDispatch, confirmedEarly: options.confirmedEarly };
       if (live.inflight) {
         live.queue.push(queued);
         if (options.now) await this.abort(sessionId, live, "send-now");
@@ -149,13 +151,13 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
       const session = this.writable(sessionId);
       const row = this.store.getItem(itemId);
       if (row?.type !== "user" || row.sessionId !== sessionId || (row.delivery !== "held" && row.delivery !== "unsent")) throw unsupported("这条消息不能重新发送。");
-      this.assertCurrentMessage(sessionId, itemId);
+      this.assertCurrentMessage(sessionId, itemId, options.confirmedEarly);
       this.checkAccess(session.taskId, session.options, options.purpose ?? row.messagePurpose);
       const live = await this.ensureLive(session);
       this.checkStopVersion(sessionId, stopVersion);
       options.beforeDispatch?.();
-      this.assertCurrentMessage(sessionId, itemId);
-      const queued = { itemId, text: row.text, images: blocks, stopVersion, beforeDispatch: options.beforeDispatch };
+      this.assertCurrentMessage(sessionId, itemId, options.confirmedEarly);
+      const queued = { itemId, text: row.text, images: blocks, stopVersion, beforeDispatch: options.beforeDispatch, confirmedEarly: options.confirmedEarly };
       this.updateItem(itemId, (item) => item.type === "user" ? withDelivery(item, live.inflight ? "waiting" : "held") : item);
       if (live.inflight) {
         live.queue.push(queued);
@@ -443,7 +445,7 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     await this.applyOptions(session, live);
     this.checkStopVersion(sessionId, queued.stopVersion);
     queued.beforeDispatch?.();
-    this.assertCurrentMessage(sessionId, queued.itemId);
+    this.assertCurrentMessage(sessionId, queued.itemId, queued.confirmedEarly);
     this.checkAccess(session.taskId, this.writable(sessionId).options, item?.type === "user" ? item.messagePurpose : undefined);
     queueMessagePurpose(this.store, sessionId, item?.type === "user" ? item.messagePurpose ?? "work" : "work", false, isBotConversationInput(item));
     live.transcript.openTurn();
@@ -453,7 +455,7 @@ export class PiRuntime extends RuntimeBase implements SessionRuntimeApi {
     this.setStatus(sessionId, "running");
     try {
       this.checkStopVersion(sessionId, queued.stopVersion);
-      this.assertCurrentMessage(sessionId, queued.itemId);
+      this.assertCurrentMessage(sessionId, queued.itemId, queued.confirmedEarly);
       const current = this.writable(sessionId);
       this.checkAccess(current.taskId, current.options, item?.type === "user" ? item.messagePurpose : undefined);
       const accepted = await live.conn.request<Value>("prompt", { message: queued.text, ...(queued.images.length ? { images: queued.images } : {}) });

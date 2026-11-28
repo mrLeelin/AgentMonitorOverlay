@@ -19,6 +19,18 @@ function sources(dir: string): string[] {
   });
 }
 
+function templatedKvKeys(path: string, text: string): string[] {
+  // A local `key` counts only where it goes to the kv table (Codex's notices have keys of their own).
+  const localKey = /\b(?:get|set|delete)Kv\(key\b/.test(text);
+  return text.split("\n").flatMap((line) => {
+    // This helper formats studio_bot_lead_acceptances.source_key. Scan real KV uses even in this file.
+    const sqlSourceFormatter = path === "store/bot-leads.ts" && /^\s*export const botRequestSourceKey = \(/.test(line);
+    const kvUsage = /\b(?:get|set|delete)Kv\(/.test(line) || (localKey && /\bconst key = /.test(line));
+    const kvHelper = !sqlSourceFormatter && /\w+Key = \(|const by[A-Z]\w* = \(/.test(line);
+    return kvUsage || kvHelper ? [...line.matchAll(/`([a-z][\w.:-]*[:.])\$\{/g)].map((match) => `${match[1]}*`) : [];
+  });
+}
+
 /** Key (or prefix ending in `*`) → the files it is used in. */
 function usedKeys(): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -27,12 +39,7 @@ function usedKeys(): Map<string, string[]> {
     const text = readFileSync(file, "utf8");
     for (const m of text.matchAll(/\b[A-Z_]*KEY[A-Z_]* = "([\w.:-]+)"/g)) add(m[1]!, file);
     for (const m of text.matchAll(/\b(?:get|set|delete)Kv\("([^"]+)"/g)) add(m[1]!, file);
-    // A local `key` counts only where it goes to the kv table (Codex's notices have keys of their own).
-    const localKey = /\b(?:get|set|delete)Kv\(key\b/.test(text);
-    for (const line of text.split("\n")) {
-      if (!/\b(?:get|set|delete)Kv\(|\w+Key = \(|const by[A-Z]\w* = \(/.test(line) && !(localKey && /\bconst key = /.test(line))) continue;
-      for (const m of line.matchAll(/`([a-z][\w.:-]*[:.])\$\{/g)) add(`${m[1]}*`, file);
-    }
+    for (const key of templatedKvKeys(relative(SRC, file).replaceAll("\\", "/"), text)) add(key, file);
   }
   // The prefixes kv-keys.ts itself hands out (MCP_SESSION_PREFIX…), for the files that import them.
   const own = join(SRC, "store", "kv-keys.ts");
@@ -57,5 +64,13 @@ describe("kv keys", () => {
     const usedNames = new Set([...used.keys()].map((k) => k.replace(/\*$/, "")));
     expect(KV_KEYS.filter((k) => !usedNames.has(k.key)).map((k) => k.key)).toEqual([]);
     expect(new Set(KV_KEYS.map((k) => k.key)).size).toBe(KV_KEYS.length);
+  });
+
+  it("recognizes the SQL source formatter without dropping real KV calls or other key helpers", () => {
+    const sqlFormatter = 'export const botRequestSourceKey = (id: Id): string => `request:${id}`;';
+    const actualKv = 'store.getKv(`request:${id}`);';
+    expect(templatedKvKeys("store/bot-leads.ts", sqlFormatter)).toEqual([]);
+    expect(templatedKvKeys("store/bot-leads.ts", `${sqlFormatter}\n${actualKv}`)).toEqual(["request:*"]);
+    expect(templatedKvKeys("features/another/service.ts", sqlFormatter)).toEqual(["request:*"]);
   });
 });

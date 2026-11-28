@@ -9,6 +9,7 @@ import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { McpIdentities } from "../../mcp/identity.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 import { noteOwnDescription, recordRole, roleCard, roleCardFor, roleUpdate } from "./role.js";
 
 // 2026-10-17: Codex threads start with the role card as developer instructions; a task's later changes (topic, canvas
@@ -87,14 +88,15 @@ describe("role card (2026-10-17)", () => {
     expect(referenced.update).toContain("任务被引用到了专题「迁移」");
     expect(splitRoleUpdate(await send(session, "再来")).update).toBeNull();
 
-    // Moved into the topic, made its 主控, described: all in one note.
+    // Moved into the topic, marked 主控 by an older Host, described: the changes it can still hear in one note.
     service.tasks.updateTask(task.id, { topicId: topic.id });
-    // Simulate a role persisted by an older Host; the current API requires old Codex threads to be archived first.
+    // Simulate a role persisted by an older Host; the current API requires a Bot appointment instead (2026-11-28).
     store.updateTask(task.id, { lead: true, description: "迁移装甲车的数据表" });
-    // The old thread cannot continue with its earlier write permissions. The role update itself remains available.
-    await expect(send(session, "看看")).rejects.toThrow(/主控只读限制/);
+    // The old thread cannot continue without a current Bot term. The role update itself remains available.
+    await expect(send(session, "看看")).rejects.toThrow(/主控需要任命机器人/);
     const update = roleUpdate(service, session.id).lines.join("\n");
-    expect(update).toContain("你现在是「主控」（之前是「执行」）");
+    // Without a Bot term the mark alone makes no session a 主控 (core/role.ts), so it is not told it became one.
+    expect(update).not.toContain("你现在是「主控」");
     expect(update).toContain("任务现在在专题「迁移」");
     expect(update).toContain("任务说明改成了：迁移装甲车的数据表");
     expect(update).not.toContain("不再在");
@@ -124,7 +126,7 @@ describe("role card (2026-10-17)", () => {
 
   it("does not grant management through canvas references", async () => {
     const lead = store.createTask({ title: "迁移主控", workspaceId: alpha.id, topicId: topic.id, lead: true });
-    const leadSession = await start(lead.id);
+    const leadSession = await startLeadFixture(service, lead, "p-ds");
     expect(() => service.relays.send(leadSession.id, { taskId: task.id, text: "x" })).toThrow(/不在你的管理范围/);
     reference(topic.id, task.id);
     expect(() => service.relays.send(leadSession.id, { taskId: task.id, text: "先做数据" })).toThrow(/不在你的管理范围/);

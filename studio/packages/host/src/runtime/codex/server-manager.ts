@@ -1,9 +1,10 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { connect as tcpConnect, createServer } from "node:net";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ModelProfile } from "@amo-studio/protocol";
 import type { CredentialReader } from "../credentials.js";
 import { withoutHostEnv } from "../agent-env.js";
@@ -71,6 +72,7 @@ interface Entry {
   pid: number | null;
   handle: CodexServerHandle | null;
   starting: Promise<CodexServerHandle> | null;
+  startAbort: AbortController | null;
   failures: number;
   restartTimer: NodeJS.Timeout | null;
   healthyTimer: NodeJS.Timeout | null;
@@ -78,8 +80,19 @@ interface Entry {
   stderr: string;
 }
 
+class CodexSpawnError extends Error {
+  constructor(command: string, cwd: string, error: NodeJS.ErrnoException) {
+    const printable = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "�").slice(0, 1024);
+    const code = error.code && /^[A-Z0-9_]+$/.test(error.code) ? ` (${error.code})` : "";
+    const reason = error.code === "ENOENT" ? `找不到可执行文件，或启动目录「${printable(cwd)}」不存在。`
+      : error.code === "EACCES" || error.code === "EPERM" ? "系统拒绝执行。" : "系统未能创建进程。";
+    super(`无法启动 Codex 程序「${printable(command)}」${code}。${reason}`, { cause: error });
+  }
+}
+
 export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
   private readonly entries = new Map<string, Entry>();
+  private readonly readyChildren = new WeakSet<ChildProcess>();
   private readonly stateFile: string;
   private readonly tokenDir: string;
   private stopping = false;
@@ -98,8 +111,11 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
     const entry = this.entry(profileId);
     if (entry.handle?.client.isOpen) return Promise.resolve(entry.handle);
     if (!entry.starting) {
-      entry.starting = this.start(entry).finally(() => {
+      const abort = new AbortController();
+      entry.startAbort = abort;
+      entry.starting = this.start(entry, abort.signal).finally(() => {
         entry.starting = null;
+        entry.startAbort = null;
       });
     }
     return entry.starting;
@@ -113,12 +129,16 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
   /** Stops one server and forgets its pid; port and token are kept for the next start. */
   async stop(profileId: string): Promise<void> {
     const entry = this.entries.get(profileId) ?? this.entry(profileId);
+    entry.startAbort?.abort();
     this.clearTimers(entry);
-    entry.handle?.client.close();
+    const handle = entry.handle;
     entry.handle = null;
-    if (entry.child) await killTree(entry.child, null);
-    else if (entry.pid && isOurServer(entry.pid, this.tokenFile(entry.profileId))) await killTree(null, entry.pid);
+    handle?.client.close();
+    const child = entry.child;
     entry.child = null;
+    if (child) await killTree(child, null);
+    else if (entry.pid && isOurServer(entry.pid, this.tokenFile(entry.profileId))) await killTree(null, entry.pid);
+    await entry.starting?.catch(() => undefined);
     entry.pid = null;
     // The launcher may exit before codex.exe releases the socket; wait until nothing listens any more.
     await waitPortClosed(entry.port, 5000);
@@ -146,6 +166,7 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
   detachAll(): void {
     this.stopping = true;
     for (const entry of this.entries.values()) {
+      entry.startAbort?.abort();
       this.clearTimers(entry);
       entry.handle?.client.close();
       entry.handle = null;
@@ -176,6 +197,7 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
       pid: saved?.pid ?? null,
       handle: null,
       starting: null,
+      startAbort: null,
       failures: 0,
       restartTimer: null,
       healthyTimer: null,
@@ -185,14 +207,15 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
     return entry;
   }
 
-  private async start(entry: Entry): Promise<CodexServerHandle> {
+  private async start(entry: Entry, signal: AbortSignal): Promise<CodexServerHandle> {
     // A server left running by a previous Host keeps its sessions alive; reuse it when it answers on our token.
     if (entry.port && !entry.child) {
-      const adopted = await this.connect(entry, 1500).catch(() => null);
+      const adopted = await this.connect(entry, 1500, signal).catch(() => null);
       if (adopted) {
         this.emit("log", `adopted running app-server for ${entry.profileId} on port ${entry.port}`);
         return adopted;
       }
+      signal.throwIfAborted();
       // Only kill a leftover pid when its command line proves it is our server (pids get reused).
       if (entry.pid && isOurServer(entry.pid, this.tokenFile(entry.profileId))) await killTree(null, entry.pid);
       entry.pid = null;
@@ -200,75 +223,129 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
     for (let attempt = 1; ; attempt++) {
       // Keep the address when we can: attached TUIs reconnect to it. A killed server's socket can take a moment to be
       // released (seen under load), so wait briefly for it before moving to another port.
-      if (!entry.port || !(await portFreeWithin(entry.port, attempt === 1 ? PORT_RELEASE_WAIT_MS : 0))) entry.port = await this.pickPort(entry.profileId);
-      this.spawnServer(entry);
-      this.persist();
+      signal.throwIfAborted();
+      if (!entry.child) {
+        if (!entry.port || !(await portFreeWithin(entry.port, attempt === 1 ? PORT_RELEASE_WAIT_MS : 0))) entry.port = await this.pickPort(entry.profileId);
+        signal.throwIfAborted();
+        await this.spawnServer(entry);
+        this.persist();
+      }
+      const child = entry.child;
       try {
-        return await this.waitReady(entry);
+        return await this.waitReady(entry, child, signal);
       } catch (err) {
+        signal.throwIfAborted();
         // An early exit is usually a socket still held by the previous process; retry a few times.
-        if (attempt >= 3 || entry.child) throw err;
+        if (child && entry.child === child) {
+          await killTree(child, null);
+          throw err;
+        }
+        if (attempt >= 3) throw err;
         this.emit("log", `app-server for ${entry.profileId} exited during startup, retrying (${attempt})`);
-        await new Promise((r) => setTimeout(r, 1000 * attempt));
+        await delay(1000 * attempt, undefined, { signal });
       }
     }
   }
 
-  private spawnServer(entry: Entry): void {
+  private async spawnServer(entry: Entry): Promise<void> {
     const profile = this.options.profiles.find((p) => p.id === entry.profileId)!;
     const spec = codexServerSpec(profile, this.options.profiles, this.options.credentials, { providers: this.options.providers, mcp: this.options.mcp?.() ?? null, extraMcp: this.extraMcp() });
     const cmd = this.options.codexCommand ?? resolveCodexCommand();
     const tokenFile = this.tokenFile(entry.profileId);
     const args = [...cmd.prefixArgs, "app-server", ...spec.configArgs, "--listen", `ws://127.0.0.1:${entry.port}`, "--ws-auth", "capability-token", "--ws-token-file", tokenFile];
-    const child = spawn(cmd.command, args, {
-      cwd: this.options.cwd,
-      // Not the Host's own variables (agent-env.ts); cmd.env puts ELECTRON_RUN_AS_NODE back when codex.js needs it.
-      env: withoutWindowsApps(networkEnv(this.options.network?.() ?? { mode: "inherit", proxyUrl: "" }, { ...(this.options.baseEnv?.() ?? {}), ...withoutHostEnv(process.env), ...cmd.env, ...this.options.env, ...spec.env })),
-      stdio: ["ignore", "ignore", "pipe"],
-      windowsHide: true,
+    // Not the Host's own variables (agent-env.ts); cmd.env puts ELECTRON_RUN_AS_NODE back when codex.js needs it.
+    const env = withoutWindowsApps(networkEnv(this.options.network?.() ?? { mode: "inherit", proxyUrl: "" }, { ...(this.options.baseEnv?.() ?? {}), ...withoutHostEnv(process.env), ...cmd.env, ...this.options.env, ...spec.env }));
+    const cwd = this.options.cwd;
+    let child: ChildProcess;
+    try {
+      child = spawn(cmd.command, args, { cwd, env, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+    } catch (error) {
+      throw new CodexSpawnError(cmd.command, cwd, error as NodeJS.ErrnoException);
+    }
+    // Node emits a failed spawn as 'error' without 'spawn' or 'exit'. Wait for that verdict before probing the socket.
+    const spawned = once(child, "spawn");
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      // Keep a listener for later process errors (for example a failed kill), even after startup has settled.
+      if (child.pid) this.emit("log", `app-server process error for ${entry.profileId}: ${error.code ?? error.name}`);
     });
-    lowerAgentPriority(child.pid);
     entry.stderr = "";
     child.stderr?.on("data", (d: Buffer) => {
-      entry.stderr = (entry.stderr + d.toString()).slice(-4000);
+      if (entry.child === child) entry.stderr = (entry.stderr + d.toString()).slice(-4000);
     });
     entry.child = child;
     entry.pid = child.pid ?? null;
-    child.once("exit", (code) => {
+    const onExit = (code: number | null) => {
       if (entry.child !== child) return;
       entry.child = null;
       entry.pid = null;
-      entry.handle?.client.close();
+      const handle = entry.handle;
       entry.handle = null;
+      handle?.client.close();
+      this.clearTimers(entry);
       this.persist();
-      if (this.stopping) return;
+      if (this.stopping || !this.readyChildren.has(child)) return;
       this.emit("down", { profileId: entry.profileId, reason: `exited with code ${code}: ${entry.stderr.slice(-300)}` });
       this.scheduleRestart(entry);
-    });
+    };
+    child.once("exit", onExit);
+    try {
+      await spawned;
+    } catch (error) {
+      child.off("exit", onExit);
+      if (entry.child === child) {
+        entry.child = null;
+        entry.pid = null;
+        // Keep the launch error even if saving the now idle process state fails.
+        try { this.persist(); } catch { /* the persisted pid cannot refer to this failed spawn */ }
+      }
+      throw new CodexSpawnError(cmd.command, cwd, error as NodeJS.ErrnoException);
+    }
+    lowerAgentPriority(child.pid);
   }
 
-  private async waitReady(entry: Entry): Promise<CodexServerHandle> {
-    const deadline = Date.now() + 30_000;
-    let lastError: unknown;
-    while (Date.now() < deadline) {
-      if (!entry.child && !this.stopping) throw new Error(`app-server for ${entry.profileId} exited during startup: ${entry.stderr.slice(-600)}`);
-      try {
-        return await this.connect(entry, 2000);
-      } catch (err) {
-        lastError = err;
-        await new Promise((r) => setTimeout(r, 300));
+  private async waitReady(entry: Entry, child: ChildProcess | null, signal: AbortSignal): Promise<CodexServerHandle> {
+    const exit = new AbortController();
+    const exited = () => exit.abort(new Error(`app-server for ${entry.profileId} exited during startup: ${entry.stderr.slice(-600)}`));
+    if (!child || entry.child !== child) exited();
+    else child.once("exit", exited);
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), 30_000);
+    const waiting = AbortSignal.any([signal, exit.signal, timeout.signal]);
+    let lastError: unknown = new Error("connection or initialization timed out");
+    try {
+      while (!waiting.aborted) {
+        try {
+          return await this.connect(entry, 2000, waiting);
+        } catch (err) {
+          if (waiting.aborted) break;
+          lastError = err;
+          await delay(300, undefined, { signal: waiting });
+        }
       }
+    } catch (error) {
+      if (!waiting.aborted) throw error;
+    } finally {
+      clearTimeout(timer);
+      child?.off("exit", exited);
     }
+    signal.throwIfAborted();
+    exit.signal.throwIfAborted();
     throw new Error(`app-server for ${entry.profileId} did not become ready: ${String(lastError)}`);
   }
 
-  private async connect(entry: Entry, timeoutMs: number): Promise<CodexServerHandle> {
+  private async connect(entry: Entry, timeoutMs: number, signal: AbortSignal): Promise<CodexServerHandle> {
     const url = `ws://127.0.0.1:${entry.port}`;
-    const client = await CodexRpcClient.connect({ url, token: entry.token, connectTimeoutMs: timeoutMs });
+    const client = await CodexRpcClient.connect({ url, token: entry.token, connectTimeoutMs: timeoutMs, signal });
+    if (signal.aborted) {
+      client.close();
+      signal.throwIfAborted();
+    }
     const handle: CodexServerHandle = { profileId: entry.profileId, url, port: entry.port, token: entry.token, client };
     entry.handle = handle;
+    if (entry.child) this.readyChildren.add(entry.child);
     client.once("close", () => {
-      if (entry.handle === handle) entry.handle = null;
+      if (entry.handle !== handle) return;
+      entry.handle = null;
       // An adopted server has no child to report its exit; treat a dropped connection as going down.
       if (!entry.child && !this.stopping) {
         this.emit("down", { profileId: entry.profileId, reason: "connection lost" });
@@ -294,7 +371,7 @@ export class CodexServerManager extends EventEmitter<CodexServerManagerEvents> {
       entry.restartTimer = null;
       this.ensure(entry.profileId).catch((err: unknown) => {
         this.emit("log", `restart failed for ${entry.profileId}: ${String(err)}`);
-        this.scheduleRestart(entry);
+        if (!(err instanceof CodexSpawnError) && !(err instanceof Error && err.name === "AbortError")) this.scheduleRestart(entry);
       });
     }, delay);
   }
@@ -420,9 +497,18 @@ function killTreeSync(pid: number): void {
 async function killTree(child: ChildProcess | null, pid: number | null): Promise<void> {
   const target = child?.pid ?? pid;
   if (!target) return;
-  const exited = child && child.exitCode === null ? new Promise<void>((r) => child.once("exit", () => r())) : Promise.resolve();
+  if (child && (child.exitCode !== null || child.signalCode !== null)) return;
   killTreeSync(target);
-  await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+  if (!child) return;
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      child.off("exit", done);
+      resolve();
+    };
+    const timer = setTimeout(done, 5000);
+    child.once("exit", done);
+  });
 }
 
 /**

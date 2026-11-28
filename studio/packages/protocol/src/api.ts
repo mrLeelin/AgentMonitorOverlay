@@ -2,7 +2,7 @@
 import type { AccountUsage, Annotation, FolderAccessStatus, CanvasDoc, ChecklistItem, ScheduleProposal, DecisionRequest, Id, MailMessage, MailRecipient, ModelProfile, TaskNote, TodoItem, Session, SessionItem, SessionOptions, Task, TaskColumn, TaskPlan, PlannedTask, Relay, Timestamp, Topic, TopicDoc, Workspace } from "./entities.js";
 import type { CanvasRoutes } from "./canvas.js";
 import type { TaskManagement } from "./task-management.js";
-import type { TaskResult, TaskWorkflow } from "./task-workflow.js";
+import type { TaskResult, TaskWorkflow, TaskWorkflowRoutes } from "./task-workflow.js";
 import type { SharedContextView, SharedContext, TaskContextBinding, ContextReceipt, ContextSaveInput, ContextApplyInput, ContextSubmissionInput } from "./shared-context.js";
 import type { ChannelRoutes } from "./channels.js";
 import type { ChatFileRoutes } from "./chatfiles.js";
@@ -10,6 +10,8 @@ import type { CliRoutes } from "./cli.js";
 import type { DataRoutes } from "./datamgmt.js";
 import type { DutyRoutes } from "./duty.js";
 import type { BotRoutes } from "./bots.js";
+import type { BotLeadOperationReceipt, BotLeadRoutes, BotLeadTaskState, BotLeadTermSummary } from "./bot-leads.js";
+import type { WorktreeIntegrationRequirement, WorktreeIntegrationRoutes } from "./worktree-integrations.js";
 import type { FileRoutes } from "./files.js";
 import type { GitReviewRoutes } from "./gitreview.js";
 import type { MaintenanceRoutes } from "./maintenance.js";
@@ -621,6 +623,7 @@ export interface HostRoutes
     DataRoutes,
     DutyRoutes,
     BotRoutes,
+    BotLeadRoutes,
     FileRoutes,
     GitReviewRoutes,
     MaintenanceRoutes,
@@ -632,7 +635,9 @@ export interface HostRoutes
     RemoteRoutes,
     TeamTaskRoutes,
     TeamBoardHostRoutes,
-    ViewPackRoutes {
+    TaskWorkflowRoutes,
+    ViewPackRoutes,
+    WorktreeIntegrationRoutes {
   "GET /api/state": { req: void; res: StateSnapshot };
   /**
    * Whether the Host answers (the shell's keepalive). No token needed (2026-10-28). `running`: sessions at work, counted
@@ -752,7 +757,7 @@ export interface HostRoutes
   /** Every live task still waiting for prerequisites: task id → their ids (the board, the task page, the canvas). */
   "GET /api/prerequisites": { req: void; res: Record<Id, Id[]> };
   "POST /api/tasks/:id/workflow/retry-notice": { req: { noticeId: Id }; res: { ok: true } };
-  "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string } & ContextSubmissionInput; res: TaskResult };
+  "POST /api/tasks/:id/workflow/submit": { req: { sessionId: Id; summary: string; verification: string; worktrees?: TaskResult["worktrees"] } & ContextSubmissionInput; res: TaskResult };
   "POST /api/tasks/:id/workflow/review": { req: { sessionId: Id; resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
   /** Studio user only, guarded by the REST credential, never exposed as an AI tool. */
   "POST /api/tasks/:id/workflow/user-review": { req: { resultId: Id; accept: boolean; review: string; contextExplanation?: string }; res: TaskResult };
@@ -901,14 +906,28 @@ export type RouteRequest<R extends HostRoute> = HostRoutes[R]["req"];
 export type RouteResponse<R extends HostRoute> = HostRoutes[R]["res"];
 
 export interface HostErrorBody {
-  error: { code: HostErrorCode; message: string };
+  error: { code: HostErrorCode; message: string; details?: HostErrorDetails };
 }
 export type HostErrorCode = "bad_request" | "not_found" | "conflict" | "read_only" | "runtime_error" | "internal";
+
+/** Keep the existing HTTP error codes and actionable messages for older clients. */
+export type HostErrorDetails =
+  | { reason: "appointment-required"; taskId?: Id; action: "select-bot" }
+  | { reason: "stale-term"; taskId: Id; current: BotLeadTermSummary | null }
+  | { reason: "operation-conflict"; operationId: Id }
+  | { reason: "source-already-accepted"; receipt: BotLeadOperationReceipt }
+  | { reason: "management-wait-cycle"; taskIds: Id[] }
+  | { reason: "required-management-card"; topicId: Id; taskIds: Id[] }
+  | { reason: "worktree-integration-pending"; taskId: Id; waiting: WorktreeIntegrationRequirement[] }
+  | { reason: "reviewer-is-submitter"; taskId: Id; resultId: Id }
+  | { reason: "stale-workflow-page"; rootTaskId: Id }
+  | { reason: "plane-plan-changed"; jobId: Id; planHash: string | null; baseCommit: string | null };
 
 /** Events on `ws://127.0.0.1:<port>/api/events?since=<eventSeq>`. `seq` is global and monotonic. */
 export type HostEvent = { seq: number } & (
   | { type: "bots.changed" }
-  | { type: "plane.bot.changed"; itemId: Id; taskId: Id | null }
+  | { type: "bot-lead.changed"; taskId: Id; topicId: Id | null; state: BotLeadTaskState | null }
+  | { type: "plane.bot.changed"; itemId: Id; taskId: Id | null; rootTaskId?: Id | null }
   | { type: "bot-files.changed"; botId: Id }
   | { type: "bot.notification"; botId: Id; botName: string; notice: "approval" | "completed" | "failed" }
   | { type: "bot-groups.changed" }

@@ -679,6 +679,8 @@ def result_comment(request, issue):
     comment = IssueComment.objects.filter(issue=issue, external_source="AMO Studio", external_id=result_id).first()
     if comment is None:
         comment = note(request, issue, text.strip(), result_id=result_id)
+    elif comment.actor_id != request.user.id:
+        raise BoardProblem(409, "同一交付编号已有其他账号的评论，无法确认归属")
     return Response({"id": str(comment.id)})
 
 

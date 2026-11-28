@@ -63,15 +63,22 @@ describe("topic documents and 主控", () => {
     expect((await api("PATCH", "/api/topic-docs/nope", { body: "x" })).status).toBe(404);
   });
 
-  it("marks a task 主控 when it is made or later, and takes the mark off", async () => {
+  // 2026-11-28: a 主控 is appointed with a Bot (plans/bot-topic-leads.md); the bare mark is refused, made or later.
+  it("asks for a Bot before marking a task 主控, made or later, and still takes an old mark off", async () => {
     const ws = (await api<Workspace>("POST", "/api/workspaces", { path: join(root, "alpha") })).data;
-    const made = (await api<{ task: Task }>("POST", "/api/tasks", { title: "主控", workspaceId: ws.id, lead: true })).data.task;
-    expect(made.lead).toBe(true);
+    const made = await api<{ error: { details?: Record<string, unknown> } }>("POST", "/api/tasks", { title: "主控", workspaceId: ws.id, lead: true });
+    expect(made.status).toBe(409);
+    expect(made.data.error.details).toMatchObject({ reason: "appointment-required", action: "select-bot" });
+    expect(store.listTasks().some((t) => t.title === "主控")).toBe(false);
     const other = (await api<{ task: Task }>("POST", "/api/tasks", { title: "执行", workspaceId: ws.id })).data.task;
     expect(other).not.toHaveProperty("lead");
-    expect((await api<Task>("PATCH", `/api/tasks/${other.id}`, { lead: true })).data.lead).toBe(true);
-    expect((await api<Task>("PATCH", `/api/tasks/${made.id}`, { lead: false })).data).not.toHaveProperty("lead");
-    expect((await api("PATCH", `/api/tasks/${made.id}`, { lead: "yes" })).status).toBe(400);
-    expect(store.getTask(other.id)?.lead).toBe(true);
+    const later = await api<{ error: { details?: Record<string, unknown> } }>("PATCH", `/api/tasks/${other.id}`, { lead: true });
+    expect(later.status).toBe(409);
+    expect(later.data.error.details).toMatchObject({ reason: "appointment-required", taskId: other.id });
+    expect(store.getTask(other.id)?.lead).toBeFalsy();
+    // A mark an older Host wrote, without a Bot term, can still come off.
+    const old = store.createTask({ title: "旧主控", workspaceId: other.workspaceId, lead: true });
+    expect((await api<Task>("PATCH", `/api/tasks/${old.id}`, { lead: false })).data).not.toHaveProperty("lead");
+    expect((await api("PATCH", `/api/tasks/${old.id}`, { lead: "yes" })).status).toBe(400);
   });
 });

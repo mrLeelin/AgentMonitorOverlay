@@ -1,11 +1,38 @@
 import { join } from "node:path";
 import { newCanvasRelationIssues, canvasRelationMessage, canvasRelationDiagnostic } from "@amo-studio/protocol";
-import type { CanvasDoc, CanvasNode, Id, Task } from "@amo-studio/protocol";
-import { addDependency, addGroupAuto, CANVAS_COLORS, CanvasLayoutError, canvasNodeExtent as nodeExtent, canvasOutline, emptyCanvas, isCanvasColor, pruneLinks, isCommon, LAYOUT, placeTask, refsToCard, removeTask, unplaceTask, validateCanvas } from "@amo-studio/protocol";
+import type { BotLeadTerm, BotLeadTermRef, CanvasDoc, CanvasNode, Id, Task } from "@amo-studio/protocol";
+import { addDependency, addGroupAuto, CANVAS_COLORS, CanvasLayoutError, canvasNodeExtent as nodeExtent, canvasOutline, emptyCanvas, isCanvasColor, pruneLinks, isCommon, LAYOUT, placeTask, refsToCard, removeTask, taskManagement, unplaceTask, validateCanvas } from "@amo-studio/protocol";
 import { newId } from "../../store/store.js";
 import { HostError } from "../../core/shared.js";
 import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
+import { checkWaitGraph } from "./wait-graph.js";
+
+const formalCardIds = (doc: CanvasDoc) => new Set(doc.nodes.flatMap((node) => node.kind === "task" ? [node.taskId] : []));
+const recordArray = (value: unknown): boolean => Array.isArray(value) && value.every((entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry));
+
+function adoptReference(doc: CanvasDoc, taskId: Id): CanvasDoc {
+  const reference = doc.nodes.find((node) => node.kind === "ref" && node.taskId === taskId);
+  if (!reference) return doc;
+  const next = refsToCard(doc, taskId);
+  // Preserve styling as well as position when an existing reference becomes the task's formal card.
+  return { ...next, nodes: next.nodes.map((node) => node.id === reference.id ? { ...node, ...(reference.color ? { color: reference.color } : {}), ...(reference.size ? { size: reference.size } : {}) } : node) };
+}
+
+function fillFormalCards(doc: CanvasDoc, taskIds: ReadonlySet<Id>): CanvasDoc {
+  const placed = formalCardIds(doc);
+  let next = doc;
+  for (const id of taskIds) {
+    if (placed.has(id)) continue;
+    const adopted = adoptReference(next, id);
+    next = adopted === next ? placeTask(next, id, null, newId("n")) : adopted;
+  }
+  return next;
+}
+
+function cardRequired(task: Task): never {
+  throw new HostError("conflict", `「${task.title}」是活动管理任务，须保留本专题的正式卡。可以收起分支，或先转交、归档任务。`);
+}
 
 function layoutTarget(doc: CanvasDoc, target: string) {
   const group = doc.groups.find((g) => g.id === target);
@@ -39,6 +66,9 @@ function applyLayout(doc: CanvasDoc, moves: ReadonlyMap<Id, { x: number; y: numb
 
 /** Each topic's canvas, and the canvas changes agents ask for. */
 export class CanvasFeature extends Feature {
+  currentTerm?: (taskId: Id) => BotLeadTerm | null;
+  assertManagementSession?: (sessionId: Id, expectedTerm?: BotLeadTermRef) => BotLeadTerm;
+
   canvas(topicId: Id): CanvasDoc {
     this.requireTopic(topicId);
     return this.store.getCanvas(topicId) ?? emptyCanvas(topicId);
@@ -46,10 +76,10 @@ export class CanvasFeature extends Feature {
 
   saveCanvas(topicId: Id, input: unknown, actorSessionId?: Id): CanvasDoc {
     let doc = input as CanvasDoc;
-    if (!doc || typeof doc !== "object" || !Array.isArray(doc.groups) || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) {
+    if (!doc || typeof doc !== "object" || !recordArray(doc.groups) || !recordArray(doc.nodes) || !recordArray(doc.edges)) {
       throw new HostError("bad_request", "canvas needs groups, nodes and edges arrays");
     }
-    if (doc.links !== undefined && !Array.isArray(doc.links)) throw new HostError("bad_request", "links must be an array");
+    if (doc.links !== undefined && !recordArray(doc.links)) throw new HostError("bad_request", "links must be an array");
     if (this.requireTopic(topicId).archivedAt) throw new HostError("read_only", "the topic is archived");
     const current = this.canvas(topicId);
     if (doc.version !== current.version) {
@@ -58,6 +88,10 @@ export class CanvasFeature extends Feature {
     // Archived tasks keep their cards and dependencies (hidden while archived, back on restore), so they count too:
     // refusing them made every later save of that canvas fail (S11-A: an empty group that would not go away).
     const known = this.store.listTasks().filter((t) => t.topicId === topicId);
+    const required = this.managedCardIds(known);
+    const before = formalCardIds(current);
+    const after = formalCardIds(doc);
+    for (const task of known) if (required.has(task.id) && before.has(task.id) && !after.has(task.id)) cardRequired(task);
     // 连线 to a card that was just taken off go with it (the page need not remember to drop them).
     doc = pruneLinks(doc);
     const errors = validateCanvas(doc, new Set(known.map((t) => t.id)), current);
@@ -66,13 +100,19 @@ export class CanvasFeature extends Feature {
       throw new HostError("bad_request", errors.slice(0, 5).map((error) => messages.get(error) ?? error).join("; "));
     }
     this.checkManagementScope(topicId, current, doc, actorSessionId);
+    if (JSON.stringify(current.edges) !== JSON.stringify(doc.edges)) checkWaitGraph(known, current.edges, known, doc.edges);
+    // A legacy missing card is repaired by the Host, outside the actor's requested edit and authorization scope.
+    return this.persistCanvas(current, fillFormalCards(doc, required), actorSessionId);
+  }
+
+  private persistCanvas(current: CanvasDoc, doc: CanvasDoc, actorSessionId?: Id): CanvasDoc {
     const next: CanvasDoc = {
-      id: topicId,
+      id: current.id,
       version: current.version + 1,
       groups: doc.groups,
       nodes: doc.nodes,
       edges: doc.edges,
-      links: doc.links ?? [],
+      links: pruneLinks(doc).links ?? [],
       updatedAt: new Date().toISOString(),
     };
     this.store.putCanvas(next);
@@ -85,16 +125,48 @@ export class CanvasFeature extends Feature {
     return this.store.listTasks().filter((t) => t.topicId === topicId && !t.archivedAt);
   }
 
+  /** Required even when the appointed lead is paused, waiting to start, or handing off its term. */
+  private managedCardIds(tasks: readonly Task[]): Set<Id> {
+    const required = new Set<Id>();
+    for (const lead of tasks) {
+      if (!lead.lead || lead.archivedAt || lead.remote) continue;
+      const term = this.currentTerm?.(lead.id);
+      if (!term || term.state === "ended") continue;
+      required.add(lead.id);
+      for (const child of taskManagement(tasks, lead.id).descendants) required.add(child.id);
+    }
+    return required;
+  }
+
+  /** Check a prospective task assignment or restore against the canvas before persisting it. */
+  checkManagementWait(task: Task): void {
+    if (!task.topicId) return;
+    const current = this.store.listTasks().filter((known) => known.topicId === task.topicId);
+    const deps = this.canvas(task.topicId).edges;
+    checkWaitGraph(current, deps, [...current.filter((known) => known.id !== task.id), task], deps);
+  }
+
+  /** Topic restore has to consider cycles across all reactivated branches before any task is unarchived. */
+  checkManagementRestore(topicId: Id, restoringTaskIds: ReadonlySet<Id>): void {
+    if (!restoringTaskIds.size) return;
+    const current = this.store.listTasks().filter((task) => task.topicId === topicId);
+    const deps = this.canvas(topicId).edges;
+    const restored = current.map((task) => restoringTaskIds.has(task.id) ? { ...task, archivedAt: null } : task);
+    checkWaitGraph(current, deps, restored, deps);
+  }
+
   /**
    * A task leaving a topic takes its card and its dependencies off that topic's canvas — its dependencies even when it had
    * no card (2026-11-17: they stayed, naming a task the topic no longer has, and every later save was refused).
    */
   leaveCanvas(topicId: Id, taskId: Id): void {
+    const tasks = this.topicTasks(topicId);
+    const task = tasks.find((member) => member.id === taskId);
+    const required = this.managedCardIds(tasks);
+    if (task && required.has(taskId)) cardRequired(task);
     const current = this.store.getCanvas(topicId);
     if (!current || (!current.nodes.some((n) => n.kind === "task" && n.taskId === taskId) && !current.edges.some((e) => e.from === taskId || e.to === taskId))) return;
-    const next: CanvasDoc = { ...removeTask(current, taskId), version: current.version + 1, updatedAt: new Date().toISOString() };
-    this.store.putCanvas(next);
-    this.publish({ type: "canvas.updated", canvas: next });
+    this.persistCanvas(current, fillFormalCards(removeTask(current, taskId), required));
   }
 
   /**
@@ -102,11 +174,9 @@ export class CanvasFeature extends Feature {
    * reference to one of the topic's own tasks is not allowed); further references to it there go.
    */
   joinCanvas(topicId: Id, taskId: Id): void {
-    const current = this.store.getCanvas(topicId);
-    if (!current || !current.nodes.some((n) => n.kind === "ref" && n.taskId === taskId)) return;
-    const next: CanvasDoc = { ...refsToCard(current, taskId), version: current.version + 1, updatedAt: new Date().toISOString() };
-    this.store.putCanvas(next);
-    this.publish({ type: "canvas.updated", canvas: next });
+    const current = this.canvas(topicId);
+    const next = fillFormalCards(adoptReference(current, taskId), this.managedCardIds(this.topicTasks(topicId)));
+    if (next !== current) this.persistCanvas(current, next);
   }
 
   canvasCreateGroup(topicId: Id, input: { title?: unknown; workspace?: unknown }, actorSessionId?: Id): { groupId: Id; title: string } {
@@ -157,27 +227,53 @@ export class CanvasFeature extends Feature {
     const task = this.requireTask(String(taskId));
     if (!task.topicId) throw new HostError("bad_request", "the task is not in a topic, so it has no canvas");
     const group = typeof groupId === "string" && groupId ? groupId : null;
-    this.mutateCanvas(task.topicId, (doc) => placeTask(doc, task.id, group, newId("n")), actorSessionId);
+    this.mutateCanvas(task.topicId, (doc) => placeTask(adoptReference(doc, task.id), task.id, group, newId("n")), actorSessionId);
     return { taskId: task.id, groupId: group };
   }
 
-  /** System invariant after promotion/splitting: derived management lines need real card endpoints.
-   * Only fill missing cards along this task's same-topic ancestry; never reposition cards or assign ownership.
+  /** Transfers and restores maintain appointed branches without laying out anonymous legacy tasks. */
+  ensureAppointedCards(topicId: Id): void {
+    if (this.requireTopic(topicId).archivedAt) return;
+    const doc = this.canvas(topicId);
+    const next = fillFormalCards(doc, this.managedCardIds(this.topicTasks(topicId)));
+    if (next !== doc) this.persistCanvas(doc, next);
+  }
+
+  /** Promotion and splitting need formal cards along their same-topic ancestry. Also repair any appointed branches
+   * on this canvas in the same write. Preserve existing layout, style, and ownership.
    */
   ensureManagementCards(taskId: Id): void {
     const task = this.requireTask(taskId);
-    if (!task.topicId) return;
-    const chain: Task[] = [];
-    const seen = new Set<Id>();
+    if (!task.topicId || task.archivedAt || task.remote || this.requireTopic(task.topicId).archivedAt) return;
+    const tasks = this.topicTasks(task.topicId);
+    const byId = new Map(tasks.map((member) => [member.id, member]));
+    const chain = new Set<Id>();
     let current: Task | undefined = task;
-    while (current && current.topicId === task.topicId && !current.archivedAt && !current.remote && !seen.has(current.id)) {
-      seen.add(current.id);
-      chain.unshift(current);
-      current = current.managerTaskId ? this.store.getTask(current.managerTaskId) : undefined;
+    while (current && !current.remote && !chain.has(current.id)) {
+      chain.add(current.id);
+      const parent: Task | undefined = current.managerTaskId ? byId.get(current.managerTaskId) : undefined;
+      current = parent?.lead ? parent : undefined;
     }
-    for (const member of chain) {
-      if (!this.canvas(task.topicId).nodes.some((n) => n.kind === "task" && n.taskId === member.id)) this.canvasPlaceTask(member.id, null);
-    }
+    const doc = this.canvas(task.topicId);
+    const next = fillFormalCards(doc, new Set([...Array.from(chain).reverse(), ...this.managedCardIds(tasks)]));
+    if (next !== doc) this.persistCanvas(doc, next);
+  }
+
+  ensureLegacyManagementCards(topicId: Id, taskIds: readonly Id[]): void {
+    const doc = this.canvas(topicId);
+    const next = fillFormalCards(doc, new Set(taskIds));
+    if (next === doc) return;
+    const existing = new Set(doc.nodes.map((node) => node.id));
+    const cardHeight = 160;
+    const startY = Math.max(0, ...doc.groups.map((group) => group.rect.y + group.rect.h), ...doc.nodes.map((node) =>
+      node.pos.y + (node.kind === "task" ? Math.max(cardHeight, nodeExtent(node).h) : nodeExtent(node).h))) + LAYOUT.margin;
+    let added = 0;
+    const nodes = next.nodes.map((node) => {
+      if (existing.has(node.id) || node.kind !== "task" || node.groupId) return node;
+      const index = added++;
+      return { ...node, pos: { x: LAYOUT.margin + (index % 4) * (LAYOUT.card.w + LAYOUT.margin), y: startY + Math.floor(index / 4) * (cardHeight + LAYOUT.margin) } };
+    });
+    this.persistCanvas(doc, { ...next, nodes });
   }
 
   /** Only a just-filed split's new ungrouped cards: leave a clear branch row below all existing contents.
@@ -249,9 +345,11 @@ export class CanvasFeature extends Feature {
     const task = this.requireTask(taskId);
     if (!task.topicId) throw new HostError("bad_request", "the task is not in a topic, so it has no canvas");
     if (typeof input.onCanvas !== "boolean") throw new HostError("bad_request", "onCanvas must be true or false");
-    const placed = this.canvas(task.topicId).nodes.some((n) => n.kind === "task" && n.taskId === task.id);
-    if (placed === input.onCanvas) return this.canvas(task.topicId);
-    return this.mutateCanvas(task.topicId, (doc) => (input.onCanvas ? placeTask(doc, task.id, null, newId("n")) : unplaceTask(doc, task.id)));
+    const doc = this.canvas(task.topicId);
+    const placed = formalCardIds(doc).has(task.id);
+    if (!input.onCanvas && !placed && this.managedCardIds(this.topicTasks(task.topicId)).has(task.id)) cardRequired(task);
+    if (placed === input.onCanvas) return doc;
+    return this.mutateCanvas(task.topicId, (doc) => (input.onCanvas ? fillFormalCards(doc, new Set([task.id])) : unplaceTask(doc, task.id)));
   }
 
   /** Applies a change to the latest canvas and saves it (one synchronous read-modify-write, so no version race here). */
@@ -275,6 +373,11 @@ export class CanvasFeature extends Feature {
     const own = session.taskId ? this.store.getTask(session.taskId) : null;
     if (session.taskId && (!own || own.archivedAt || own.remote)) throw new HostError("read_only", "调用任务不存在、已归档或为远程副本，不能修改画布。");
     if ((session.topicId ?? own?.topicId) !== topicId) throw new HostError("read_only", "只能修改所在专题的画布。");
+    const term = own && this.currentTerm?.(own.id);
+    if (term || session.botLeadTerm || own?.lead) {
+      if (!this.assertManagementSession) throw new HostError("read_only", "当前主控任期无法验证，不能修改画布。");
+      this.assertManagementSession(actorSessionId, term ?? undefined);
+    }
     if (!own?.lead) return; // Other roles retain the existing person-approved editing flow.
     const task = (id: Id) => {
       if (!managesTask(this.host, actorSessionId, id)) throw new HostError("read_only", `任务 ${id} 不在你的管理范围内；请由直属主控或用户调整画布。`);

@@ -76,7 +76,7 @@ export class ReviewFeature extends Feature<"sessions"> {
     const pending = this.annotations(sessionId).filter((a) => !a.sentAt);
     if (!pending.length) throw new HostError("bad_request", "no annotations to send");
     // The same message as referring to them from the composer (2026-10-15), without text of the person's own.
-    const result = await this.f.sessions.sendMessage(sessionId, "", [], pending.map((a) => a.id));
+    const result = await this.f.sessions.sendMessage(sessionId, "", [], pending.map((a) => a.id), { fromPerson: true });
     const sent = pending.map((a) => this.store.getAnnotation(a.id) ?? a);
     return { mode: result.mode, sent };
   }

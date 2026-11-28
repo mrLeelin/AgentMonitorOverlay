@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 // 2026-11-17, the Free 主控: a 下级's decision woke it (a notification turn), it asked the person with Codex's
 // request_user_input_async and that turn ended, leaving the session 等待回答 with no turn running. The person's answer
@@ -26,7 +27,7 @@ beforeEach(async () => {
   service = new HostService(store, runtime, profiles, { commonDir: join(folder, "common") });
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const lead = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
-  manager = await service.tasks.addSession(lead.id, { profileId: "test" });
+  manager = await startLeadFixture(service, lead, "test");
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
 
@@ -53,6 +54,13 @@ async function wentIn(text: string): Promise<void> {
   await vi.waitFor(() => expect(status()).toBe("idle"), { timeout: 4000 });
 }
 
+/** 停止 也停了任命主控：人要先在主控卡上恢复，才能再给它发消息（同 user-review.test.ts）。 */
+async function resumeLead(): Promise<void> {
+  await service.botLeads.flush();
+  service.botLeads.control(manager.taskId!, { action: "resume", operationId: "resume-test-lead", expectedTerm: service.botLeads.currentTerm(manager.taskId!) });
+  await service.botLeads.flush();
+}
+
 it("the card's answer goes in at once as the next turn's work", async () => {
   const question = await askedInNotificationTurn();
   await service.sessions.answerQuestion(manager.id, question.id, SUMMER);
@@ -75,6 +83,7 @@ it("停止 ends the wait for an async question: back to idle, the question close
   await service.sessions.interrupt(manager.id);
   await vi.waitFor(() => expect(status()).toBe("idle"));
   expect(store.getItem(question.id)).toMatchObject({ state: "dismissed" });
+  await resumeLead();
   await service.sessions.sendMessage(manager.id, "接着做");
   await wentIn("接着做");
 }, 15_000);
@@ -146,7 +155,8 @@ it("while the turn that asked runs on, a message of another purpose waits for it
     expect(latestTurn()).toMatchObject({ state: "running", messagePurpose: "notification" });
   });
   const [question] = store.findItems(manager.id, "question", { source: "codex-async" });
-  await service.sessions.sendMessage(manager.id, "冬天");
+  // 人在输入框里写的：只有输入框的路由会标 fromPerson，排队后才算人的回答（deferMessage 不再默认当成人的）。
+  await service.sessions.sendMessage(manager.id, "冬天", [], [], { fromPerson: true });
   expect(held()).toEqual(["冬天"]);
   expect(turnStarts("冬天")).toHaveLength(0);
   await vi.waitFor(() => expect(latestTurn()).toMatchObject({ state: "completed" }), { timeout: 4000 });

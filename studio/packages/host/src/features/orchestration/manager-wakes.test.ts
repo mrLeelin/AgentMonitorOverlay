@@ -9,6 +9,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 // What reaches a 主控 from its children, and what no longer wakes it (2026-11-17, the Free 主控: 13 mails it never saw,
 // a turn only to say 已知悉 after its own 传话, a status that repeated a question it had not answered yet).
@@ -23,7 +24,7 @@ beforeEach(async () => {
   workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: top.id });
-  manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  manager = await startLeadFixture(service, top, "test");
   worker = await service.tasks.addSession(child.id, { profileId: "test", options: { permission: "workspace-write" } });
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });

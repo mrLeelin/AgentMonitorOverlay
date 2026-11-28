@@ -29,8 +29,35 @@ function makeStore(path = ":memory:"): Store {
   return store;
 }
 
+function removePlaneManagedSchema(store: Store): void {
+  store.db.exec(`
+    DROP TABLE plane_bot_managed_members;
+    DROP TABLE plane_bot_writebacks;
+    DROP TABLE plane_bot_approvals;
+    DROP INDEX plane_bot_managed_item;
+    DROP INDEX plane_bot_root;
+    ALTER TABLE plane_bot_jobs DROP COLUMN planned_project_path;
+    ALTER TABLE plane_bot_jobs DROP COLUMN approved_plan_hash;
+    ALTER TABLE plane_bot_jobs DROP COLUMN root_task_id;
+    DELETE FROM schema_migrations WHERE version >= 45;
+  `);
+}
+
+function removeLeadAppointmentSchema(store: Store): void {
+  removePlaneManagedSchema(store);
+  store.db.exec(`
+    DROP TABLE studio_bot_lead_continuations;
+    DROP TABLE studio_bot_lead_acceptances;
+    DROP TABLE studio_bot_lead_operations;
+    DROP TABLE studio_bot_lead_sessions;
+    DROP TABLE studio_bot_lead_terms;
+    DELETE FROM schema_migrations WHERE version >= 43;
+  `);
+}
+
 /** These fixtures start before migration 36 and replay the Bot and Plane migrations when reopened. */
 function removeBotSchema(store: Store): void {
+  removeLeadAppointmentSchema(store);
   store.db.exec(`
     ALTER TABLE tasks DROP COLUMN first_message_attachments;
     DROP TABLE plane_bot_native_attempts;
@@ -46,6 +73,7 @@ function removeBotSchema(store: Store): void {
 }
 
 function removePlaneBotCheckSchema(store: Store): void {
+  removeLeadAppointmentSchema(store);
   store.db.exec(`
     ALTER TABLE plane_bot_jobs DROP COLUMN check_result_id;
     ALTER TABLE plane_bot_jobs DROP COLUMN check_request_id;
@@ -73,6 +101,77 @@ describe("Store", () => {
     expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
     open.pop()!.close();
     expect(makeStore(path).schemaVersion()).toBe(MIGRATIONS.length);
+  });
+
+  it("reopens a v44 independent Plane worker with its original task, approval and migrated comment receipt", () => {
+    const path = tempDbPath();
+    const old = makeStore(path);
+    const { ws, task } = seed(old);
+    removePlaneManagedSchema(old);
+    const approvedAt = "2026-11-28T00:00:00Z";
+    old.db.prepare(`INSERT INTO plane_bot_jobs (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data,
+      base_commit, plan, plan_hash, approved_at, task_id, sent_result_id, comment_id)
+      VALUES ('old-job','old-request','https://plane.test','viewer','issue','bot',?,'prompt','{}','base','old plan','old hash',?,?,'old-result','old-comment')`).run(ws.id, approvedAt, task.id);
+    expect(old.schemaVersion()).toBe(44);
+    open.pop()!.close();
+    const current = makeStore(path);
+    expect(current.schemaVersion()).toBe(45);
+    expect(current.db.prepare("SELECT task_id, root_task_id, approved_at, plan_hash FROM plane_bot_jobs").get()).toEqual({
+      task_id: task.id, root_task_id: null, approved_at: approvedAt, plan_hash: "old hash",
+    });
+    expect(current.db.prepare("SELECT result_id, comment_id FROM plane_bot_writebacks").get()).toEqual({ result_id: "old-result", comment_id: "old-comment" });
+  });
+
+  it("keeps legacy leads unassigned and permits only one current Bot appointment per task across reopen", () => {
+    const path = tempDbPath();
+    const old = makeStore(path);
+    const { task, ws, main, other } = seed(old);
+    old.updateTask(task.id, { lead: true });
+    removeLeadAppointmentSchema(old);
+    open.pop()!.close();
+
+    const store = makeStore(path);
+    expect(store.getTask(task.id)?.lead).toBe(true);
+    expect(store.db.prepare("SELECT id FROM studio_bot_lead_terms").all()).toEqual([]);
+    const bot = store.db.prepare("INSERT INTO studio_bots (id, name_key, data) VALUES (?, ?, '{}')");
+    bot.run("whale", "whale");
+    bot.run("dolphin", "dolphin");
+    const second = store.createTask({ title: "另一项工作", workspaceId: ws.id, lead: true });
+    const appoint = store.db.prepare("INSERT INTO studio_bot_lead_terms (id, task_id, bot_id, generation, session_id, snapshot, handoff, started_at) VALUES (?, ?, ?, ?, ?, ?, '', ?)");
+    const start = "2026-11-28T00:00:00Z";
+    appoint.run("first", task.id, "whale", 1, main.id, '{"name":"小鲸鱼"}', start);
+    expect(() => appoint.run("raced", task.id, "dolphin", 2, other.id, "{}", start)).toThrow(/UNIQUE/);
+    expect(() => appoint.run("reuse-session", second.id, "whale", 1, main.id, "{}", start)).toThrow(/UNIQUE/);
+    appoint.run("parallel", second.id, "whale", 1, null, "{}", start);
+    const end = "2026-11-28T01:00:00Z";
+    store.db.prepare("UPDATE studio_bot_lead_terms SET ended_at = ? WHERE id = 'first'").run(end);
+    appoint.run("next", task.id, "dolphin", 2, other.id, "{}", end);
+    open.pop()!.close();
+
+    const reopened = makeStore(path);
+    expect(reopened.db.prepare("SELECT bot_id, generation, ended_at, snapshot FROM studio_bot_lead_terms WHERE task_id = ? ORDER BY generation").all(task.id)).toEqual([
+      { bot_id: "whale", generation: 1, ended_at: end, snapshot: '{"name":"小鲸鱼"}' },
+      { bot_id: "dolphin", generation: 2, ended_at: null, snapshot: "{}" },
+    ]);
+    expect(reopened.db.prepare("SELECT task_id FROM studio_bot_lead_terms WHERE bot_id = 'whale' AND ended_at IS NULL").all()).toEqual([{ task_id: second.id }]);
+  });
+
+  it("migrates the reserved #43 terms and keeps historical session attribution", () => {
+    const path = tempDbPath();
+    const old = makeStore(path);
+    const { task, main } = seed(old);
+    old.updateTask(task.id, { lead: true });
+    removeLeadAppointmentSchema(old);
+    const migration43 = MIGRATIONS[42]!;
+    old.db.exec(typeof migration43 === "string" ? migration43 : migration43.sql);
+    old.db.exec("INSERT INTO schema_migrations (version, applied_at) VALUES (43, '2026-11-28T00:00:00Z')");
+    old.db.exec("INSERT INTO studio_bots (id, name_key, data) VALUES ('bot-43', 'fixture', '{}')");
+    old.db.prepare("INSERT INTO studio_bot_lead_terms (id, task_id, bot_id, generation, session_id, snapshot, handoff, started_at) VALUES ('term-43', ?, 'bot-43', 1, ?, '{\"name\":\"旧机器人\"}', '旧交接', '2026-11-28T00:00:00Z')").run(task.id, main.id);
+    open.pop()!.close();
+    const migrated = makeStore(path);
+    expect(migrated.getSession(main.id)?.botLeadTerm).toEqual({ termId: "term-43", generation: 1, botId: "bot-43", name: "旧机器人" });
+    expect(migrated.db.prepare("SELECT run_state, handoff FROM studio_bot_lead_terms WHERE id = 'term-43'").get()).toEqual({ run_state: "needs-reconciliation", handoff: "旧交接" });
+    expect(migrated.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
   it("requires a fresh analysis for a legacy Plane intake without a base and preserves dispatched work", () => {
@@ -115,7 +214,7 @@ describe("Store", () => {
 
     const migrated = makeStore(path);
     expect(migrated.schemaVersion()).toBe(MIGRATIONS.length);
-    expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null });
+    expect(migrated.db.prepare("SELECT * FROM plane_bot_jobs WHERE id = 'job'").get()).toEqual({ ...existing, check_result_id: null, check_request_id: null, root_task_id: null, approved_plan_hash: null, planned_project_path: null });
   });
 
   it("adds deferred first-message attachment storage without changing existing task data", () => {
@@ -123,6 +222,7 @@ describe("Store", () => {
     const store = makeStore(path);
     const { task } = seed(store);
     store.updateTask(task.id, { firstMessage: "留待首个会话" });
+    removeLeadAppointmentSchema(store);
     store.db.exec("ALTER TABLE tasks DROP COLUMN first_message_attachments; DELETE FROM schema_migrations WHERE version >= 41;");
     open.pop()!.close();
 
@@ -136,7 +236,8 @@ describe("Store", () => {
     const path = tempDbPath();
     const store = makeStore(path);
     const { task, ws } = seed(store);
-    store.db.prepare("DELETE FROM schema_migrations WHERE version = 42").run();
+    removeLeadAppointmentSchema(store);
+    store.db.exec("DELETE FROM schema_migrations WHERE version >= 42;");
     const insert = store.db.prepare(`INSERT INTO plane_bot_jobs
       (id, request_id, source, viewer_id, item_id, bot_id, workspace_id, prompt, item_data, task_id)
       VALUES (?, ?, 'plane', 'actor', ?, 'bot', ?, 'prompt', '{}', ?)`);

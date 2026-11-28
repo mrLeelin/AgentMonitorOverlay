@@ -1,12 +1,12 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ModelProfile } from "@amo-studio/protocol";
 import { mockCodexProvider, removeTempDir, startMockModel, type MockModelServer } from "@amo-studio/testkit";
 import { StaticCredentialReader } from "../credentials.js";
 import { CodexServerManager, type CodexServerHandle } from "./server-manager.js";
-import { resolveCodexCommand } from "./command.js";
+import { nodeRunner, resolveCodexCommand, type CodexCommand } from "./command.js";
 
 // Integration: real `codex app-server` (npm package) against the local mock model. No model budget is spent.
 //
@@ -26,7 +26,7 @@ mkdirSync(join(root, "codex-home"), { recursive: true });
 let mock: MockModelServer;
 const managers: CodexServerManager[] = [];
 
-function manager(dataDir = join(root, "data")) {
+function manager(dataDir = join(root, "data"), codexCommand = CODEX) {
   const m = new CodexServerManager({
     dataDir,
     profiles: [PROFILE],
@@ -35,7 +35,7 @@ function manager(dataDir = join(root, "data")) {
     env: { CODEX_HOME: join(root, "codex-home") },
     providers: { "amo-mock": mockCodexProvider(mock.baseUrl) },
     portRange: [47940, 47949],
-    codexCommand: CODEX,
+    codexCommand,
     backoffMs: { first: 200, max: 1000 },
   });
   managers.push(m);
@@ -120,4 +120,34 @@ describe("CodexServerManager", () => {
     expect(fresh.port).toBe(handle.port);
     await probe.stopAll();
   }, 60_000);
+
+  it("coalesces callers during a readiness timeout and replaces the timed-out process on retry", async () => {
+    const dir = join(root, "startup-timeout");
+    mkdirSync(dir);
+    const script = join(dir, "waiting.js");
+    const launches = join(dir, "launches.txt");
+    writeFileSync(script, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(launches)}, process.pid + '\\n');\nsetInterval(() => {}, 1000);\n`);
+    const command: CodexCommand = nodeRunner(script, "env");
+    const m = manager(dir, command);
+    const ready = vi.fn();
+    const down = vi.fn();
+    m.on("ready", ready).on("down", down);
+    const setTimer = globalThis.setTimeout;
+    const deadline = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, ms, ...args) => setTimer(callback, ms === 30_000 ? 1200 : ms, ...args));
+    try {
+      const first = m.ensure(PROFILE.id);
+      expect(m.ensure(PROFILE.id)).toBe(first);
+      await expect(first).rejects.toThrow("did not become ready");
+      expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(dir, "codex-servers.json"), "utf8"))[PROFILE.id].pid).toBeNull();
+      expect(ready).not.toHaveBeenCalled();
+      expect(down).not.toHaveBeenCalled();
+    } finally {
+      deadline.mockRestore();
+    }
+    Object.assign(command, CODEX);
+    const again = await m.ensure(PROFILE.id);
+    expect(again.client.isOpen).toBe(true);
+    expect(ready).toHaveBeenCalledExactlyOnceWith(again);
+  }, 20_000);
 });

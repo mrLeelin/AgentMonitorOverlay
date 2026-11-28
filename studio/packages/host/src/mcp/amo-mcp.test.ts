@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ModelProfile, Task } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
+import { bindLeadFixture } from "../features/botleads/lead.test-support.js";
 import { startHostServer, type HostServer } from "../http/server.js";
 import { CodexRuntime } from "../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../runtime/codex/fake-servers.test-support.js";
@@ -15,7 +16,8 @@ import { McpIdentities, MCP_SESSION_HEADER } from "./identity.js";
 
 // The AMO MCP over HTTP with the official MCP client: tools, read-only annotations, auth, and what each tool returns.
 
-const PROFILES: ModelProfile[] = [{ id: "p-ds", label: "DS", runtime: "codex", provider: "amo-ds", model: "ds-model" }];
+const PROFILES: ModelProfile[] = [{ id: "p-ds", label: "DS", runtime: "codex", provider: "amo-ds", model: "ds-model" },
+  { id: "p-dsh", label: "DSH", runtime: "dsh", provider: null, model: "dsh-model" }];
 const TOKEN = "test-host-token";
 const MCP_TOKEN = "test-mcp-token";
 let root: string;
@@ -91,10 +93,10 @@ describe("AMO MCP", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "amo_guide", "amo_whoami", "board_list", "bot_ask", "canvas_arrange", "canvas_callout", "canvas_callout_close", "canvas_color", "canvas_depend", "canvas_group_create", "canvas_item_update", "canvas_items_post", "canvas_move", "canvas_place", "canvas_read", "checklist_check", "context_adopt", "context_apply", "context_get", "context_publish", "context_save", "decision_request", "duty_list", "duty_save", "duty_stop", "handoff_submit", "issue_get", "issue_list", "issue_released", "issue_reply", "issue_update", "list_file_marks",
-      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_decision_answer", "task_describe", "task_get", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_read_reply", "task_read_result", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "task_workflow", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
+      "mailbox_read", "mailbox_send", "mcp_server_list", "mcp_server_save", "project_context", "prompt_template_delete", "prompt_template_list", "prompt_template_save", "review_open", "session_archive", "session_send", "session_start", "session_tree", "task_decision_answer", "task_describe", "task_get", "task_lead_bots", "task_management", "task_manager_set", "task_message", "task_note_add", "task_plan_propose", "task_read_reply", "task_read_result", "task_review_result", "task_set_lead", "task_submit_result", "task_update", "task_workflow", "team_ask", "team_done", "team_followup", "team_members", "team_session", "team_sessions", "topic_doc_write", "topic_docs", "topic_get", "topic_list", "view_open",
     ]);
     expect(tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort()).toEqual([
-      "amo_guide", "amo_whoami", "board_list", "canvas_read", "context_get", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_management", "task_read_reply", "task_read_result", "task_workflow", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
+      "amo_guide", "amo_whoami", "board_list", "canvas_read", "context_get", "duty_list", "issue_get", "issue_list", "list_file_marks", "mcp_server_list", "project_context", "prompt_template_list", "session_tree", "task_get", "task_lead_bots", "task_management", "task_read_reply", "task_read_result", "task_workflow", "team_members", "team_session", "team_sessions", "topic_docs", "topic_get", "topic_list",
     ]);
     await client.close();
   });
@@ -206,7 +208,7 @@ describe("AMO MCP", () => {
 
   it("opens /mcp, and only /mcp, with the MCP token", async () => {
     const client = await connect(MCP_TOKEN);
-    expect((await client.listTools()).tools).toHaveLength(71);
+    expect((await client.listTools()).tools).toHaveLength(72);
     await client.close();
     const res = await fetch(`${http.url}/api/state`, { headers: { authorization: `Bearer ${MCP_TOKEN}`, connection: "close" } });
     expect(res.status).toBe(401);
@@ -281,7 +283,8 @@ describe("AMO MCP", () => {
     // Without a caller there is no "own topic": the topic is named.
     expect((await call(client, "canvas_read")).isError).toBe(true);
     const topics = (await call(client, "topic_list")).data;
-    expect(topics.topics).toEqual([expect.objectContaining({ title: "导入专题", projects: ["alpha", "beta"], openTasks: 2, sessions: 0 })]);
+    expect(topics.topics).toEqual([expect.objectContaining({ title: "导入专题", openTasks: 2, sessions: 0 })]);
+    expect([...topics.topics[0].projects].sort()).toEqual(["alpha", "beta"]);
     const topic = (await call(client, "topic_get", { topic: "导入专题" })).data;
     expect(topic.tasks.map((t: { title: string }) => t.title).sort()).toEqual(["导入重试", "统一配置键"]);
     expect(topic.canvas).toContain("分组「导入」");
@@ -432,23 +435,23 @@ describe("AMO MCP", () => {
     const refused = await call(client, "topic_doc_write", { title: "迁移计划", body: "先导入" });
     expect(refused.isError).toBe(true);
     expect(refused.content[0]!.text).toContain("只有主控或专题会话");
-    store.updateSession(mainSessionId, { status: "idle" });
-    // Simulate an older Host's stored role; active Codex threads cannot be promoted through the current API.
-    store.updateTask(importTask.id, { lead: true });
-    expect((await text(client, "amo_whoami")).text).toContain("角色：主控");
-    expect((await client.listTools()).tools.some((t) => t.name === "topic_doc_write")).toBe(true);
+    await client.close();
+    const owner = store.createTask({ title: "导入主控", workspaceId: importTask.workspaceId, topicId, lead: true });
+    const session = bindLeadFixture(service, store.createSession({ ...store.getSession(mainSessionId)!, id: undefined, taskId: owner.id, status: "idle", runtimeRef: null }));
+    const leadClient = await connect(MCP_TOKEN, identities.tokenFor(session.id));
+    expect((await text(leadClient, "amo_whoami")).text).toContain("角色：主控");
+    expect((await leadClient.listTools()).tools.some((t) => t.name === "topic_doc_write")).toBe(true);
     const topicSession = store.createSession({ taskId: null, topicId, parentId: null, kind: "main", runtime: "codex", profileId: "p-ds", workspaceId: importTask.workspaceId, title: "专题", status: "idle", writer: "workbench", runtimeRef: null });
     const topicClient = await connect(MCP_TOKEN, identities.tokenFor(topicSession.id));
     const doc = (await call(topicClient, "topic_doc_write", { title: "迁移计划", body: "1. 先导入\n2. 再统一配置键" })).data as { id: string };
     await call(topicClient, "topic_doc_write", { docId: doc.id, body: "1. 先导入（已完成）" });
     await topicClient.close();
-    const listed = (await call(client, "topic_docs")).data as { docs: Array<{ id: string; title: string }> };
+    const listed = (await call(leadClient, "topic_docs")).data as { docs: Array<{ id: string; title: string }> };
     expect(listed.docs).toMatchObject([{ id: doc.id, title: "迁移计划" }]);
-    expect((await call(client, "topic_docs", { docId: doc.id })).data).toMatchObject({ title: "迁移计划", body: "1. 先导入（已完成）" });
-    expect((await call(client, "topic_doc_write", { docId: doc.id, body: "主控已调整分工" })).isError).not.toBe(true);
-    expect((await text(client, "amo_whoami")).text).toContain("「迁移计划」");
-    service.tasks.updateTask(importTask.id, { lead: false });
-    await client.close();
+    expect((await call(leadClient, "topic_docs", { docId: doc.id })).data).toMatchObject({ title: "迁移计划", body: "1. 先导入（已完成）" });
+    expect((await call(leadClient, "topic_doc_write", { docId: doc.id, body: "主控已调整分工" })).isError).not.toBe(true);
+    expect((await text(leadClient, "amo_whoami")).text).toContain("「迁移计划」");
+    await leadClient.close();
     // Without an identity: no role card.
     const anonymous = await connect(MCP_TOKEN);
     expect((await text(anonymous, "amo_whoami")).isError).toBe(true);
@@ -457,7 +460,7 @@ describe("AMO MCP", () => {
 
   it("lets a DSH lead assign managed tasks automatically", async () => {
     const lead = store.createTask({ title: "DSH 主控", workspaceId: importTask.workspaceId, topicId, lead: true });
-    const session = store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "dsh", profileId: "p-ds", workspaceId: lead.workspaceId, title: "分配", status: "idle", writer: "workbench", runtimeRef: null });
+    const session = bindLeadFixture(service, store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "dsh", profileId: "p-dsh", workspaceId: lead.workspaceId, title: "分配", status: "idle", writer: "workbench", runtimeRef: null }));
     const client = await connect(MCP_TOKEN, identities.tokenFor(session.id));
     try {
       const names = (await client.listTools()).tools.map((t) => t.name);
@@ -473,7 +476,7 @@ describe("AMO MCP", () => {
       expect(names).not.toContain("session_start");
       expect((await call(client, "canvas_group_create", { title: "主控直接建组" })).isError).not.toBe(true);
       const before = store.listTasks().length;
-      const proposal = await call(client, "task_plan_propose", { summary: "把实现交给执行任务", tasks: [{ title: "执行导入修复", description: "修复导入重试", firstMessage: "检查失败原因并修复" }] });
+      const proposal = await call(client, "task_plan_propose", { summary: "把实现交给执行任务", tasks: [{ title: "执行导入修复", description: "修复导入重试", firstMessage: "检查失败原因并修复", model: "p-ds" }] });
       expect(proposal.isError).not.toBe(true);
       expect(service.taskPlans.list().find((p) => p.id === proposal.data.proposalId)).toMatchObject({ state: "accepted", fromSessionId: session.id, tasks: [{ title: "执行导入修复" }] });
       expect(store.listTasks()).toHaveLength(before + 1);

@@ -1,4 +1,4 @@
-import { inTurn, type SessionOptions, type HostErrorCode, type HostEvent, type Session } from "@amo-studio/protocol";
+import { inTurn, type SessionOptions, type HostErrorCode, type HostErrorDetails, type HostEvent, type Session } from "@amo-studio/protocol";
 
 /** Env var that carries the app-server token into an attached terminal; never put the token itself on a command line. */
 export const TERMINAL_TOKEN_ENV = "AMO_STUDIO_CODEX_TOKEN";
@@ -71,7 +71,7 @@ export function sessionOptions(v: unknown): SessionOptions {
 // Application layer behind the Host API. HTTP handlers stay thin and call into this.
 
 export class HostError extends Error {
-  constructor(readonly code: HostErrorCode, message: string) {
+  constructor(readonly code: HostErrorCode, message: string, readonly details?: HostErrorDetails) {
     super(message);
     this.name = "HostError";
   }

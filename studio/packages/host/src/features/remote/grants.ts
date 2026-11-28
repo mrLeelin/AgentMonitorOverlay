@@ -356,8 +356,8 @@ export class RemoteGrants {
           if (!afterTurn) this.sending.set(s.id, { account: from.account, device: from.device });
           try {
             return ok(await sessions.sendMessage(s.id, claimedText(plain, claimed), claimed.images.map((a) => a.id), [], afterTurn
-              ? { afterTurn: true, queuedFromDevice: { account: from.account, device: from.device } }
-              : { now: b.now === true }));
+              ? { fromPerson: true, afterTurn: true, queuedFromDevice: { account: from.account, device: from.device } }
+              : { fromPerson: true, now: b.now === true }));
           } catch (err) {
             if (!afterTurn) this.sending.delete(s.id);
             this.ctx.inbox().drop(claimed);

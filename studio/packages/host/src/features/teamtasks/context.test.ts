@@ -92,6 +92,35 @@ async function call(name: string, args: Record<string, unknown> = {}) {
 }
 
 describe("Plane work item context", () => {
+  it("rejects a legacy personal lead draft before any counted Plane assignment and still copies an ordinary draft", async () => {
+    vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockReturnValue({ server: origin, sealed: "fixture-encrypted-key",
+      selected: { workspace: "demo", project: projectId }, identityId: planeViewer });
+    const calls = { read: 0, assign: 0 };
+    const item = { id: workItemId, number: "DEMO-2", title: "隔离工作项", revision: 1, description: "临时说明", assigneeIds: [],
+      creator: "测试发起人", creatorAvatarUrl: null, url: `${origin}/demo/browse/DEMO-2/`, archived: false };
+    fetchPlane.mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/work-items") && init?.method === "GET") { calls.read++; return Response.json({ viewerId: planeViewer, writable: true, members: [{ id: planeViewer, name: "测试用户" }] }); }
+      if (path.endsWith(`/work-items/${workItemId}`)) {
+        if (init?.method === "GET") { calls.read++; return Response.json(item); }
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toMatchObject({ action: "edit", fields: { assigneeIds: [planeViewer] } });
+        calls.assign++;
+        return Response.json({ item: { ...item, assigneeIds: [planeViewer] } });
+      }
+      throw new Error(`unexpected isolated Plane call ${path}`);
+    });
+    const route = teamTasksRoutes(service).find((entry) => entry.method === "POST" && entry.path.endsWith("/work-items/:id/copy"))!;
+    const send = (lead: boolean, requestId: string) => route.handle({ method: "POST", path: "", params: { id: workItemId }, query: new URLSearchParams(),
+      body: { source: origin + prefix, workspaceId: session.workspaceId, viewerId: planeViewer, requestId, draft: { title: "新本地副本", lead } } });
+    const before = store.listTasks().length;
+    await expect(send(true, "41eac826-1d93-4182-9832-b640d4ca1369")).rejects.toMatchObject({ code: "conflict", details: { reason: "appointment-required" } });
+    expect(calls).toEqual({ read: 0, assign: 0 });
+    expect(store.listTasks()).toHaveLength(before);
+    await expect(send(false, "51eac826-1d93-4182-9832-b640d4ca1369")).resolves.toMatchObject({ task: { title: "新本地副本" } });
+    expect(calls).toEqual({ read: 2, assign: 1 });
+    expect(store.listTasks()).toHaveLength(before + 1);
+  });
   it("adopts the matching old connection and draft without adopting another AMO account's settings", async () => {
     vi.spyOn(PlaneBoardSettings.prototype, "current", "get").mockRestore();
     const amoAccount = { server: "https://amo.test", name: "mine", key: "fixture-amo-key" };

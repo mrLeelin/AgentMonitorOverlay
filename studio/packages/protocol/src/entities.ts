@@ -2,6 +2,9 @@
 // studio/design/interaction-notes.md for the meaning of each state.
 import type { QuestionFields } from "./questions.js";
 import type { SessionGoal } from "./goals.js";
+import type { BotLeadAttribution, BotLeadTaskState } from "./bot-leads.js";
+import type { PlannedTaskExecution } from "./worktree-integrations.js";
+import type { TaskContextHint } from "./shared-context.js";
 
 export type Id = string;
 /** ISO-8601 timestamp. */
@@ -53,11 +56,12 @@ export interface Task {
   firstMessage?: string;
   /** Images uploaded with a filed first message, retained until its first session takes them into the composer. */
   firstMessageAttachments?: Id[];
-  /**
-   * 主控 (stage 16, from the stage 15 design): the person marks a task as the one that coordinates its topic (or its
-   * project when it is in none). Its sessions get the 主控 role card and may propose tasks and relay messages.
-   */
+  /** Structural lead flag, also present on legacy trees. Appointment authority is resolved by the Host. */
   lead?: boolean;
+  /** Optional projection in Host snapshots. The task still owns its topic and management relations. */
+  botLead?: BotLeadTaskState;
+  /** On local live task snapshots and upserts. Null means no cue; omission means the projection is unavailable. */
+  contextHint?: TaskContextHint | null;
   /** Single direct manager, explicitly assigned; absent/null on tasks created before management was introduced. */
   managerTaskId?: Id | null;
   /** 主控传话不用确认 (stage 16): a 主控's relays go into this task's session without asking the person. */
@@ -198,6 +202,8 @@ export interface Session {
   status: SessionStatus;
   /** The current or last native turn handles an @Bot message or its reply. */
   botConversation?: true;
+  /** Historical attribution; only the current term's designated session may manage. */
+  botLeadTerm?: BotLeadAttribution;
   writer: WriterState;
   /** Codex thread id or Claude session id; null until the runtime has created it. */
   runtimeRef: string | null;
@@ -521,6 +527,7 @@ export const TOPIC_DOC_TITLE_MAX = 120;
  * them on the topic's canvas with their dependencies, and tells the 主控 which tasks they became.
  */
 export interface TaskPlan {
+  planePlanHash?: string;
   /** Specific object and goal for a new topic; an existing topic is never renamed. */
   topicTitle?: string;
   /** Immutable normalized request fingerprint; accepting edits must not break retry deduplication. */
@@ -554,6 +561,10 @@ export interface PlannedTask {
   description?: string;
   /** A domain coordinator that may split and assign its own managed work. */
   lead?: boolean;
+  /** Bot selected for a coordinator; older queued proposals may have lead without a selection. */
+  leadBotId?: Id;
+  completionCriteria?: string;
+  execution?: PlannedTaskExecution;
   /** The first message of its first session when it starts at once. */
   firstMessage?: string;
   /** The model profile to start it with. */

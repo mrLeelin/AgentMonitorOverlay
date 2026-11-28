@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { HostService } from "../service.js";
 import { MCP_SESSION_HEADER, McpIdentities } from "./identity.js";
-import { AMO_MCP_NAME, BOT_MCP_INSTRUCTIONS, amoInstructions, amoToolsFor, isBotCaller, type McpCaller } from "./tools.js";
+import { AMO_MCP_NAME, BOT_MCP_INSTRUCTIONS, amoInstructions, amoToolsFor, isBotCaller, isLeadCaller, type McpCaller } from "./tools.js";
 import { PROMPTED_WRITE_TOOLS } from "./names.js";
 import { recordRole, roleCard } from "../features/guide/role.js";
 
@@ -17,7 +17,7 @@ import { recordRole, roleCard } from "../features/guide/role.js";
 export function createAmoMcpServer(service: HostService, caller: McpCaller | null = null, connecting = false, botOnly = false): McpServer {
   const session = caller ? service.store.getSession(caller.sessionId) : null;
   const dsh = session?.runtime === "dsh";
-  const lead = !!session?.taskId && service.store.getTask(session.taskId)?.lead === true;
+  const lead = isLeadCaller(service, caller);
   const instructions = botOnly || isBotCaller(service, caller) ? BOT_MCP_INSTRUCTIONS : dsh && caller ? dshInstructions(service, caller.sessionId, connecting) : amoInstructions(service);
   const server = new McpServer({ name: AMO_MCP_NAME, version: "0.5.0" }, { instructions });
   const prompted = new Set<string>(PROMPTED_WRITE_TOOLS);

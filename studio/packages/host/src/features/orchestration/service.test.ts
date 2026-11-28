@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelProfile, Task } from "@amo-studio/protocol";
+import type { BotLeadTerm, ModelProfile, Task } from "@amo-studio/protocol";
 import { managementRoot } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
 import { amoToolsFor } from "../../mcp/tools.js";
@@ -10,6 +10,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 import { roleCard } from "../guide/role.js";
 import { guideText, WORKFLOW_READING_GUIDE } from "../guide/guide.js";
 import { queueMessagePurpose } from "../../runtime/message-purpose.js";
@@ -26,8 +27,25 @@ beforeEach(() => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
 const task = (title: string, lead = false, managerTaskId: string | null = null) => store.createTask({ title, lead, managerTaskId, workspaceId, topicId });
-const session = (owner: Task) => store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "idle", writer: "workbench", runtimeRef: null });
+const session = (owner: Task) => bindLeadFixture(service, store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "idle", writer: "workbench", runtimeRef: null }));
 const delivery = () => vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
+
+const termFor = (owner: Task, sessionId: string, botId: string, generation = 1, runState: BotLeadTerm["runState"] = "idle"): BotLeadTerm => ({
+  termId: `test-term-${owner.id}-${generation}`, taskId: owner.id, botId, name: botId, sessionId, generation, state: "active", runState, source: { kind: "manual" }, handoff: "", startedAt: new Date().toISOString(), endedAt: null,
+  snapshot: { name: botId, avatar: null, purpose: "管理交付", profileId: "test", skills: [], runtime: "codex", options: { permission: "read-only" } },
+});
+
+function setTerms(terms: Map<string, BotLeadTerm>): void {
+  service.orchestration.currentTerm = (id) => terms.get(id) ?? null;
+  service.orchestration.assertManagementSession = (sessionId, expected) => {
+    const owner = store.getSession(sessionId)?.taskId;
+    const term = owner ? terms.get(owner) : undefined;
+    if (!term || term.sessionId !== sessionId || expected?.termId !== term.termId || expected.generation !== term.generation || term.runState === "paused") throw new Error("任期已经变更");
+    return term;
+  };
+}
+
+const summaryInputs = { waitingFor: () => [], waitingForWorktree: () => [] };
 
 function requireNextRootVersion(sessionId: string, taskId: string): void {
   const draft = service.sharedContext.save(sessionId, { rootTaskId: taskId, title: "共同需求", baseRevision: 0, body: "三枚投币", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户目标" }] });
@@ -41,6 +59,151 @@ function requireNextRootVersion(sessionId: string, taskId: string): void {
 }
 
 describe("managed delivery workflow", () => {
+  it("binds cursors to one root, branch and revision; pages evidence without sending the whole tree", () => {
+    delivery();
+    const top = task("总主控", true), manager = session(top), branch = task("中控", true, top.id);
+    const worker = task("执行", false, top.id), nested = task("下辖执行", false, branch.id), other = task("同专题另一棵树", true);
+    store.db.prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", branch.id);
+    const workSession = session(worker), evidence = { taskId: worker.id, sessionId: workSession.id, cwd: folder, baseCommit: "mock-base" };
+    service.orchestration.verifyWorktrees = (_task, _session, input) => input ? [evidence] : undefined;
+    const result = service.orchestration.submit(workSession.id, "摘要正文", "有完整记录", { worktrees: [evidence] });
+    service.orchestration.review(manager.id, result.id, true, "已核对");
+    const page = service.orchestration.workflowSummaryPage(top.id, { limit: 1 }, summaryInputs);
+    expect(page).toMatchObject({ rootTaskId: top.id, parentTaskId: null, counts: { directTasks: 2, executionTasks: 2, acceptedExecutionTasks: 1 }, pendingUserReviewResultId: null });
+    expect(page.tasks.map((row) => row.taskId)).toEqual([top.id, branch.id]);
+    expect(page.tasks[1]?.directTaskCount).toBe(1);
+    const last = service.orchestration.workflowSummaryPage(top.id, { limit: 1, cursor: page.nextCursor! }, summaryInputs);
+    expect(last.tasks).toEqual([expect.objectContaining({ taskId: worker.id, acceptedCurrent: true, latestResult: expect.objectContaining({ id: result.id }) })]);
+    expect(last.tasks[0]!.latestResult).not.toHaveProperty("worktrees");
+    expect(last.tasks[0]!.latestResult).not.toHaveProperty("summary");
+    expect(JSON.parse(service.orchestration.readResult(top.id, result.id).text)).toHaveProperty("worktrees", [evidence]);
+    expect(service.orchestration.workflowSummaryPage(top.id, { parentTaskId: branch.id }, summaryInputs).tasks.map((row) => row.taskId)).toEqual([nested.id]);
+    expect(() => service.orchestration.workflowSummaryPage(top.id, { parentTaskId: branch.id, cursor: page.nextCursor! }, summaryInputs)).toThrow(/分页已过期/);
+    expect(() => service.orchestration.workflowSummaryPage(other.id, { cursor: page.nextCursor! }, summaryInputs)).toThrow(/分页已过期/);
+    expect(() => service.orchestration.workflowSummaryPage(top.id, { parentTaskId: other.id }, summaryInputs)).toThrow(/移出/);
+    store.updateTask(other.id, { title: "旁支改名" });
+    service.publish({ type: "session.upserted", session: session(other) });
+    expect(service.orchestration.workflowSummaryPage(top.id, { cursor: page.nextCursor! }, summaryInputs).tasks[0]?.taskId).toBe(worker.id);
+    service.publish({ type: "session.upserted", session: store.updateSession(workSession.id, { status: "completed" }) });
+    expect(() => service.orchestration.workflowSummaryPage(top.id, { cursor: page.nextCursor! }, summaryInputs)).toThrow(/分页已过期/);
+    const nextPage = service.orchestration.workflowSummaryPage(top.id, { limit: 1 }, summaryInputs);
+    store.updateTask(worker.id, { title: "树内改名" });
+    expect(() => service.orchestration.workflowSummaryPage(top.id, { cursor: nextPage.nextCursor! }, summaryInputs)).toThrow(/分页已过期/);
+  });
+
+  it("rejects stale appointed sessions and a successor that authored the same result under another term", () => {
+    delivery();
+    const top = task("总主控", true), branch = task("中控", true, top.id);
+    const oldManager = session(top), currentManager = session(top), worker = session(branch);
+    const terms = new Map([[top.id, termFor(top, currentManager.id, "接任的机器人", 2)], [branch.id, termFor(branch, worker.id, "提交的机器人")]]);
+    setTerms(terms);
+    const result = service.orchestration.submit(worker.id, "中控汇总", "隔离验证");
+    expect(result.submittedByLead).toEqual({ termId: terms.get(branch.id)!.termId, generation: 1, botId: "提交的机器人", name: "提交的机器人" });
+    expect(() => service.orchestration.review(oldManager.id, result.id, true, "旧会话")).toThrow(/任期/);
+    terms.set(branch.id, termFor(branch, session(branch).id, "另一位机器人", 2));
+    terms.set(top.id, termFor(top, currentManager.id, "提交的机器人", 3));
+    expect(() => service.orchestration.review(currentManager.id, result.id, true, "同一机器人")).toThrow(/需要另一位主控验收/);
+    expect(() => service.orchestration.submit(worker.id, "中控汇总", "隔离验证")).toThrow(/任期/);
+    terms.set(top.id, termFor(top, currentManager.id, "接任的机器人", 4));
+    const accepted = service.orchestration.review(currentManager.id, result.id, true, "现任通过");
+    expect(accepted).toMatchObject({ id: result.id, state: "accepted", submittedByLead: result.submittedByLead });
+    const final = service.orchestration.submit(currentManager.id, "根交付", "全部下辖已核对");
+    expect(service.orchestration.workflowSummaryPage(top.id, {}, summaryInputs).pendingUserReviewResultId).toBe(final.id);
+  });
+
+  it("rolls back result and outbox when transactional task-state update fails", () => {
+    delivery();
+    const top = task("总主控", true), worker = task("执行", false, top.id), executing = session(worker);
+    const fault = vi.spyOn(service.tasks, "updateTask").mockImplementationOnce(() => { throw new Error("模拟状态写入失败"); });
+    expect(() => service.orchestration.submit(executing.id, "摘要", "证据")).toThrow(/状态写入失败/);
+    expect(service.orchestration.results(worker.id)).toEqual([]);
+    expect(service.orchestration.workflow(top.id).deliveryNotices).toEqual([]);
+    fault.mockRestore();
+    const result = service.orchestration.submit(executing.id, "摘要", "证据");
+    expect(service.orchestration.results(worker.id)).toEqual([result]);
+  });
+
+  it("does not project a root pending review when a nested accepted prerequisite is now stale", () => {
+    delivery();
+    const top = task("总主控", true), branch = task("中控", true, top.id), child = task("下辖执行", false, branch.id);
+    const manager = session(top), coordinator = session(branch), worker = session(child);
+    const result = service.orchestration.submit(worker.id, "执行交付", "证据");
+    service.orchestration.review(coordinator.id, result.id, true, "逐层通过");
+    const middle = service.orchestration.submit(coordinator.id, "中控汇总", "证据");
+    service.orchestration.review(manager.id, middle.id, true, "直属通过");
+    const final = service.orchestration.submit(manager.id, "最终交付", "证据");
+    expect(service.orchestration.workflowSummaryPage(top.id, {}, summaryInputs).pendingUserReviewResultId).toBe(final.id);
+    service.sharedContext.setPrerequisites(child.id, ["新的前置交付"]);
+    const stale = service.orchestration.workflowSummaryPage(top.id, {}, summaryInputs);
+    expect(stale.pendingUserReviewResultId).toBeNull();
+    expect(stale.tasks.find((row) => row.taskId === branch.id)?.acceptedCurrent).toBe(false);
+    expect(() => service.orchestration.reviewByUser(top.id, final.id, true, "忽略失效的下辖")).toThrow(/下辖未就绪/);
+  });
+
+  it("reopens both final deliveries when a previously accepted child transfers between roots", () => {
+    delivery();
+    const top = task("总主控", true), other = task("另一棵树", true), child = task("下辖执行", false, top.id);
+    const manager = session(top), receiving = session(other), worker = session(child);
+    const deliveryResult = service.orchestration.submit(worker.id, "执行交付", "隔离证据");
+    service.orchestration.review(manager.id, deliveryResult.id, true, "直属通过");
+    const first = service.orchestration.submit(manager.id, "原根汇总", "包含执行证据");
+    const second = service.orchestration.submit(receiving.id, "接收根汇总", "原有目标完成");
+    for (const rootResult of [first, second]) service.orchestration.reviewByUser(rootResult.taskId, rootResult.id, true, "人工通过");
+    service.tasks.setManager(child.id, other.id);
+    for (const rootResult of [first, second]) {
+      expect(service.orchestration.results(rootResult.taskId).at(-1)).toMatchObject({ id: rootResult.id, state: "returned", userReview: { state: "accepted", review: "人工通过" } });
+      expect(store.getTask(rootResult.taskId)?.column).toBe("doing");
+    }
+  });
+
+  it("rechecks appointed notice target when a held result batch survives a term change", async () => {
+    const top = task("总主控", true), original = session(top), replacement = session(top);
+    const other = session(top);
+    service.sessions.inbox.pause(original.id);
+    service.sessions.inbox.pause(replacement.id);
+    const terms = new Map([[top.id, termFor(top, original.id, "第一位机器人")]]);
+    setTerms(terms);
+    const results = [task("任务一", false, top.id), task("任务二", false, top.id)].map((child) => service.orchestration.submit(session(child).id, "摘要", "证据"));
+    await vi.waitFor(() => expect(service.sessions.inbox.held(original.id)).toHaveLength(1));
+    const old = service.sessions.inbox.held(original.id)[0]!;
+    expect(old).toMatchObject({ text: expect.stringContaining("2 个任务") });
+    expect(service.sessions.inbox.held(other.id)).toEqual([]);
+    terms.set(top.id, termFor(top, replacement.id, "第二位机器人", 2, "paused"));
+    service.publish({ type: "bot-lead.changed", taskId: top.id, topicId, state: null });
+    expect(store.getItem(old.id)).toMatchObject({ delivery: "expired" });
+    expect(service.sessions.inbox.held(replacement.id)).toEqual([]);
+    expect(() => service.orchestration.validateMessage({ id: old.id, sessionId: original.id })).toThrow(/任期/);
+    terms.set(top.id, termFor(top, replacement.id, "第二位机器人", 2));
+    service.publish({ type: "bot-lead.changed", taskId: top.id, topicId, state: null });
+    await vi.waitFor(() => expect(service.sessions.inbox.held(replacement.id)).toHaveLength(1));
+    const next = service.sessions.inbox.held(replacement.id)[0]!;
+    for (const result of results) expect(next).toMatchObject({ text: expect.stringContaining(result.id) });
+    expect(next).toMatchObject({ replacesItemId: old.id });
+    expect(service.sessions.inbox.held(original.id)).toEqual([]);
+    expect(service.sessions.inbox.held(other.id)).toEqual([]);
+  });
+
+  it("reroutes an open decision on initial assignment and transfer back without reusing a revoked receipt", async () => {
+    const first = task("第一位主控", true), second = task("第二位主控", true), child = task("独立任务");
+    const initial = session(first), moved = session(second), worker = session(child);
+    vi.spyOn(service.sessions.inbox, "canAutoDispatch").mockReturnValue(false);
+    const decision = service.collab.requestDecisionFromSession(worker.id, "当前交付方式？", []);
+    service.tasks.setManager(child.id, first.id);
+    expect(store.getDecision(decision.id)?.routedToTaskId).toBe(first.id);
+    await vi.waitFor(() => expect(service.sessions.inbox.held(initial.id)).toHaveLength(1));
+    const initialRow = service.sessions.inbox.held(initial.id)[0]!;
+    service.tasks.setManager(child.id, second.id);
+    expect(store.getItem(initialRow.id)).toMatchObject({ delivery: "expired" });
+    await vi.waitFor(() => expect(service.sessions.inbox.held(moved.id)).toHaveLength(1));
+    service.tasks.setManager(child.id, first.id);
+    await vi.waitFor(() => expect(service.sessions.inbox.held(initial.id)).toHaveLength(1));
+    const newRow = service.sessions.inbox.held(initial.id)[0]!;
+    expect(newRow).toMatchObject({ replacesItemId: initialRow.id, text: expect.stringContaining(decision.id) });
+    expect(newRow.id).not.toBe(initialRow.id);
+    expect(service.sessions.inbox.held(moved.id)).toEqual([]);
+    expect(service.orchestration.answerDecision(initial.id, decision.id, "首次有效回答")).toMatchObject({ state: "answered", answer: "首次有效回答" });
+    expect(store.getItem(newRow.id)).toMatchObject({ delivery: "expired" });
+  });
   it.each([false, true])("does not duplicate a same-turn routed decision with a completed status report (answered=%s)", async (answered) => {
     const send = delivery(), top = task("主控", true), child = task("规则确认", false, top.id);
     const manager = session(top), worker = session(child), at = new Date(Date.now() - 1000).toISOString();
@@ -322,7 +485,7 @@ describe("managed delivery workflow", () => {
     const question = service.collab.requestDecisionFromSession(sc.id, "需要什么音色？", ["卡通", "写实"], "参考：Audio/coin_old.wav");
     expect(question.routedToTaskId).toBe(middle.id);
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining(question.id), undefined, expect.any(String), { purpose: "notification" }));
-    expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining("背景与证据：\n参考：Audio/coin_old.wav"), undefined, expect.any(String), { purpose: "notification" });
+    expect(send).toHaveBeenCalledWith(sm.id, expect.stringContaining('"detail":"参考：Audio/coin_old.wav'), undefined, expect.any(String), { purpose: "notification" });
     expect(service.orchestration.workflow(middle.id).decisions).toHaveLength(1);
     const escalate = service.collab.requestDecisionFromSession(sm.id, "投币音色需要总主控决定", ["卡通", "写实"]);
     expect(escalate.routedToTaskId).toBe(top.id);

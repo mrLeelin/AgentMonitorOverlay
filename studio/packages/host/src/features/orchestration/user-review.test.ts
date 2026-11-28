@@ -10,6 +10,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, root: Task, session: Session, http: HostServer | undefined;
@@ -19,12 +20,18 @@ beforeEach(async () => {
   service = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
   const ws = store.addWorkspace({ name: "最终验收隔离测试", path: folder });
   root = store.createTask({ title: "总主控", workspaceId: ws.id, lead: true });
-  session = await service.tasks.addSession(root.id, { profileId: "test" });
-  service.sessions.inbox.pause(session.id);
+  session = await startLeadFixture(service, root, "test");
+  root = store.getTask(root.id)!;
+  vi.spyOn(service.sessions.inbox, "canAutoDispatch").mockReturnValue(false);
 });
 afterEach(async () => { await http?.close(); http = undefined; vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
 const submit = () => service.orchestration.submit(session.id, "最终交付", "实际验证记录");
 const tool = (name: string) => amoToolsFor(service, { sessionId: session.id }).find((t) => t.name === name)!;
+const resumeLead = async () => {
+  await service.botLeads.flush();
+  service.botLeads.control(root.id, { action: "resume", operationId: "resume-test-lead", expectedTerm: service.botLeads.currentTerm(root.id) });
+  await service.botLeads.flush();
+};
 
 it("keeps root submission pending, deduplicates retries and rejects changed pending submissions", () => {
   const result = submit();
@@ -127,9 +134,10 @@ it("invalidates human acceptance for explicit reopen and newly assigned unfinish
   expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");
   await service.sessions.interrupt(session.id);
   await vi.waitFor(() => expect(store.getSession(session.id)?.status).toMatch(/idle|interrupted|completed/));
+  await resumeLead();
   const second = service.orchestration.submit(session.id, "重新交付", "补充证据");
   service.orchestration.reviewByUser(root.id, second.id, true, "再次人工验收");
-  await service.tasks.createTask({ title: "新增待办", workspaceId: root.workspaceId, managerTaskId: root.id });
+  await service.tasks.createTask({ title: "新增待办", workspaceId: root.workspaceId, topicId: root.topicId, managerTaskId: root.id });
   expect(store.getTask(root.id)?.column).toBe("doing");
   expect(service.orchestration.results(root.id).at(-1)?.state).toBe("returned");
   expect(service.orchestration.results(root.id).at(-1)?.userReview).toMatchObject({ state: "accepted", review: "再次人工验收", reviewedAt: expect.any(String) });
@@ -154,7 +162,7 @@ it.each(["submitted", "accepted"])("invalidates %s review when explicit reopen j
 });
 
 it("still invalidates an accepted root when its accepted worker actually starts more work", async () => {
-  const { task: child } = await service.tasks.createTask({ title: "已验收执行任务", workspaceId: root.workspaceId, managerTaskId: root.id });
+  const { task: child } = await service.tasks.createTask({ title: "已验收执行任务", workspaceId: root.workspaceId, topicId: root.topicId, managerTaskId: root.id });
   const worker = await service.tasks.addSession(child.id, { profileId: "test" });
   service.sessions.inbox.pause(worker.id);
   const input = service.orchestration.submit(worker.id, "实现完成", "验证通过");
@@ -180,9 +188,8 @@ it("does not treat an old accepted result without a human source as permission t
 
 it("invalidates pending final delivery on transfer and keeps a managed lead under direct-manager review", async () => {
   const previous = submit();
-  const parent = store.createTask({ title: "新总主控", workspaceId: root.workspaceId, lead: true });
-  const manager = await service.tasks.addSession(parent.id, { profileId: "test" });
-  service.sessions.inbox.pause(manager.id);
+  const parent = store.createTask({ title: "新总主控", workspaceId: root.workspaceId, topicId: root.topicId, lead: true });
+  const manager = await startLeadFixture(service, parent, "test");
   service.tasks.setManager(root.id, parent.id);
   expect(service.orchestration.results(root.id).at(-1)).toMatchObject({ id: previous.id, state: "returned" });
   const next = submit();
@@ -205,6 +212,7 @@ it.each(["submitted", "accepted"])("preserves %s final delivery through a real n
   expect(service.orchestration.results(root.id).at(-1)).toMatchObject({ id: result.id, state });
   await service.sessions.interrupt(session.id);
   expect(service.orchestration.results(root.id).at(-1)?.state).toBe(state);
+  await resumeLead();
   await service.sessions.sendMessage(session.id, "[[slow]] 明确继续工作", [], [], { now: true, purpose: "reopen" });
   await vi.waitFor(() => expect(store.getSession(session.id)?.status).toBe("running"));
   expect(store.getTask(root.id)?.column).toBe("doing");
@@ -227,4 +235,45 @@ it("guards the real human API with the REST credential and validates requests wi
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ state: "accepted", reviewedBy: "user" });
   expect(store.getTask(root.id)?.column).toBe("done");
+});
+
+it("serves a root page and chunked result through REST, and serializes two review clicks for that result", async () => {
+  const first = service.orchestration.submit(session.id, "最终摘要".repeat(2400), "最终验证".repeat(2400));
+  http = await startHostServer({ service, token: "test-person-token", port: 0 });
+  const endpoint = `${http.url}/api/tasks/${root.id}/workflow`;
+  const headers = { authorization: "Bearer test-person-token", "content-type": "application/json" };
+  const summary = await fetch(`${endpoint}/summary?limit=1`, { headers });
+  expect(summary.status).toBe(200);
+  const page = await summary.json();
+  expect(page).toMatchObject({ rootTaskId: root.id, pendingUserReviewResultId: first.id, nextCursor: null, tasks: [{ taskId: root.id, latestResult: { id: first.id } }] });
+  expect(page.tasks[0].latestResult).not.toHaveProperty("verification");
+  expect((await fetch(`${endpoint}/summary?limit=bad`, { headers })).status).toBe(400);
+  const evidence = await fetch(`${endpoint}/results/${first.id}?offset=0`, { headers });
+  expect(evidence.status).toBe(200);
+  expect(await evidence.json()).toMatchObject({ latest: true, acceptedCurrent: false, nextOffset: 6000, result: { id: first.id } });
+  expect((await fetch(`${endpoint}/results/${first.id}?offset=-1`, { headers })).status).toBe(400);
+  const sendReview = (accept: boolean) => fetch(`${endpoint}/user-review`, { method: "POST", headers, body: JSON.stringify({ resultId: first.id, accept, review: accept ? "人验收" : "人退回" }) });
+  const responses = await Promise.all([sendReview(true), sendReview(false)]);
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+  const result = service.orchestration.results(root.id).at(-1);
+  expect(result?.userReview).toMatchObject({ state: result?.state, review: result?.state === "accepted" ? "人验收" : "人退回" });
+  const current = await fetch(`${endpoint}/summary`, { headers });
+  expect(await current.json()).toMatchObject({ pendingUserReviewResultId: null });
+});
+
+it("routes the same business decision to its live owner and rejects a stale human click", async () => {
+  const { task: child } = await service.tasks.createTask({ title: "下辖执行", workspaceId: root.workspaceId, topicId: root.topicId, managerTaskId: root.id });
+  const worker = await service.tasks.addSession(child.id, { profileId: "test" });
+  service.sessions.inbox.pause(worker.id);
+  const childQuestion = service.collab.requestDecisionFromSession(worker.id, "由谁处理技术问题？", []);
+  const mainQuestion = service.collab.requestDecisionFromSession(session.id, "最终目标怎么改？", []);
+  http = await startHostServer({ service, token: "test-person-token", port: 0 });
+  const headers = { authorization: "Bearer test-person-token", "content-type": "application/json" };
+  const answer = (id: string, text: string) => fetch(`${http!.url}/api/decisions/${id}/answer`, { method: "POST", headers, body: JSON.stringify({ answer: text }) });
+  expect((await answer(childQuestion.id, "用户抢答")).status).toBe(409);
+  expect(service.orchestration.answerDecision(session.id, childQuestion.id, "直属主控回答")).toMatchObject({ state: "answered" });
+  expect((await answer(childQuestion.id, "重复回答")).status).toBe(409);
+  expect((await answer(mainQuestion.id, "最终目标由用户确认")).status).toBe(200);
+  expect((await answer(mainQuestion.id, "旧卡第二次确认")).status).toBe(409);
+  expect(store.getDecision(mainQuestion.id)).toMatchObject({ state: "answered", answer: "最终目标由用户确认" });
 });

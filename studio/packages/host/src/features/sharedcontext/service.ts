@@ -1,4 +1,4 @@
-import { managementRoot, type ContextApplyInput, type ContextBasis, type ContextReceipt, type ContextResolution, type ContextSaveInput, type ContextSubmissionInput, type Id, type SharedContext, type SharedContextView, type TaskContextBinding, type TaskResult } from "@amo-studio/protocol";
+import { managementRoot, projectTaskContextHint, type BotLeadTerm, type BotLeadTermRef, type ContextApplyInput, type ContextBasis, type ContextReceipt, type ContextResolution, type ContextSaveInput, type ContextSubmissionInput, type Id, type Session, type SharedContext, type SharedContextView, type Task, type TaskContextBinding, type TaskResult } from "@amo-studio/protocol";
 import { Feature } from "../../core/feature.js";
 import { managesTask } from "../../core/role.js";
 import { HostError } from "../../core/shared.js";
@@ -8,11 +8,15 @@ const CONTEXT_KEY = "shared-context:";
 const BINDING_KEY = "context-binding:";
 const RECEIPTS_KEY = "context-receipts:";
 const PREREQUISITES_KEY = "context-prerequisites:";
+const REPLACED_PREREQUISITES_KEY = "context-replaced-prerequisites:";
 const at = () => new Date().toISOString();
 const same = (a: ContextBasis | undefined | null, b: ContextBasis | undefined | null) => (!a && !b) || (!!a && !!b && a.contextId === b.contextId && a.version === b.version);
 
 /** Requirements are independent of ordinary topic documents and never inferred from canvas proximity. */
 export class SharedContextFeature extends Feature {
+  currentTerm?: (taskId: Id) => BotLeadTerm | null;
+  assertManagementSession?: (sessionId: Id, expectedTerm?: BotLeadTermRef) => BotLeadTerm;
+
   private read<T>(key: string, fallback: T): T { return JSON.parse(this.store.getKv(key)?.value ?? JSON.stringify(fallback)) as T; }
   private saveValue(key: string, value: unknown): void { this.store.setKv(key, JSON.stringify(value)); }
   private root(taskId: Id): Id | null { return managementRoot(this.store.listTasks(), taskId)?.id ?? null; }
@@ -26,7 +30,13 @@ export class SharedContextFeature extends Feature {
     const s = this.requireSession(sessionId), task = s.taskId ? this.requireTask(s.taskId) : null;
     if (!task || task.archivedAt || task.remote || s.kind !== "main" || s.archivedAt || s.writer === "archived" || !this.root(task.id)) throw new HostError("read_only", "需要有效管理树中的本地主会话。");
     if (task.topicId) this.requireLiveTopic(task.topicId);
+    this.assertLeadSession(s, task);
     return task.id;
+  }
+  private assertLeadSession(session: Session, task: Task): void {
+    if (!task.lead && !session.botLeadTerm) return;
+    if (!this.assertManagementSession) throw new HostError("read_only", "当前主控任期无法校验。");
+    this.assertManagementSession(session.id);
   }
   private reader(sessionId: Id): Id {
     const s = this.requireSession(sessionId), task = s.taskId ? this.requireTask(s.taskId) : null;
@@ -45,27 +55,72 @@ export class SharedContextFeature extends Feature {
     throw new HostError("not_found", "共同需求不存在。");
   }
   binding(taskId: Id): TaskContextBinding | null { return this.read<TaskContextBinding | null>(BINDING_KEY + taskId, null); }
-  private valid(binding: TaskContextBinding): boolean {
+  private valid(binding: TaskContextBinding, taskAt = (id: Id) => this.store.getTask(id), liveTopic = (id: Id) => {
+    const topic = this.store.getTopic(id);
+    return !!topic && !topic.archivedAt;
+  }, contextAt = (id: Id) => this.read<SharedContext | null>(CONTEXT_KEY + id, null)): boolean {
     if (binding.invalidatedAt) return false;
-    const task = this.store.getTask(binding.taskId);
-    if (!task || task.archivedAt || task.remote || this.root(task.id) !== binding.rootTaskId || JSON.stringify(this.managementPath(task.id)) !== JSON.stringify(binding.managementPath)) return false;
-    if (task.topicId && this.store.getTopic(task.topicId)?.archivedAt) return false;
-    const source = this.store.getTask(binding.appliedByTaskId);
-    if (!source?.lead || source.archivedAt || !binding.managementPath.includes(source.id) || this.root(source.id) !== binding.rootTaskId) return false;
-    const context = this.read<SharedContext | null>(CONTEXT_KEY + binding.rootTaskId, null);
+    let task = taskAt(binding.taskId);
+    if (!task || (task.topicId && !liveTopic(task.topicId))) return false;
+    const seen = new Set<Id>();
+    let sourceValid = false;
+    for (const id of binding.managementPath) {
+      if (!task || task.id !== id || task.archivedAt || task.remote || seen.has(id)) return false;
+      seen.add(id);
+      if (task.id === binding.appliedByTaskId) sourceValid = !!task.lead;
+      if (!task.managerTaskId) break;
+      const manager = taskAt(task.managerTaskId);
+      if (!manager?.lead || manager.topicId !== task.topicId || (!task.topicId && manager.workspaceId !== task.workspaceId)) return false;
+      task = manager;
+    }
+    if (!sourceValid || seen.size !== binding.managementPath.length || !task?.lead || task.id !== binding.rootTaskId || task.managerTaskId) return false;
+    const context = contextAt(binding.rootTaskId);
     return context?.id === binding.contextId && context.versions.some((v) => v.version === binding.version);
   }
   receipts(sessionId: Id): ContextReceipt[] { return this.read<ContextReceipt[]>(RECEIPTS_KEY + sessionId, []); }
   watch(): void {
     // A transfer followed by a transfer back must not resurrect a notice from the previous ownership period.
     const reconcile = () => {
+      const affected: Id[] = [];
       for (const task of this.store.listTasks()) {
         const binding = this.binding(task.id);
-        if (binding && !binding.invalidatedAt && !this.valid(binding)) this.saveValue(BINDING_KEY + task.id, { ...binding, invalidatedAt: at() });
+        if (binding && !binding.invalidatedAt && !this.valid(binding)) {
+          this.saveValue(BINDING_KEY + task.id, { ...binding, invalidatedAt: at() });
+          affected.push(task.id);
+        }
       }
+      for (const taskId of affected) this.changed(taskId);
     };
     this.host.on("event", (e) => { if (e.type === "task.upserted" || e.type === "topic.upserted") reconcile(); });
     reconcile();
+  }
+  projectTask(task: Task): Task {
+    if (task.archivedAt || task.remote) return task;
+    const binding = this.binding(task.id), validBinding = !!binding && this.valid(binding);
+    const receipts = validBinding ? this.store.listSessions({ taskId: task.id }).flatMap((session) => this.receipts(session.id)) : [];
+    return { ...task, contextHint: projectTaskContextHint({ binding, validBinding, receipts }) };
+  }
+  projectTasks(tasks: readonly Task[], sessions: readonly Session[]): Task[] {
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    const liveTopics = new Set(this.store.listTopics().filter((topic) => !topic.archivedAt).map((topic) => topic.id));
+    const sessionsByTask = new Map<Id, Id[]>();
+    for (const s of sessions) {
+      if (!s.taskId) continue;
+      const ids = sessionsByTask.get(s.taskId) ?? [];
+      ids.push(s.id);
+      sessionsByTask.set(s.taskId, ids);
+    }
+    const contexts = new Map<Id, SharedContext | null>();
+    const contextAt = (id: Id) => {
+      if (!contexts.has(id)) contexts.set(id, this.read<SharedContext | null>(CONTEXT_KEY + id, null));
+      return contexts.get(id) ?? null;
+    };
+    return tasks.map((task) => {
+      if (task.archivedAt || task.remote) return task;
+      const binding = this.binding(task.id), validBinding = !!binding && this.valid(binding, (id) => byId.get(id), (id) => liveTopics.has(id), contextAt);
+      const receipts = validBinding ? (sessionsByTask.get(task.id) ?? []).flatMap((id) => this.receipts(id)) : [];
+      return { ...task, contextHint: projectTaskContextHint({ binding, validBinding, receipts }) };
+    });
   }
   get(taskId: Id): SharedContextView {
     this.requireTask(taskId);
@@ -129,6 +184,7 @@ export class SharedContextFeature extends Feature {
   }
   adopt(sessionId: Id, basis: ContextBasis): ContextReceipt {
     const taskId = this.reader(sessionId), binding = this.binding(taskId);
+    this.assertLeadSession(this.requireSession(sessionId), this.requireTask(taskId));
     if (!binding || !this.valid(binding) || !same(binding, basis)) throw new HostError("conflict", "声明采用的版本不等于任务当前明确要求，或管理归属已变化。");
     const receipt = this.receipts(sessionId).find((r) => r.requirementId === binding.id);
     if (!receipt?.deliveredAt || receipt.taskId !== taskId || receipt.rootTaskId !== binding.rootTaskId) throw new HostError("conflict", "请先用 context_get 读取完整共同需求，再声明采用。");
@@ -202,6 +258,12 @@ export class SharedContextFeature extends Feature {
   }
   prerequisites(taskId: Id): Id[] { return this.read<Id[]>(PREREQUISITES_KEY + taskId, []); }
   setPrerequisites(taskId: Id, resultIds: Id[]): void { this.requireTask(taskId); this.saveValue(PREREQUISITES_KEY + taskId, [...new Set(resultIds)]); }
+  recordReplacedSession(sessionId: Id, resultIds: readonly Id[]): void {
+    if (!this.store.getKv(REPLACED_PREREQUISITES_KEY + sessionId)) this.saveValue(REPLACED_PREREQUISITES_KEY + sessionId, resultIds);
+  }
+  private assertCurrentSession(sessionId: Id): void {
+    if (this.store.getKv(REPLACED_PREREQUISITES_KEY + sessionId)) throw new HostError("conflict", "这段会话保留前置换版前的执行历史，请使用任务当前会话。");
+  }
   /**
    * A prerequisite done again and accepted anew (2026-11-17, plans/done/task-dependencies.md): unbound tasks that started on one
    * of its earlier deliveries now name this one, so their own can be accepted (an accepted one shows outdated until
@@ -244,10 +306,10 @@ export class SharedContextFeature extends Feature {
     const effective = result.contextResolution?.requiredBasis ?? result.contextBasis;
     return same(binding, effective);
   }
-  /** Also used by direct/manual runtime entry, so the queued-plan scheduler is not a bypassable gate. */
-  assertStartable(taskId: Id, freeze = false): void {
+  /** Resolve the latest acceptable deliveries of the same prerequisite tasks, including non-canvas plans. */
+  startPrerequisites(taskId: Id): Id[] | null {
     const binding = this.binding(taskId);
-    if (!binding) return; // Old unbound tasks keep their existing entry behavior.
+    if (!binding) return null; // Old unbound tasks keep their existing entry behavior.
     if (!this.valid(binding)) throw new HostError("conflict", "共同需求归属已变化，请由当前主控重新明确绑定后启动。");
     const task = this.requireTask(taskId);
     const dependencyIds = task.topicId ? (this.store.getCanvas(task.topicId)?.edges ?? []).filter((e) => e.kind === "depends" && e.to === taskId).map((e) => e.from) : [];
@@ -263,11 +325,20 @@ export class SharedContextFeature extends Feature {
       if (!dependency || dependency.archivedAt || dependency.column !== "done" || !result || result.state !== "accepted" || result.managerTaskId !== (dependency.managerTaskId ?? null) || !this.isPrerequisiteInScope(taskId, id) || !this.isResultCurrent(id, result) || !this.isPrerequisiteCurrent(taskId, result)) throw new HostError("conflict", "前置任务尚无归属及需求版本有效的已验收交付，不能启动依赖任务。");
       resultIds.push(result.id);
     }
+    return resultIds;
+  }
+
+  /** Also used by direct/manual runtime entry, so the queued-plan scheduler is not a bypassable gate. */
+  assertStartable(taskId: Id, freeze = false, sessionId?: Id): void {
+    if (sessionId) this.assertCurrentSession(sessionId);
+    const resultIds = this.startPrerequisites(taskId);
+    if (!resultIds) return;
     if (freeze) this.setPrerequisites(taskId, resultIds);
     else if (this.prerequisites(taskId).some((id) => !resultIds.includes(id))) throw new HostError("conflict", "启动时的前置交付依据已失效，请由主控安排重新开始并核对前置结果。");
   }
   private results(taskId: Id): TaskResult[] { return this.read<TaskResult[]>("task-results:" + taskId, []); }
   captureBasis(sessionId: Id, input: ContextSubmissionInput = {}): Pick<TaskResult, "contextBasis" | "prerequisiteResultIds" | "contextMismatch"> {
+    this.assertCurrentSession(sessionId);
     const taskId = this.reader(sessionId), binding = this.binding(taskId);
     const adoptedReceipts = this.receipts(sessionId).filter((r) => r.adoptedAt && r.taskId === taskId);
     const adopted = adoptedReceipts.find((r) => r.requirementId === binding?.id) ?? adoptedReceipts.sort((a, b) => b.adoptedAt!.localeCompare(a.adoptedAt!) || (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") || a.requirementId.localeCompare(b.requirementId))[0];

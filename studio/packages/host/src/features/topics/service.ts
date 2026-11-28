@@ -92,11 +92,12 @@ export class TopicsFeature extends Feature<"tasks"> {
     const current = this.requireTopic(id);
     if (!current.archivedAt) return { topic: current, tasks: [] };
     const since = current.archivedAt;
+    const pending = this.store.listTasks().filter((x) => x.topicId === id && x.archivedAt && x.archivedAt >= since);
+    this.f.tasks.checkTopicRestore(id, new Set(pending.map((task) => task.id)));
     const topic = this.store.updateTopic(id, { archivedAt: null });
     this.publish({ type: "topic.upserted", topic });
     await this.f.tasks.unarchiveSessions(this.store.listSessions({ topicId: id }), since);
     const tasks: Task[] = [];
-    const pending = this.store.listTasks().filter((x) => x.topicId === id && x.archivedAt && x.archivedAt >= since);
     while (pending.length) {
       const index = pending.findIndex((t) => !t.managerTaskId || !this.store.getTask(t.managerTaskId)?.archivedAt);
       if (index < 0) throw new HostError("conflict", "管理链异常，请先恢复直属主控。");

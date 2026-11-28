@@ -322,7 +322,7 @@ export class GitReviewFeature extends Feature<"projects" | "remote" | "sessions"
     const wanted = ids ? new Set(ids as string[]) : null;
     const drafts = sortComments(this.comments(workspaceId).filter((c) => c.state === "draft" && (!wanted || wanted.has(c.id))));
     if (!drafts.length) throw new HostError("bad_request", "no comments to send");
-    const result = await this.f.sessions.sendMessage(session.id, composeGitReviewMessage(drafts, ws.name));
+    const result = await this.f.sessions.sendMessage(session.id, composeGitReviewMessage(drafts, ws.name), [], [], { fromPerson: true });
     const at = new Date().toISOString();
     const sent = drafts.map((c) => {
       const next: GitReviewComment = { ...c, state: "sent", sessionId: session.id, sentAt: at, updatedAt: at };

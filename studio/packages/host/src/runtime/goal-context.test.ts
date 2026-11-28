@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelProfile, Session, SessionGoal, SessionRuntime } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
+import { bindLeadFixture } from "../features/botleads/lead.test-support.js";
 import { HostService } from "../service.js";
 import { Store } from "../store/store.js";
 import { RuntimeRouter, type RuntimeEvents, type SessionRuntimeApi } from "./runtime.js";
@@ -46,7 +47,7 @@ async function fixture(name: Exclude<SessionRuntime, "remote" | "pi"> = "codex")
   const service = new HostService(store, router, profiles, { commonDir: join(folder, "common") });
   const lead = store.createTask({ title: "lead", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "child", workspaceId: workspace.id, managerTaskId: lead.id });
-  const manager = create(lead.id);
+  const manager = bindLeadFixture(service, create(lead.id));
   const publish = (body: string) => {
     const previous = service.sharedContext.get(lead.id).context;
     const draft = service.sharedContext.save(manager.id, { rootTaskId: lead.id, baseRevision: previous?.revision ?? 0, title: "Requirements", body, changeNote: "Explicit requirements", sources: [{ kind: "user_requirement", source: "The person" }] });
@@ -246,7 +247,7 @@ describe("Goal shared requirement preparation", () => {
     const workspace = store.addWorkspace({ name: "native", path: folder });
     const lead = store.createTask({ title: "lead", workspaceId: workspace.id, lead: true });
     const child = store.createTask({ title: "child", workspaceId: workspace.id, managerTaskId: lead.id });
-    const manager = store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "native", workspaceId: workspace.id, title: "manager", status: "idle", writer: "workbench", runtimeRef: "manager" });
+    const manager = bindLeadFixture(service, store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "native", workspaceId: workspace.id, title: "manager", status: "idle", writer: "workbench", runtimeRef: "manager" }));
     const body = "Large frozen business body. ".repeat(300);
     const saved = service.sharedContext.save(manager.id, { rootTaskId: lead.id, baseRevision: 0, title: "Requirements", body, changeNote: "Initial", sources: [{ kind: "user_requirement", source: "The person" }] });
     const published = service.sharedContext.publishVersion(manager.id, saved.id, saved.revision);

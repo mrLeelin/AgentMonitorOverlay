@@ -1,14 +1,21 @@
 import { z } from "zod";
 import { TASK_PLAN_MAX_TASKS } from "@amo-studio/protocol";
-import { writeAsync, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
+import { answer, writeAsync, type AmoTool, type ToolContext } from "../../mcp/tool-kit.js";
 
 /** The AMO MCP tools of this feature (gathered in mcp/tools.ts). */
 export function taskPlansTools({ service, caller }: ToolContext): AmoTool[] {
   return [
     {
+      name: "task_lead_bots",
+      title: "可任命的中控机器人",
+      description: "List Bot IDs eligible for a new middle lead under the caller. Use leadBotId with task_plan_propose. When no Bot is available, assign ordinary execution tasks or ask the user for an appointment.",
+      inputSchema: {}, readOnly: true, autoApprove: true,
+      run: () => answer(() => service.botLeads.choices(caller?.sessionId ?? "")),
+    },
+    {
       name: "task_plan_propose",
       title: "拆任务提案",
-      description: `主控 splits work into managed tasks (at most ${TASK_PLAN_MAX_TASKS}) and starts them automatically; no repeated human confirmation. Give summary with the concrete goal; topicTitle names the object plus goal/deliverable for a new topic. An already-lead root without a topic creates and binds that topic atomically with the split (omitted topicTitle uses a meaningful task title; generic labels such as 审查/任务 are refused); existing topics are never renamed. The lead, children and same-topic management ancestors receive missing canvas cards, preserving existing layout; management lines derive from ownership, never invented dependencies. Identical parameters retried in the same actual turn return the existing proposal and created ids, including after restart. A new turn may dispatch identical work again. Optional operationKey explicitly identifies one operation across turns; keep it and the parameters for a retry, use a new key for new work. Reusing a key with changed parameters is refused. Without a recorded turn or operationKey, legacy calls remain separate requests. A topic session without a lead still proposes for the person to confirm. Per task: key, title, project (default yours), description, firstMessage (enough to work independently), lead (true for a domain coordinator), model, effort, contextBasis ({contextId,version}, explicit frozen shared requirement; omitted stays unbound), dependsOn (keys of this proposal, or ids of live tasks of your topic, that must finish first: a managed one accepted by its own direct manager, one without a manager done; they become the topic's dependency lines, and removing a line releases the wait). Tasks without prerequisites start at once; dependent tasks retain their specified version while queued. New task ids are returned in created.`,
+      description: `主控 splits work into managed tasks (at most ${TASK_PLAN_MAX_TASKS}) and starts them automatically; no repeated human confirmation. Give summary with the concrete goal; topicTitle names the object plus goal/deliverable for a new topic. Existing topics stay bound to their current tasks. The lead, children and same-topic management ancestors receive missing canvas cards, preserving existing layout; management lines derive from ownership, never invented dependencies. Identical parameters retried in the same actual turn return the existing proposal and created ids, including after restart. A new turn may dispatch identical work again. Optional operationKey explicitly identifies one operation across turns; keep it and the parameters for a retry, use a new key for new work. Reusing a key with changed parameters is refused. Without a recorded turn or operationKey, legacy calls remain separate requests. A topic session without a lead still proposes for the person to confirm. Per task: key, title, project (default yours), description, firstMessage (enough to work independently), leadBotId (choose from task_lead_bots for a middle lead under this task), model, effort, contextBasis ({contextId,version}, explicit frozen shared requirement; omitted stays unbound), dependsOn (keys of this proposal, or ids of live tasks of your topic, that must finish first: a managed one accepted by its own direct manager, one without a manager done; they become the topic's dependency lines, and removing a line releases the wait). Tasks without prerequisites start at once; dependent tasks retain their specified version while queued. New task ids are returned in created.`,
       inputSchema: {
         summary: z.string(),
         topicTitle: z.string().min(1).max(100).optional(),
@@ -19,11 +26,14 @@ export function taskPlansTools({ service, caller }: ToolContext): AmoTool[] {
             title: z.string(),
             project: z.string().optional(),
             description: z.string().optional(),
+            completionCriteria: z.string().optional(),
             lead: z.boolean().optional(),
+            leadBotId: z.string().optional(),
             firstMessage: z.string().describe("Complete execution contract: interfaces, file ownership, constraints and verification; designate who gathers shared evidence so downstream tasks can cite accepted resultIds instead of rereading the same sources. Short reports distinguish direct observations, upstream references, source conclusions and untested items. If details are stored in description, explicitly tell the executor to read its complete task_get description before starting; a role-card preview is not the full contract.").optional(),
             model: z.string().optional(),
             effort: z.string().optional(),
             dependsOn: z.array(z.string()).optional(),
+            execution: z.discriminatedUnion("kind", [z.object({ kind: z.literal("project") }), z.object({ kind: z.literal("worktree"), baseCommit: z.string(), branch: z.string().optional(), integrateFrom: z.array(z.string()).optional() })]).optional(),
             contextBasis: z.object({ contextId: z.string(), version: z.number().int().positive() }).optional(),
           }),
         ),

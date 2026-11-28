@@ -62,6 +62,7 @@ import { dutyRoutes } from "./duty/routes.js";
 import { dutyTools } from "./duty/mcp.js";
 import { botsRoutes } from "./bots/routes.js";
 import { botsTools } from "./bots/mcp.js";
+import { botLeadsRoutes } from "./botleads/routes.js";
 
 /**
  * Every Host feature (features/<name>/): its service class lives on HostService, its routes and MCP tools are listed
@@ -114,5 +115,6 @@ export const FEATURES: readonly HostFeature[] = [
   { name: "teamtasks", routes: teamTasksRoutes, tools: teamTasksTools },
   { name: "duty", routes: dutyRoutes, tools: dutyTools },
   { name: "bots", routes: botsRoutes, tools: botsTools },
+  { name: "botleads", routes: botLeadsRoutes },
   { name: "issues", routes: () => [], tools: issuesTools },
 ];

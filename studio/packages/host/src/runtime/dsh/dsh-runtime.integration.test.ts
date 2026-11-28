@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CredentialStatus, DshStatus, ModelProfile, ProfileChoices, Session, SessionItem, StateSnapshot, Task, Workspace } from "@amo-studio/protocol";
 import { fakeAcpAgent, removeTempDir, TINY_PNG_BASE64 } from "@amo-studio/testkit";
 import { startHost, type RunningHost } from "../../host-process.js";
+import { startLeadFixture } from "../../features/botleads/lead.test-support.js";
 import { FakeServers } from "../codex/fake-servers.test-support.js";
 import { StaticCredentialReader } from "../credentials.js";
 import type { FolderAccess } from "./folder-access.js";
@@ -93,8 +94,8 @@ describe("DSH runtime", () => {
     await idle(host, s.id);
     const store = host.service.store;
     const top = store.createTask({ title: "主控", workspaceId: s.workspaceId, lead: true });
-    const lead = await host.service.tasks.addSession(top.id, { profileId: "p-ds" });
-    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id });
+    const lead = await startLeadFixture(host.service, top, "p-ds");
+    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id, topicId: store.getTask(top.id)!.topicId });
     const result = host.service.orchestration.submit(s.id, "完成", "验证通过");
     host.service.orchestration.review(lead.id, result.id, true, "通过");
     await host.service.sessions.inbox.put(s.id, "只读询问", lead.id, "i-dsh-inquiry", { purpose: "inquiry" });
@@ -124,8 +125,8 @@ describe("DSH runtime", () => {
     host.service.runtime.on("message-delivered", received);
     const s = await start(host, "");
     const top = host.service.store.createTask({ title: "主控", workspaceId: s.workspaceId, lead: true });
-    const lead = await host.service.tasks.addSession(top.id, { profileId: "p-ds" });
-    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id });
+    const lead = await startLeadFixture(host.service, top, "p-ds");
+    host.service.tasks.updateTask(s.taskId!, { managerTaskId: top.id, topicId: host.service.store.getTask(top.id)!.topicId });
     const draft = host.service.sharedContext.save(lead.id, { rootTaskId: top.id, baseRevision: 0, title: "共同需求", body: "共同需求正文", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户" }] });
     host.service.sharedContext.publishVersion(lead.id, draft.id, draft.revision);
     const [binding] = host.service.sharedContext.apply(lead.id, { contextId: draft.id, version: 1, taskIds: [s.taskId!] });
@@ -171,12 +172,15 @@ describe("DSH runtime", () => {
   it("keeps a lead read-only, denies escalation and cannot unlock it through session options", async () => {
     const host = await boot();
     const ws = await call<Workspace>(host, "POST", "/api/workspaces", { path: join(root, "ws") });
-    const { session: s } = await call<{ session: Session }>(host, "POST", "/api/tasks", { title: "只读主控", workspaceId: ws.id, lead: true, firstSession: { profileId: "dsh-deepseek", text: "[[env]]", options: { permission: "full-access" } } });
+    // 2026-11-28: a 主控 starts with its Bot term, whose DSH session is read-only from creation.
+    const top = host.service.store.createTask({ title: "只读主控", workspaceId: ws.id, lead: true });
+    const s = await startLeadFixture(host.service, top, "dsh-deepseek", "[[env]]");
     await idle(host, s.id);
     expect(s.options.permission).toBe("read-only");
     expect(replies(await items(host, s.id))[0]).toMatch(/^ENV permission=read-only /);
-    const changed = await call<Session>(host, "PATCH", `/api/sessions/${s.id}/options`, { permission: "full-access" });
-    expect(changed.options.permission).toBe("read-only");
+    // Session options of an appointed 主控 do not change at all: the term's read-only permission stays.
+    await expect(call<Session>(host, "PATCH", `/api/sessions/${s.id}/options`, { permission: "full-access" })).rejects.toThrow(/该操作不能用于任命主控/);
+    expect(host.service.store.getSession(s.id)?.options.permission).toBe("read-only");
     await call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "[[ask: New-Item forbidden.txt]]" });
     await until(() => items(host, s.id), (l) => replies(l).length === 2);
     expect(replies(await items(host, s.id))[1]).toBe("REJECTED New-Item forbidden.txt");
@@ -191,30 +195,38 @@ describe("DSH runtime", () => {
     expect(replies(await items(again, s.id))[2]).toMatch(/^ENV permission=read-only /);
   });
 
-  it("refuses promoting a running task and refuses continuing an old writable DSH session as lead", async () => {
+  // 2026-11-28: the bare 主控 mark asks for a Bot (plans/bot-topic-leads.md), running or idle; waiting for the turn
+  // moved into the appointment's handoff (the test below).
+  it("asks for a Bot instead of marking a DSH task 主控 and refuses continuing an old writable DSH session as lead", async () => {
     const host = await boot();
     const s = await start(host, "[[ask: New-Item old.txt]]");
     await until(() => status(host, s.id), (v) => v === "awaiting-approval");
-    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/请先停止/);
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/主控需要任命机器人/);
     expect(host.service.store.getTask(s.taskId!)?.lead).toBeFalsy();
     const approval = (await items(host, s.id)).find((i) => i.type === "approval");
     await call(host, "POST", `/api/approvals/${approval?.type === "approval" ? approval.approvalId : ""}`, { sessionId: s.id, decision: "decline" });
     await idle(host, s.id);
-    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/先归档/);
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/主控需要任命机器人/);
+    expect(host.service.store.getTask(s.taskId!)?.lead).toBeFalsy();
     // Existing data from before this restriction must also fail closed, even when the role was changed out of band.
     host.service.store.updateTask(s.taskId!, { lead: true });
-    await expect(call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "不能继续旧权限" })).rejects.toThrow(/新开一个会话/);
+    await expect(call(host, "POST", `/api/sessions/${s.id}/messages`, { text: "不能继续旧权限" })).rejects.toThrow(/主控需要任命机器人/);
     await expect(host.service.sessions.startPeer(s.id, { text: "绕过主控", permission: "write" })).rejects.toThrow(/主控的本地文件只读/);
   });
 
-  it("does not promote an idle task while a background command is still running", async () => {
+  it("hands an idle DSH task to a Bot lead only after its background command ends", async () => {
     const host = await boot();
     const s = await start(host, "你好");
     await idle(host, s.id);
     const now = new Date().toISOString();
     host.service.store.appendItem({ id: "bg-item", createdAt: now, sessionId: s.id, type: "background", taskId: "bg-write", command: "long-running write", state: "running", startedAt: now });
-    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/请先停止/);
+    await expect(call(host, "PATCH", `/api/tasks/${s.taskId}`, { lead: true })).rejects.toThrow(/主控需要任命机器人/);
+    const bot = host.service.bots.save({ name: "带队", purpose: "带队", memory: "", workspaceId: s.workspaceId, profileId: "p-ds", enabled: true });
+    const receipt = host.service.botLeads.appoint({ operationId: "dsh-background-upgrade", botId: bot.id, taskId: s.taskId!, expectedTerm: null, summary: "接手 DSH 任务", topicTitle: "DSH 任务 · 带队", intent: "upgrade", source: { kind: "manual" } });
+    expect(receipt).toMatchObject({ action: "upgrade", state: { kind: "pending-upgrade", blockers: expect.arrayContaining([{ kind: "background-command", sessionId: s.id }]) } });
+    await host.service.botLeads.flush();
     expect(host.service.store.getTask(s.taskId!)?.lead).toBeFalsy();
+    expect(host.service.store.getSession(s.id)?.writer).toBe("workbench");
   });
 
   it("shows a subagent DSH starts itself as a child session filled from its log, while it runs (2026-11-06)", async () => {

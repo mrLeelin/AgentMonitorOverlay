@@ -140,8 +140,8 @@ export async function startHostServer(options: HostServerOptions): Promise<HostS
     res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(JSON.stringify(payload));
   };
-  const fail = (res: ServerResponse, status: number, code: HostErrorBody["error"]["code"], message: string) =>
-    send(res, status, { error: { code, message } } satisfies HostErrorBody);
+  const fail = (res: ServerResponse, status: number, code: HostErrorBody["error"]["code"], message: string, details?: HostErrorBody["error"]["details"]) =>
+    send(res, status, { error: { code, message, ...(details ? { details } : {}) } } satisfies HostErrorBody);
   const statusOf: Record<HostErrorBody["error"]["code"], number> = {
     bad_request: 400,
     not_found: 404,
@@ -281,7 +281,7 @@ export async function startHostServer(options: HostServerOptions): Promise<HostS
       }
       return fail(res, 404, "not_found", `no route for ${req.method} ${url.pathname}`);
     } catch (err) {
-      if (err instanceof HostError) return fail(res, statusOf[err.code], err.code, err.message);
+      if (err instanceof HostError) return fail(res, statusOf[err.code], err.code, err.message, err.details);
       return fail(res, 500, "internal", (err as Error).message ?? String(err));
     }
   });

@@ -37,5 +37,7 @@ export * from "./remote.js";
 export * from "./fileRefs.js";
 export * from "./duty.js";
 export * from "./bots.js";
+export * from "./bot-leads.js";
+export * from "./worktree-integrations.js";
 export * from "./todo.js";
 export * from "./mcp.js";

@@ -101,6 +101,7 @@ export function toolContext(service: HostService, caller: McpCaller | null): Too
   };
   const inOwnTopic = (c: McpCaller, ...taskIds: unknown[]) => {
     const session = service.store.getSession(c.sessionId)!;
+    if (session.botLeadTerm || (session.taskId && service.botLeads.currentTerm(session.taskId))) service.botLeads.assertManagementSession(c.sessionId);
     const lead = session.taskId ? service.store.getTask(session.taskId)?.lead : false;
     if (lead) {
       for (const id of taskIds) if (!managesTask(service, c.sessionId, String(id))) throw new HostError("read_only", `任务 ${String(id)} 不在你的管理范围内；同专题或协作关系不授予管理权限。`);

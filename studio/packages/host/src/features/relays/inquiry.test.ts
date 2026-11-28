@@ -9,6 +9,8 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
+import { RelaysFeature } from "./service.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, manager: Session, worker: Session;
@@ -20,12 +22,19 @@ beforeEach(async () => {
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "已完成执行", workspaceId: workspace.id, managerTaskId: top.id });
-  manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  manager = await startLeadFixture(service, top, "test");
   worker = await service.tasks.addSession(child.id, { profileId: "test", options: { permission: "workspace-write" } });
   const result = service.orchestration.submit(worker.id, "完成", "检查通过");
   service.orchestration.review(manager.id, result.id, true, "验收通过");
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
+
+// 暂停收件（停止）会收回主控现任任期的管理权限（core/bot-lead-access.ts），之后既不能传话也不能「立即发送」。
+// 这里只拦住主控的自动派送，回执留在收件箱等「立即发送」；拦在原型上，重建的 Host 也照样拦住，跟原来跨重建保留的暂停记录一样。
+const holdManagerInbox = () => {
+  const automatic = RelaysFeature.prototype.canAutoDispatch;
+  return vi.spyOn(RelaysFeature.prototype, "canAutoDispatch").mockImplementation(function (this: RelaysFeature, id: string) { return id !== manager.id && automatic.call(this, id); });
+};
 
 it("keeps accepted work accepted while an explicit MCP inquiry reaches an actual runtime turn", async () => {
   const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
@@ -156,7 +165,7 @@ it("retains the inquiry's permission boundary after a failed immediate change an
 it("migrates an actionable legacy failure receipt's purpose before sending without revoking acceptance", async () => {
   const final = service.orchestration.submit(manager.id, "全部交付", "下级已验收");
   service.orchestration.reviewByUser(manager.taskId!, final.id, true, "用户验收通过");
-  service.sessions.inbox.pause(manager.id);
+  holdManagerInbox();
   const tool = amoToolsFor(service, { sessionId: manager.id }).find((t) => t.name === "task_message")!;
   const resend = vi.spyOn(service.runtime, "resend").mockRejectedValueOnce(new Error("测试发送失败"));
   await tool.run({ taskId: worker.taskId, text: "仅回答当前状态", purpose: "inquiry" });
@@ -180,7 +189,7 @@ it("migrates an actionable legacy failure receipt's purpose before sending witho
 });
 
 it.each(["held", "unsent"] as const)("retires a legacy %s success receipt and its context replacement before Host recovery", async (delivery) => {
-  service.sessions.inbox.pause(manager.id);
+  const hold = holdManagerInbox();
   service.sessions.inbox.pause(worker.id);
   const relay = service.relays.send(manager.id, { taskId: worker.taskId!, text: "仅回答当前状态", purpose: "inquiry" });
   expect(await service.relays.deliver(relay.id)).toMatchObject({ state: "delivered" });
@@ -197,6 +206,7 @@ it.each(["held", "unsent"] as const)("retires a legacy %s success receipt and it
   }
   // The next Host resumes the manager immediately; only the real worker message remains paused.
   store.setKv("sessions.inbox.paused", JSON.stringify([worker.id]));
+  hold.mockRestore();
   const rebuilt = new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") });
   for (const id of [receiptId, replacementId]) {
     expect(store.getItem(id)).toMatchObject({ delivery: "expired", deliveryReason: expect.stringContaining("成功回执") });

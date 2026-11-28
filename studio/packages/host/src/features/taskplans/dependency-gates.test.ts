@@ -9,6 +9,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 
 // 2026-11-17, plans/done/task-dependencies.md: a task whose prerequisites are not finished is not started (nor reopened) by its
 // manager's work, and the person starts it only once they confirmed it; one already started is not held up. Before, the
@@ -33,7 +34,7 @@ beforeEach(async () => {
   prerequisite = store.createTask({ title: "Free UI 移植", workspaceId: ws.id, topicId: topic.id, managerTaskId: lead.id });
   dependent = store.createTask({ title: "核对 Free 配置", workspaceId: ws.id, topicId: topic.id, managerTaskId: lead.id });
   service.canvases.canvasAddDependency(prerequisite.id, dependent.id);
-  leadSession = store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p", workspaceId: ws.id, title: "", status: "idle", writer: "workbench", runtimeRef: "thr-lead" });
+  leadSession = bindLeadFixture(service, store.createSession({ taskId: lead.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "p", workspaceId: ws.id, title: "", status: "idle", writer: "workbench", runtimeRef: "thr-lead" }));
   vi.spyOn(service.sessions.inbox, "put").mockResolvedValue({ delivered: true, waiting: 0 });
   vi.spyOn(service.tasks, "startSession").mockImplementation(async (owner) => store.createSession({ ...leadSession, id: undefined, taskId: owner.taskId, runtimeRef: null }));
 });
@@ -87,6 +88,10 @@ it("the person starts it by hand only once they confirmed it; the page can ask w
   const started = await api<Session>("POST", `/api/tasks/${dependent.id}/sessions`, { profileId: "p", confirmed: true });
   expect(started.status).toBe(200);
   expect(sessions(dependent)).toHaveLength(1);
+  expect(store.listTaskNotes(dependent.id)).toEqual([expect.objectContaining({ sessionId: (started.data as Session).id, text: expect.stringContaining(prerequisite.id) })]);
+  expect(() => service.taskPlans.assertDependencyExecution(dependent.id, "work", (started.data as Session).id)).not.toThrow();
+  expect(() => service.taskPlans.assertDependencyExecution(dependent.id, "reopen", (started.data as Session).id)).toThrow(/Free UI 移植/);
+  expect(() => service.taskPlans.assertDependencyExecution(dependent.id, "work")).toThrow(/Free UI 移植/);
   // Started now: another session needs no confirming.
   expect((await api<Session>("POST", `/api/tasks/${dependent.id}/sessions`, { profileId: "p" })).status).toBe(200);
 });

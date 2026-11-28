@@ -1,4 +1,5 @@
 import { codexAnswers, elicitationForm, formContent, storedAnswers, type ApprovalDecision, type Id, type QuestionReply, type SessionItem } from "@amo-studio/protocol";
+import { newId } from "../../store/store.js";
 import type { ServerRequest } from "./rpc-client.js";
 import type { CodexServerHandle } from "./server-manager.js";
 import { inputQuestions } from "./describe.js";
@@ -29,10 +30,13 @@ export class CodexAsks {
     if (r.method === USER_INPUT || (r.method === ELICITATION && elicitationForm((r.params as { requestedSchema?: unknown }).requestedSchema))) return this.onQuestion(handle, r);
     if (!isApprovalMethod(r.method)) return;
     const params = r.params as { threadId?: string; turnId?: string; itemId?: string; command?: string | null; reason?: string | null; cwd?: string; message?: string; serverName?: string };
-    const s = params.threadId ? this.core.findByThread(params.threadId) : undefined;
-    if (!s) return;
+    const threadId = params.threadId;
+    const s = threadId ? this.core.findByThread(threadId) : undefined;
+    if (!s || !threadId) return;
     const key = approvalKey(s.id, String(r.id));
     if (this.approvals.has(key)) return; // replayed on resubscribe
+    // The server may reuse an RPC id after reconnecting. The UI receipt names this exact pending item.
+    const approvalId = newId("approval");
     const elicitation = r.method === ELICITATION;
     const kind = elicitation ? "permissions" : r.method.includes("fileChange") || r.method === "applyPatchApproval" ? "fileChange" : r.method.includes("permissions") ? "permissions" : "command";
     // The tool row the approval is for already has a readable summary (the command without its shell wrapper, the files).
@@ -41,13 +45,13 @@ export class CodexAsks {
     const toolSummary = tool?.type === "tool" ? (kind === "command" ? tool.input : tool.summary) || undefined : undefined;
     const item = this.core.appendItem(s.id, {
       type: "approval",
-      approvalId: String(r.id),
+      approvalId,
       kind,
       summary: elicitation ? (params.message ?? `MCP 服务 ${params.serverName ?? ""} 请求批准`) : (toolSummary ?? params.command ?? params.reason ?? r.method),
       ...(elicitation ? (params.serverName ? { detail: `MCP：${params.serverName}` } : {}) : params.cwd ? { detail: params.cwd } : {}),
       state: "pending",
     }, { method: r.method, ...(params.itemId ? { itemId: params.itemId } : {}), ...(params.turnId ? { turnId: params.turnId } : {}) });
-    this.approvals.set(key, { kind: elicitation ? "elicitation" : "approval", sessionId: s.id, itemId: item.id, profileId: handle.profileId, requestId: r.id });
+    this.approvals.set(key, { kind: elicitation ? "elicitation" : "approval", sessionId: s.id, itemId: item.id, approvalId, profileId: handle.profileId, requestId: r.id, threadId, client: handle.client });
     this.core.setStatus(s.id, "awaiting-approval");
     // Switched to 完全访问 during the turn (which still runs under the policy it started with): granted at once.
     if (!elicitation && this.core.store.getSession(s.id)?.options.permission === FULL_ACCESS) void this.acceptAll(s.id);
@@ -55,8 +59,8 @@ export class CodexAsks {
 
   /** 完全访问 chosen mid-turn (2026-10-22): the session's waiting approvals (not MCP forms) are accepted at once. */
   async acceptAll(sessionId: Id): Promise<void> {
-    for (const a of [...this.approvals.values()].filter((x) => x.sessionId === sessionId && x.kind === "approval")) {
-      await this.respondApproval(sessionId, String(a.requestId), "accept").catch(() => undefined);
+    for (const a of [...this.approvals.values()].filter((x) => x.sessionId === sessionId && x.kind === "approval" && !x.claimed)) {
+      await this.respondApproval(sessionId, a.approvalId, "accept").catch(() => undefined);
     }
   }
 
@@ -83,20 +87,45 @@ export class CodexAsks {
 
   /** Answers a pending approval. Throws if it was already answered here or elsewhere. */
   async respondApproval(sessionId: Id, approvalId: string, decision: ApprovalDecision): Promise<void> {
-    const pending = this.approvals.get(approvalKey(sessionId, approvalId));
-    if (!pending) throw new Error(`approval ${approvalId} is not pending`);
+    const pending = [...this.approvals.values()].find((approval) => approval.sessionId === sessionId && approval.approvalId === approvalId);
+    const conflict = (message: string) => Object.assign(new Error(message), { code: "conflict" });
+    const stale = () => {
+      const [item] = this.core.store.findItems(sessionId, "approval", { approvalId }, { newest: true, limit: 1 });
+      const state = item?.type === "approval" ? item.state : undefined;
+      const status = state === "accepted" ? "审批已通过" : state === "declined" ? "审批已拒绝" : "审批已过期或由其他入口处理";
+      return conflict(`${status}，请刷新会话（approval ${approvalId} is not pending）。`);
+    };
+    if (!pending || pending.claimed) throw stale();
+    const key = approvalKey(sessionId, String(pending.requestId));
+    const handle = await this.core.handleFor(pending.profileId).catch((error: unknown) => {
+      if (this.approvals.get(key) !== pending || pending.claimed) throw stale();
+      throw error;
+    });
     const session = this.core.store.getSession(sessionId);
-    if (session?.taskId && this.core.store.getTask(session.taskId)?.lead) {
-      const item = this.core.store.getItem(pending.itemId);
-      if (pending.kind !== "elicitation" || item?.type !== "approval" || item.detail !== "MCP：amo") decision = "decline";
+    const item = this.core.store.getItem(pending.itemId);
+    if (this.approvals.get(key) !== pending || pending.claimed || item?.type !== "approval" || item.sessionId !== sessionId || item.approvalId !== approvalId || item.state !== "pending") throw stale();
+    if (!session || session.archivedAt || session.writer === "archived" || session.profileId !== pending.profileId || session.runtimeRef !== pending.threadId || this.core.findByThread(pending.threadId)?.id !== sessionId || handle.client !== pending.client) {
+      this.approvals.delete(key);
+      this.core.updateItem(item.id, () => ({ ...item, state: "resolved-elsewhere" }));
+      throw conflict("审批原会话或 Codex 连接已变更，请刷新并处理仍有效的请求。");
     }
-    const handle = await this.core.handleFor(pending.profileId);
-    handle.client.respond(
-      pending.requestId,
-      pending.kind === "elicitation" ? { action: decision === "accept" ? "accept" : "decline", content: decision === "accept" ? {} : null, _meta: null } : { decision },
-    );
-    this.approvals.delete(approvalKey(sessionId, approvalId));
-    this.core.updateItem(pending.itemId, (item) => (item.type === "approval" ? { ...item, state: decision === "accept" ? "accepted" : "declined" } : item));
+    if (!handle.client.isOpen) throw conflict("Codex 连接当前不可用，审批尚未发送，请刷新后重试。");
+    if (session.taskId && this.core.store.getTask(session.taskId)?.lead) {
+      if (pending.kind !== "elicitation" || item.detail !== "MCP：amo") decision = "decline";
+    }
+    // Keep the native identity until resolution or disconnect so a replay cannot reopen this approval.
+    pending.claimed = true;
+    try {
+      handle.client.respond(
+        pending.requestId,
+        pending.kind === "elicitation" ? { action: decision === "accept" ? "accept" : "decline", content: decision === "accept" ? {} : null, _meta: null } : { decision },
+      );
+    } catch {
+      this.core.updateItem(pending.itemId, (current) => current.type === "approval" && current.state === "pending" ? { ...current, state: "resolved-elsewhere" } : current);
+      this.afterAnswer(sessionId);
+      throw conflict("无法确认 Codex 是否收到审批答复。请刷新原会话核对请求状态。");
+    }
+    this.core.updateItem(pending.itemId, (current) => current.type === "approval" && current.state === "pending" ? { ...current, state: decision === "accept" ? "accepted" : "declined" } : current);
     this.afterAnswer(sessionId);
   }
 
@@ -153,7 +182,7 @@ export class CodexAsks {
   /** After an answer: still waiting for another question or approval (an open async question too), or back to running. */
   afterAnswer(sessionId: Id): void {
     if ([...this.questions.values()].some((q) => q.sessionId === sessionId)) this.core.setStatus(sessionId, "awaiting-answer");
-    else if ([...this.approvals.values()].some((a) => a.sessionId === sessionId)) this.core.setStatus(sessionId, "awaiting-approval");
+    else if ([...this.approvals.values()].some((a) => a.sessionId === sessionId && !a.claimed)) this.core.setStatus(sessionId, "awaiting-approval");
     else if (this.core.sessionState(sessionId).activeTurnId) this.core.setStatus(sessionId, this.openAsync(sessionId).length ? "awaiting-answer" : "running");
   }
 
@@ -167,10 +196,13 @@ export class CodexAsks {
     for (const q of [...this.questions.values()]) if (q.sessionId === sessionId) this.closeQuestion(q, "cancelled");
   }
 
-  /** At start-up no request is waiting yet: questions left pending by the last Host are over (servers replay live ones). */
+  /** Close the previous Host's UI receipts. Servers replay requests that are still live. */
   cancelStale(): void {
     for (const s of this.core.store.listSessions()) {
       if (s.runtime !== "codex") continue;
+      for (const item of this.core.store.findItems(s.id, "approval", { state: "pending" })) {
+        this.core.updateItem(item.id, (it) => it.type === "approval" && it.state === "pending" ? { ...it, state: "resolved-elsewhere" } : it);
+      }
       for (const item of this.core.store.findItems(s.id, "question", { state: "pending" })) {
         if (item.type === "question" && item.state === "pending" && item.source !== "codex-async") this.core.updateItem(item.id, (it) => (it.type === "question" ? { ...it, state: "cancelled" } : it));
       }
@@ -189,7 +221,7 @@ export class CodexAsks {
 
   /** A request_user_input, MCP form or approval of the session's turn waits for the person. */
   waiting(sessionId: Id): boolean {
-    return [...this.questions.values()].some((q) => q.sessionId === sessionId) || [...this.approvals.values()].some((a) => a.sessionId === sessionId);
+    return [...this.questions.values()].some((q) => q.sessionId === sessionId) || [...this.approvals.values()].some((a) => a.sessionId === sessionId && !a.claimed);
   }
 
   /** The person's 停止 (2026-11-17): open async questions close unanswered. */
@@ -236,6 +268,6 @@ export class CodexAsks {
   }
 
   pendingApprovals(sessionId: Id): string[] {
-    return [...this.approvals.values()].filter((a) => a.sessionId === sessionId).map((a) => String(a.requestId));
+    return [...this.approvals.values()].filter((a) => a.sessionId === sessionId && !a.claimed).map((a) => String(a.requestId));
   }
 }

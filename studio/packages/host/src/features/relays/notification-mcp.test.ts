@@ -9,6 +9,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { startLeadFixture } from "../botleads/lead.test-support.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test-model" }];
 let folder: string, store: Store, servers: FakeServers, service: HostService, manager: Session, worker: Session;
@@ -20,9 +21,11 @@ beforeEach(async () => {
   const workspace = store.addWorkspace({ name: "通知权限隔离验证", path: folder });
   const root = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: root.id });
-  manager = await service.tasks.addSession(root.id, { profileId: "test" });
+  manager = await startLeadFixture(service, root, "test");
   worker = await service.tasks.addSession(child.id, { profileId: "test" });
-  service.sessions.inbox.pause(manager.id);
+  // 暂停收件（停止）会收回主控现任任期的管理权限（core/bot-lead-access.ts），主控这边只拦住自动派送，通知仍由「立即发送」送进去。
+  const automatic = service.sessions.inbox.canAutoDispatch;
+  vi.spyOn(service.sessions.inbox, "canAutoDispatch").mockImplementation((id) => id !== manager.id && automatic(id));
   service.sessions.inbox.pause(worker.id);
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
@@ -59,7 +62,7 @@ it("permits the direct manager's actual MCP review in a notification turn and ke
   const submitted = service.orchestration.submit(worker.id, "可验收交付", "正式隔离验证证据");
   await notification(manager.id);
   const strangerTask = store.createTask({ title: "其他管理根", lead: true, workspaceId: manager.workspaceId });
-  const stranger = await service.tasks.addSession(strangerTask.id, { profileId: "test" });
+  const stranger = await startLeadFixture(service, strangerTask, "test");
   expect((await tool(stranger.id, "task_review_result").run({ resultId: submitted.id, accept: true, review: "不能跨树验收" })).isError).toBe(true);
   expect(service.orchestration.results(worker.taskId!).at(-1)?.state).toBe("submitted");
   expect((await tool(manager.id, "task_review_result").run({ resultId: submitted.id, accept: true, review: "通知回合中的直属主控验收" })).isError).not.toBe(true);

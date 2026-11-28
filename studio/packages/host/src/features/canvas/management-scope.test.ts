@@ -8,6 +8,7 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 import { toolContext } from "../../mcp/tool-kit.js";
 import { canvasTools } from "./mcp.js";
 
@@ -26,7 +27,7 @@ beforeEach(() => {
   child = store.createTask({ title: "执行", workspaceId: workspace.id, topicId, managerTaskId: lead.id });
   peer = store.createTask({ title: "平级", workspaceId: workspace.id, topicId, lead: true });
   const session = { parentId: null, kind: "main" as const, runtime: "codex" as const, profileId: "test", workspaceId: workspace.id, title: "", status: "idle" as const, writer: "workbench" as const, runtimeRef: null };
-  leadSessionId = store.createSession({ ...session, taskId: lead.id, topicId: null }).id;
+  leadSessionId = bindLeadFixture(service, store.createSession({ ...session, taskId: lead.id, topicId: null })).id;
   topicSessionId = store.createSession({ ...session, taskId: null, topicId }).id;
   service.canvases.saveCanvas(topicId, {
     ...emptyCanvas(topicId),

@@ -8,20 +8,22 @@ import { CodexRuntime } from "../../runtime/codex/codex-runtime.js";
 import { FakeServers } from "../../runtime/codex/fake-servers.test-support.js";
 import { HostService } from "../../service.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 
 const profiles: ModelProfile[] = [{ id: "test", label: "测试", runtime: "codex", provider: null, model: "test" }];
-let folder: string, store: Store, servers: FakeServers, service: HostService, workspaceId: string;
+let folder: string, store: Store, servers: FakeServers, service: HostService, workspaceId: string, topicId: string;
 beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), "amo-studio-test-notifications-"));
   store = new Store(join(folder, "studio.db"));
   servers = new FakeServers(profiles);
   service = host();
   workspaceId = store.addWorkspace({ name: "隔离验证", path: folder }).id;
+  topicId = service.topics.createTopic({ title: "隔离通知", workspaceIds: [workspaceId] }).id;
 });
 afterEach(async () => { vi.restoreAllMocks(); await servers.close(); store.close(); removeTempDir(folder); });
 function host() { return new HostService(store, new CodexRuntime({ store, servers, profiles }), profiles, { commonDir: join(folder, "common") }); }
-const task = (title: string, lead = false, managerTaskId: string | null = null) => store.createTask({ title, lead, managerTaskId, workspaceId });
-const session = (owner: Task) => store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "running", writer: "workbench", runtimeRef: null });
+const task = (title: string, lead = false, managerTaskId: string | null = null) => store.createTask({ title, lead, managerTaskId, workspaceId, topicId });
+const session = (owner: Task) => bindLeadFixture(service, store.createSession({ taskId: owner.id, topicId: null, parentId: null, kind: "main", runtime: "codex", profileId: "test", workspaceId, title: owner.title, status: "running", writer: "workbench", runtimeRef: null }));
 function publish(lead: string, root: string) {
   const input = { rootTaskId: root, title: "共同需求", body: "v1正文", changeNote: "初版", sources: [{ kind: "user_requirement" as const, source: "隔离测试" }] };
   const draft = service.sharedContext.save(lead, { ...input, baseRevision: 0 });
@@ -68,11 +70,11 @@ describe("durable management notification lifecycle", () => {
     expect(rebuilt.orchestration.workflow(root.id).deliveryIssues).toEqual([]);
   });
 
-  it("keeps an actual transport error and retry, while a paused session stays paused after upgrade", async () => {
+  it("keeps an actual transport error and retry after a context upgrade while the inbox is held", async () => {
     const root = task("主控", true), child = task("执行", false, root.id), manager = session(root), worker = session(child);
     const contextId = publish(manager.id, root.id);
     service.sharedContext.apply(manager.id, { contextId, version: 1, taskIds: [root.id] });
-    service.sessions.inbox.pause(manager.id);
+    const gate = vi.spyOn(service.sessions.inbox, "canAutoDispatch").mockReturnValue(false);
     store.updateSession(worker.id, { status: "idle" });
     const result = service.orchestration.submit(worker.id, "业务完成", "实际证据");
     await vi.waitFor(() => expect(store.getItem(`i-${result.id}-submit`)).toHaveProperty("delivery", "held"));
@@ -81,7 +83,8 @@ describe("durable management notification lifecycle", () => {
     await Promise.resolve();
     expect(send).not.toHaveBeenCalled();
     store.updateSession(manager.id, { status: "idle" });
-    service.sessions.inbox.resume(manager.id);
+    gate.mockRestore();
+    await service.sessions.inbox.flush(manager.id);
     await vi.waitFor(() => expect(service.orchestration.workflow(root.id).deliveryIssues).toEqual([expect.objectContaining({ detail: expect.stringContaining("isolated runtime offline") })]));
     const failed = service.orchestration.workflow(root.id).deliveryIssues[0]!;
     send.mockImplementation(async (_sessionId, itemId) => {
@@ -182,7 +185,7 @@ describe("durable management notification lifecycle", () => {
     store.updateSession(manager.id, { status: "idle" }); store.updateSession(worker.id, { status: "idle" });
     const result = service.orchestration.submit(worker.id, "等待恢复的有效业务", "隔离证据"), oldId = `i-${result.id}-submit`;
     await entered;
-    service.sessions.inbox.pause(manager.id);
+    vi.spyOn(service.sessions.inbox, "canAutoDispatch").mockReturnValue(false);
     service.sharedContext.apply(manager.id, { contextId, version: 2, taskIds: [root.id] });
     release();
     await vi.waitFor(() => expect(store.listItems(manager.id).some((row) => row.type === "user" && row.replacesItemId === oldId && row.delivery === "held")).toBe(true));

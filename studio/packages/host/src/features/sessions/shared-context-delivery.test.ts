@@ -8,6 +8,7 @@ import { removeTempDir } from "@amo-studio/testkit";
 import { HostService } from "../../service.js";
 import { RuntimeRouter, type RuntimeEvents, type SessionRuntimeApi } from "../../runtime/runtime.js";
 import { Store } from "../../store/store.js";
+import { bindLeadFixture } from "../botleads/lead.test-support.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
@@ -43,6 +44,7 @@ describe("shared context transport", () => {
     const child = f.store.createTask({ title: "child", workspaceId: f.workspace.id, managerTaskId: lead.id });
     const manager = f.create(lead);
     const service = new HostService(f.store, f.runtime, f.profiles, { commonDir: join(f.root, "common") });
+    bindLeadFixture(service, manager);
     const body = "正文".repeat(50_000);
     const input = { rootTaskId: lead.id, baseRevision: 0, title: "共同需求", body, changeNote: "初版", sources: [{ kind: "user_requirement" as const, source: "用户" }] };
     const saved = service.sharedContext.save(manager.id, input);
@@ -107,6 +109,7 @@ describe("shared context transport", () => {
     const child = f.store.createTask({ title: "child", workspaceId: f.workspace.id, managerTaskId: lead.id });
     const manager = f.create(lead), worker = f.create(child);
     const service = new HostService(f.store, f.runtime, f.profiles, { commonDir: join(f.root, "common") });
+    bindLeadFixture(service, manager);
     let release!: () => void;
     const put = vi.spyOn(service.sessions.inbox, "put").mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ delivered: false, waiting: 1 }); })).mockResolvedValue({ delivered: false, waiting: 1 });
     const saved = service.sharedContext.save(manager.id, { rootTaskId: lead.id, baseRevision: 0, title: "共同需求", body: "三枚", changeNote: "初版", sources: [{ kind: "user_requirement", source: "用户" }] });
@@ -129,6 +132,7 @@ describe("shared context transport", () => {
     const child = f.store.createTask({ title: "child", workspaceId: f.workspace.id, managerTaskId: lead.id });
     const manager = f.create(lead);
     const service = new HostService(f.store, f.runtime, f.profiles, { commonDir: join(f.root, "common") });
+    bindLeadFixture(service, manager);
     const saved = service.sharedContext.save(manager.id, { rootTaskId: lead.id, baseRevision: 0, title: "共同需求", body: "投币五枚", changeNote: "用户确定", sources: [{ kind: "user_requirement", source: "当前目标" }] });
     const published = service.sharedContext.publishVersion(manager.id, saved.id, saved.revision);
     service.sharedContext.apply(manager.id, { contextId: published.id, version: 1, taskIds: [child.id] });
@@ -170,6 +174,7 @@ describe("shared context transport", () => {
     const child = f.store.createTask({ title: "child", workspaceId: f.workspace.id, managerTaskId: lead.id });
     const manager = f.create(lead), worker = f.create(child);
     const service = new HostService(f.store, f.runtime, f.profiles, { commonDir: join(f.root, "common") });
+    bindLeadFixture(service, manager);
     service.sessions.inbox.pause(worker.id);
     const saved = service.sharedContext.save(manager.id, { rootTaskId: lead.id, baseRevision: 0, title: "共同需求", body: "投币五枚", changeNote: "用户确定", sources: [{ kind: "user_requirement", source: "当前目标" }] });
     const published = service.sharedContext.publishVersion(manager.id, saved.id, saved.revision);

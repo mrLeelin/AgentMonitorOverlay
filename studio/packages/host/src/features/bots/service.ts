@@ -5,6 +5,7 @@ import { boundedText, HostError, isRemoteCopy } from "../../core/shared.js";
 import type { DutyFeature } from "../duty/service.js";
 import { createForkWorktree } from "../sessions/fork-worktree.js";
 import { planeBotWorkerSession } from "../../store/plane-bot.js";
+import { BotLeadStore, botRequestSourceKey, botWorkerOperationId, leadFingerprint } from "../../store/bot-leads.js";
 import { BotWebhookBridge } from "./webhooks.js";
 import { assertBotsEnabled, botsEnabled, botInstructions, botPermission, isBotTask } from "./data.js";
 import { botMascotId, supportsBotMemory, supportsBotRuntime } from "@amo-studio/protocol";
@@ -20,7 +21,7 @@ interface BotRow {
 }
 
 type GroupRequest = { groupId: Id; postId: Id };
-type SavedRequest = BotRequest & { group?: GroupRequest; planningWorkspace?: Id };
+type SavedRequest = BotRequest & { group?: GroupRequest; planningWorkspace?: Id; direct?: true };
 type WorkerTarget = { workspaceId: Id; topicId?: Id; title: string; commit?: string; text: string; link(task: Task): void };
 
 interface RequestRow {
@@ -34,6 +35,8 @@ function readRequest(row: RequestRow): SavedRequest {
 }
 
 const inboxId = (id: Id) => `bot-request:${id}`;
+// The DSH runtime adds its Bot persona to direct messages. Requests carry their own.
+const chatMessageId = (id: Id) => `bot-chat:${id}`;
 const AVATAR_PREFIX = "data:image/png;base64,";
 const PNG_HEADER = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 
@@ -104,7 +107,7 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     return { ...content, id: row.id, taskId: row.task_id, homeSessionId: row.home_session_id };
   }
 
-  sidebar(): BotSidebarData {
+  sidebar(botId?: Id): BotSidebarData {
     const latest = this.store.db.prepare(`SELECT b.id, (
       SELECT substr(json_extract(i.body, '$.markdown'), 1, 180)
       FROM sessions s JOIN items i ON i.session_id = s.id
@@ -113,10 +116,21 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     ) AS preview FROM studio_bots b WHERE b.task_id IS NOT NULL AND ${activeBot}`).all() as { id: Id; preview: string | null }[];
     const workers = this.store.db.prepare(`SELECT r.bot_id AS botId, w.task_id AS taskId
       FROM studio_bot_workers w JOIN studio_bot_requests r ON r.id = w.request_id`).all() as BotSidebarData["workers"];
-    return { previews: Object.fromEntries(latest.flatMap(({ id, preview }) => preview ? [[id, preview.replace(/\s+/gu, " ").trim()]] : [])), workers };
+    const previews = Object.fromEntries(latest.flatMap(({ id, preview }) => preview ? [[id, preview.replace(/\s+/gu, " ").trim()]] : []));
+    if (!botId) return { previews, workers };
+    const taskId = this.botRow(botId)?.task_id;
+    const chats = !taskId ? [] : this.store.db.prepare(`SELECT s.id, (
+      SELECT substr(CASE WHEN i.type = 'agent' THEN json_extract(i.body, '$.markdown') ELSE json_extract(i.body, '$.text') END, 1, 180)
+      FROM items i WHERE i.session_id = s.id AND (i.type = 'agent' AND length(json_extract(i.body, '$.markdown')) > 0
+        OR i.type = 'user' AND coalesce(json_extract(i.body, '$.queueCancelled'), 0) = 0)
+      ORDER BY i.seq DESC LIMIT 1
+    ) AS preview FROM sessions s
+      WHERE s.task_id = ? AND s.kind = 'main' AND s.parent_id IS NULL ORDER BY s.updated_at DESC LIMIT 100`).all(taskId) as { id: Id; preview: string | null }[];
+    const chatPreviews = Object.fromEntries(chats.flatMap(({ id, preview }) => preview ? [[id, preview.replace(/\s+/gu, " ").trim()]] : []));
+    return { previews, workers, chatPreviews };
   }
 
-  private bot(id: Id): StudioBot {
+  bot(id: Id): StudioBot {
     const bot = this.findBot(id);
     if (!bot) throw new HostError("not_found", "找不到这个 Bot。");
     return bot;
@@ -258,15 +272,19 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
 
   async chatSkillContext(input: Parameters<BotsFeature["runtime"]["startSession"]>[0]) {
     if (!input.taskId || input.resumeFrom) return undefined;
-    const row = this.store.db.prepare("SELECT data FROM studio_bots WHERE task_id = ?").get(input.taskId) as { data: string } | undefined;
-    if (!row) return undefined;
-    const bot = JSON.parse(row.data) as BotInput;
-    const assigned = [...new Map([...this.sharedSkills(), ...(bot.skills ?? [])].map((skill) => [skill.id, skill])).values()];
+    const term = input.leadSessionId ? new BotLeadStore(this.store).currentTerm(input.taskId) : null;
+    const row = term ? null : this.store.db.prepare("SELECT data FROM studio_bots WHERE task_id = ?").get(input.taskId) as { data: string } | undefined;
+    if (!term && !row) return undefined;
+    const assigned = term ? term.snapshot.skills ?? [] : this.configuredSkills((JSON.parse(row!.data) as BotInput).skills);
     if (!assigned.length) return undefined;
     const profile = this.requireProfile(input.profileId);
     const workspace = input.cwd ? { ...input.workspace, path: input.cwd } : input.workspace;
     const catalog = await readBotSkills(this.store.path, this.options, this.runtime, profile, workspace, { project: !isCommon(workspace) });
     return botSkillPrompt(assigned, catalog);
+  }
+
+  configuredSkills(skills: BotInput["skills"]) {
+    return [...new Map([...this.sharedSkills(), ...(skills ?? [])].map((skill) => [skill.id, skill])).values()];
   }
 
   patch(id: Id, raw: Record<string, unknown>): StudioBot {
@@ -296,6 +314,13 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     return this.serial(id, async () => {
       const bot = this.findBot(id);
       if (!bot) return { ok: true };
+      const leads = new BotLeadStore(this.store);
+      const taskIds = new Set([
+        ...leads.currentTerms().filter((term) => term.botId === id).map((term) => term.taskId),
+        ...leads.upgrades().filter((entry) => entry.upgrade?.botId === id && entry.taskId).map((entry) => entry.taskId!),
+      ]);
+      const appointments = [...taskIds].map((taskId) => this.store.getTask(taskId)).filter((task): task is Task => !!task && !task.archivedAt && !(task.topicId && this.store.getTopic(task.topicId)?.archivedAt));
+      if (appointments.length) throw new HostError("conflict", `「${bot.name}」还负责 ${appointments.map((task) => `「${task.title}」`).join("、")}。请先到任务卡换任、取消交接或归档。`);
       const sessions = bot.taskId ? this.store.listSessions({ taskId: bot.taskId }) : [];
       if (sessions.some((session) => this.chatHasWork(session))) throw new HostError("conflict", "这个 Bot 还有运行或排队的消息，请处理完再删除。");
       const groups = this.groups().filter((group) => group.memberIds.includes(id));
@@ -589,7 +614,13 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
     return request && this.status(request);
   }
 
-  async request(id: Id, raw: Record<string, unknown>, reportToSource = false, group?: GroupRequest, planningWorkspace?: Id): Promise<BotRequest> {
+  async newChat(id: Id, raw: Record<string, unknown>): Promise<Session> {
+    const sent = await this.request(id, { id: raw.id, text: raw.text, destination: "new" }, false, undefined, undefined, true);
+    if (sent.sessionId && this.store.getItem(chatMessageId(sent.id))) return this.requireSession(sent.sessionId);
+    throw new HostError("conflict", sent.result ?? "这条消息未能开启聊天，请重试。");
+  }
+
+  async request(id: Id, raw: Record<string, unknown>, reportToSource = false, group?: GroupRequest, planningWorkspace?: Id, direct = false): Promise<BotRequest> {
     const requestId = boundedText(raw.id, "请求编号", 80);
     if (!/^[\w-]+$/u.test(requestId)) throw new HostError("bad_request", "请求编号有误。");
     return this.serial(id, async () => {
@@ -600,31 +631,45 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
       const destination = this.destination(raw.destination);
       const previous = this.getRequest(requestId);
       if (previous) {
-        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination) || previous.planningWorkspace !== planningWorkspace
+        if (previous.botId !== bot.id || previous.sourceSessionId !== (source?.id ?? null) || previous.text !== text || JSON.stringify(previous.destination) !== JSON.stringify(destination) || previous.planningWorkspace !== planningWorkspace || (previous.direct === true) !== direct
           || (previous.group && (previous.group.groupId !== group?.groupId || previous.group.postId !== group?.postId))) {
           throw new HostError("conflict", "请求编号已用于另一条 Bot 消息。");
+        }
+        if (direct && previous.status === "failed" && !this.store.getItem(chatMessageId(requestId))) {
+          const retry: SavedRequest = { ...previous, status: "queued", settledAt: undefined, result: undefined };
+          this.store.db.prepare("UPDATE studio_bot_requests SET data = ?, delivered = 0 WHERE id = ?").run(JSON.stringify(retry), requestId);
+          return this.deliver(retry);
         }
         return this.deliver(previous);
       }
       assertBotsEnabled(this.store);
       if (!bot.enabled) throw new HostError("conflict", "这个 Bot 已停用。");
       if (source?.taskId && source.taskId === bot.taskId) throw new HostError("bad_request", "请在当前 Bot 会话直接发送消息。");
-      const queued: SavedRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}), ...(group ? { group } : {}), ...(planningWorkspace ? { planningWorkspace } : {}) };
+      const queued: SavedRequest = { id: requestId, botId: id, botName: bot.name, sourceSessionId: source?.id ?? null, destination, sessionId: null, text, createdAt: new Date().toISOString(), status: "queued", ...(reportToSource ? { reportToSource: true } : {}), ...(group ? { group } : {}), ...(planningWorkspace ? { planningWorkspace } : {}), ...(direct ? { direct: true } : {}) };
       this.store.db.prepare("INSERT INTO studio_bot_requests (id, bot_id, source_session_id, created_at, data) VALUES (?, ?, ?, ?, ?)").run(requestId, id, queued.sourceSessionId, queued.createdAt, JSON.stringify(queued));
       return this.deliver(queued);
     });
   }
 
-  async worker(id: Id, target?: WorkerTarget) {
+  async worker(id: Id, target?: WorkerTarget, operationInput?: unknown) {
     return this.serial(`worker:${id}`, async () => {
+      const leads = new BotLeadStore(this.store);
+      const operationId = operationInput === undefined ? botWorkerOperationId(id) : boundedText(operationInput, "operationId", 200);
+      const fingerprint = leadFingerprint({ action: "worker", requestId: id });
+      const operation = !target ? leads.beginOperation(operationId, fingerprint) : null;
+      const prior = operation?.receipt ?? (!target ? leads.requestAcceptance(id) : null);
+      if (prior && prior.action !== "worker") throw new HostError("conflict", "该请求已由机器人主控承接，请打开原任务。", { reason: "source-already-accepted", receipt: prior });
       const record = this.getRequest(id);
-      if (!record) throw new HostError("not_found", "找不到 Bot 请求。");
+      if (!record || record.direct) throw new HostError("not_found", "找不到 Bot 请求。");
       if (record.planningWorkspace && !target) throw new HostError("conflict", "这条 Plane 请求由 Studio 创建执行任务，请从原单进入。");
       const previous = this.store.db.prepare("SELECT task_id FROM studio_bot_workers WHERE request_id = ?").get(id) as { task_id: Id } | undefined;
       const previousTask = previous && this.requireTask(previous.task_id);
       const previousSession = previousTask && (target ? planeBotWorkerSession(this.store, previousTask.id, target.workspaceId)
         : this.store.listSessions({ taskId: previousTask.id }).find((session) => !session.parentId));
-      if (previousTask && (previousSession || !target)) return { task: previousTask, session: previousSession ?? null };
+      if (previousTask && (previousSession || !target)) {
+        if (!target && prior && !operation?.receipt) leads.finishOperation(operationId, prior);
+        return { task: previousTask, session: previousSession ?? null, ...(prior ? { receipt: prior } : {}) };
+      }
       assertBotsEnabled(this.store);
       const request = this.status(record);
       if (request.status !== "completed" || !request.result) throw new HostError("conflict", "Bot 提供结论后再创建执行任务。");
@@ -651,17 +696,40 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
           throw error;
         }
       }
-      return this.f.tasks.createTask({ title, workspaceId: workspace.id, topicId: target?.topicId, worktree: { commit: target?.commit }, description: description.slice(0, TASK_DESCRIPTION_MAX), firstSession }, (task) => {
+      const register = (task: Task) => {
+        if (!target) {
+          const winner = leads.requestAcceptance(id);
+          if (winner) throw new HostError("conflict", "该请求已有承接任务，请打开原任务。", { reason: "source-already-accepted", receipt: winner });
+          const receipt = { operationId, action: "worker" as const, taskId: task.id, topicId: task.topicId };
+          leads.finishOperation(operationId, receipt);
+          leads.claimAcceptance(botRequestSourceKey(id), operationId);
+        }
         this.store.db.prepare("INSERT INTO studio_bot_workers (request_id, task_id) VALUES (?, ?)").run(id, task.id);
         target?.link(task);
-      });
+      };
+      const result = await this.f.tasks.createTask({ title, workspaceId: workspace.id, topicId: target?.topicId, worktree: { commit: target?.commit }, description: description.slice(0, TASK_DESCRIPTION_MAX), firstSession }, register);
+      const receipt = !target ? leads.operation(operationId)?.receipt : null;
+      if (receipt?.action === "worker") this.publish({ type: "bots.changed" });
+      return { ...result, ...(receipt?.action === "worker" ? { receipt } : {}) };
     });
   }
 
   requests(source: Id | null): BotRequest[] {
-    const sql = source === null ? "SELECT * FROM studio_bot_requests ORDER BY created_at DESC LIMIT 100" : "SELECT * FROM studio_bot_requests WHERE source_session_id = ? ORDER BY created_at DESC LIMIT 100";
+    const sql = source === null ? "SELECT * FROM studio_bot_requests WHERE json_extract(data, '$.direct') IS NULL ORDER BY created_at DESC LIMIT 100" : "SELECT * FROM studio_bot_requests WHERE source_session_id = ? ORDER BY created_at DESC LIMIT 100";
     const stmt = this.store.db.prepare(sql);
-    return ((source === null ? stmt.all() : stmt.all(source)) as unknown as RequestRow[]).map((row) => this.status(this.fromRequestRow(row)));
+    const leads = new BotLeadStore(this.store);
+    return ((source === null ? stmt.all() : stmt.all(source)) as unknown as RequestRow[]).map((row) => {
+      const request = this.status(this.fromRequestRow(row));
+      const acceptance = leads.requestAcceptance(request.id);
+      return acceptance ? { ...request, acceptance } : request;
+    });
+  }
+
+  appointmentRequest(id: Id): BotRequest {
+    const request = this.getRequest(id);
+    if (!request || request.direct) throw new HostError("not_found", "找不到 Bot 请求。");
+    if (request.planningWorkspace) throw new HostError("conflict", "请从 Plane 原单确认带队方式。");
+    return this.status(request);
   }
 
   recover(): void {
@@ -767,7 +835,9 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
   }
 
   private async deliver(request: SavedRequest): Promise<BotRequest> {
-    if (request.status !== "queued" || this.store.getItem(inboxId(request.id))) return this.status(request);
+    if (request.status !== "queued") return this.status(request);
+    const messageId = request.direct ? chatMessageId(request.id) : inboxId(request.id);
+    if (this.store.getItem(messageId)) return request.direct ? this.settled({ ...request, status: "completed" }) : this.status(request);
     try {
       const bot = this.bot(request.botId);
       if (request.planningWorkspace) this.requirePlanningBot(bot.id);
@@ -789,13 +859,17 @@ export class BotsFeature extends Feature<"tasks" | "sessions" | "duty"> {
       }
       this.store.db.prepare("UPDATE studio_bot_requests SET session_id = ? WHERE id = ?").run(session.id, request.id);
       request = { ...request, sessionId: session.id };
+      if (request.direct) {
+        await this.f.sessions.inbox.put(session.id, request.text, undefined, messageId, { fromPerson: true, afterTurn: true });
+        return this.settled({ ...request, status: "completed" });
+      }
       const cwd = source && (source.cwd ?? this.store.getWorkspace(source.workspaceId)?.path);
       const input = request.group ? this.groupInput(request, request.group) : `【本次请求】\n${request.text}`;
       const text = [`你是 ${bot.name}。`, `【职责】\n${bot.purpose}`, ...(bot.memory ? [`【记忆】\n${bot.memory}`] : []), ...(cwd ? [`【本次任务的工作目录】\n${cwd}`] : []), input].join("\n\n");
       const origin = source ? (source.taskId && this.store.getTask(source.taskId)?.title) || source.title || "项目会话" : null;
       const heading = `来自「${origin}」的请求`;
       // Requests need their own turns so stopping or attributing a reply affects only that request.
-      await this.f.sessions.inbox.put(session.id, origin ? `【Bot 来信】${heading}\n\n${text}` : text, undefined, inboxId(request.id),
+      await this.f.sessions.inbox.put(session.id, origin ? `【Bot 来信】${heading}\n\n${text}` : text, undefined, messageId,
         { afterTurn: true, ...(origin ? { botLetter: { kind: "request", heading, text: request.text } } : {}) });
       this.store.db.prepare("UPDATE studio_bot_requests SET delivered = 1 WHERE id = ?").run(request.id);
       return this.status(request);

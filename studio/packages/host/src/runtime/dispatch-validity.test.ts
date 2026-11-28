@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ModelProfile } from "@amo-studio/protocol";
 import { removeTempDir } from "@amo-studio/testkit";
+import { startLeadFixture } from "../features/botleads/lead.test-support.js";
 import { HostService } from "../service.js";
 import { Store } from "../store/store.js";
 import { CodexRuntime } from "./codex/codex-runtime.js";
@@ -21,7 +22,7 @@ it("rechecks the frozen inbox row after cold resume and never dispatches an expi
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: top.id });
-  const manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  const manager = await startLeadFixture(service, top, "test");
   const worker = await service.tasks.addSession(child.id, { profileId: "test" });
   service.sessions.inbox.pause(worker.id);
   const draft = service.sharedContext.save(manager.id, { rootTaskId: top.id, baseRevision: 0, title: "版本", body: "旧版专用内容", changeNote: "v1", sources: [{ kind: "user_requirement", source: "用户" }] });
@@ -63,7 +64,7 @@ it("rejects a direct send captured under v1 when cold recovery completes only af
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: top.id });
-  const manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  const manager = await startLeadFixture(service, top, "test");
   const worker = await service.tasks.addSession(child.id, { profileId: "test" });
   service.sessions.inbox.pause(worker.id);
   const draft = service.sharedContext.save(manager.id, { rootTaskId: top.id, baseRevision: 0, title: "版本", body: "直发旧版专用内容", changeNote: "v1", sources: [{ kind: "user_requirement", source: "用户" }] });
@@ -91,7 +92,7 @@ it("rechecks a first-session input snapshot after native creation waits across a
   const workspace = store.addWorkspace({ name: "项目", path: folder });
   const top = store.createTask({ title: "主控", workspaceId: workspace.id, lead: true });
   const child = store.createTask({ title: "执行", workspaceId: workspace.id, managerTaskId: top.id });
-  const manager = await service.tasks.addSession(top.id, { profileId: "test" });
+  const manager = await startLeadFixture(service, top, "test");
   const draft = service.sharedContext.save(manager.id, { rootTaskId: top.id, baseRevision: 0, title: "版本", body: "首发旧版专用内容", changeNote: "v1", sources: [{ kind: "user_requirement", source: "用户" }] });
   const v1 = service.sharedContext.publishVersion(manager.id, draft.id, draft.revision);
   service.sharedContext.apply(manager.id, { contextId: draft.id, version: 1, taskIds: [child.id] });

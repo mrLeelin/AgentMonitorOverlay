@@ -8,8 +8,11 @@ import { ATTACHMENT_ID, str, strOrNull, toItem, toSession, toTask, toTopic, toWo
 import { MIGRATIONS } from "./migrations.js";
 import { kvPrefixes, MCP_SESSION_PREFIX, MCP_TOKEN_PREFIX, MESSAGE_PURPOSE_PREFIX } from "./kv-keys.js";
 
-const SESSION_SELECT = `SELECT sessions.*, CASE WHEN json_valid(kv.value) THEN json_extract(kv.value, '$.botConversation') END AS bot_conversation
-  FROM sessions LEFT JOIN kv ON kv.key = '${MESSAGE_PURPOSE_PREFIX}' || sessions.id`;
+const SESSION_SELECT = `SELECT sessions.*, CASE WHEN json_valid(kv.value) THEN json_extract(kv.value, '$.botConversation') END AS bot_conversation,
+    lead.id AS lead_term_id, lead.generation AS lead_generation, lead.bot_id AS lead_bot_id, json_extract(lead.snapshot, '$.name') AS lead_name
+  FROM sessions LEFT JOIN kv ON kv.key = '${MESSAGE_PURPOSE_PREFIX}' || sessions.id
+  LEFT JOIN studio_bot_lead_sessions ON studio_bot_lead_sessions.session_id = sessions.id
+  LEFT JOIN studio_bot_lead_terms lead ON lead.id = studio_bot_lead_sessions.term_id`;
 
 /** A HostEvent before the store assigns its sequence number. */
 export type HostEventInput = HostEvent extends infer E ? (E extends HostEvent ? Omit<E, "seq"> : never) : never;
@@ -263,7 +266,7 @@ export class Store extends DocumentStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(s.id, s.taskId, s.topicId, s.parentId, s.kind, s.runtime, s.profileId, s.workspaceId, s.cwd ?? null, s.title, s.status, s.writer, s.runtimeRef, JSON.stringify(s.options), s.goal === undefined ? null : JSON.stringify(s.goal), at, at);
-    return s;
+    return input.id ? this.getSession(s.id)! : s;
   }
 
   getSession(id: Id): Session | undefined {
@@ -272,17 +275,17 @@ export class Store extends DocumentStore {
   }
 
   findSessionByRuntimeRef(runtime: Session["runtime"], runtimeRef: string): Session | undefined {
-    const r = this.db.prepare(`${SESSION_SELECT} WHERE runtime = ? AND runtime_ref = ?`).get(runtime, runtimeRef) as Row | undefined;
+    const r = this.db.prepare(`${SESSION_SELECT} WHERE sessions.runtime = ? AND sessions.runtime_ref = ?`).get(runtime, runtimeRef) as Row | undefined;
     return r && toSession(r);
   }
 
   /** All sessions, or one owner's (a task's or a topic's). */
   listSessions(filter: { taskId?: Id; topicId?: Id } = {}): Session[] {
     const rows = filter.taskId
-      ? this.db.prepare(`${SESSION_SELECT} WHERE task_id = ? ORDER BY created_at, sessions.id`).all(filter.taskId)
+      ? this.db.prepare(`${SESSION_SELECT} WHERE sessions.task_id = ? ORDER BY sessions.created_at, sessions.id`).all(filter.taskId)
       : filter.topicId
-        ? this.db.prepare(`${SESSION_SELECT} WHERE topic_id = ? ORDER BY created_at, sessions.id`).all(filter.topicId)
-        : this.db.prepare(`${SESSION_SELECT} ORDER BY created_at, sessions.id`).all();
+        ? this.db.prepare(`${SESSION_SELECT} WHERE sessions.topic_id = ? ORDER BY sessions.created_at, sessions.id`).all(filter.topicId)
+        : this.db.prepare(`${SESSION_SELECT} ORDER BY sessions.created_at, sessions.id`).all();
     return (rows as Row[]).map(toSession);
   }
 
@@ -457,7 +460,7 @@ export class Store extends DocumentStore {
       // Forks point at their parents: one statement per owner set is checked at its end, so order does not matter.
       if (sessions.size) this.db.prepare(`DELETE FROM sessions WHERE id IN (${[...sessions].map(() => "?").join(", ")})`).run(...sessions);
       // A whole management subtree may go together, independent of parent/child insertion order.
-      each(tasks, "DELETE FROM plane_bot_jobs WHERE task_id = ?");
+      each(tasks, "DELETE FROM plane_bot_jobs WHERE task_id = ? OR root_task_id = ?1");
       if (tasks.size) this.db.prepare(`DELETE FROM tasks WHERE id IN (${[...tasks].map(() => "?").join(", ")})`).run(...tasks);
       each(topics, "DELETE FROM canvas_docs WHERE id = ?");
       each(topics, "DELETE FROM canvas_callouts WHERE topic_id = ?");

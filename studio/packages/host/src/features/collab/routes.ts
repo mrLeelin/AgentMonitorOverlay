@@ -22,6 +22,6 @@ export function collabRoutes(service: HostService): Route[] {
     route("PATCH /api/mail/:id", ({ params, body }) => service.collab.updateMail(params.id!, obj(body).state)),
     route("POST /api/mail/:id/forward", ({ params, body }) => service.collab.forwardMail(params.id!, obj(body))),
     route("GET /api/decisions", ({ query }) => service.collab.decisions(query.get("state") ? { state: query.get("state") as never } : {})),
-    route("POST /api/decisions/:id/answer", ({ params, body }) => service.collab.answerDecision(params.id!, obj(body).answer)),
+    route("POST /api/decisions/:id/answer", ({ params, body }) => service.orchestration.answerDecisionByUser(params.id!, obj(body).answer)),
   ];
 }

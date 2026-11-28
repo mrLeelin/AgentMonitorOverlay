@@ -25,21 +25,22 @@ const GRAPH: Record<string, string[]> = {
   datamgmt: ["attachments", "projects"],
   duty: ["sessions", "tasks"],
   bots: ["duty", "sessions", "tasks"],
+  botleads: ["bots", "canvas", "sessions", "taskplans", "tasks", "topics"],
   gitreview: ["projects", "remote", "sessions"],
   guide: ["config", "teamtasks"],
   marks: ["openin"],
   orchestration: ["collab", "sessions", "sharedcontext", "tasks"],
   planning: ["canvas", "tasks"],
   projects: ["tasks"],
-  relays: ["collab", "sessions", "taskplans", "tasks"],
+  relays: ["collab", "sessions", "sharedcontext", "taskplans", "tasks"],
   remote: ["attachments", "channels", "chatfiles", "gitreview", "openin", "prompttemplates", "sessions", "tasks", "viewpacks"],
   review: ["sessions"],
   scratchpad: ["attachments"],
   sessions: ["attachments", "collab", "config", "remote", "review", "sharedcontext", "tasks"],
   taskplans: ["canvas", "collab", "orchestration", "sessions", "sharedcontext", "tasks", "topics"],
-  tasks: ["canvas", "config", "mcp", "remote", "sessions", "topics"],
+  tasks: ["canvas", "config", "mcp", "remote", "sessions"],
   teamrelay: ["config", "sessions"],
-  teamtasks: ["bots", "orchestration", "sessions", "tasks"],
+  teamtasks: ["botleads", "bots", "orchestration", "sessions", "tasks"],
   topics: ["tasks"],
   viewpacks: ["remote"],
 };
@@ -52,8 +53,7 @@ const GRAPH: Record<string, string[]> = {
  * gitreview ⇄ remote and viewpacks ⇄ remote (opened on the paired device; A reads them for B); and through them
  * projects (archiving a project archives its tasks; opening a Review of a folder adds it as a project).
  */
-// topics ⇄ tasks: promotion reuses topic creation/binding; topics already uses task lifecycle for archiving.
-const KNOWN_CYCLES: string[][] = [["collab", "gitreview", "projects", "remote", "review", "sessions", "tasks", "topics", "viewpacks"]];
+const KNOWN_CYCLES: string[][] = [["collab", "gitreview", "projects", "remote", "review", "sessions", "tasks", "viewpacks"]];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
