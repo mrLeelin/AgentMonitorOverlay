@@ -11,7 +11,7 @@
     },
     "gpt": {
       "limit": 300,
-      "used": 208
+      "used": 217
     },
     "claude": {
       "limit": 300,
@@ -1457,6 +1457,51 @@
       "at": "2026-11-26T11:29:20.310Z",
       "provider": "gpt",
       "note": "Plane TALUO-11 @AmoStudio real test: worker first turn"
+    },
+    {
+      "at": "2026-11-28T06:03:43.441Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 1"
+    },
+    {
+      "at": "2026-11-28T06:03:43.443Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 2"
+    },
+    {
+      "at": "2026-11-28T06:03:43.445Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 3"
+    },
+    {
+      "at": "2026-11-28T06:03:43.447Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 4"
+    },
+    {
+      "at": "2026-11-28T06:03:43.449Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 5"
+    },
+    {
+      "at": "2026-11-28T06:03:43.451Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 6"
+    },
+    {
+      "at": "2026-11-28T06:03:43.452Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 7"
+    },
+    {
+      "at": "2026-11-28T06:03:43.454Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 8"
+    },
+    {
+      "at": "2026-11-28T06:03:43.455Z",
+      "provider": "gpt",
+      "note": "2026-11-28 integrated Bot lead workflow: reconciled from completed transcript after run 9"
     }
   ]
 }
