@@ -724,6 +724,10 @@ export function ScopeNav({ link, workspaces, topics, tasks, sessions = [], profi
               <li>专题和它的画布、{liveTasks.filter((t) => t.topicId === archiving.id).length} 个任务以及这些任务和专题自己的会话一起归档，只能查看。</li>
             )}
             {archiving.kind === "workspace" && <li>项目文件夹里的文件不受影响。</li>}
+            {archiving.kind === "topic" && liveTasks.filter((task) => task.topicId === archiving.id && task.lead && task.column !== "done").map((task) => {
+              const running = liveTasks.filter((child) => child.managerTaskId === task.id && sessions.some((session) => session.taskId === child.id && !session.archivedAt && (session.status === "running" || needsPerson(session.status))));
+              return <li key={task.id}>「{task.title}」{running.length ? `，在途：${running.map((child) => child.title).join("、")}` : ""}。恢复后从主控卡手动继续。</li>;
+            })}
             <li>可以在 设置 → 数据管理 里恢复，或者彻底删除。</li>
           </ul>
         </ConfirmDialog>

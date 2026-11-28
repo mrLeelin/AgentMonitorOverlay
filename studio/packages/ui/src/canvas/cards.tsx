@@ -4,6 +4,7 @@ import { relativeTime, SESSION_LOOK, taskSessions, taskStatus } from "../lib/sta
 import type { ContextHint } from "./useContextHints.js";
 import { TaskRunner } from "../board/TaskRunner.js";
 import { TaskModels } from "../lib/TaskModels.js";
+import { BotAvatar } from "../bots/BotAvatar.js";
 
 // The canvas's cards (stage 16 split out of CanvasPage.tsx): a task of the topic, a reference to another topic's task,
 // and a note. A task's description shows on its card (two lines); a colour mark is its outline (data-color).
@@ -48,7 +49,7 @@ interface CardModels {
   choices: ReadonlyMap<string, ProfileChoices | null>;
 }
 
-export function TaskCard({ node, task, sessions, profiles, choices, workspaces, selected, flag, linking, handles, onOpen, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager, contextHint }: CardEvents & CardModels & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void; contextHint?: ContextHint }) {
+export function TaskCard({ node, task, sessions, profiles, choices, workspaces, selected, flag, linking, handles, onOpen, onDetails, onMouseDown, onContextMenu, manager, management, dimmed, onLocateManager, contextHint, runLabel, deliveryLabel, waitingOn }: CardEvents & CardModels & { node: CanvasNode; task: Task; sessions: readonly Session[]; workspaces: readonly Workspace[]; linking: boolean; onOpen(): void; onDetails?(): void; manager?: Task; management?: { directLeadCount: number; workerCount: number; pending: number }; dimmed?: boolean; onLocateManager?(): void; contextHint?: ContextHint; runLabel?: string; deliveryLabel?: string; waitingOn?: string }) {
   const own = taskSessions(task, sessions);
   const status = taskStatus(own);
   const look = status ? SESSION_LOOK[status] : null;
@@ -56,6 +57,7 @@ export function TaskCard({ node, task, sessions, profiles, choices, workspaces, 
   const where = taskWhere(task, workspaces);
   // An archived task keeps its card (2026-10-22): greyed, marked 已归档, so its links and dependencies still make sense.
   const archived = !!task.archivedAt;
+  const term = task.botLead?.kind === "appointed" ? task.botLead.term : undefined;
   const size = { w: node.size?.w ?? CARD_W, h: Math.max(node.size?.h ?? cardHeight(task), CARD_H + managementHeight(task)) };
   const lines = node.size ? descLines(size.h - managementHeight(task)) : 2;
   return (
@@ -73,7 +75,11 @@ export function TaskCard({ node, task, sessions, profiles, choices, workspaces, 
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
       onDoubleClick={onOpen}
-      onKeyDown={(e) => e.key === "Enter" && onOpen()}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter") onOpen();
+        if (e.key === " " && onDetails) { e.preventDefault(); onDetails(); }
+      }}
     >
       <span className="canvas-card-title">
         {archived && (
@@ -81,7 +87,7 @@ export function TaskCard({ node, task, sessions, profiles, choices, workspaces, 
             已归档
           </span>
         )}
-        {task.lead && !archived && (
+        {task.lead && !archived && !term && (
           <span className={`lead-badge${!task.managerTaskId ? " root-lead-badge" : ""}`} title={!task.managerTaskId ? "总主控：管理树的最顶层主控，汇总下辖任务的交付" : "主控：管理明确归属的下辖任务"} data-testid="lead-badge">
             {task.managerTaskId ? "主控" : "总主控"}
           </span>
@@ -94,15 +100,19 @@ export function TaskCard({ node, task, sessions, profiles, choices, workspaces, 
         ) : (
           <>
             <span className="dot" style={{ background: look?.dot ?? "var(--muted-dot)" }} />
-            <span style={{ color: look?.text ?? "var(--text-dim)" }}>{look?.label ?? "未开始"}</span>
+            <span style={{ color: look?.text ?? "var(--text-dim)" }} title={waitingOn || deliveryLabel}>{waitingOn || deliveryLabel || look?.label || "未开始"}</span>
             {status === "running" && <TaskRunner sessions={own} />}
-            {contextHint ? <span className="canvas-context-hint" data-testid="canvas-context-hint" title={contextHint.detail}>{contextHint.label}</span> : <span>· {[where, live ? `${live} 个会话` : ""].filter(Boolean).join(" · ")}</span>}
+            <span title={where}>· {[where, !term && live ? `${live} 个会话` : ""].filter(Boolean).join(" · ")}</span>
+            {contextHint && <span className="canvas-context-hint" data-testid="canvas-context-hint" title={contextHint.detail}>{contextHint.label}</span>}
           </>
         )}
       </span>
       <TaskModels sessions={own} profiles={profiles} choices={task.remote ? new Map() : choices} />
       {task.managerTaskId && <button type="button" className="link-btn canvas-manager" title="定位直属主控" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onLocateManager?.(); }}>直属：{manager?.title || "主控不可用"}</button>}
-      {task.lead && management && <span className="canvas-management-summary" data-testid="canvas-management-summary">直属主控 {management.directLeadCount} · 下辖执行 {management.workerCount}<br />待确认 {management.pending} 项</span>}
+      {task.lead && management && <span className="canvas-management-summary" data-testid="canvas-management-summary">
+        {term && <span className="canvas-lead-identity"><BotAvatar name={term.name} avatar={term.avatar} size={14} /><span title={term.name}>{task.managerTaskId ? "中控" : "总主控"} · {term.name}</span></span>}
+        {runLabel ? `${runLabel} · ${management.pending} 项待确认` : <>直属主控 {management.directLeadCount} · 下辖执行 {management.workerCount}<br />待确认 {management.pending} 项</>}
+      </span>}
       {task.description && lines > 0 && (
         <span className="canvas-card-desc" title={task.description} style={lines !== 2 ? { WebkitLineClamp: lines } : undefined} data-testid="canvas-card-desc">
           {task.description}

@@ -10,10 +10,14 @@
 .sidebar-rail { border-right: 0; border-left: 1px solid var(--border); }
 .task-sidebar { flex: 0 0 300px; min-width: 0; min-height: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel-raised); }
 .task-sidebar-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--divider); }
-.task-sidebar-views { flex: 1; display: flex; gap: 4px; }
-.task-sidebar-views .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-color: var(--border); }
+.task-sidebar-views { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
+.task-sidebar-views .btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-color: var(--border); white-space: nowrap; }
 .task-sidebar-views .btn-ghost[aria-pressed="true"] { background: var(--tint); color: var(--primary-hover); border-color: var(--primary); }
 .task-sidebar-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; }
+.task-sidebar-description:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.task-sidebar-description-actions { display: flex; justify-content: flex-end; padding: 10px 16px 0; }
+.task-sidebar-description .task-sidebar-body:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.task-sidebar-description-text { margin: 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .session-row { justify-content: flex-start; gap: 10px; }
 .session-text { display: flex; flex-direction: column; min-width: 0; }
 .session-kind { font-size: 11px; color: var(--text-dim); }
@@ -292,6 +296,9 @@
   .bar-btn.labeled { padding: 0 7px; }
   .thread-head { gap: 6px; padding-left: 16px; }
 }
+.thread-head.bot-chat-head { justify-content: center; padding-inline: 12px; }
+.bot-chat-head .bot-chat-identity { box-sizing: border-box; max-width: 100%; gap: 6px; padding: 3px 10px 3px 5px; border-radius: 999px; background: var(--chip); color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.bot-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-head .task-title, .task-head .task-title .task-title-btn { font-size: 18px; font-weight: 700; line-height: 1.3; }
 /* Quiet until hovered: the session bar's buttons have no box of their own. */
 .thread-head .btn-ghost { border-color: transparent; background: transparent; }
@@ -338,9 +345,7 @@
 .slist-detail-title { font-size: var(--fs-sm); font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srow.tree-row.child::before { content: none; }
 
-/* A task's description (stage 16): under the head, and its dialog (also opened from the canvas). */
-.task-desc { display: flex; align-items: flex-start; gap: 10px; margin: -4px 0 8px; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--panel-raised); }
-.task-desc-text { margin: 0; flex: 1; font-size: var(--fs-sm); line-height: 1.6; white-space: pre-wrap; color: var(--text); max-height: 6.4em; overflow: auto; }
+/* The description editor also opens from the canvas. */
 .description-dialog textarea { min-height: 140px; }
 .description-dialog-actions { display: flex; align-items: center; gap: 8px; }
 .description-dialog-actions .spacer { flex: 1; }
@@ -357,5 +362,5 @@
 .todo-bind-box { flex: none; width: 14px; height: 14px; margin-top: 3px; display: grid; place-items: center; border: 1.3px solid var(--text-dim); border-radius: 2px; font-size: 10px; line-height: 1; }
 .todo-bind-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .todo-bind-tag { flex: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--text-dim); }
-/* Under the task head (stage 16): the description, 拆任务提案 and 传话 keep the archived banner's margins. */
-.taskpage > .task-desc, .taskpage > .plan-banner, .taskpage > .relay-banner { margin: 10px 24px 0; }
+/* 拆任务提案 and 传话 keep the archived banner's margins. */
+.taskpage > .plan-banner, .taskpage > .relay-banner { margin: 10px 24px 0; }

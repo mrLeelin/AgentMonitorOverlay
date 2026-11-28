@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, ITEM_CARD, REVIEW_STATUSES, taskManagement, workspacesActivity, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasItem, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type ModelProfile, type ReviewStatus, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
+import { CANVAS_LINK_LABEL_MAX, CANVAS_SIDES, ITEM_CARD, REVIEW_STATUSES, isManagedBy, taskManagement, workspacesActivity, type CanvasCallout, type CanvasColor, type CanvasDoc, type CanvasGroup, type CanvasItem, type CanvasLink, type CanvasNode, type CanvasSide, type Id, type Point, type ModelProfile, type ReviewStatus, type Session, type Task, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError } from "../host/client.js";
 import { useCallouts } from "./useCallouts.js";
 import { CalloutDialog, CalloutLayer, calloutFlags, ItemCard, ItemDetail, itemActivity, ITEM_MIN, TalkTab } from "./review.js";
@@ -37,9 +37,14 @@ import { useCanvasReturns } from "./useCanvasReturns.js";
 import { taskStatus } from "../lib/status.js";
 import { dependencyFlow, managementFlow } from "./task-flow.js";
 import { usePrerequisites } from "../task/prerequisites.js";
-import { useTaskFlow } from "./useTaskFlow.js";
-import { useContextHints } from "./useContextHints.js";
+import { useTaskFlow, workflowRoots } from "./useTaskFlow.js";
+import { canvasContextHints } from "./useContextHints.js";
 import { FlowOverlay } from "./FlowOverlay.js";
+import { LeadAppointment, openLeadReceipt, type LeadSeed } from "../bots/LeadAppointment.js";
+import { LeadRun, LeadWorkflowPanel, leadRunLabel } from "../bots/LeadWorkflow.js";
+import { LegacyLeadIssues } from "../bots/LeadLifecycle.js";
+import type { LeadAttentionTarget } from "../bots/lead-navigation.js";
+import { useBots } from "../bots/roster.js";
 
 export { CARD_H, CARD_W, NOTE_H, NOTE_W } from "./cards.js";
 
@@ -106,6 +111,11 @@ interface CanvasPageProps {
   onNewTask?(): void;
   /** A question to open once the canvas has it (from Focus); `nav` changes with each ask. */
   openCallout?: { id: Id; nav: number };
+  focusTask?: { id: Id; nav: number; attention?: LeadAttentionTarget };
+  botsEnabled?: boolean;
+  online?: boolean;
+  onBack?(): void;
+  backLabel?: string;
   /**
    * 画布小窗 (2026-10-27): the canvas alone, no sidebar or editing tools — the cards, their bubbles and the question
    * window — fitted into view when it opens.
@@ -113,7 +123,7 @@ interface CanvasPageProps {
   compact?: boolean;
 }
 
-export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [topic], sessions, workspaces, profiles = [], onOpenTask, onNewTask, openCallout, compact = false }: CanvasPageProps) {
+export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [topic], sessions, workspaces, profiles = [], onOpenTask, onNewTask, openCallout, focusTask, botsEnabled = false, online = true, compact = false, onBack, backLabel }: CanvasPageProps) {
   const { doc, save, conflict, dismissConflict, error, dismissError } = useCanvas(link, topic.id);
   const { changes: reviewChanges, acknowledge: acknowledgeReview } = useReviewChanges(doc, topic.id, link.url, !compact);
   const returns = useCanvasReturns(link, topic.id);
@@ -128,6 +138,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     setPreviewState(next);
   };
   const [selection, setSelectionState] = useState<CanvasSelection>(null);
+  const [detailFocus, setDetailFocus] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<Id>>(new Set());
   const [selectedLines, setSelectedLines] = useState<ReadonlySet<string>>(new Set());
   // Let Ctrl/Shift clicks reach cards covered by the detail box; typing shortcuts keep the editor visible.
@@ -159,18 +170,34 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const [showReviewRelations, setShowReviewRelations] = useState(() => readKey("amo.canvasReviewRelations") !== "0");
   const [expandedDiscussion, setExpandedDiscussion] = useState<{ topicId: string; itemId: string } | null>(null);
   const [allLevels, setAllLevels] = useState(true);
+  const [foldedBranches, setFoldedBranches] = useState<ReadonlySet<Id>>(new Set());
+  const [leadSeed, setLeadSeed] = useState<LeadSeed>();
+  const [legacyIssues, setLegacyIssues] = useState(false);
+  const [awaitingCard, setAwaitingCard] = useState<Id>();
+  const bots = useBots(link, !compact && botsEnabled);
+  const [listChoice, setListChoice] = useState<boolean>();
   const decisions = useOpenDecisions(link);
-  const taskFlow = useTaskFlow(link, tasks);
-  const contextHints = useContextHints(link, tasks);
+  const contextHints = useMemo(() => canvasContextHints(tasks), [tasks]);
   // Whether each prerequisite is finished, as the Host counts it (2026-11-17, plans/done/task-dependencies.md).
   const prerequisites = usePrerequisites(link);
   const [animateFlow, setAnimateFlow] = useState(() => readKey("amo.canvasFlowAnimation") !== "0");
-  const flowStatus = new Map(tasks.map((t) => [t.id, taskStatus(sessions.filter((s) => s.taskId === t.id))]));
+  const sessionsByTask = useMemo(() => {
+    const grouped = new Map<Id, Session[]>();
+    for (const session of sessions) {
+      if (!session.taskId) continue;
+      const own = grouped.get(session.taskId) ?? [];
+      own.push(session);
+      grouped.set(session.taskId, own);
+    }
+    return grouped;
+  }, [sessions]);
+  const flowStatus = new Map(tasks.map((t) => [t.id, taskStatus(sessionsByTask.get(t.id) ?? [])]));
   // Selecting opens the 详情框 beside the card; the sidebar keeps its tab (2026-10-29: 详情 left the sidebar).
   const setSelection = (next: CanvasSelection) => {
     setSelectedIds(new Set());
     setSelectedLines(new Set());
     setSelectionState(next);
+    setDetailFocus(false);
   };
   const planning = useFeature("planning");
   const [sideOpen, setSideOpenState] = useState(() => readKey(SIDE_KEY) !== "0");
@@ -227,11 +254,15 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   useEffect(() => saveView(viewKey, view), [view, viewKey]);
 
   // The viewport's size, for the 详情框 to stay inside it (the sidebar's width and the window change it).
-  const [area, setArea] = useState({ w: 0, h: 0 });
+  const [area, setArea] = useState({ w: 0, h: 0, pageWidth: 0 });
+  const taskList = !compact && (listChoice ?? (area.pageWidth > 0 && area.pageWidth < 760));
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el) return;
-    const measure = () => setArea((a) => (a.w === el.clientWidth && a.h === el.clientHeight ? a : { w: el.clientWidth, h: el.clientHeight }));
+    const measure = () => {
+      const pageWidth = el.closest(".canvas-page")?.clientWidth ?? el.clientWidth;
+      setArea((a) => a.w === el.clientWidth && a.h === el.clientHeight && a.pageWidth === pageWidth ? a : { w: el.clientWidth, h: el.clientHeight, pageWidth });
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -240,11 +271,25 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
 
   const latestDoc = useRef(doc);
   latestDoc.current = doc;
-  const persist = useCallback((next: CanvasDoc) => {
+  const requiredTaskIds = useMemo(() => {
+    const ids = new Set<Id>();
+    for (const task of tasks) {
+      if (task.botLead?.kind !== "appointed") continue;
+      ids.add(task.id);
+      for (const child of taskManagement(tasks, task.id).descendants) ids.add(child.id);
+    }
+    return ids;
+  }, [tasks]);
+  const persist = useCallback((next: CanvasDoc, base?: CanvasDoc) => {
+    const formal = new Set(next.nodes.flatMap((node) => node.kind === "task" ? [node.taskId] : []));
+    if (latestDoc.current?.nodes.some((node) => node.kind === "task" && requiredTaskIds.has(node.taskId) && !formal.has(node.taskId))) {
+      setNotice({ text: "活动管理任务需要保留正式卡。可收起分支，或打开任务处理归属或归档。", error: true });
+      return;
+    }
     const issue = newCanvasRelationIssues(next, latestDoc.current ?? undefined)[0];
     if (issue) { setNotice({ text: canvasRelationMessage(next, issue, allTasks), error: true }); return; }
-    void save(next).catch(() => undefined);
-  }, [save, allTasks]);
+    void save(next, base).catch(() => undefined);
+  }, [save, allTasks, requiredTaskIds]);
   const edit = useCallback(
     (apply: (d: CanvasDoc) => CanvasDoc) => {
       const cur = latestDoc.current;
@@ -262,7 +307,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const cardTaskById = new Map([...allTasks.filter((t) => t.archivedAt && t.topicId === topic.id), ...tasks].map((t) => [t.id, t]));
   const anyTaskById = new Map(allTasks.map((t) => [t.id, t]));
   const modelTaskIds = new Set((doc?.nodes ?? []).flatMap((n) => (n.kind === "task" || n.kind === "ref") && anyTaskById.has(n.taskId) && !anyTaskById.get(n.taskId)?.remote ? [n.taskId] : []));
-  const modelChoices = useChoicesFor(link, [...modelTaskIds].flatMap((id) => taskModelSessions(sessions.filter((s) => s.taskId === id)).map((s) => s.profileId)));
+  const modelChoices = useChoicesFor(link, [...modelTaskIds].flatMap((id) => taskModelSessions(sessionsByTask.get(id) ?? []).map((s) => s.profileId)));
   const nodeSize = (n: CanvasNode) => n.kind === "task" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? cardHeight(anyTaskById.get(n.taskId)), CARD_H + managementHeight(anyTaskById.get(n.taskId))) } : n.kind === "ref" ? { w: n.size?.w ?? CARD_W, h: Math.max(n.size?.h ?? (anyTaskById.get(n.taskId)?.description ? CARD_H_DESC : CARD_H), CARD_H) } : n.size ?? (n.kind === "note" ? { w: NOTE_W, h: NOTE_H } : ITEM_CARD);
   const minSize = (n: CanvasNode) => (n.kind === "note" ? NOTE_MIN : n.kind === "item" ? ITEM_MIN : n.kind === "task" ? { ...CARD_MIN, h: CARD_MIN.h + managementHeight(anyTaskById.get(n.taskId)) } : CARD_MIN);
   const relationDoc = preview ?? doc;
@@ -346,7 +391,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
     const el = viewport.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.(".ref-picker, .canvas-detail")) return; // the task list and the 详情框 scroll
+      if ((e.target as HTMLElement | null)?.closest?.(".ref-picker, .canvas-detail, .lead-narrow-cards")) return;
       e.preventDefault();
       const box = el.getBoundingClientRect();
       zoomAt(e.clientX - box.left, e.clientY - box.top, e.deltaY < 0 ? 1.1 : 1 / 1.1);
@@ -480,7 +525,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       if (drag.kind !== "pan") {
         // A fast gesture may release before its last mousemove reaches the window listener.
         onMove(e);
-        if (drag.moved && previewRef.current) persist(previewRef.current);
+        if (drag.moved && previewRef.current) persist(previewRef.current, drag.base);
         else if ((drag.kind === "node" || drag.kind === "group-move") && drag.selectOnClick) {
           setSelection({ kind: drag.kind === "node" ? "node" : "group", id: drag.id });
         }
@@ -504,17 +549,56 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const nodeById = new Map((shown?.nodes ?? []).map((n) => [n.id, n]));
   const selectedNode = selection?.kind === "node" ? nodeById.get(selection.id) : undefined;
   const selectedTask = selectedNode && (selectedNode.kind === "task" || selectedNode.kind === "ref") ? anyTaskById.get(selectedNode.taskId) : undefined;
+  const rootByTask = useMemo(() => workflowRoots(tasks), [tasks]);
+  const selectedRoot = selectedNode?.kind === "task" && selectedTask ? rootByTask.get(selectedTask.id) : null;
+  const branch = selectedRoot && selectedTask && !foldedBranches.has(selectedTask.id) ? {
+    rootId: selectedRoot, parentId: selectedTask.lead ? selectedTask.id : selectedTask.managerTaskId ?? selectedRoot,
+  } : null;
+  const taskFlow = useTaskFlow(link, tasks, branch);
+  const attentionFromNavigation = focusTask?.id === selectedTask?.id ? focusTask?.attention : undefined;
   const selectedTree = selectedTask?.lead ? taskManagement(allTasks, selectedTask.id) : null;
   const selectedScope = selectedTree && new Set([selectedTask!.id, ...selectedTree.descendants.map((t) => t.id)]);
   const hiddenTasks = new Set(selectedTree && !allLevels ? selectedTree.descendants.filter((t) => t.managerTaskId !== selectedTask!.id).map((t) => t.id) : []);
+  for (const id of foldedBranches) for (const child of taskManagement(tasks, id).descendants) hiddenTasks.add(child.id);
   const visibleNode = (n: CanvasNode) => !(n.kind === "task" && hiddenTasks.has(n.taskId));
   const visibleLinks = shown?.links ?? [];
   /** A card's box as drawn. */
   const rectOf = (n: CanvasNode) => ({ ...n.pos, ...(sizes.get(n.id) ?? nodeSize(n)) });
-  const locateTask = (id: Id) => {
-    const node = shown?.nodes.find((n) => (n.kind === "task" || n.kind === "ref") && n.taskId === id);
-    if (node) { setAllLevels(true); setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }
+  const locateTask = (id: Id, takeFocus = true) => {
+    const node = shown?.nodes.find((n) => n.kind === "task" && n.taskId === id);
+    if (node) {
+      setAllLevels(true);
+      setFoldedBranches((previous) => new Set([...previous].filter((ancestor) => !isManagedBy(tasks, id, ancestor))));
+      setSelection({ kind: "node", id: node.id });
+      setDetailFocus(takeFocus);
+      centreOf(rectOf(node));
+    }
     else onOpenTask(id);
+  };
+  const located = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusTask || !doc || !area.w) return;
+    const key = `${focusTask.id}:${focusTask.nav}`;
+    if (located.current === key || !doc.nodes.some((node) => node.kind === "task" && node.taskId === focusTask.id)) return;
+    located.current = key;
+    locateTask(focusTask.id);
+  }, [doc, area.w, focusTask?.id, focusTask?.nav]);
+  useEffect(() => {
+    if (!awaitingCard || !area.w || !doc?.nodes.some((node) => node.kind === "task" && node.taskId === awaitingCard)) return;
+    locateTask(awaitingCard);
+    setAwaitingCard(undefined);
+  }, [doc, area.w, awaitingCard]);
+  const toggleFold = (id: Id) => setFoldedBranches((previous) => {
+    const next = new Set(previous);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const fitTree = () => {
+    if (!shown || !selectedScope) return;
+    const bounds = contentBounds({ ...shown, groups: [], nodes: shown.nodes.filter((node) => node.kind === "task" && selectedScope.has(node.taskId) && visibleNode(node)) }, nodeSize);
+    if (!bounds) return;
+    const k = Math.max(MIN_K, Math.min(1, (area.w - 80) / bounds.w, (area.h - 80) / bounds.h));
+    setView({ k, x: (area.w - bounds.w * k) / 2 - bounds.x * k, y: (area.h - bounds.h * k) / 2 - bounds.y * k });
   };
 
   /** 连线: a drag from one of a card's four side handles draws a line to another card. */
@@ -740,6 +824,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const setItemStatus = (id: Id, status: ReviewStatus) => edit((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id && n.kind === "item" ? { ...n, status } : n)) }));
   /** Task cards leave the canvas; review items go with their open bubbles, just as in their context menu. */
   const deleteNodes = (ids: ReadonlySet<Id>, lines: ReadonlySet<string> = new Set()) => {
+    if (latestDoc.current?.nodes.some((node) => ids.has(node.id) && node.kind === "task" && requiredTaskIds.has(node.taskId))) {
+      setNotice({ text: "所选卡片包含活动管理任务。可收起对应分支，或在任务页处理归属或归档。", error: true });
+      return;
+    }
     const items = new Set(latestDoc.current?.nodes.filter((n) => ids.has(n.id) && n.kind === "item").map((n) => n.id));
     edit((d) => ({ ...d, groups: d.groups.filter((g) => !ids.has(g.id)), nodes: d.nodes.filter((n) => !ids.has(n.id)).map((n) => n.groupId && ids.has(n.groupId) ? { ...n, groupId: null } : n), links: (d.links ?? []).filter((l) => !lines.has(`link:${l.id}`) && !ids.has(l.from) && !ids.has(l.to)), edges: d.edges.filter((e) => !lines.has(`edge:${e.id}`)) }));
     for (const c of callouts) if (items.has(c.target) && c.state !== "closed") closeCallout(c);
@@ -783,6 +871,8 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       item("新分组", () => newGroup(at), { testId: "menu-new-group" }),
       item("引用任务…", () => setPicking(true)),
       ...(onNewTask ? [item("在专题里新建任务", onNewTask)] : []),
+      ...(botsEnabled && !topic.archivedAt ? [item("请机器人带队…", () => setLeadSeed({ source: { kind: "manual" }, topicId: topic.id }))] : []),
+      item("查看管理关系异常…", () => setLegacyIssues(true)),
       SEP,
       item("全部显示", fitAll, { testId: "menu-fit" }),
       item("复位缩放", () => setView({ x: 0, y: 0, k: 1 })),
@@ -806,11 +896,15 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       colorOf({ kind: "node", id: node.id }, node.color),
       item(task.description ? "编辑说明…" : "添加说明…", () => setDescribing(task.id), { testId: "menu-describe" }),
       item("打开任务", () => onOpenTask(task.id)),
+      ...(botsEnabled && !task.remote && !task.lead && !task.botId && !task.botLead ? [item("请机器人带队…", () => setLeadSeed({
+        source: { kind: "manual" }, intent: "upgrade", taskId: task.id, topicId: topic.id, title: task.title, summary: task.description || task.firstMessage || task.title,
+      }))] : []),
       item("连依赖：选它之后的任务…", () => setLinkFrom(task.id), { hint: "再点一张任务卡片：那个任务要等这个做完才开始", testId: "menu-link" }),
       ...groupItems(node),
       centreItem(node),
       SEP,
-      item("从画布上拿掉（任务不变）", () => edit((d) => ({ ...d, nodes: d.nodes.filter((n) => n.id !== node.id) })), { danger: true, hint: "只拿掉卡片：任务仍在专题里，依赖也保留" }),
+      ...(requiredTaskIds.has(task.id) ? [task.lead ? item(foldedBranches.has(task.id) ? "展开分支" : "收起分支", () => toggleFold(task.id)) : item("打开任务处理归属或归档", () => onOpenTask(task.id))]
+        : [item("从画布上拿掉（任务不变）", () => edit((d) => ({ ...d, nodes: d.nodes.filter((n) => n.id !== node.id) })), { danger: true, hint: "只拿掉卡片：任务仍在专题里，依赖也保留" })]),
     ]);
   };
 
@@ -902,11 +996,11 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
   const detailAvoid = selectedRect && !compact ? (shown?.nodes ?? []).filter((n) => !(selection?.kind === "node" && n.id === selection.id)).map((n) => onScreen(rectOf(n))) : [];
 
   return (
-    <section className="canvas-page" aria-label="画布">
+    <section className="canvas-page" aria-label="画布" data-task-list={taskList || undefined}>
       <div className="toaster">
       {conflict && (
         <div role="status" className="toast" data-testid="canvas-conflict">
-          <span>画布刚在别处更新过，已载入最新内容，刚才的改动没有保存。</span>
+          <span>画布已载入最新内容。与其他窗口冲突的改动未保存，请核对后再试。</span>
           <button type="button" className="toast-close" aria-label="关闭提示" onClick={dismissConflict}>
             ×
           </button>
@@ -931,10 +1025,18 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
       </div>
       {!compact && <div className="canvas-relations" role="group" aria-label="关系图例与显示">{([ ["management", "管理 ⇢ 虚线"], ["dependency", "依赖 → 实线"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={relations[key]} onChange={(e) => changeRelation(key, e.target.checked)} />{label}</label>)}<label title="自动显示问题来源和展开的讨论，不改变管理归属"><input type="checkbox" checked={showReviewRelations} onChange={(e) => { setShowReviewRelations(e.target.checked); writeKey("amo.canvasReviewRelations", e.target.checked ? "1" : "0"); }} />来源与讨论 · 点划线</label>{selectedTree && <button type="button" className="link-btn" aria-pressed={allLevels} onClick={() => setAllLevels(!allLevels)}>{allLevels ? "收起间接下辖" : "展开全部层级"}</button>}</div>}
       {!compact && <div className="canvas-flow-legend" role="group" aria-label="任务流转">
+        {onBack && <button type="button" className="link-btn" onClick={onBack}>返回{backLabel === "Bots" ? " Bots" : backLabel}</button>}
+        <strong>{topic.title}</strong>
         <label title="高亮沿箭头流向执行任务；提交后沿管理线回流到主控"><input type="checkbox" checked={animateFlow} onChange={(e) => { setAnimateFlow(e.target.checked); writeKey("amo.canvasFlowAnimation", e.target.checked ? "1" : "0"); }} />流转动画</label>
         <span data-state="running">顺流执行</span><span data-state="submitted">回流待验收</span><span data-state="waiting">等待时静止</span>
         {taskFlow.unavailable && <span role="status">交付状态暂未加载</span>}
+        {awaitingCard && <span role="status">已承接，正在定位正式卡…</span>}
+        {!taskFlow.unavailable && taskFlow.loading && <span role="status">正在更新交付状态…</span>}
         {contextHints.unavailable && <span role="status">共同需求状态暂未加载</span>}
+        {focusTask && doc && tasks.some((item) => item.id === focusTask.id) && !doc.nodes.some((node) => node.kind === "task" && node.taskId === focusTask.id) && <button type="button" className="link-btn" onClick={() => onOpenTask(focusTask.id)}>正式卡暂未显示 · 打开任务</button>}
+        <button type="button" className="link-btn" aria-pressed={taskList} onClick={() => setListChoice(!taskList)}>{taskList ? "显示画布" : "任务列表"}</button>
+        {selectedTree && !taskList && <button type="button" className="link-btn" onClick={fitTree}>聚焦本树</button>}
+        {botsEnabled && !topic.archivedAt && <button type="button" className="link-btn" onClick={() => setLeadSeed({ source: { kind: "manual" }, topicId: topic.id })}>请机器人带队</button>}
       </div>}
       {doc && <CanvasRelationProblems doc={doc} tasks={allTasks} onLocate={(node) => { setSelection({ kind: "node", id: node.id }); centreOf(rectOf(node)); }} onRemove={(source, id) => edit((d) => source === "link" ? removeLink(d, id) : removeEdge(d, id))} />}
       {!compact && reviewChanges.size > 0 && <div className="canvas-review-changes" role="group" aria-label="审阅变化" data-testid="canvas-review-changes">
@@ -1162,10 +1264,17 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             }
             const task = cardTaskById.get(node.taskId);
             if (!task) return null;
-            const tree = task.lead ? taskManagement(allTasks, task.id) : null;
-            const scope = tree ? new Set([task.id, ...tree.descendants.map((t) => t.id)]) : new Set([task.id]);
-            const scopeNodeIds = new Set((shown?.nodes ?? []).filter((n) => (n.kind === "task" || n.kind === "ref") && scope.has(n.taskId)).map((n) => n.id));
-            const pending = new Set([...decisions.filter((d) => d.taskId && scope.has(d.taskId)).map((d) => `decision:${d.id}`), ...callouts.filter((c) => c.kind === "question" && c.state === "open" && (scope.has(c.target) || scopeNodeIds.has(c.target))).map((c) => `callout:${c.id}`)]).size;
+            const tree = task.lead ? taskManagement(tasks, task.id) : null;
+            const rootPage = taskFlow.homes.get(task.id);
+            const scope = tree && new Set([task.id, ...tree.descendants.map((t) => t.id)]);
+            const pending = scope ? new Set([
+              ...decisions.filter((d) => d.taskId && scope.has(d.taskId)).map((d) => d.id),
+              ...callouts.filter((c) => {
+                const target = nodeById.get(c.target);
+                return c.kind === "question" && c.state === "open" && (scope.has(c.target) || (target?.kind === "task" || target?.kind === "ref") && scope.has(target.taskId));
+              }).map((c) => c.id),
+              ...(rootPage?.pendingUserReviewResultId ? [rootPage.pendingUserReviewResultId] : []),
+            ]).size : 0;
             return (
               <TaskCard
                 key={node.id}
@@ -1178,8 +1287,12 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
                 contextHint={contextHints.hints.get(task.id)}
                 dimmed={!!selectedScope && !selectedScope.has(task.id)}
                 onLocateManager={() => task.managerTaskId && locateTask(task.managerTaskId)}
-                sessions={sessions}
+                onDetails={() => locateTask(task.id)}
+                sessions={sessionsByTask.get(task.id) ?? []}
                 workspaces={workspaces}
+                runLabel={leadRunLabel(task)}
+                deliveryLabel={rootPage?.pendingUserReviewResultId ? "待你验收" : taskFlow.results.get(task.id)?.state === "submitted" ? "已提交 · 待验收" : taskFlow.rows.get(task.id)?.acceptedCurrent ? "已验收" : undefined}
+                waitingOn={taskFlow.rows.get(task.id)?.waitingForWorktree?.length ? "等待接入前置改动" : (prerequisites?.[task.id]?.length ? `等待「${anyTaskById.get(prerequisites[task.id]![0]!)?.title || "前置任务"}」${prerequisites[task.id]!.length > 1 ? `等 ${prerequisites[task.id]!.length} 项` : ""}` : undefined)}
                 selected={selected}
                 flag={flags.get(task.id) ?? flags.get(node.id)}
                 linking={!!linkFrom && linkFrom !== task.id && !task.archivedAt}
@@ -1320,7 +1433,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           </button>
         </div>
         {!compact && <div className="canvas-hint">中键移动视角 · 左键拖动卡片 · 空白处框选 · Ctrl／Shift 点击或框选多选 · 滚轮缩放 · Del 删除 · 双击打开任务 · 右键更多操作</div>}
-        {!compact && (
+        {!compact && !taskList && (
           <button
             type="button"
             className="btn-ghost small sidebar-toggle canvas-side-toggle"
@@ -1339,6 +1452,9 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             {!sideOpen && openQuestions.length > 0 && <span className="sidebar-count" title={`${openQuestions.length} 个问题待你确认`}>{openQuestions.length}</span>}
           </button>
         )}
+        {taskList && shown && <div className="lead-narrow-cards" role="region" aria-label="专题任务列表" onMouseDown={(event) => event.stopPropagation()}>
+          {shown.nodes.flatMap((node) => node.kind === "task" && visibleNode(node) && cardTaskById.has(node.taskId) ? [<button type="button" key={node.id} className="btn-ghost small" aria-pressed={selection?.kind === "node" && selection.id === node.id} onClick={() => locateTask(node.taskId)}>{cardTaskById.get(node.taskId)!.title || "未命名任务"}{leadRunLabel(cardTaskById.get(node.taskId)!) ? ` · ${leadRunLabel(cardTaskById.get(node.taskId)!)}` : ""}</button>] : [])}
+        </div>}
         {shown && selection && !compact && (
           <CanvasDetail
             link={link}
@@ -1354,7 +1470,22 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
             topics={topics}
             sessions={sessions}
             workspaces={workspaces}
-            onChange={persist}
+            stacked={taskList}
+            focusDetail={detailFocus}
+            onLocateTask={locateTask}
+            keepTaskCard={requiredTaskIds.has(selectedTask?.id ?? "")}
+            onFold={selectedTask?.lead ? () => toggleFold(selectedTask.id) : undefined}
+            folded={foldedBranches.has(selectedTask?.id ?? "")}
+            renderWorkflow={selectedTask && (selectedRoot || selectedTask.botLead) ? <div className="lead-workflow" key={`${selectedTask.id}:${attentionFromNavigation ? focusTask?.nav : ""}`}>
+              <LeadRun link={link} task={selectedTask} sessions={sessions} botsEnabled={botsEnabled} onOpen={onOpenTask} directory={{
+                link, bots, tasks: allTasks, topics, workspaces, profiles, onTask: onOpenTask, onCanvas: (_topic, id) => locateTask(id),
+              }} onChooseUpgrade={() => setLeadSeed({ source: { kind: "manual" }, intent: "upgrade", taskId: selectedTask.id, title: selectedTask.title,
+                summary: selectedTask.botLead?.kind === "legacy" ? selectedTask.botLead.summary || selectedTask.title : selectedTask.title })} />
+              {selectedRoot && <LeadWorkflowPanel link={link} task={selectedTask} root={taskFlow.homes.get(selectedRoot)} pages={taskFlow.selected?.pages ?? []} selectedRow={taskFlow.rows.get(selectedTask.id)} pending={taskFlow.selected?.loading ?? taskFlow.loading} error={taskFlow.selected?.error}
+                decisions={decisions} tasks={allTasks} online={online} focusReview={attentionFromNavigation?.resultId} focusDecision={attentionFromNavigation?.decisionId} onRefresh={() => taskFlow.refresh(selectedRoot)} onMore={taskFlow.more} onLocate={locateTask} onOpen={onOpenTask} />
+              }
+            </div> : undefined}
+            onChange={(next) => persist(next, shown)}
             onEdit={edit}
             onClearSelection={() => setSelectionState(null)}
             onDeleteGroup={askDeleteGroup}
@@ -1378,7 +1509,7 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           />
         )}
       </div>
-      {shown && !compact && sideOpen && (
+      {shown && !compact && sideOpen && !taskList && (
         <>
           {sideW.handle("调整画布侧栏宽度")}
           <CanvasSidebar
@@ -1395,7 +1526,15 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
         </>
       )}
       </div>
+      {leadSeed && <LeadAppointment directory={{ link, bots, tasks: allTasks, topics, workspaces, profiles, onTask: onOpenTask, onCanvas: (_topic, id) => {
+        const ready = latestDoc.current?.nodes.some((node) => node.kind === "task" && node.taskId === id);
+        if (ready) locateTask(id); else setAwaitingCard(id);
+      } }} seed={leadSeed} onClose={() => setLeadSeed(undefined)} onReceipt={(receipt) => {
+        setLeadSeed(undefined);
+        openLeadReceipt({ onCanvas: (_topic, id) => setAwaitingCard(id), onTask: onOpenTask }, receipt);
+      }} />}
       {menu && <CanvasMenu x={menu.x} y={menu.y} label={menu.label} entries={menu.entries} onClose={closeMenu} />}
+      {legacyIssues && <LegacyLeadIssues link={link} onTask={onOpenTask} onClose={() => setLegacyIssues(false)} />}
       {describedTask && <DescriptionDialog link={link} task={describedTask} onClose={() => setDescribing(null)} />}
       {deletingSelection && doc && <DeleteSelectionDialog doc={doc} selection={deletingSelection} onCancel={() => setDeletingSelection(null)} onConfirm={() => {
         const pending = deletingSelection;
@@ -1411,6 +1550,10 @@ export function CanvasPage({ link, topic, tasks, allTasks = tasks, topics = [top
           onConfirm={(withCards) => {
             const id = deletingGroup;
             setDeletingGroup(null);
+            if (withCards && doc.nodes.some((node) => node.groupId === id && node.kind === "task" && requiredTaskIds.has(node.taskId))) {
+              setNotice({ text: "此分组有活动管理任务。可保留卡片并移除分组，或收起对应分支。", error: true });
+              return;
+            }
             // Review items that go take the bubbles still out on them, as 删除条目 does.
             const goneItems = withCards ? new Set(doc.nodes.filter((n) => n.groupId === id && n.kind === "item").map((n) => n.id)) : new Set<Id>();
             edit((d) => (withCards ? deleteGroupAndCards(d, id) : deleteGroup(d, id)));

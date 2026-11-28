@@ -1,19 +1,23 @@
-import { useState } from "react";
-import type { PlaneBotJob, Session, StudioBot, Task } from "@amo-studio/protocol";
+import { useId, useState } from "react";
+import type { PlaneBotExecutionChoice, PlaneBotJob, Session, StudioBot, Task } from "@amo-studio/protocol";
+import { IconChevronDown, IconChevronRight, IconPlan } from "../chat/icons.js";
 import { ApprovalCard } from "../chat/Transcript.js";
 import { QuestionCard } from "../chat/questions/QuestionCard.js";
 import { DecisionCard } from "../collab/DecisionPanel.js";
 import { call, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
-import { Markdown } from "../lib/markdown.js";
 import { Modal } from "../lib/Modal.js";
 import { TaskWorkflow } from "../task/TaskWorkflow.js";
-import { PlaneBotDeliveryCard, planeBotCheckChanged, planeBotStatus } from "./PlaneBot.js";
+import { PlaneBotDeliveryCard, PlaneBotRootLinks, PlaneBotWritebackHistory, planeBotCheckChanged, planeBotStatus } from "./PlaneBot.js";
+import { PlaneBotPlan, PlaneBotReplanControl } from "./PlaneBotPlan.js";
+import { planeBotNeedsAttention } from "./planeBotAttention.js";
 import { teamBoardMessage } from "./SharedTeamBoard.js";
 
 export function PlaneBotConversation({ link, bot, session, sessions, tasks, onOpen }: {
   link: HostLink; bot: StudioBot; session: Session | null; sessions: readonly Session[]; tasks: readonly Task[]; onOpen(id: string, sessionId?: string): void;
 }) {
+  const listId = useId();
+  const [expanded, setExpanded] = useState<boolean>();
   const [jobs, setJobs, reload] = useLiveResource<PlaneBotJob[]>({
     load: () => call(link, "GET /api/team-board/plane/bots/:id/jobs", { id: bot.id }, undefined, { unfinished: "1" }),
     initial: [], reset: true, reloadDelay: 80,
@@ -26,9 +30,19 @@ export function PlaneBotConversation({ link, bot, session, sessions, tasks, onOp
   const visible = jobs.filter((job) => job.jobId && (home || job.botSessionId === session?.id
     || (session?.id === fallback && !activeChats.some((s) => s.id === job.botSessionId))));
   if (!visible.length) return null;
+  const ordered = visible.toSorted((a, b) => Number(planeBotNeedsAttention(b)) - Number(planeBotNeedsAttention(a)));
+  const pending = ordered.filter(planeBotNeedsAttention).length;
+  const showList = expanded ?? pending > 0;
   const update = (updated: PlaneBotJob) => setJobs((current) => current.map((job) => job.jobId === updated.jobId ? updated : job));
-  return <section className="plane-bot-conversation" aria-label="Bot 工单" data-testid="plane-bot-conversation">
-    {visible.map((job) => <ConversationJob key={job.jobId} link={link} job={job} botName={bot.name} tasks={tasks} onUpdate={update} onReload={reload} onOpen={onOpen} />)}
+  return <section className="plane-bot-conversation" aria-label="Plane 工单" data-testid="plane-bot-conversation">
+    <button type="button" className="plane-bot-conversation-toggle" aria-expanded={showList} aria-controls={listId} onClick={() => setExpanded(!showList)}>
+      <IconPlan /><strong>Plane 工单</strong><span className="plane-bot-conversation-count">{visible.length} 张</span>
+      {pending > 0 && <span className="plane-bot-conversation-pending">{pending} 项待处理</span>}
+      {showList ? <IconChevronDown /> : <IconChevronRight />}
+    </button>
+    <ul className="plane-bot-conversation-list" id={listId} hidden={!showList}>
+      {ordered.map((job) => <ConversationJob key={job.jobId} link={link} job={job} botName={bot.name} tasks={tasks} onUpdate={update} onReload={reload} onOpen={onOpen} />)}
+    </ul>
   </section>;
 }
 
@@ -39,10 +53,10 @@ function ConversationJob({ link, job, botName, tasks, onUpdate, onReload, onOpen
   const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const task = tasks.find((t) => t.id === job.taskId);
+  const task = tasks.find((t) => t.id === (job.rootTaskId ?? job.taskId));
   const plan = job.state === "awaiting-approval";
-  const canDecide = plan && !!job.planHash && !!job.jobId;
   const status = planeBotStatus(job, task?.column === "done");
+  const statusDetail = [status, job.decisions?.[0]?.question].filter(Boolean).join(" · ");
   const next = plan ? "查看计划" : job.state === "awaiting-user" ? "答复 Bot" : job.state === "review" ? "验收交付" : "查看工单";
   const act = async (operation: () => Promise<PlaneBotJob | { ok: true }>) => {
     setError(""); setBusy(true);
@@ -55,12 +69,13 @@ function ConversationJob({ link, job, botName, tasks, onUpdate, onReload, onOpen
       setBusy(false); onReload();
     }
   };
-  const decide = (approve: boolean) => void act(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/decision", { id: job.botId, jobId: job.jobId! }, { approve, planHash: job.planHash! }));
+  const decide = (approve: boolean, execution?: PlaneBotExecutionChoice) => void act(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/decision", { id: job.botId, jobId: job.jobId! },
+    approve ? { approve, planHash: job.planHash!, ...(execution ? { execution } : {}) } : { approve, planHash: job.planHash! }));
   const retry = () => void act(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/retry", { id: job.botId, jobId: job.jobId! }));
-  return <div className="plane-bot-delivery" data-testid="plane-bot-conversation-job">
+  return <li className="plane-bot-conversation-job" data-testid="plane-bot-conversation-job">
     <div className="plane-bot-delivery-copy">
-      <strong title={job.item.title}>{job.item.number} · {job.item.title}</strong>
-      <span className="plane-bot-delivery-status" role="status" data-state={job.state}>{status}{job.decisions?.[0] ? ` · ${job.decisions[0].question}` : ""}</span>
+      <div className="plane-bot-conversation-title"><span>{job.item.number}</span><strong title={job.item.title}>{job.item.title}</strong></div>
+      <span className="plane-bot-delivery-status" role="status" data-state={job.state} title={statusDetail}>{statusDetail}</span>
     </div>
     <button type="button" className={`btn-${plan || job.state === "awaiting-user" || job.state === "review" ? "primary" : "ghost"} small`} aria-haspopup="dialog" onClick={() => setOpen(true)}>{next}</button>
     {open && <Modal portal label="Bot 工单" className="plane-bot-review" onClose={() => setOpen(false)}>
@@ -70,11 +85,9 @@ function ConversationJob({ link, job, botName, tasks, onUpdate, onReload, onOpen
       </header>
       <div className="plane-bot-review-body">
         <p role="status">{status}</p>
-        {plan && <>
-          {job.baseCommit && <p className="side-note">基准提交 <code title={job.baseCommit}>{job.baseCommit.slice(0, 7)}</code></p>}
-          {!!job.behind && <p className="side-note">分析后项目有 {job.behind} 个新提交。开工使用当前计划的基准提交。</p>}
-          {job.plan && <section className="plane-bot-plan" aria-label="Bot 计划"><Markdown source={job.plan} /></section>}
-        </>}
+        {plan && <PlaneBotPlan key={job.planHash} link={link} job={job} busy={busy} approve={(execution) => decide(true, execution)} decline={() => decide(false)} />}
+        <PlaneBotReplanControl link={link} job={job} busy={busy} replan={(workspaceId) => void act(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/replan",
+          { id: job.botId, jobId: job.jobId! }, { planHash: job.planHash!, workspaceId }))} />
         {job.decisions?.map((decision) => <DecisionCard key={decision.id} link={link} decision={decision} sessionTitle={botName} />)}
         {job.requests?.map((item) => item.type === "approval"
           ? <ApprovalCard key={item.id} item={item} busy={busy} onApprove={(_, decision) => void act(() => call(link, "POST /api/approvals/:approvalId", { approvalId: item.approvalId }, { sessionId: item.sessionId, decision }))} />
@@ -82,16 +95,14 @@ function ConversationJob({ link, job, botName, tasks, onUpdate, onReload, onOpen
           : <button key={item.id} type="button" className="btn-ghost small" onClick={() => setActiveQuestion(item.id)}>答复「{item.questions?.[0]?.question || "需要确认"}」</button>)}
         {job.delivery && <PlaneBotDeliveryCard key={job.delivery.resultId} link={link} job={job} onJobChange={onUpdate} onReload={onReload} onOpen={(id, sessionId) => { setOpen(false); onOpen(id, sessionId); }} compact />}
         {task && job.delivery && <TaskWorkflow link={link} task={task} tasks={tasks} onOpenTask={onOpen} planeBot />}
+        <PlaneBotWritebackHistory job={job} />
         {(error || job.error) && <p className="form-error" role="alert">{error || job.error}</p>}
       </div>
       <footer className="plane-bot-review-footer">
+        <PlaneBotRootLinks job={job} onOpen={(id) => { setOpen(false); onOpen(id); }} />
         <button type="button" className="btn-ghost small" onClick={() => setOpen(false)}>关闭</button>
-        {plan && <>
-          <button type="button" className="btn-ghost small" disabled={busy || !canDecide} onClick={() => decide(false)}>放弃</button>
-          <button type="button" className="btn-primary small" disabled={busy || !canDecide} onClick={() => decide(true)}>开工</button>
-        </>}
-        {job.canRetry && <button type="button" className="btn-primary small" disabled={busy} onClick={retry}>{job.failureStage === "writeback" ? "重试回写" : job.taskId ? "重试执行" : "重试接单"}</button>}
+        {job.canRetry && <button type="button" className="btn-primary small" disabled={busy} onClick={retry}>{job.failureStage === "writeback" ? job.rootTaskId ? "核对并重试回写" : "重试回写" : job.taskId ? "重试执行" : "重试接单"}</button>}
       </footer>
     </Modal>}
-  </div>;
+  </li>;
 }

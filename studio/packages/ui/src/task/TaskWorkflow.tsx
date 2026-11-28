@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Id, SharedContextView, Task, TaskResult, TaskWorkflow as Workflow } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
@@ -21,7 +21,8 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }
     reloadDelay: 60,
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
   }, [link, task.id]);
-  const resultTasks = [...new Set(workflow.results.map((r) => r.taskId))];
+  const visibleResults = planeBot ? workflow.results.filter((result) => result.taskId === task.id).reverse() : workflow.results;
+  const resultTasks = [...new Set(visibleResults.map((r) => r.taskId))];
   const [contexts] = useLiveResource<Record<string, SharedContextView>>({
     load: async () => { const views: Record<string, SharedContextView> = {}; for (const id of resultTasks) { try { views[id] = await call(link, "GET /api/tasks/:id/context", { id }); } catch { /* Missing data is shown as unavailable, never inferred. */ } } return views; },
     initial: {}, reset: true, reloadOn: (e) => e.type === "task.upserted", reloadDelay: 80,
@@ -34,8 +35,8 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }
     {retryError && <span className="error" role="alert">通知重试失败：{retryError}</span>}
     {workflow.deliveryIssues?.map((issue) => <div key={issue.id} className="workflow-delivery-issue" data-testid="workflow-delivery-issue" role="status"><strong>主控通知发送失败</strong><p className="workflow-text">{issue.detail}</p><button type="button" className="link-btn" disabled={retrying === issue.id} onClick={() => { setRetryError(""); setRetrying(issue.id); void call(link, "POST /api/tasks/:id/workflow/retry-notice", { id: task.id, noticeId: issue.id }).catch((err: unknown) => setRetryError(err instanceof Error ? err.message : String(err))).finally(() => setRetrying(null)); }}>{retrying === issue.id ? "正在重试…" : "重试通知"}</button><button type="button" className="link-btn" onClick={() => onOpenTask(issue.taskId)}>进入相关任务</button></div>)}
     {!!workflow.deliveryNotices?.length && <details data-testid="workflow-delivery-history"><summary>管理通知 · {workflow.deliveryNotices.filter((n) => n.state === "waiting").length} 条等待发送 · 查看历史</summary>{workflow.deliveryNotices.map((notice) => <div key={notice.id} className="workflow-text" data-testid="workflow-notice" data-state={notice.state}><strong>{{ waiting: "等待发送", delivered: "已送入会话", expired: "已过期", failed: "发送失败" }[notice.state]}</strong><p>{notice.detail}</p>{notice.replacesNoticeId && <span className="dim">已按当前要求重新生成，原通知保留在历史中。</span>}</div>)}</details>}
-    {!error && workflow.results.length === 0 && <span className="side-note" data-testid="workflow-empty">{planeBot ? "执行任务还未提交交付。" : "还没有提交结果。主控会在这里收齐各负责人的交付。"}</span>}
-    {(planeBot ? [...workflow.results].reverse() : workflow.results).map((result, index) => { const view = contexts[result.taskId]; const binding = view?.binding; const mismatch = result.contextMismatch || (binding && (!view.validBinding ? "原共同需求归属已失效。" : result.contextBasis?.contextId !== binding.contextId || result.contextBasis?.version !== binding.version ? "实际交付依据与当前任务要求不同。" : "")); return <details key={result.id} open={planeBot && index === 0 ? true : undefined} className="workflow-result" data-testid="workflow-result" data-state={result.state}>
+    {!error && visibleResults.length === 0 && <span className="side-note" data-testid="workflow-empty">{planeBot ? task.lead ? "主控还未提交最终交付。" : "执行任务还未提交交付。" : "还没有提交结果。主控会在这里收齐各负责人的交付。"}</span>}
+    {visibleResults.map((result, index) => { const view = contexts[result.taskId]; const binding = view?.binding; const mismatch = result.contextMismatch || (binding && (!view.validBinding ? "原共同需求归属已失效。" : result.contextBasis?.contextId !== binding.contextId || result.contextBasis?.version !== binding.version ? "实际交付依据与当前任务要求不同。" : "")); return <details key={result.id} open={planeBot && index === 0 ? true : undefined} className="workflow-result" data-testid="workflow-result" data-state={result.state}>
       <summary><span>{planeBot ? index === 0 ? "交付摘要" : "历史交付" : title(result.taskId)}</span><span className="workflow-state">{!result.managerTaskId && result.state === "submitted" ? "待用户审核" : !result.managerTaskId && result.state === "accepted" && result.reviewedBy === "user" ? "用户已验收" : !result.managerTaskId && result.state === "accepted" && !result.reviewedBy ? "历史交付" : RESULT_LABEL[result.state]}</span></summary>
       <p className="workflow-text">{result.summary}</p>
       <strong>验证记录</strong><p className="workflow-text">{result.verification}</p>
@@ -61,16 +62,19 @@ export function TaskWorkflow({ link, task, tasks, onOpenTask, planeBot = false }
   </section>;
 }
 
-function UserReview({ link, result, mismatch, planeBot }: { link: HostLink; result: TaskResult; mismatch: boolean; planeBot: boolean }) {
+export function UserReview({ link, result, mismatch, planeBot = false, onRefresh }: { link: HostLink; result: TaskResult; mismatch: boolean; planeBot?: boolean; onRefresh?(): void }) {
   const [review, setReview] = useState("");
   const [explanation, setExplanation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const inFlight = useRef(false);
   const submit = async (accept: boolean) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setPending(true); setError("");
     try { await call(link, "POST /api/tasks/:id/workflow/user-review", { id: result.taskId }, { resultId: result.id, accept, review: review.trim() || "用户验收通过", ...(explanation.trim() ? { contextExplanation: explanation.trim() } : {}) }); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setPending(false); }
+    finally { inFlight.current = false; setPending(false); onRefresh?.(); }
   };
   return <div className="workflow-user-review" data-testid="workflow-user-review">
     {!planeBot && <><strong>等待你审核最终交付</strong>

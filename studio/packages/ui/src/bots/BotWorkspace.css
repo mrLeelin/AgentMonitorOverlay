@@ -1,0 +1,61 @@
+.bot-workspace { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; container-type: inline-size; }
+.bot-workspace-conversation { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+.bot-workspace-panel { flex: 0 0 clamp(302px, 38cqw, 510px); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--divider); background: var(--panel); }
+.bot-workspace-tabs { display: flex; flex: none; align-items: center; gap: 3px; min-height: 45px; padding: 5px 8px; border-bottom: 1px solid var(--divider); }
+.bot-workspace-tabs > button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; height: 30px; border: 1px solid transparent; border-radius: var(--r-m); background: transparent; color: var(--text-dim); white-space: nowrap; font: inherit; font-size: 12px; cursor: pointer; }
+.bot-workspace-tabs > button[aria-current="page"] { border-color: var(--border); background: var(--chip); color: var(--text); font-weight: 600; }
+.bot-workspace-tabs > .bot-workspace-icon { margin-left: auto; padding-inline: 3px; }
+.bot-workspace-tabs > button:hover, .bot-workspace-icon:hover { background: var(--chip); color: var(--text); }
+.bot-workspace-page { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: auto; scrollbar-width: thin; }
+.bot-workspace-rail { flex: 0 0 37px; display: flex; justify-content: center; padding-top: 8px; border-left: 1px solid var(--divider); background: var(--panel); }
+.bot-workspace-icon { flex: none; display: inline-grid; place-items: center; width: 29px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: var(--r-m); background: transparent; color: var(--text-dim); cursor: pointer; }
+.bot-workspace-more { padding-bottom: 3px; font-size: 19px; line-height: 1; }
+.bot-workspace-home { padding: 13px 12px 18px; }
+.bot-workspace-identity { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.bot-workspace-identity > div { flex: 1; min-width: 0; }
+.bot-workspace-identity h2 { display: flex; align-items: baseline; gap: 7px; margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.bot-workspace-identity h2 small { flex: none; color: var(--text-dim); font-weight: 400; font-size: 11px; }
+.bot-workspace-identity p { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 12px; line-height: 1.4; }
+.bot-workspace-activity { margin-block: 17px 14px; }
+.bot-workspace-empty { display: grid; justify-items: center; gap: 6px; padding: 45px 4px 25px; text-align: center; font-size: 13px; }
+.bot-workspace-empty > svg, .bot-workspace-empty > p { color: var(--text-dim); }
+.bot-workspace-empty > svg { width: 21px; height: 21px; }
+.bot-workspace-empty > p { margin: 0; line-height: 1.6; font-size: 12px; }
+.bot-workspace-section { margin-top: 16px; }
+.bot-workspace-section > summary { display: flex; align-items: center; gap: 5px; width: fit-content; min-height: 25px; margin-bottom: 3px; color: var(--text-dim); list-style: none; font-size: 12px; cursor: pointer; }
+.bot-workspace-section > summary::-webkit-details-marker { display: none; }
+.bot-workspace-section > summary svg { width: 13px; height: 13px; }
+.bot-workspace-section:not([open]) > summary svg { transform: rotate(-90deg); }
+.bot-workspace-line, .bot-workspace-chat-row { display: flex; align-items: center; width: 100%; min-width: 0; gap: 7px; border: 1px solid transparent; border-radius: var(--r-m); background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.bot-workspace-line { min-height: 30px; padding: 4px 5px; font-size: 12px; }
+.bot-workspace-line svg, .bot-workspace-chat-row svg { flex: none; color: var(--text-dim); }
+.bot-workspace-line span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bot-workspace-line small { flex: none; color: var(--text-dim); font-size: 11px; }
+.bot-workspace-line:hover:not(:disabled), .bot-workspace-chat-row:hover:not(:disabled) { background: var(--chip); }
+.bot-workspace-line:disabled, .bot-workspace-chat-row:disabled { color: var(--text-dim); cursor: default; }
+.bot-workspace-connectors, .bot-workspace-chats { padding: 9px 9px 16px; }
+.bot-workspace-chat-tools { display: flex; align-items: stretch; gap: 5px; margin-bottom: 7px; }
+.bot-workspace-chat-tools > label { flex: 1; }
+.bot-workspace-chat-tools > button { display: inline-flex; flex: none; align-items: center; gap: 3px; padding-inline: 6px; white-space: nowrap; }
+.bot-workspace-chat-tools > button svg { width: 13px; height: 13px; }
+.bot-workspace-chat-rows { display: grid; gap: 2px; }
+.bot-workspace-chat-row { align-items: flex-start; gap: 7px; min-height: 36px; padding: 6px 7px; }
+.bot-workspace-chat-row[aria-current="true"] { background: var(--chip); border-color: var(--border); }
+.bot-workspace-chat-row > span { flex: 1; min-width: 0; }
+.bot-workspace-chat-row strong, .bot-workspace-chat-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-workspace-chat-row strong { font-size: 12px; font-weight: 650; }
+.bot-workspace-chat-row small, .bot-workspace-chat-row time { color: var(--text-dim); font-size: 11px; }
+.bot-workspace-chat-row small { margin-top: 2px; }
+.bot-workspace-chat-row time { flex: none; }
+.bot-share-download { text-decoration: none; display: inline-flex; align-items: center; }
+.bot-workspace-home-status { display: flex; flex-direction: column; align-items: center; padding-inline: 12px; text-align: center; }
+.bot-workspace-conversation > .taskpage .thread-col { min-width: 0; }
+.bot-workspace-conversation > .taskpage .task-head { padding-block: 5px; }
+.bot-workspace-conversation > .taskpage .task-title { font-size: 16px; }
+.bot-workspace-conversation-bar { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; min-height: 45px; padding: 5px 12px; border-bottom: 1px solid var(--divider); }
+.bot-workspace-task-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.bot-workspace-chat-welcome .bot-chat-empty { padding-top: clamp(32px, 10vh, 95px); }
+
+@container (max-width: 500px) {
+  .bot-workspace-panel { position: absolute; z-index: 12; inset: 0 0 0 auto; width: min(350px, 92cqw); box-shadow: -8px 0 26px rgb(0 0 0 / .18); }
+}

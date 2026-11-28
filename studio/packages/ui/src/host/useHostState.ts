@@ -29,6 +29,12 @@ export function applyEvent(state: StateSnapshot, e: HostEvent): StateSnapshot {
       return { ...next, workspaces: state.workspaces.filter((w) => w.id !== e.workspaceId) };
     case "task.upserted":
       return { ...next, tasks: upsert(state.tasks, e.task) };
+    case "bot-lead.changed": {
+      const task = state.tasks.find((item) => item.id === e.taskId);
+      if (!task) return state;
+      const { botLead: _previous, ...base } = task;
+      return { ...next, tasks: upsert(state.tasks, { ...base, topicId: e.topicId, ...(e.state ? { botLead: e.state } : {}) }) };
+    }
     case "topic.upserted":
       return { ...next, topics: upsert(state.topics, e.topic) };
     case "session.upserted":

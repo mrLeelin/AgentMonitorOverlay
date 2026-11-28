@@ -19,11 +19,11 @@ export interface MenuAction {
 
 type Slot = MenuAction | false | null | undefined;
 
-export function ActionMenu({ label, at, groups, onClose, testId, focus = false }: { label: string; at: { x: number; y: number }; groups: ReadonlyArray<readonly Slot[]>; onClose(): void; testId?: string; focus?: boolean }) {
+export function ActionMenu({ label, at, groups, onClose, testId, focus = false, trigger, alignEnd = false }: { label: string; at: { x: number; y: number }; groups: ReadonlyArray<readonly Slot[]>; onClose(): void; testId?: string; focus?: boolean; trigger?: HTMLElement; alignEnd?: boolean }) {
   const shown = groups.map((g) => g.filter((a): a is MenuAction => !!a)).filter((g) => g.length);
   const box = useRef<HTMLDivElement>(null);
-  const pos = useInWindow(box, at);
-  useMenuDismiss(box, onClose, { scroll: true });
+  const pos = useInWindow(box, at, false, alignEnd);
+  useMenuDismiss(box, onClose, { scroll: true, trigger });
   const latest = useRef({ shown, onClose });
   latest.current = { shown, onClose };
 
@@ -50,6 +50,7 @@ export function ActionMenu({ label, at, groups, onClose, testId, focus = false }
 
   return (
     <div className="ctx-menu action-menu" role="menu" aria-label={label} style={{ left: pos.x, top: pos.y }} ref={box} data-testid={testId} onKeyDown={(event) => {
+      if (trigger && event.key === "Tab") return onClose();
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
       if (!buttons.length) return;

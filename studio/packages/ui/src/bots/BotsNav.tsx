@@ -33,9 +33,10 @@ export interface BotsNavActions {
   groupId?: string;
   taskId?: string;
   sessionId?: string;
-  open(pick?: { botId: string } | { groupId: string }): void;
-  openChat(taskId: string, sessionId?: string, botId?: string): void;
+  open(pick?: { botId: string; chat?: "empty-home" } | { groupId: string }): void;
+  openChat(taskId: string, sessionId?: string, botId?: string, workspace?: boolean): void;
   openSettings(botId?: string): void;
+  openLeadTopics(botId: string): void;
 }
 
 export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav }: {
@@ -61,7 +62,6 @@ export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav
   const [context, setContext] = useState<{ entity: BotEntity; x: number; y: number; trigger: HTMLButtonElement }>();
   const [edit, setEdit] = useState<BotEntityEdit>();
   const [creation, setCreation] = useState<BotCreationEntry>();
-  const [opening, setOpening] = useState<string>();
   const dragging = useRef<string>(null);
   const [dragTarget, setDragTarget] = useState<{ id: string; after: boolean }>();
   const searchBox = useRef<HTMLInputElement>(null);
@@ -121,15 +121,12 @@ export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav
     setMenu(menu?.type === type ? undefined : { type, trigger, x: rect.left, y: rect.bottom + 5 });
   }
 
-  async function openHome(bot: StudioBot, home?: Session) {
-    if (opening) return;
-    if (!bot.enabled && home?.taskId) return nav.openChat(home.taskId, home.id, bot.id);
-    setOpening(bot.id);
-    try {
-      const session = await call(link, "POST /api/bots/:id/home", { id: bot.id }, {});
-      if (session.taskId) nav.openChat(session.taskId, session.id, bot.id);
-    } catch (err) { showToast({ text: err instanceof Error ? err.message : String(err), error: true }); }
-    finally { setOpening(undefined); }
+  function openHome(bot: StudioBot, home?: Session) {
+    if (home?.taskId) {
+      nav.openChat(home.taskId, home.id, bot.id, true);
+      return;
+    }
+    nav.open({ botId: bot.id, chat: "empty-home" });
   }
 
   function rightClick(event: MouseEvent<HTMLButtonElement>, entity: BotEntity) {
@@ -159,7 +156,7 @@ export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav
     }
     const bot = entity.item;
     const path = (bot.workspaceId ? workspaces.find((workspace) => workspace.id === bot.workspaceId) : workspaces.find(isCommon))?.path;
-    return [[rename,
+    return [[{ label: "带队专题…", icon: <IconPeople />, run: () => nav.openLeadTopics(bot.id) }], [rename,
       { label: "Bot 设置…", icon: <IconPlan />, run: () => nav.openSettings(bot.id) },
       { label: bot.enabled ? "暂停 Bot" : "继续 Bot", icon: bot.enabled ? <IconPause /> : <IconAgent />, disabled: !live, run: () => {
         void call(link, "PATCH /api/bots/:id", { id: bot.id }, { enabled: !bot.enabled }).catch((err) => showToast({ text: String(err.message ?? err), error: true }));
@@ -218,7 +215,7 @@ export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav
             <button type="button" className="nav-row bot-nav-profile" aria-label={bot.name} aria-current={selected || undefined} draggable={manual}
               title={manual ? `${bot.name} · 拖动或 Alt + ↑ / ↓ 调整顺序` : bot.name}
               onContextMenu={(event) => rightClick(event, { kind: "bot", item: bot })}
-              onClick={() => { markRead(`bot:${bot.id}`); nav.open({ botId: bot.id }); }}
+              onClick={() => { markRead(`bot:${bot.id}`); openHome(bot, home); }}
               onDragStart={(event) => {
                 dragging.current = bot.id;
                 event.dataTransfer.effectAllowed = "move";
@@ -251,12 +248,12 @@ export function BotsNav({ link, live, profiles, workspaces, tasks, sessions, nav
                 <span className="bot-nav-title"><strong>{bot.name}</strong>{!bot.enabled ? <small>已暂停</small> : active ? <i className="bot-activity-dot" aria-label="有活动" /> : null}
                   {unread.has(`bot:${bot.id}`) ? <span className="bot-unread-dot" role="img" aria-label="未读" /> : stamp && <time dateTime={stamp}>{relativeTime(stamp)}</time>}
                 </span>
-                <span className="bot-nav-preview" title={preview}>{preview}</span>
+                {bot.enabled && <span className="bot-nav-preview" title={preview}>{preview}</span>}
               </span>
             </button>
             <div className="bot-nav-chats">
               <button type="button" className="nav-row bot-nav-chat" aria-label={`${bot.name} 主聊天`} aria-current={nav.sessionId && nav.sessionId === home?.id || undefined}
-                disabled={!live || !!opening || (!bot.enabled && !home)} onClick={() => { markRead(`bot:${bot.id}`); void openHome(bot, home); }}><IconAgent /><span>主聊天</span>{opening === bot.id && <small>打开中…</small>}</button>
+                onClick={() => { markRead(`bot:${bot.id}`); openHome(bot, home); }}><IconAgent /><span>主聊天</span>{home && <small>{relativeTime(home.updatedAt)}</small>}</button>
               {workers.map(({ task, session }) => <button key={task.id} type="button" className="nav-row bot-nav-chat" title={task.title}
                 aria-current={nav.taskId === task.id || undefined} onClick={() => nav.openChat(task.id, session?.id, bot.id)}><IconWorktree /><span>{task.title}</span></button>)}
             </div>

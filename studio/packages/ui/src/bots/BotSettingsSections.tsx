@@ -1,12 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { DEFAULT_BOT_PREFERENCES, type BotFiles, type BotInput, type BotPreferences, type BotSkillRef, type DutyItem, type Session, type StateSnapshot, type StudioBot } from "@amo-studio/protocol";
-import { IconChevronRight, IconPlus } from "../chat/icons.js";
+import { IconAgent, IconCheck, IconChevronRight, IconClock, IconEdit, IconEnvironment, IconGlobe, IconPeople, IconPlan, IconPlus, IconRead, IconShield, IconThink, IconTrash } from "../chat/icons.js";
 import { setDuty, useDuty } from "../duty/duty.js";
 import { call, type HostLink } from "../host/client.js";
 import { onHostEvent } from "../host/events.js";
 import { revealInExplorer } from "../lib/openin.js";
 import { showToast } from "../lib/toast.js";
 import { scheduleText } from "../settings/DutyPage.js";
+import { BotAvatar } from "./BotAvatar.js";
+import type { ChangeBotDraft } from "./BotProfileFields.js";
 
 export const botSettingsTabs = [["overview", "概览"], ["runtime", "运行配置"], ["memory", "角色与记忆"], ["automation", "自动化"], ["access", "访问与技能"], ["notifications", "通知"]] as const;
 export type BotSettingsTab = typeof botSettingsTabs[number][0];
@@ -57,6 +59,119 @@ export function BotSettingsOverview({ bot, draft, state, shared, chats, open }: 
     <section className="bot-settings-card bot-settings-summary-wide"><h4>通知</h4>
       <OverviewRow label="需要授权、完成与失败" value={`${Object.values(preferences.notifications).filter(Boolean).length} 项已开启`} open={() => open("notifications")} />
     </section>
+  </div>;
+}
+
+function WorkspaceSettingsRow({ label, icon, value, onOpen }: { label: string; icon: ReactNode; value?: string; onOpen(): void }) {
+  return <button className="bot-workspace-settings-row" type="button" aria-label={label} aria-description={value} onClick={onOpen}>
+    {icon}<span>{label}</span><small>{value}</small><IconChevronRight />
+  </button>;
+}
+
+function WorkspaceShareIcon() {
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+    <path d="m5.6 7.1 4.7-2.4M5.6 8.9l4.7 2.4" /><circle cx="4" cy="8" r="1.7" /><circle cx="12" cy="4" r="1.7" /><circle cx="12" cy="12" r="1.7" />
+  </svg>;
+}
+
+export function BotWorkspaceSettingsOverview({ botId, link, draft, state, shared, disabled, canDelete, memorySupported, open, onConnectors, onShare, onDelete, change }: {
+  botId: string; link: HostLink; draft: BotInput; state: StateSnapshot; shared?: readonly BotSkillRef[]; disabled: boolean; canDelete: boolean; memorySupported: boolean;
+  open(tab: BotSettingsTab, file?: BotMemoryPage): void; onConnectors?(): void; onShare?(): void; onDelete(): void; change: ChangeBotDraft;
+}) {
+  const duty = useDuty();
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
+  const profile = state.profiles.find((value) => value.id === draft.profileId);
+  const workspace = state.workspaces.find((value) => value.id === draft.workspaceId);
+  const preferences = draft.preferences ?? DEFAULT_BOT_PREFERENCES;
+  const jobs = duty?.items.filter((item) => item.action.kind === "bot" && item.action.botId === botId) ?? [];
+  const runtime = () => open("runtime");
+  const automation = () => open("automation");
+  const access = () => open("access");
+
+  async function toggleSchedule(id: string, enabled: boolean) {
+    setSavingSchedule(true);
+    setScheduleError("");
+    try { setDuty(await call(link, "PATCH /api/duty/items/:id", { id }, { enabled })); }
+    catch (err) { setScheduleError(err instanceof Error ? err.message : String(err)); }
+    finally { setSavingSchedule(false); }
+  }
+
+  function scheduleRow(kind: "patrol" | "memory", label: string, icon: ReactNode) {
+    const items = jobs.filter((item) => item.action.kind === "bot" && (item.action.job === "memory") === (kind === "memory"));
+    const supported = kind === "patrol" || memorySupported;
+    const single = supported && items.length === 1 ? items[0] : undefined;
+    const value = !supported ? "此渠道不支持" : !duty ? undefined : single ? scheduleText(single.schedule)
+      : items.length ? `${items.filter((item) => item.enabled).length} 项已启用` : "未设置";
+    return <div className="bot-workspace-settings-schedule">
+      <WorkspaceSettingsRow label={label} icon={icon} value={value} onOpen={automation} />
+      {single && <input type="checkbox" className="bot-setting-switch" role="switch" aria-label={`启用${label}`} checked={single.enabled}
+        disabled={disabled || savingSchedule} onChange={(event) => void toggleSchedule(single.id, event.currentTarget.checked)} />}
+    </div>;
+  }
+
+  return <div className="bot-workspace-settings-list">
+    <div className="bot-workspace-settings-identity">
+      <button type="button" aria-label="名称和头像" onClick={runtime}>
+        <BotAvatar name={draft.name} avatar={draft.avatar} size={34} /><strong>{draft.name}</strong><IconEdit />
+      </button>
+      {onShare && <button type="button" className="bot-icon-button" aria-label="分享 Bot" title="分享 Bot" onClick={onShare}><WorkspaceShareIcon /></button>}
+    </div>
+    <section>
+      <h4>智能体</h4>
+      <div className="bot-workspace-settings-group">
+        <WorkspaceSettingsRow label="模型" icon={<IconAgent />} value={draft.model ?? profile?.label ?? "请选择模型"} onOpen={runtime} />
+        <WorkspaceSettingsRow label="权限" icon={<IconShield />} value={permissionLabels[draft.permission ?? "read-only"] ?? "自定义权限"} onOpen={runtime} />
+        <WorkspaceSettingsRow label="电脑" icon={<IconEnvironment />} value="本地 Windows" onOpen={runtime} />
+        <label className="bot-workspace-settings-row"><IconCheck /><span>接收消息</span>
+          <input type="checkbox" className="bot-setting-switch" role="switch" checked={draft.enabled} disabled={disabled} onChange={(event) => change("enabled", event.currentTarget.checked)} />
+        </label>
+        {workspace && <WorkspaceSettingsRow label="默认项目" icon={<IconPlan />} value={workspace.name} onOpen={runtime} />}
+      </div>
+    </section>
+    <section>
+      <h4>计划</h4>
+      <div className="bot-workspace-settings-group">
+        {scheduleRow("patrol", "巡视", <IconPlan />)}
+        {scheduleRow("memory", "记忆整理", <IconClock />)}
+      </div>
+      {scheduleError && <p className="form-error" role="alert">{scheduleError}</p>}
+    </section>
+    <section>
+      <h4>事项</h4>
+      <div className="bot-workspace-settings-group">
+        <label className="bot-workspace-settings-row"><IconClock /><span>多久算长期未活动</span><select className="field" value={preferences.inactiveDays} disabled={disabled}
+          onChange={(event) => change("preferences", { ...preferences, inactiveDays: Number(event.currentTarget.value) as BotPreferences["inactiveDays"] })}>
+          <option value={5}>5 天</option><option value={7}>7 天</option><option value={14}>14 天</option>
+        </select></label>
+      </div>
+    </section>
+    <section>
+      <h4>角色与记忆</h4>
+      <div className="bot-workspace-settings-group">
+        <WorkspaceSettingsRow label="角色职责" icon={<IconThink />} value="SOUL.md" onOpen={() => open("memory", "purpose")} />
+        <WorkspaceSettingsRow label="记忆" icon={<IconRead />} value="MEMORY.md" onOpen={() => open("memory", "memory")} />
+      </div>
+    </section>
+    <section>
+      <h4>访问权限</h4>
+      <div className="bot-workspace-settings-group">
+        <WorkspaceSettingsRow label="连接器" icon={<IconGlobe />} value="Webhook" onOpen={onConnectors ?? access} />
+        <WorkspaceSettingsRow label="谁可以提问" icon={<IconPeople />} value={preferences.allowGroupAsk ? "你及同群 Bot" : "自己"} onOpen={access} />
+        <WorkspaceSettingsRow label="技能" icon={<IconRead />} value={`${shared?.length ?? 0} 项共有 · ${draft.skills?.length ?? 0} 项专用`} onOpen={access} />
+      </div>
+    </section>
+    {onShare && <div className="bot-workspace-settings-group"><WorkspaceSettingsRow label="分享" icon={<WorkspaceShareIcon />} value="导出职责文件" onOpen={onShare} /></div>}
+    <section>
+      <h4>通知</h4>
+      <div className="bot-workspace-settings-group">
+        {(Object.keys(notificationLabels) as Array<keyof BotPreferences["notifications"]>).map((kind) => <label key={kind} className="bot-workspace-settings-row">
+          <span>{notificationLabels[kind]}</span><input className="bot-setting-switch" type="checkbox" role="switch" checked={preferences.notifications[kind]} disabled={disabled}
+            onChange={(event) => change("preferences", { ...preferences, notifications: { ...preferences.notifications, [kind]: event.currentTarget.checked } })} />
+        </label>)}
+      </div>
+    </section>
+    <button className="link-btn bot-settings-delete bot-workspace-settings-delete" type="button" disabled={!canDelete} onClick={onDelete}><IconTrash />删除 Bot…</button>
   </div>;
 }
 
@@ -166,6 +281,7 @@ export function BotAutomation({ bot, link, preferences, disabled, memorySupporte
 export function BotMemoryFiles({ link, botId, active, file, select, purpose, memory }: {
   link: HostLink; botId: string; active: boolean; file: BotMemoryPage; select(page: BotMemoryPage): void; purpose: ReactNode; memory: ReactNode;
 }) {
+  const noteId = useId();
   const [files, setFiles] = useState<BotFiles>();
   const [note, setNote] = useState<string>();
   const [original, setOriginal] = useState<string | null>();
@@ -241,8 +357,8 @@ export function BotMemoryFiles({ link, botId, active, file, select, purpose, mem
         <div hidden={file !== "memory"}>{memory}</div>
         {file === "notes" && (creating || note ? <>
           {creating ? <label className="bot-form-field">文件名<input className="field" value={name} placeholder="审查笔记.md" maxLength={78} onChange={(event) => setName(event.target.value)} /></label>
-            : <label className="bot-settings-file-title" htmlFor="bot-note-content">{note}</label>}
-          <textarea aria-label="记忆文件内容" id="bot-note-content" className="field" value={content} readOnly={generated} disabled={busy || original === undefined} maxLength={32_000} onChange={(event) => setContent(event.target.value)} />
+            : <label className="bot-settings-file-title" htmlFor={noteId}>{note}</label>}
+          <textarea aria-label="记忆文件内容" id={noteId} className="field" value={content} readOnly={generated} disabled={busy || original === undefined} maxLength={32_000} onChange={(event) => setContent(event.target.value)} />
           {generated ? <p className="settings-hint">旧版整理记录。现在的整理结果写入 MEMORY.md。</p>
             : <div className="settings-row"><button type="button" className="btn-primary small" disabled={busy || original === undefined || (creating ? !name.trim() : content === original)} onClick={saveNote}>保存文件</button></div>}
         </> : <p className="settings-hint">选择一份记忆文件，或新建笔记。</p>)}

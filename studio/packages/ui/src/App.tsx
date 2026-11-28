@@ -3,6 +3,10 @@ import { OPEN_SETTINGS_EVENT } from "./mcp/shared.js";
 import type { Scope } from "./board/Board.js";
 import { ScopeNav } from "./board/ScopeNav.js";
 import { canvasTopicFor } from "./canvas/topic.js";
+import { canvasBridgeView, leadCanvasView } from "./bots/lead-navigation.js";
+import { BotWorkspace } from "./bots/BotWorkspace.js";
+import { BotLeadTopicsDialog } from "./bots/LeadConversation.js";
+import { useBots } from "./bots/roster.js";
 import { useHostState } from "./host/useHostState.js";
 import { QuickStart } from "./newtask/QuickStart.js";
 import { BellGlyph, NeedsGlyph, RecentGlyph, ShortcutMenu, ThemeShortcut, pendingItems, recentSessions } from "./shell/WorkbenchShortcuts.js";
@@ -55,6 +59,8 @@ export function App() {
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const teamTasksEnabled = settings?.teamTasksEnabled === true;
   const botsEnabled = settings?.botsEnabled !== false;
+  const availableBots = useBots(host.kind === "ready" ? host.link : NO_LINK, botsEnabled);
+  const [leadTopicsBotId, setLeadTopicsBotId] = useState<string>();
   const planeJobs = usePlaneBotAttention(host.kind === "ready" && teamTasksEnabled && botsEnabled ? host.link : null);
   useTaskbarBadge(host, planeJobs);
   useEffect(() => onHostEvent((event) => {
@@ -243,7 +249,7 @@ export function App() {
         // 画布审阅 (2026-10-27): a topic's canvas, a question on it opened.
         if (!taskId && topicId) {
           setScope({ kind: "topic", id: topicId });
-          setView({ kind: "canvas", ...(calloutId ? { callout: calloutId } : {}), nav: Date.now() });
+          setView(canvasBridgeView(topicId, calloutId));
           return;
         }
         setView(taskId ? { kind: "task", taskId, ...(sessionId ? { sessionId } : {}), ...(sessionId && passage ? { passage } : {}), nav: Date.now() } : { kind: "board" });
@@ -300,6 +306,7 @@ export function App() {
     experimental,
     teamTasksEnabled,
     botsEnabled,
+    online: host.live,
     setView,
   };
   // A page of a feature that was just turned off falls back to the board.
@@ -325,8 +332,12 @@ export function App() {
     }
   });
   const def = views.find((d) => d.kind === shown.kind) as ViewDef<typeof shown.kind> | undefined;
+  const botWorkspaceId = shown.kind === "task" ? shown.botWorkspace : shown.kind === "bots" && shown.chat ? shown.botId : undefined;
+  const workspaceBot = botsEnabled ? availableBots.find((bot) => bot.id === botWorkspaceId) : undefined;
+  const leadTopicsBot = botsEnabled ? availableBots.find((bot) => bot.id === leadTopicsBotId) : undefined;
+  const content = def?.render(shown as never, ctx);
   // "+ 新任务" over a canvas works as the canvas's own: the task goes into that topic and "←" returns to the canvas.
-  const canvasTopic = shown.kind === "canvas" ? canvasTopicFor(scope, state) : undefined;
+  const canvasTopic = shown.kind === "canvas" ? shown.topicId ? state.topics.find((item) => item.id === shown.topicId) : canvasTopicFor(scope, state) : undefined;
   // 搜索: a task, a task's session, or a topic's own session (on that topic's canvas).
   const openHit = (hit: SearchHit) => {
     if (hit.kind === "task") setView({ kind: "task", taskId: hit.id, nav: Date.now() });
@@ -368,10 +379,11 @@ export function App() {
           bots={botsEnabled ? {
             current: shown.kind === "bots" || (shown.kind === "task" && (shown.back?.kind === "bots" || state.tasks.some((task) => task.id === shown.taskId && task.botId))),
             ...(shown.kind === "bots" ? { botId: shown.botId, groupId: shown.groupId } : {}),
-            ...(shown.kind === "task" ? { taskId: shown.taskId, sessionId: shown.sessionId } : {}),
+            ...(shown.kind === "task" ? { taskId: shown.taskId, sessionId: shown.sessionId, botId: shown.botWorkspace } : {}),
             open: (pick) => setView({ kind: "bots", ...pick }),
-            openChat: (taskId, sessionId, botId) => setView({ kind: "task", taskId, sessionId, back: { kind: "bots", botId }, nav: Date.now() }),
+            openChat: (taskId, sessionId, botId, workspace) => setView({ kind: "task", taskId, sessionId, back: { kind: "bots", botId }, nav: Date.now(), ...(workspace ? { botWorkspace: botId } : {}) }),
             openSettings: (botId) => setSettingsOpen({ page: "bots", botId, at: Date.now() }),
+            openLeadTopics: setLeadTopicsBotId,
           } : undefined}
           shortcuts={<>
             <ShortcutMenu label="最近会话" icon={<RecentGlyph />} items={recent} empty="还没有最近会话" />
@@ -401,11 +413,20 @@ export function App() {
           />}
           {/* A page that fails to render says so; the title bar, the left column and the sessions carry on. */}
           <main className="main">
-            <PaneBoundary resetKey={team ? "team" : JSON.stringify(shown)}>{def?.render(shown as never, ctx)}</PaneBoundary>
+            <PaneBoundary resetKey={team ? "team" : JSON.stringify(shown)}>
+              {workspaceBot ? <BotWorkspace key={workspaceBot.id} bot={workspaceBot} context={ctx}
+                selectedSession={shown.kind === "task" ? shown.sessionId : undefined}
+                onCanvas={(topicId, taskId, attention) => setView(leadCanvasView(topicId, taskId, attention, shown))}>{content}</BotWorkspace> : content}
+            </PaneBoundary>
           </main>
         </div>
       </div>
       <HostErrorToast />
+      {leadTopicsBot && <BotLeadTopicsDialog bot={leadTopicsBot} sessions={state.sessions} canAppoint={live} onClose={() => setLeadTopicsBotId(undefined)} directory={{
+        link, tasks: state.tasks, topics: state.topics, profiles: state.profiles, workspaces: state.workspaces, bots: availableBots, decisions: openDecisions,
+        onTask: (taskId, sessionId) => { setLeadTopicsBotId(undefined); setView({ kind: "task", taskId, sessionId, back: shown, nav: Date.now() }); },
+        onCanvas: (topicId, taskId, attention) => { setLeadTopicsBotId(undefined); setView(leadCanvasView(topicId, taskId, attention, shown)); },
+      }} />}
       {settingsOpen && (
         <SettingsDialog
           key={settingsOpen.at}
@@ -419,7 +440,8 @@ export function App() {
             if (!session.taskId) return;
             setSettingsOpen(false);
             const owner = state.tasks.find((task) => task.id === session.taskId)?.botId;
-            setView({ kind: "task", taskId: session.taskId, sessionId: session.id, back: botsEnabled ? { kind: "bots", botId: owner } : { kind: "board" }, nav: Date.now() });
+            setView({ kind: "task", taskId: session.taskId, sessionId: session.id, back: botsEnabled ? { kind: "bots", botId: owner } : { kind: "board" },
+              ...(botsEnabled && owner ? { botWorkspace: owner } : {}), nav: Date.now() });
           }}
           onOpenRemote={() => {
             setSettingsOpen(false);
@@ -469,6 +491,9 @@ export function App() {
           tasks={state.tasks}
           sessions={state.sessions}
           profiles={state.profiles}
+          leadDirectory={botsEnabled ? { link, bots: availableBots, tasks: state.tasks, workspaces: state.workspaces, topics: state.topics, profiles: state.profiles,
+            onTask: (taskId) => setView({ kind: "task", taskId }),
+            onCanvas: (topicId, taskId) => setView({ kind: "canvas", topicId, taskId, nav: Date.now() }) } : undefined}
           onClose={() => setQuickOpen(false)}
           onExpand={() => {
             setQuickOpen(false);

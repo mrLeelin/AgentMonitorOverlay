@@ -45,14 +45,15 @@ export function useMenuDismiss(box: RefObject<HTMLElement | null>, onClose: () =
 }
 
 /** Where a menu opened at `at` goes so that it stays inside the window (near the right or bottom edge: leftwards or upwards). */
-export function useInWindow(box: RefObject<HTMLElement | null>, at: { x: number; y: number }, above = false): { x: number; y: number } {
+export function useInWindow(box: RefObject<HTMLElement | null>, at: { x: number; y: number }, above = false, alignEnd = false): { x: number; y: number } {
   const [pos, setPos] = useState(at);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return setPos(at);
     const r = el.getBoundingClientRect();
-    setPos({ x: Math.max(4, Math.min(at.x, window.innerWidth - r.width - 4)), y: Math.max(4, Math.min(at.y - (above ? r.height : 0), window.innerHeight - r.height - 4)) });
-  }, [at.x, at.y, above]); // eslint-disable-line react-hooks/exhaustive-deps
+    const x = at.x - (alignEnd ? r.width : 0);
+    setPos({ x: Math.max(4, Math.min(x, window.innerWidth - r.width - 4)), y: Math.max(4, Math.min(at.y - (above ? r.height : 0), window.innerHeight - r.height - 4)) });
+  }, [at.x, at.y, above, alignEnd]); // eslint-disable-line react-hooks/exhaustive-deps
   return pos;
 }
 

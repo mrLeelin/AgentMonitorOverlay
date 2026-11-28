@@ -17,6 +17,7 @@ export function replyNeedsPerson(session: Session, tasks: readonly Task[], sessi
   if (!session.taskId) return true;
   const root = managementRoot(tasks, session.taskId);
   if (!root) return true;
+  if (root.id === session.taskId && root.botLead?.kind === "appointed") return false;
   // A coordinator ending a planning/review turn is still waiting for delivery, not asking the person to review it.
   if (root.id === session.taskId) return !tasks.some((t) => t.managerTaskId === root.id && !t.archivedAt) || root.column === "done";
   // Never hide work when its reporting destination has no usable conversation.

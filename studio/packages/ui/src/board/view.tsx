@@ -6,6 +6,7 @@ import { checklistByTask } from "../collab/ChecklistPanel.js";
 import { Board } from "./Board.js";
 import { featureOn } from "../lib/features.js";
 import type { BoardPanel, ViewDef } from "../shell/views.js";
+import { leadCanvasView } from "../bots/lead-navigation.js";
 
 /** The board: the tasks in scope by column, under the panels other features add (scheduler proposals). */
 export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
@@ -26,6 +27,7 @@ export function boardView(panels: readonly BoardPanel[]): ViewDef<"board"> {
             profiles={state.profiles}
             scope={scope}
             onOpen={(task) => setView({ kind: "task", taskId: task.id })}
+            onOpenCanvas={(task) => { if (task.topicId) setView(leadCanvasView(task.topicId, task.id, undefined, { kind: "board" })); }}
             onNew={() => setView({ kind: "new" })}
             onMove={(task, column) => call(link, "PATCH /api/tasks/:id", { id: task.id }, { column })}
             onArchive={(tasks) =>

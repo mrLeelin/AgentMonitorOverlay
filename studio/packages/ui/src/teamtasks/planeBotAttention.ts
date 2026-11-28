@@ -12,6 +12,6 @@ export function usePlaneBotAttention(link: HostLink | null) {
   return jobs;
 }
 
-export function planeBotNeedsAttention(job: PlaneBotAttention): boolean {
+export function planeBotNeedsAttention(job: Pick<PlaneBotAttention, "state">): boolean {
   return job.state === "awaiting-approval" || job.state === "awaiting-user" || job.state === "review" || job.state === "failed";
 }

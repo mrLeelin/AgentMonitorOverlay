@@ -1,10 +1,16 @@
 import { NewTaskPage } from "./NewTaskPage.js";
 import { backTo, type ViewDef } from "../shell/views.js";
+import { useBots } from "../bots/roster.js";
 
 /** The draft task page (top bar 新任务, the canvas's 新任务, Ctrl Shift N). "←" returns where it was opened from. */
 export const newTaskView: ViewDef<"new"> = {
   kind: "new",
-  render: (view, { link, state, scope, setView, teamTasksEnabled, botsEnabled }) => {
+  render: (view, context) => <NewTaskView view={view} context={context} />,
+};
+
+function NewTaskView({ view, context }: { view: Parameters<ViewDef<"new">["render"]>[0]; context: Parameters<ViewDef<"new">["render"]>[1] }) {
+    const { link, state, scope, setView, teamTasksEnabled, botsEnabled } = context;
+    const bots = useBots(link, botsEnabled);
     const back = backTo(view.back, teamTasksEnabled, botsEnabled);
     return (
       <NewTaskPage
@@ -18,6 +24,9 @@ export const newTaskView: ViewDef<"new"> = {
         {...(view.back?.kind === "canvas" && view.topicId ? { canvasTopicId: view.topicId } : {})}
         backLabel={back.label}
         onBack={() => setView(back.view)}
+        leadDirectory={botsEnabled ? { link, bots, workspaces: state.workspaces, topics: state.topics, tasks: state.tasks, profiles: state.profiles,
+          onTask: (taskId) => setView({ kind: "task", taskId, back: back.view }),
+          onCanvas: (topicId, taskId) => setView({ kind: "canvas", topicId, taskId, nav: Date.now(), back: back.view }) } : undefined}
         // The task page returns to the same place; a task only filed goes back there right away.
         onCreated={(task, session) => setView(session ? { kind: "task", taskId: task.id, sessionId: session.id, created: true, ...(view.back ? { back: view.back } : {}) } : back.view)}
         // 远程创建 (2026-10-29): the device card's 「在它上面新建任务」 picks the device; the copy opens once it is here.
@@ -25,5 +34,4 @@ export const newTaskView: ViewDef<"new"> = {
         onOpenRemote={(taskId, sessionId) => setView({ kind: "task", taskId, ...(sessionId ? { sessionId } : {}), created: true, ...(view.back ? { back: view.back } : {}) })}
       />
     );
-  },
-};
+}

@@ -50,7 +50,9 @@ import { TurnStartHint, useTurnStartHint } from "./TurnStartHint.js";
 import { useAnnotationMarks } from "./annotationMarks.js";
 import { AnnotationRefChips, ComposerStats, composerPlaceholder } from "./ThreadParts.js";
 import { BotConversation, useBotRequests, withBotReplies } from "../bots/BotRequests.js";
+import type { LeadDirectory } from "../bots/LeadAppointment.js";
 import { TranscriptBots } from "../bots/BotAvatar.js";
+import { BotChatEmpty } from "../bots/BotWorkspaceChat.js";
 import { ContextMenu } from "../lib/ContextMenu.js";
 import type { StudioBot } from "@amo-studio/protocol";
 
@@ -64,9 +66,13 @@ const SEND_GIVE_UP_MS = 30_000;
 
 interface ThreadProps {
   link: HostLink;
+  leadDirectory?: LeadDirectory;
+  leadReadOnly?: boolean;
+  messageAction?: React.ContextType<typeof BotConversation>["messageAction"];
   bots: readonly StudioBot[];
   botsEnabled: boolean;
   botBlock?: string;
+  emptyBot?: StudioBot;
   session: Session | null;
   /** The task was filed with this sentence (放进待办): shown while it has no session; its first session starts with it. */
   firstMessage?: string;
@@ -121,7 +127,7 @@ interface ThreadProps {
 
 
 /** Conversation of one session plus its composer. */
-export function Thread({ link, bots, botsEnabled, botBlock, presets, session, firstMessage, profile, profiles = [], subsessionNotes = [], tasks = [], sessions = [], projects, items, annotations, annotationRefs, model, busy, onApprove, onJump, onSend, onInterrupt, onDelivery, onSaveAnnotation, onEditAnnotation, onDeleteAnnotation, onBookmark, initialScroll, atPassage = false, onError, decisions = [], remote }: ThreadProps) {
+export function Thread({ link, bots, botsEnabled, botBlock, emptyBot, presets, session, firstMessage, profile, profiles = [], subsessionNotes = [], tasks = [], sessions = [], projects, items, annotations, annotationRefs, model, busy, onApprove, onJump, onSend, onInterrupt, onDelivery, onSaveAnnotation, onEditAnnotation, onDeleteAnnotation, onBookmark, initialScroll, atPassage = false, onError, decisions = [], remote, leadDirectory, leadReadOnly, messageAction }: ThreadProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
@@ -354,7 +360,7 @@ export function Thread({ link, bots, botsEnabled, botBlock, presets, session, fi
   const isRemote = session?.runtime === "remote";
   const remoteSub = isRemote && session.kind === "sub";
   const blocked = isRemote ? (remote?.blocked ?? null) : botBlock ?? null;
-  const readOnly = !session || claudeSub || remoteSub || !!remote?.revoked || session.writer === "archived" || session.writer === "terminal-handoff";
+  const readOnly = !session || claudeSub || remoteSub || !!remote?.revoked || !!leadReadOnly || session.writer === "archived" || session.writer === "terminal-handoff";
   // An archived session has no composer (stage 14): the task page's banner says so and restores it.
   const archived = !!session && (session.writer === "archived" || !!session.archivedAt);
   const generating = !!session && (session.status === "running" || session.status === "awaiting-approval" || session.status === "awaiting-answer");
@@ -674,7 +680,9 @@ ${d}` : restored));
             </button>
           ))}
           <div className="thread-inner">
-            {!session &&
+            {emptyBot && !conversationItems.some((item) => item.type === "user" || item.type === "agent") && <div className="bot-workspace-chat-welcome"><BotChatEmpty bot={emptyBot} /></div>}
+            {!session && leadReadOnly && <div className="thread-empty">主控会话会在任命或恢复后创建。可以先查看专题和交付记录。</div>}
+            {!session && !leadReadOnly &&
               (firstMessage ? (
                 <div className="thread-empty thread-first" data-testid="task-first-message">
                   <div>这个任务还没有会话。放进待办时写的第一句话在这里，在左侧新建一个会话，它会放进输入框，看过再发：</div>
@@ -688,7 +696,7 @@ ${d}` : restored));
               <QuestionSeatContext.Provider value={seat}>
                 {/* A remote session's approvals grey while its computer is away (or the grant is gone): they are checked again there. */}
                 <SubagentStatusContext.Provider value={subagentStatus}>
-                  <BotConversation.Provider value={{ rows: botRequests.rows, onFollowUp: canMentionBot && !readOnly && sessionId ? async (row, text, id) => {
+                  <BotConversation.Provider value={{ rows: botRequests.rows, leadDirectory, messageAction, onChanged: botRequests.refresh, onFollowUp: canMentionBot && !readOnly && sessionId ? async (row, text, id) => {
                     if (!row.sessionId) throw new Error("找不到这次请求的 Bot 会话。");
                     if (row.reportToSource) {
                       await call(link, "POST /api/bots/:id/mentions", { id: row.botId }, { id, sourceSessionId: sessionId, destination: { sessionId: row.sessionId }, text: `请向 @${row.botName} 追问：${text}` });

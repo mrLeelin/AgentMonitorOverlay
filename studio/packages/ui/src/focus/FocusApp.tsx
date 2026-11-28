@@ -30,6 +30,8 @@ import { useRemote } from "../remote/remote.js";
 import { FocusPairRequest } from "./FocusPairRequest.js";
 import { FocusTaskRequest } from "./FocusTaskRequest.js";
 import { decisionNeedsPerson, isBotConversation, replyNeedsPerson } from "./managedAttention.js";
+import { focusCanvasTarget } from "../bots/lead-navigation.js";
+import { useLeadAttention } from "./leadAttention.js";
 import "./focus.css";
 
 export { isToReview, latestSnippet, summary } from "./FocusEntry.js";
@@ -70,7 +72,7 @@ export function FocusApp() {
   const pending = usePendingProposals(host.kind === "ready" ? host.link : NO_LINK);
   const settings = useSettings(host.kind === "ready" ? host.link : NO_LINK);
   const planeJobs = usePlaneBotAttention(host.kind === "ready" && settings?.teamTasksEnabled === true && settings.botsEnabled !== false ? host.link : null);
-  const planeNeeds = planeJobs.filter(planeBotNeedsAttention);
+  const planeNeeds = planeJobs.filter((job) => planeBotNeedsAttention(job) && !(job.rootTaskId && job.state === "review"));
   // Scheduler proposals belong to the planning feature (设置 → 功能).
   const proposals = settings?.disabledFeatures.includes("planning") ? [] : pending;
   // 拆任务提案 (stage 16): a 主控 waits for the person to accept or dismiss them.
@@ -98,7 +100,7 @@ export function FocusApp() {
   // 2026-11-02 (问题 #8): 进行中 and the 运行中 count follow this too — the device that sent the work is the one watching
   // it; 「我也关心」 on the task page (ALSO_MINE_KEY) keeps a task listed here as usual.
   const alsoMine = useStoredIds(ALSO_MINE_KEY);
-  const mine = (s: Session) => !s.taskId || !held.has(s.taskId) || alsoMine.has(s.taskId);
+  const mine = (s: Pick<Session, "taskId">) => !s.taskId || !held.has(s.taskId) || alsoMine.has(s.taskId);
   const canvasAsks = Object.entries(questionsByTopic)
     .filter(([topicId]) => host.kind !== "ready" || host.state.topics.some((t) => t.id === topicId && !t.archivedAt))
     .map(([topicId, w]) => ({ topicId, ...w }))
@@ -146,6 +148,7 @@ export function FocusApp() {
 
   const seenHere = useSessionSeen();
   const live = host.kind === "ready" ? host.state : null;
+  const leadReviews = useLeadAttention(host.kind === "ready" ? host.link : NO_LINK, live).filter((item) => mine({ taskId: item.task.id }));
   // A granted task's sessions: what they had before the grant is not to review here (lib/sessionSeen.ts withGrants).
   const seenData = live ? withGrants(seenHere, live.tasks, live.sessions) : seenHere;
   // 置顶 and which sessions show their subagents (2026-10-21); forgotten once their task or session is gone.
@@ -168,7 +171,8 @@ export function FocusApp() {
   // title folded it). Opening it here no longer counts as seeing it.
   const list = [...waiting, ...finished];
   const asks = live ? decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)) : [];
-  const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id), ...planeNeeds.map((job) => `plane:${job.id}:${job.state}`)]);
+  const leadKeys = leadReviews.map((item) => `result:${item.resultId}`);
+  const keys = attentionKeys([...waiting, ...finished], asks.map((d) => d.id), [...proposals.map((p) => p.id), ...plans.map((p) => p.id), ...relays.map((r) => r.id), ...teamSends.map((s) => s.id), ...canvasAsks.map((q) => q.first.id), ...pairAsks.map((r) => r.id), ...taskAsks.map((r) => r.id), ...planeNeeds.map((job) => `plane:${job.id}:${job.state}`), ...leadKeys]);
   const keysId = keys.join("|");
   // Forget what was handled, so it alerts again if it comes back.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the keys by content
@@ -187,6 +191,7 @@ export function FocusApp() {
         label: isToReview(s, waiting) ? "完成待审核" : SESSION_LOOK[s.status].label,
       })),
       ...asks.map((d) => ({ key: `d:${d.id}`, sessionId: d.sessionId, taskId: d.taskId ?? null, label: "等你决定" })),
+      ...leadReviews.map((item) => ({ key: `result:${item.resultId}`, sessionId: item.sessionId, taskId: item.task.id, label: "待你验收" })),
     ];
     setHistory((h) => {
       const next = updateHistory(h, now, undefined, (r) => live.sessions.some((s) => s.id === r.sessionId && (s.status === "running" || runningSubs(s.id, subs).length > 0)));
@@ -196,11 +201,12 @@ export function FocusApp() {
   }, [keysId, !!live]); // eslint-disable-line react-hooks/exhaustive-deps -- follows the keys by content
   const alerting = shouldAlert(keys, seen);
   const toReview = [...waiting, ...finished].filter((s) => isToReview(s, waiting));
-  const reviewKeys = new Set(attentionKeys(toReview, [], []));
+  const reviewKeys = new Set(attentionKeys(toReview, [], leadKeys));
   // Green when everything new is finished work to look at.
   const calm = alerting && keys.every((k) => seen.has(k) || reviewKeys.has(k));
-  const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length + planeNeeds.length;
-  const things = needs - toReview.length;
+  const needs = waiting.length + finished.length + asks.length + proposals.length + plans.length + relays.length + teamSends.length + canvasAsks.length + pairAsks.length + taskAsks.length + planeNeeds.length + leadReviews.length;
+  const reviewCount = toReview.length + leadReviews.length;
+  const things = needs - reviewCount;
 
   // How long the oldest unacknowledged thing has waited; the clock ticks while something does.
   const firstSeen = useRef<Map<string, number>>(new Map());
@@ -227,7 +233,7 @@ export function FocusApp() {
         ? "生气了！（测试，点我停下）"
         : ""
       : alerting && waited >= ANGRY_AFTER_MS
-        ? `${summary(things, toReview.length)}，等你 ${Math.floor(waited / 60_000)} 分钟了！`
+        ? `${summary(things, reviewCount)}，等你 ${Math.floor(waited / 60_000)} 分钟了！`
         : "";
   useEffect(() => {
     if (flyMessage) window.amo?.focus?.fly?.(flyMessage);
@@ -293,6 +299,12 @@ export function FocusApp() {
     goTo(sessionId, taskId);
   };
   const goToBot = (job: (typeof planeNeeds)[number]) => void window.amo?.openInWorkbench?.({ taskId: job.botTaskId, ...(job.botSessionId ? { sessionId: job.botSessionId } : {}) });
+  const goToLead = (item: (typeof leadReviews)[number]) => void window.amo?.openInWorkbench?.(focusCanvasTarget(item.task.topicId!, item.task.id, { resultId: item.resultId }));
+  const goToDecision = (decision: (typeof asks)[number]) => {
+    const task = state.tasks.find((item) => item.id === decision.taskId);
+    if (task?.botLead?.kind === "appointed" && task.topicId) void window.amo?.openInWorkbench?.(focusCanvasTarget(task.topicId, task.id, { decisionId: decision.id }));
+    else goToDeal(decision.sessionId, decision.taskId);
+  };
 
   /** The robot and header count open the first thing that needs the person in the workbench. */
   const openFirst = () => {
@@ -300,14 +312,15 @@ export function FocusApp() {
     const s = list[0];
     const d = asks[0];
     if (s) goToDeal(s.id, s.taskId);
-    else if (d) goToDeal(d.sessionId, d.taskId);
+    else if (d) goToDecision(d);
+    else if (leadReviews[0]) goToLead(leadReviews[0]);
     else if (planeNeeds[0]) goToBot(planeNeeds[0]);
     else if (pairAsks.length || taskAsks.length) void window.amo?.openInWorkbench?.({ settings: "remote" });
     else void window.amo?.openInWorkbench?.({ taskId: "" });
   };
   caught.current = () => (demo ? setDemo(null) : openFirst());
   const slotMood: BotMood = demo && demo !== "angry" ? demo : calm ? "calm" : "alert";
-  const slotSay = demo === "alert" ? "1 件事（测试）" : demo === "calm" ? "1 个完成待审核（测试）" : summary(things, toReview.length);
+  const slotSay = demo === "alert" ? "1 件事（测试）" : demo === "calm" ? "1 个完成待审核（测试）" : summary(things, reviewCount);
   const rootCalm = demo ? demo === "calm" : calm;
 
   const panelClass = ["focus-panel", locked ? "locked" : "", moving ? "moving" : "", alerting ? "alerting" : "", passthrough ? "passthrough" : ""].filter(Boolean).join(" ");
@@ -433,6 +446,12 @@ export function FocusApp() {
                 ))}
               </div>
             )}
+            {leadReviews.map((item) => <div key={item.resultId} className="focus-entry" data-tone="ok" data-testid="focus-lead-review">
+              <button type="button" className="focus-row" onClick={() => goToLead(item)}>
+                <StatusWord tone="done" word="待你验收" />
+                <span className="focus-row-text"><span className="focus-title">{item.task.title || "未命名目标"}</span><span className="focus-sub">在专题画布查看交付证据</span></span>
+              </button>
+            </div>)}
             {proposals.length > 0 && (
               // A proposal needs its prompt read (and maybe edited): only the count here, handled on the board.
               <div className="focus-entry" data-tone="att" data-testid="focus-proposals">
@@ -506,7 +525,7 @@ export function FocusApp() {
                     decision={d}
                     sessionTitle={`${title(s)} · ${s.title || "会话"}`}
                     className="focus-detail focus-decision"
-                    onWriteElsewhere={() => goToDeal(d.sessionId, d.taskId)}
+                    onWriteElsewhere={() => goToDecision(d)}
                   />
                 </div>
               );

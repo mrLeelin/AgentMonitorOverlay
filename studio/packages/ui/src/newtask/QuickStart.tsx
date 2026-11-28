@@ -6,7 +6,8 @@ import { samePick } from "../lib/recents.js";
 import { EffortBars, FastToggle } from "../chat/pickers.js";
 import { MentionList, useComposerMentions } from "../attach/useMentions.js";
 import { ResourceInput, type ResourceInputHandle } from "../attach/ResourceInput.js";
-import { submitDraft, useTaskDraft } from "./draft.js";
+import { draftText, submitDraft, useTaskDraft } from "./draft.js";
+import { LeadAppointment, openLeadReceipt, type LeadDirectory, type LeadSeed } from "../bots/LeadAppointment.js";
 import { ModelRow, tilePicks } from "./ModelRow.js";
 import { ChoicePicker } from "./ChoiceRow.js";
 import { GROUP_HEADINGS } from "./choices.js";
@@ -31,6 +32,7 @@ export function QuickStart({
   onClose,
   onExpand,
   onCreated,
+  leadDirectory,
 }: {
   link: HostLink;
   workspaces: readonly Workspace[];
@@ -42,6 +44,7 @@ export function QuickStart({
   /** Continue on the draft task page. */
   onExpand(): void;
   onCreated(task: Task, session: Session | null): void;
+  leadDirectory?: LeadDirectory;
 }) {
   const { draft, update, reset } = useTaskDraft(profiles);
   const taskEnter = useTaskEnter(draft.text);
@@ -49,6 +52,7 @@ export function QuickStart({
   const rows = useDraftChoices({ draft, update, workspaces, topics, tasks });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [leadSeed, setLeadSeed] = useState<LeadSeed>();
   const [picking, setPicking] = useState<"topic" | "project" | null>(null);
   const input = useRef<ResourceInputHandle>(null);
   const { choices } = useProfileChoices(link, draft.pick.profileId);
@@ -82,6 +86,7 @@ export function QuickStart({
     if (hasResources) return onExpand();
     if (busy) return;
     if (!draft.text.trim()) return setError("写一句话再开始。");
+    if (draft.lead) return appoint(file);
     setBusy(true);
     setError("");
     try {
@@ -93,11 +98,28 @@ export function QuickStart({
       setBusy(false);
     }
   }
+  function appoint(file: boolean) {
+    if (!leadDirectory) return setError("请在「设置 → 工具与自动化 → Bots」开启 Bots，或到完整新建页取消机器人带队。");
+    const text = draftText(draft);
+    const title = draft.title.trim() || draft.text.trim().split("\n")[0]?.slice(0, 100);
+    if (!title) return setError("先写一句交付目标。");
+    setError("");
+    setLeadSeed({ source: { kind: "manual" }, intent: "create", title, text, workspaceId: project?.id, topicId: topic?.id, profileId: draft.pick.profileId, start: !file });
+  }
 
   const closePicker = () => {
     setPicking(null);
     requestAnimationFrame(() => input.current?.focus());
   };
+
+  if (leadSeed && leadDirectory) return <LeadAppointment directory={leadDirectory} seed={leadSeed} onClose={() => {
+    setLeadSeed(undefined);
+    requestAnimationFrame(() => input.current?.focus());
+  }} onReceipt={(receipt) => {
+    reset();
+    onClose();
+    openLeadReceipt(leadDirectory, receipt);
+  }} />;
 
   return (
     <div className="quick-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -164,6 +186,7 @@ export function QuickStart({
           )}
           <FastToggle fast={model?.fast} value={draft.options.fast ?? choices?.defaultFast} onChange={(fast) => update({ options: { ...draft.options, fast } })} small />
           <span className="quick-hints">
+            {leadDirectory && <button type="button" className="link-btn" onClick={() => appoint(false)} disabled={busy}>机器人带队</button>}
             <button type="button" className="link-btn" onClick={() => void submit(false)} disabled={busy}>
               <kbd aria-hidden="true">{PRIMARY_ENTER_LABELS[taskEnter.startKey]}</kbd>开始
             </button>

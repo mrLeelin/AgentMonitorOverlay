@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
 import { DEFAULT_BOT_PREFERENCES, supportsBotMemory, type BotInput, type BotSkillRef, type Session, type StateSnapshot, type StudioBot, type StudioSettings } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { IconCheck, IconChevronDown, IconChevronRight, IconEnvironment, IconPlus } from "../chat/icons.js";
@@ -12,7 +12,10 @@ import { botChatName, useBots } from "./roster.js";
 import { OPEN_SETTINGS_EVENT } from "../mcp/shared.js";
 import { BotEntityDialog } from "./BotEntityDialog.js";
 import { botSettingsSave } from "./BotSettingsSave.js";
-import { BotAutomation, BotMemoryFiles, BotNotificationSettings, BotSettingsOverview, botSettingsTabs, type BotMemoryPage, type BotSettingsTab } from "./BotSettingsSections.js";
+import { BotAutomation, BotMemoryFiles, BotNotificationSettings, BotSettingsOverview, BotWorkspaceSettingsOverview, botSettingsTabs, type BotMemoryPage, type BotSettingsTab } from "./BotSettingsSections.js";
+import { useSettings } from "../settings/useSettings.js";
+import { useLiveResource } from "../host/live.js";
+import "./BotWorkspaceSettings.css";
 
 type BotPreferences = Partial<Pick<StudioSettings, "botsEnabled" | "confirmBotHomeReset">>;
 
@@ -122,9 +125,27 @@ export function BotsPage({ link, state, settings, startBotId, onOpenChat }: { li
   </div>;
 }
 
-function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled, confirmReset, shared, onOpenChat, onDelete, onManage }: {
+export function BotWorkspaceSettings({ link, state, bot, initialSection = "overview", onBack, onDeleted, onOpenChat, onOpenConnectors, onShare }: {
+  link: HostLink; state: StateSnapshot; bot: StudioBot; onBack(): void; onDeleted(): void;
+  initialSection?: BotSettingsTab;
+  onOpenChat?(session: Session): void; onOpenConnectors?(): void; onShare?(): void;
+}) {
+  const settings = useSettings(link);
+  const [shared] = useLiveResource<BotSkillRef[] | undefined>({
+    initial: undefined,
+    load: () => call(link, "GET /api/bot-skills/shared"),
+    reloadOn: (event) => event.type === "bots.changed",
+  }, [link]);
+  return <BotSettingsEditor key={`${bot.id}:${initialSection}`} bot={bot} initialSection={initialSection} link={link} state={state}
+    enabled={settings?.botsEnabled !== false} confirmReset={settings?.confirmBotHomeReset !== false} shared={shared}
+    workspace={{ onBack, onOpenConnectors, onShare }} onDelete={onDeleted} onOpenChat={onOpenChat}
+    onManage={() => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: "bots" }))} />;
+}
+
+function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled, confirmReset, shared, onOpenChat, onDelete, onManage, workspace }: {
   bot: StudioBot; initialSection: BotSettingsTab; link: HostLink; state: StateSnapshot; enabled: boolean; confirmReset: boolean; shared?: BotSkillRef[];
   onOpenChat?(session: Session): void; onDelete(): void; onManage(): void;
+  workspace?: { onBack(): void; onOpenConnectors?(): void; onShare?(): void };
 }) {
   const { id } = selected;
   const save = botSettingsSave(link, selected);
@@ -136,11 +157,17 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
   const [memoryPage, setMemoryPage] = useState<BotMemoryPage>("memory");
   const [askDelete, setAskDelete] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
+  const breadcrumbBack = useRef<HTMLButtonElement>(null);
+  const workspaceReturnFocus = useRef<string | null>(null);
+  const previousSection = useRef(section);
   const [chats, setChats] = useState<Session[]>([]);
   const [busy, setBusy] = useState(false);
   const [askReset, setAskReset] = useState(false);
   const [actionError, setActionError] = useState("");
   const preferences = draft.preferences ?? DEFAULT_BOT_PREFERENCES;
+  const purposeId = useId();
+  const memoryId = useId();
+  const memoryHintId = useId();
 
   useLayoutEffect(() => { save.receive(selected); }, [save, selected]);
   useEffect(() => () => {
@@ -167,12 +194,26 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
   }
 
   function openSection(tab: BotSettingsTab, file?: BotMemoryPage) {
+    if (workspace && section === "overview" && tab !== "overview") workspaceReturnFocus.current = document.activeElement?.getAttribute("aria-label") ?? null;
     if (file) setMemoryPage(file);
     setSection(tab);
     scroll.current?.scrollTo({ top: 0 });
   }
 
+  useLayoutEffect(() => {
+    if (!workspace || previousSection.current === section) return;
+    previousSection.current = section;
+    if (section === "overview") {
+      const label = workspaceReturnFocus.current;
+      const button = label && Array.from(scroll.current?.querySelectorAll<HTMLButtonElement>("button[aria-label]") ?? [])
+        .find((candidate) => candidate.getAttribute("aria-label") === label);
+      (button || breadcrumbBack.current)?.focus();
+      workspaceReturnFocus.current = null;
+    } else breadcrumbBack.current?.focus();
+  }, [section, workspace]);
+
   useEffect(() => {
+    if (workspace) return;
     let active = true;
     void call(link, "GET /api/bots/:id/chats", { id }).then((rows) => { if (active) setChats(rows); }).catch(() => {});
     return () => { active = false; };
@@ -213,8 +254,17 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
     </div> : (saving || saved || Object.keys(changes).length > 0) && <p className="settings-hint" role="status">{saving || !saved ? "正在自动保存…" : "已自动保存"}</p>}
   </>;
   const chatActions = enabled && draft.enabled;
-  return <div className="bot-settings-editor bot-settings-sections">
-    <header className="bot-editor-heading">
+  const hasFeedback = Boolean(actionError || error || saving || saved || Object.keys(changes).length);
+  const memorySupported = supportsBotMemory(state.profiles.find((profile) => profile.id === draft.profileId && !profile.unavailable)?.runtime);
+  const deleteBot = () => setAskDelete(true);
+  return <div className={workspace ? "bot-settings-editor bot-settings-sections bot-workspace-settings" : "bot-settings-editor bot-settings-sections"}
+    role={workspace ? "region" : undefined} aria-label={workspace ? "Bot 设置" : undefined}>
+    {workspace ? <header className="bot-workspace-settings-breadcrumb">
+      <button ref={breadcrumbBack} className="bot-icon-button" type="button" aria-label={section === "overview" ? "返回 Bot 主页" : "返回 Bot 设置"}
+        onClick={() => section === "overview" ? workspace.onBack() : openSection("overview")}><IconChevronRight /></button>
+      <span>{draft.name}</span><span aria-hidden="true">/</span><strong>设置</strong>
+      {section !== "overview" && <><span aria-hidden="true">/</span><strong>{botSettingsTabs.find(([key]) => key === section)?.[1]}</strong></>}
+    </header> : <><header className="bot-editor-heading">
       <h3 title={bot.name}>{bot.name}</h3>
       <label className="bot-editor-enabled" title="接收消息并出现在 @ 列表">
         <input type="checkbox" className="bot-setting-switch" role="switch" aria-description="启用后出现在 @ 列表" checked={draft.enabled} disabled={busy} onChange={(event) => change("enabled", event.target.checked)} /> 接收消息
@@ -222,13 +272,15 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
     </header>
     <nav className="bot-settings-tabs" aria-label="Bot 设置分区">
       {botSettingsTabs.map(([key, label]) => <button key={key} type="button" aria-current={section === key ? "page" : undefined} onClick={() => openSection(key)}>{label}</button>)}
-    </nav>
+    </nav></>}
     <div className="bot-editor-scroll" ref={scroll}>
       <form className="bot-editor-form" aria-label={`配置 ${bot.name}`} onSubmit={(event) => {
         event.preventDefault();
         void save.flush();
       }}>
-        {section === "overview" && <BotSettingsOverview bot={selected} draft={draft} state={state} shared={shared} chats={chats} open={openSection} />}
+        {section === "overview" && (workspace ? <BotWorkspaceSettingsOverview botId={id} link={link} draft={draft} state={state} shared={shared} disabled={busy}
+          canDelete={!busy && !saving} memorySupported={memorySupported} open={openSection} onConnectors={workspace.onOpenConnectors} onShare={workspace.onShare} onDelete={deleteBot} change={change} />
+          : <BotSettingsOverview bot={selected} draft={draft} state={state} shared={shared} chats={chats} open={openSection} />)}
         <div className="bot-settings-details" hidden={section !== "runtime"}><div className="bot-editor-identity">
           <BotAvatarPicker draft={draft} busy={busy} change={change} run={perform} />
           <label className="bot-form-field">名称<input className="field" required maxLength={40} disabled={busy} {...textField("name")} /></label>
@@ -241,7 +293,7 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
             <BotLocalFields workspaces={state.workspaces} draft={draft} change={change} disabled={busy} />
           </div>
         </section>
-        <button className="link-btn bot-settings-delete" type="button" disabled={busy || saving} onClick={() => setAskDelete(true)}>删除 Bot…</button>
+        {!workspace && <button className="link-btn bot-settings-delete" type="button" disabled={busy || saving} onClick={deleteBot}>删除 Bot…</button>}
         </div>
         <div className="bot-settings-details" hidden={section !== "access"}>
           <section className="bot-settings-card"><h4>访问权限</h4>
@@ -253,20 +305,20 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
         </div>
         <div hidden={section !== "memory"}><BotMemoryFiles link={link} botId={id} active={section === "memory"} file={memoryPage} select={setMemoryPage}
           purpose={<div className="bot-form-field">
-            <div className="bot-settings-file-title"><label htmlFor="studio-bot-purpose"><code>SOUL.md</code></label>{importButton("purpose", "导入 SOUL.md")}</div>
-            <textarea aria-label="职责" id="studio-bot-purpose" className="field" rows={3} required maxLength={8000} disabled={busy} {...textField("purpose")} />
+            <div className="bot-settings-file-title"><label htmlFor={purposeId}><code>SOUL.md</code></label>{importButton("purpose", "导入 SOUL.md")}</div>
+            <textarea aria-label="职责" id={purposeId} className="field" rows={3} required maxLength={8000} disabled={busy} {...textField("purpose")} />
           </div>}
           memory={<div className="bot-form-field">
-            <div className="bot-settings-file-title"><label htmlFor="studio-bot-memory"><code>MEMORY.md</code></label>{importButton("memory", "导入 MEMORY.md")}</div>
-            <textarea aria-label="记忆" id="studio-bot-memory" className="field" rows={3} maxLength={32_000} disabled={busy} aria-describedby="studio-bot-memory-hint" {...textField("memory")} />
-            <small className="settings-hint" id="studio-bot-memory-hint">支持 Markdown。新聊天会读取长期记忆。</small>
+            <div className="bot-settings-file-title"><label htmlFor={memoryId}><code>MEMORY.md</code></label>{importButton("memory", "导入 MEMORY.md")}</div>
+            <textarea aria-label="记忆" id={memoryId} className="field" rows={3} maxLength={32_000} disabled={busy} aria-describedby={memoryHintId} {...textField("memory")} />
+            <small className="settings-hint" id={memoryHintId}>支持 Markdown。新聊天会读取长期记忆。</small>
           </div>} /></div>
       </form>
       <div hidden={section !== "automation"}><BotAutomation bot={bot} link={link} preferences={preferences} disabled={busy}
-        memorySupported={supportsBotMemory(state.profiles.find((profile) => profile.id === bot.profileId && !profile.unavailable)?.runtime)}
+        memorySupported={memorySupported}
         onChange={(value) => change("preferences", value)} onManage={() => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: "duty" }))} /></div>
-      {section === "notifications" && <BotNotificationSettings preferences={preferences} disabled={busy} onChange={(value) => change("preferences", value)} />}
-      {section === "runtime" && !!chats.length && <section className="settings-section"><h4 className="settings-heading">聊天记录</h4>
+      {!workspace && section === "notifications" && <BotNotificationSettings preferences={preferences} disabled={busy} onChange={(value) => change("preferences", value)} />}
+      {!workspace && section === "runtime" && !!chats.length && <section className="settings-section"><h4 className="settings-heading">聊天记录</h4>
         {chats.map((chat) => <div className="settings-row" key={chat.id}>
           <button type="button" className="btn-ghost small bot-history-row" onClick={() => onOpenChat?.(chat)}>{botChatName(chat, selected.homeSessionId)}{chat.archivedAt ? "（已归档）" : ""} ↗</button>
           {chat.id !== selected.homeSessionId && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void perform(async () => {
@@ -278,9 +330,9 @@ function BotSettingsEditor({ bot: selected, initialSection, link, state, enabled
       </section>}
       {section === "access" && <BotWebhooks link={link} id={id} />}
     </div>
-    {(chatActions || actionError || error || saving || saved || Object.keys(changes).length > 0) && <footer className="bot-editor-actions">
+    {((chatActions && !workspace) || hasFeedback) && <footer className="bot-editor-actions">
       {!askReset && feedback}
-      {chatActions && <div className="settings-row">
+      {chatActions && !workspace && <div className="settings-row">
         <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void openHome(false)}>打开主聊天</button>
         {!!selected.homeSessionId && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => {
           if (confirmReset) { setActionError(""); setAskReset(true); }

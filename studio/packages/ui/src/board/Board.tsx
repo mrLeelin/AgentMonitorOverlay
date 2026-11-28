@@ -16,7 +16,9 @@ import { useChoicesFor } from "../lib/choices.js";
 import { taskModelSessions } from "../lib/task-models.js";
 import { TaskModels } from "../lib/TaskModels.js";
 import { showError } from "../lib/toast.js";
+import { useStoredIds } from "../lib/storedIds.js";
 import { usePrerequisites, waitingTitles, WAITING_HINT } from "../task/prerequisites.js";
+import { IconChevronDown, IconChevronRight } from "../chat/icons.js";
 
 /** What the board shows: everything, one topic's tasks, or one project's. Archived tasks are never on the board. */
 export type Scope = { kind: "all" } | { kind: "topic"; id: string } | { kind: "workspace"; id: string };
@@ -53,6 +55,7 @@ interface BoardProps {
   profiles: readonly ModelProfile[];
   scope: Scope;
   onOpen(task: Task): void;
+  onOpenCanvas?(task: Task): void;
   onNew?(): void;
   /** A card dropped on another column (the person moves cards; agents never do). */
   onMove?(task: Task, column: TaskColumn): Promise<Task>;
@@ -69,8 +72,10 @@ interface BoardProps {
 
 type CardMove = { column: TaskColumn; updatedAt: string; saved?: Task };
 
+const topicGroupKey = (column: TaskColumn, topicId?: string | null) => `${column}:${topicId ?? ""}`;
+
 /** Four columns; the person moves cards (drag a card onto another column), agents never do. Cards carry no buttons. */
-export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
+export function Board({ tasks, sessions, workspaces, topics, profiles, scope, onOpen, onOpenCanvas, onNew, onMove, mail, decisions, checklist, onArchive, link }: BoardProps) {
   const remote = useRemote(link ?? null);
   const teamThreads = useTeamThreads(link ?? null);
   const prerequisites = usePrerequisites(link);
@@ -96,10 +101,20 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
     if (task.updatedAt >= move.saved.updatedAt) return task;
     return { ...task, column: move.saved.column, updatedAt: move.saved.updatedAt, reviewEnteredAt: move.saved.reviewEnteredAt };
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const choices = useChoicesFor(link, visible.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
+  // 按专题分组: wherever the board holds more than one topic's tasks (not in a topic's own board).
+  const groupOn = useGroupByTopic();
+  const canGroup = scope.kind !== "topic";
+  const grouped = canGroup && groupOn;
+  const collapsedGroups = useStoredIds("amo.boardCollapsedTopicGroups");
+  const topicIds = new Set(topics.map((topic) => topic.id));
+  const shown = grouped && collapsedGroups.ids.length ? visible.filter((task) => {
+    const topicId = task.topicId && topicIds.has(task.topicId) ? task.topicId : null;
+    return !collapsedGroups.has(topicGroupKey(task.column, topicId));
+  }) : visible;
+  const choices = useChoicesFor(link, shown.filter((t) => !t.remote).flatMap((t) => taskModelSessions(taskSessions(t, sessions)).map((s) => s.profileId)));
   const [dragging, setDragging] = useState<readonly Task[]>([]);
   const [over, setOver] = useState<TaskColumn | null>(null);
-  const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? visible.filter((t) => !t.remote).map((t) => t.id) : []);
+  const selection = useBoardSelection(`${scope.kind}:${"id" in scope ? scope.id : ""}`, onMove ? shown.filter((t) => !t.remote).map((t) => t.id) : []);
   const canMove = (task: Task) => !!onMove && !task.remote && !moves.has(task.id);
   const moveCards = (cards: readonly Task[], column: TaskColumn) => {
     if (!onMove || !cards.length) return;
@@ -126,13 +141,8 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
   const archive = (list: readonly Task[]) => {
     if (list.length) onArchive?.(list);
   };
-  // 按专题分组: wherever the board holds more than one topic's tasks (not in a topic's own board).
-  const groupOn = useGroupByTopic();
-  const canGroup = scope.kind !== "topic";
-  const grouped = canGroup && groupOn;
-
-  const card = (task: Task) => (
-    <TaskCard
+  const card = (task: Task) => {
+    const content = <TaskCard
       key={task.id}
       task={task}
       sessions={taskSessions(task, sessions)}
@@ -158,7 +168,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
       // A copy of a remote task has the column its own computer gives it.
       draggable={canMove(task)}
       onDragStart={(event) => {
-        const moving = selection.selected.has(task.id) ? visible.filter((t) => selection.selected.has(t.id) && canMove(t)) : [task];
+        const moving = selection.selected.has(task.id) ? shown.filter((t) => selection.selected.has(t.id) && canMove(t)) : [task];
         selection.setSelected(new Set(moving.map((t) => t.id)));
         setDragging(moving);
         if (moving.length > 1) {
@@ -177,8 +187,13 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
       mail={mail?.get(task.id) ?? 0}
       decisions={decisions?.get(task.id) ?? 0}
       {...(checklist?.get(task.id) ? { checklist: checklist.get(task.id)! } : {})}
-    />
-  );
+    />;
+    return onOpenCanvas && task.topicId && !task.remote && (task.botLead?.kind === "appointed" || task.managerTaskId) ?
+      <div key={task.id} className="board-topic-card">
+        {content}
+        <button type="button" className="link-btn" aria-label={`在专题画布定位 ${task.title || "未命名任务"}`} onClick={() => onOpenCanvas(task)}>在专题画布定位</button>
+      </div> : content;
+  };
 
   return (
     <section ref={selection.board} className={canGroup ? "board with-tools" : "board"} aria-label="看板" onPointerDown={selection.onPointerDown} onPointerMove={selection.onPointerMove} onPointerUp={selection.onPointerUp} onPointerCancel={selection.onLostPointerCapture} onLostPointerCapture={selection.onLostPointerCapture}>
@@ -215,7 +230,7 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
             onDrop={(e) => {
               e.preventDefault();
               const draggedIds = new Set(dragging.map((t) => t.id));
-              moveCards(visible.filter((t) => draggedIds.has(t.id) && canMove(t) && t.column !== col), col);
+              moveCards(shown.filter((t) => draggedIds.has(t.id) && canMove(t) && t.column !== col), col);
               setDragging([]);
               setOver(null);
             }}
@@ -236,22 +251,37 @@ export function Board({ tasks, sessions, workspaces, topics, profiles, scope, on
               )}
             </div>
             {grouped
-              ? topicGroups(cards, topics).map((g, i) => (
-                  <div className="topic-group" key={g.topic?.id ?? ""} data-testid="topic-group" data-topic={g.topic?.title ?? ""} data-group-index={i}>
+              ? topicGroups(cards, topics).map((g, i) => {
+                const key = topicGroupKey(col, g.topic?.id);
+                const collapsed = collapsedGroups.has(key);
+                const title = g.topic?.title ?? "未归专题";
+                return (
+                  <div className="topic-group" key={key} data-testid="topic-group" data-topic={g.topic?.title ?? ""} data-group-index={i}>
                     <div className={g.topic ? "topic-group-head" : "topic-group-head none"}>
-                      <KindIcon kind="topic" />
-                      <span className="topic-group-name">{g.topic?.title ?? "未归专题"}</span>
-                      <span className="topic-group-count">{g.tasks.length}</span>
-                      <span className="topic-group-rule" />
+                      <button type="button" className="topic-group-toggle" aria-expanded={!collapsed} title={`${collapsed ? "展开" : "折叠"}「${title}」`} onClick={() => {
+                        if (!collapsed) selection.setSelected((selected) => {
+                          const next = new Set(selected);
+                          for (const task of g.tasks) next.delete(task.id);
+                          return next;
+                        });
+                        collapsedGroups.toggle(key);
+                      }}>
+                        {collapsed ? <IconChevronRight /> : <IconChevronDown />}
+                        <KindIcon kind="topic" />
+                        <span className="topic-group-name">{title}</span>
+                        <span className="topic-group-count">{g.tasks.length}</span>
+                        <span className="topic-group-rule" aria-hidden="true" />
+                      </button>
                       {archivable && (
-                        <button type="button" className="bar-btn soft-danger group-archive" aria-label={`归档「${g.topic?.title ?? "未归专题"}」这一组`} title={`归档「${g.topic?.title ?? "未归专题"}」这一组（${g.tasks.length}）：任务和它们的会话一起归档`} disabled={g.tasks.some((task) => moves.has(task.id))} onClick={() => archive(g.tasks)} data-testid="archive-done-group">
+                        <button type="button" className="bar-btn soft-danger group-archive" aria-label={`归档「${title}」这一组`} title={`归档「${title}」这一组（${g.tasks.length}）：任务和它们的会话一起归档`} disabled={g.tasks.some((task) => moves.has(task.id))} onClick={() => archive(g.tasks)} data-testid="archive-done-group">
                           <ArchiveIcon size={13} />
                         </button>
                       )}
                     </div>
-                    {g.tasks.map(card)}
+                    {!collapsed && g.tasks.map(card)}
                   </div>
-                ))
+                );
+              })
               : cards.map(card)}
             {cards.length === 0 && <div className="empty-col">空</div>}
             {/* Archived tasks leave the board; the last column offers them. */}

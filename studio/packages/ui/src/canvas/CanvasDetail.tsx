@@ -4,6 +4,8 @@ import { COLUMN_NAMES, SESSION_LOOK, taskSessions, taskStatus } from "../lib/sta
 import { placeBeside, updateGroup } from "./geometry.js";
 import { DeleteButton } from "./DeleteButton.js";
 import { TaskManagement } from "../task/TaskManagement.js";
+import { TaskContext } from "../task/TaskContext.js";
+import { latestMainSession } from "../gitreview/logic.js";
 import type { HostLink } from "../host/client.js";
 
 export type CanvasSelection = { kind: "node"; id: Id } | { kind: "group"; id: Id } | null;
@@ -24,7 +26,14 @@ export interface DetailProps {
   onClearSelection(): void;
   /** 删除分组…: asks first whether its cards go too (an empty group goes at once). */
   onDeleteGroup(groupId: Id): void;
-  onOpenTask(taskId: Id): void;
+  onOpenTask(taskId: Id, sessionId?: Id): void;
+  onLocateTask?(taskId: Id): void;
+  keepTaskCard?: boolean;
+  onFold?: (() => void) | undefined;
+  folded?: boolean;
+  renderWorkflow?: ReactNode;
+  stacked?: boolean;
+  focusDetail?: boolean;
   /** Write a task's description (the dialog). */
   onDescribe?(taskId: Id): void;
   newId(prefix: string): string;
@@ -44,7 +53,7 @@ const MARGIN = { side: 10, top: 52, bottom: 56 };
  * pixels, `avoid` the other cards' (of the sides with room, it takes the one covering least of them); `hidden` while resizing or multi-selecting. Moving a card clears its details until the next click. Closed by its ×, Esc or a click on the
  * canvas's empty space (CanvasPage).
  */
-export function CanvasDetail({ anchor, avoid, area, hidden, onClose, ...props }: DetailProps & { anchor: Rect | null; avoid: readonly Rect[]; area: { w: number; h: number }; hidden: boolean; onClose(): void }) {
+export function CanvasDetail({ anchor, avoid, area, hidden, onClose, stacked, focusDetail, ...props }: DetailProps & { anchor: Rect | null; avoid: readonly Rect[]; area: { w: number; h: number }; hidden: boolean; onClose(): void }) {
   const box = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(160);
   useLayoutEffect(() => {
@@ -53,17 +62,26 @@ export function CanvasDetail({ anchor, avoid, area, hidden, onClose, ...props }:
   });
   const w = Math.min(BOX_W, Math.max(200, area.w - 2 * MARGIN.side));
   const place = anchor ? placeBeside(anchor, { w, h }, area, 12, MARGIN, avoid) : null;
-  const off = hidden || !place;
+  const off = hidden || (!stacked && !place);
+  useEffect(() => {
+    if (off || !focusDetail) return;
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    box.current?.focus({ preventScroll: true });
+    return () => {
+      if (before?.isConnected && document.activeElement === document.body) before.focus({ preventScroll: true });
+    };
+  }, [off, focusDetail, props.selection.id]);
   return (
     <div
       ref={box}
       className="canvas-detail"
       role="region"
       aria-label="详情框"
+      tabIndex={-1}
       data-side={place?.side}
       data-testid="canvas-detail"
       // Kept while out of sight (a field being typed in keeps its text), but takes no clicks.
-      style={{ left: place?.x ?? 0, top: place?.y ?? 0, width: w, maxHeight: Math.max(160, area.h - MARGIN.top - MARGIN.bottom), visibility: off ? "hidden" : undefined }}
+      style={{ left: stacked ? 8 : place?.x ?? 0, top: stacked ? 48 : place?.y ?? 0, width: stacked ? Math.max(0, area.w - 16) : w, maxHeight: Math.max(160, area.h - MARGIN.top - MARGIN.bottom), visibility: off ? "hidden" : undefined }}
       aria-hidden={off || undefined}
       // The canvas below must not pan, open its menu or zoom from here.
       onMouseDown={(e) => e.stopPropagation()}
@@ -78,7 +96,8 @@ export function CanvasDetail({ anchor, avoid, area, hidden, onClose, ...props }:
   );
 }
 
-function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics = [], sessions, workspaces, onChange, onEdit, onClearSelection, onDeleteGroup, onOpenTask, onDescribe, newId, renderItem }: DetailProps) {
+function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics = [], sessions, workspaces, onChange, onEdit, onClearSelection, onDeleteGroup, onOpenTask, onLocateTask, keepTaskCard, onFold, folded, renderWorkflow, onDescribe, newId, renderItem }: DetailProps) {
+  const [contextTaskId, setContextTaskId] = useState<Id>();
   if (selection.kind === "group") {
     const group = doc.groups.find((g) => g.id === selection.id);
     if (!group) return null;
@@ -220,11 +239,18 @@ function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics =
         {taskWhere(task, workspaces)}
       </span>
       <TaskDescription task={task} onDescribe={onDescribe} />
-      <TaskManagement link={link} task={task} tasks={allTasks} onOpenTask={onOpenTask} onDescribe={onDescribe} />
+      {!task.remote && sessions.filter((item) => item.taskId === task.id && !item.archivedAt && (item.status === "awaiting-approval" || item.status === "awaiting-answer"))
+        .map((item) => <button key={item.id} type="button" className="link-btn" onClick={() => onOpenTask(task.id, item.id)}>
+          {item.status === "awaiting-approval" ? "处理原生审批" : "回答会话问题"} · {item.title || "原会话"}
+        </button>)}
+      {!task.remote && (task.lead || task.contextHint || task.managerTaskId) && <button type="button" className="link-btn" aria-expanded={contextTaskId === task.id} onClick={() => setContextTaskId(contextTaskId === task.id ? undefined : task.id)}>共同需求详情</button>}
+      {contextTaskId === task.id && <TaskContext link={link} task={task} tasks={allTasks} session={latestMainSession(sessions, task.id) ?? null} onDismiss={() => setContextTaskId(undefined)} />}
+      {renderWorkflow}
+      <TaskManagement link={link} task={task} tasks={allTasks} onOpenTask={onOpenTask} onDescribe={onDescribe} summaryOnly />
       <button type="button" className="btn-ghost small" onClick={() => onOpenTask(task.id)}>
         打开任务
       </button>
-      <DeleteButton
+      {keepTaskCard ? <button type="button" className="btn-ghost small" onClick={onFold ?? (() => onOpenTask(task.id))}>{onFold ? folded ? "展开分支" : "收起分支" : "打开任务处理归属或归档"}</button> : <DeleteButton
         icon="off"
         title="只拿掉卡片：任务仍在专题里，依赖也保留；在任务页可以再放回来"
         onClick={() => {
@@ -233,12 +259,12 @@ function DetailContent({ link, doc, selection, tasks, allTasks = tasks, topics =
         }}
       >
         从画布上拿掉（任务不变）
-      </DeleteButton>
+      </DeleteButton>}
       <span className="side-subheading">前置任务</span>
       {before.length === 0 && <span className="side-note">没有前置任务。</span>}
       {before.map((e) => (
         <div key={e.id} className="dep-row" data-testid="dependency">
-          <span className="name">{title(e.from)}</span>
+          {onLocateTask ? <button type="button" className="link-btn name" onClick={() => onLocateTask(e.from)}>{title(e.from)}</button> : <span className="name">{title(e.from)}</span>}
           <button type="button" className="link-btn" aria-label={`移除前置任务 ${title(e.from)}`} onClick={() => onChange({ ...doc, edges: doc.edges.filter((x) => x.id !== e.id) })}>
             移除
           </button>

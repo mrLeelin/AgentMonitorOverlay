@@ -38,6 +38,7 @@ import { relativeTime } from "../lib/status.js";
 import type { OutsideSession } from "@amo-studio/protocol";
 import { activateDraftGoal, existingGoalStart, GoalStartError, readPendingGoalStart, savePendingGoalStart, supportsDraftGoal } from "./goalStart.js";
 import "../chat/goal.css";
+import { LeadAppointment, openLeadReceipt, type LeadDirectory, type LeadSeed } from "../bots/LeadAppointment.js";
 
 /** 接续已有会话 runs on this profile only: the outside sessions are the local Claude Code login's. */
 const CLAUDE_SUBSCRIPTION = "claude-subscription";
@@ -67,13 +68,14 @@ interface NewTaskPageProps {
   remoteDevice?: { account: string; device: string };
   /** A task created on another device: its copy here, once it has come. */
   onOpenRemote?(taskId: string, sessionId: string | null): void;
+  leadDirectory?: LeadDirectory;
 }
 
 /**
  * 草稿任务页 (design/ui-directions/new-task.html): no dialog, the main area becomes an empty task. Projects and topics are
  * rows of chips (both may stay unpicked: no project runs in the common folder). The draft follows the shared composer shortcuts.
  */
-export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, dialog, remoteDevice, onOpenRemote }: NewTaskPageProps) {
+export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], profiles, scope, canvasTopicId, backLabel = "看板", onBack, onCreated, dialog, remoteDevice, onOpenRemote, leadDirectory }: NewTaskPageProps) {
   const { draft, update, reset } = useTaskDraft(profiles, dialog?.initial);
   const taskEnter = useTaskEnter(draft.text);
   const { todoShortcut } = taskEnter;
@@ -95,6 +97,7 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
   // 正在启动: the page is covered while the first session starts (filing in 待办 is quick).
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [leadSeed, setLeadSeed] = useState<LeadSeed>();
   const [pendingGoal, setPendingGoal] = useState(() => dialog ? null : readPendingGoalStart());
   // "显示在画布上" for a task in a topic: off unless the page was opened from that topic's canvas (then always on).
   const [showOnCanvas, setShowOnCanvas] = useState(false);
@@ -173,9 +176,21 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
 
   async function submit(file: boolean) {
     if (busy) return;
+    if (draft.lead && !dialog) {
+      if (!leadDirectory) return setError("请在「设置 → 工具与自动化 → Bots」开启 Bots，或取消机器人带队。");
+      if (resume || worktree || draft.goal || !attach.empty || Object.values(draft.refs ?? {}).some((ref) => ref.kind === "subsession")) {
+        return setError("请先取消接续、工作树、Goal、附件或子会话设置，再建立只读主控。");
+      }
+      const text = draftText(draft);
+      const title = draft.title.trim() || resourceTitle(draft.text) || text.trim().split(/\r?\n/)[0]?.slice(0, 100);
+      if (!title) return setError("请填写交付目标。");
+      setError("");
+      setLeadSeed({ source: { kind: "manual" }, intent: "create", title, text, workspaceId: draft.projectId ?? undefined,
+        topicId: draft.topicId ?? undefined, profileId: draft.pick.profileId, start: !file });
+      return;
+    }
     if (draft.goal && file) return setError("Goal 需要直接开始，不能放进待办；关闭 Goal 后可以存为待办。");
     if (worktree && file) return setError("新建工作树需要直接开始。取消新建工作树后可以放进待办。");
-    if (resume && draft.lead) return setError("接续已有会话不能作为主控带队：请取消接续，再新建主控会话。");
     if (resume && file) return setError("接续的会话不能放进待办：直接点「接续」，第一句话可以不写。");
     if (resume && draft.pick.profileId !== CLAUDE_SUBSCRIPTION) return setError("接续已有会话只能用 Claude 订阅：先在下面选回它。");
     if (!resume && !draft.text.trim() && (file || attach.empty)) return setError(file ? "写一句话再放进待办。" : "写一句话或添加图片、文件再开始。");
@@ -368,12 +383,12 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
                 {fromCanvas && <span className="drawer-note">从画布新建，总在画布上</span>}
               </label>
             )}
-            <label className="pick-row draft-oncanvas" title="你只和总主控沟通。主控拆分并派工给各负责人，收结果、验收或退回，再向你汇总交付。接续已有会话不能改为主控。">
+            {!dialog && (leadDirectory || draft.lead) && <label className="pick-row draft-oncanvas">
               <span className="pick-lab" />
-              <input type="checkbox" checked={!!draft.lead} disabled={!!resume} onChange={(e) => update({ lead: e.target.checked })} data-testid="draft-lead" />
-              主控带队
-              <span className="drawer-note">拆分派工 → 收结果 → 验收汇总</span>
-            </label>
+              <input type="checkbox" checked={!!draft.lead} disabled={!draft.lead && !!resume} onChange={(e) => update({ lead: e.target.checked })} data-testid="draft-lead" />
+              机器人带队
+              <span className="drawer-note">提交时选择负责人，任务会显示在专题画布上</span>
+            </label>}
           </div>
 
           {resume && (
@@ -630,6 +645,11 @@ export function NewTaskPage({ link, workspaces, topics, tasks, sessions = [], pr
         />
       )}
       {pickingResume && <ResumePicker link={link} projects={projects} projectId={draft.projectId} onPick={pickResume} onClose={() => setPickingResume(false)} />}
+      {leadSeed && leadDirectory && <LeadAppointment directory={leadDirectory} seed={leadSeed} onClose={() => setLeadSeed(undefined)} onReceipt={(receipt) => {
+        reset();
+        setLeadSeed(undefined);
+        openLeadReceipt(leadDirectory, receipt);
+      }} />}
       {starting && <StartingCover label={starting} />}
     </section>
   );

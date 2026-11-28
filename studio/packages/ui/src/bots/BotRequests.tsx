@@ -3,6 +3,9 @@ import type { BotRequest, SessionItem, StudioBot } from "@amo-studio/protocol";
 import { call, type HostLink } from "../host/client.js";
 import { BotAvatar, TranscriptBots } from "./BotAvatar.js";
 import { Markdown } from "../lib/markdown.js";
+import { RequestLeadActions } from "./LeadConversation.js";
+import type { LeadDirectory } from "./LeadAppointment.js";
+import { onHostEvent, onHostReconnect } from "../host/events.js";
 
 export function useBotRequests(link: HostLink, sessionId: string | null, lastReplyId?: string) {
   const [stored, setStored] = useState<{ source: string; rows: BotRequest[] }>();
@@ -15,8 +18,10 @@ export function useBotRequests(link: HostLink, sessionId: string | null, lastRep
     const load = () => { void call(link, "GET /api/bot-requests", {}, undefined, { sourceSessionId: sessionId }).then((rows) => { if (current) setStored({ source: sessionId, rows }); }).catch(() => {}); };
     load();
     const interval = pending ? setInterval(load, 1500) : undefined;
-    return () => { current = false; clearInterval(interval); };
-  }, [link, sessionId, pending, revision, lastReplyId]);
+    const offEvent = onHostEvent((event) => { if (event.type === "bot-lead.changed" || event.type === "bots.changed") load(); });
+    const offReconnect = onHostReconnect(load);
+    return () => { current = false; clearInterval(interval); offEvent(); offReconnect(); };
+  }, [link.url, link.token, sessionId, pending, revision, lastReplyId]);
   return { rows, refresh: () => refresh((n) => n + 1) };
 }
 
@@ -24,7 +29,7 @@ export const BOT_REQUEST_STATUS: Record<BotRequest["status"], string> = { queued
 
 type FollowUp = (row: BotRequest, text: string, id: string) => Promise<void>;
 
-export const BotConversation = createContext<{ rows: readonly BotRequest[]; onFollowUp?: FollowUp }>({ rows: [] });
+export const BotConversation = createContext<{ rows: readonly BotRequest[]; onFollowUp?: FollowUp; leadDirectory?: LeadDirectory; onChanged?(): void; messageAction?(item: Extract<SessionItem, { type: "user" }>): React.ReactNode }>({ rows: [] });
 
 /** Agent-dispatched replies already have an inbox item. Direct sends only have a request record. */
 export function withBotReplies(items: readonly SessionItem[], rows: readonly BotRequest[]): readonly SessionItem[] {
@@ -47,7 +52,7 @@ export function withBotReplies(items: readonly SessionItem[], rows: readonly Bot
 }
 
 export function BotReply({ item }: { item: SessionItem }) {
-  const { rows, onFollowUp } = useContext(BotConversation);
+  const { rows, onFollowUp, leadDirectory, onChanged } = useContext(BotConversation);
   const bots = useContext(TranscriptBots);
   const row = rows.find((r) => item.id === `bot-reply:${r.id}`);
   const letter = item.type === "user" && item.botLetter?.kind === "reply" ? item.botLetter : undefined;
@@ -72,6 +77,7 @@ export function BotReply({ item }: { item: SessionItem }) {
       {result && <Markdown source={result} />}
       {row?.sessionId && row.status === "completed" && bot?.enabled && onFollowUp && <BotFollowUp row={row} send={onFollowUp} />}
       {row?.taskId && row.sessionId && <button type="button" className="btn-ghost small" onClick={() => void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! })}>打开 Bot 会话 ↗</button>}
+      {row && leadDirectory && <RequestLeadActions directory={leadDirectory} row={row} onChanged={onChanged} />}
     </div>
   </details>;
 }
@@ -103,7 +109,7 @@ function BotFollowUp({ row, send }: { row: BotRequest; send: FollowUp }) {
   </form>;
 }
 
-export function BotRequestList({ rows, bots, onOpen, onWorker }: { rows: readonly BotRequest[]; bots: readonly StudioBot[]; onOpen?: (taskId: string, sessionId: string) => void; onWorker?: (id: string) => void }) {
+export function BotRequestList({ rows, bots, onOpen, leadDirectory, onChanged }: { rows: readonly BotRequest[]; bots: readonly StudioBot[]; onOpen?: (taskId: string, sessionId: string) => void; leadDirectory?: LeadDirectory; onChanged?(): void }) {
   if (!rows.length) return null;
   const avatars = new Map(bots.map((bot) => [bot.id, bot.avatar]));
   return <section className="bot-requests" aria-label="Bot 请求">
@@ -119,7 +125,7 @@ export function BotRequestList({ rows, bots, onOpen, onWorker }: { rows: readonl
           if (onOpen) onOpen(row.taskId!, row.sessionId!);
           else void window.amo?.openInWorkbench?.({ taskId: row.taskId!, sessionId: row.sessionId! });
         }}>打开 Bot 会话 ↗</button>}
-        {row.status === "completed" && row.result && onWorker && <button type="button" className="btn-ghost small" onClick={() => onWorker(row.id)}>在独立工作树开始执行</button>}
+        {leadDirectory && <RequestLeadActions directory={leadDirectory} row={row} onChanged={onChanged} />}
       </article>;
     })}
   </section>;

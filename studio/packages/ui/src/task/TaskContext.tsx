@@ -16,8 +16,8 @@ export function contextStatus(view: SharedContextView): string {
 }
 
 /** Reading this panel never impersonates an agent's declaration of adoption. */
-export function TaskContext({ link, task, tasks, session }: { link: HostLink; task: Task; tasks: readonly Task[]; session: Session | null }) {
-  const [open, setOpen] = useState(false);
+export function TaskContext({ link, task, tasks, session, onDismiss }: { link: HostLink; task: Task; tasks: readonly Task[]; session: Session | null; onDismiss?(): void }) {
+  const [open, setOpen] = useState(!!onDismiss);
   const [error, setError] = useState("");
   const [view, , reload] = useLiveResource<SharedContextView>({
     load: () => call(link, "GET /api/tasks/:id/context", { id: task.id }).then((v) => { setError(""); return v; }), initial: EMPTY, reset: true,
@@ -30,13 +30,15 @@ export function TaskContext({ link, task, tasks, session }: { link: HostLink; ta
   const version = view.binding?.version;
   const required = view.context?.versions.find((v) => v.version === version);
   const [editing, setEditing] = useState(false);
+  const [showAdoption, setShowAdoption] = useState(false);
+  const dismiss = () => { setOpen(false); setEditing(false); setShowAdoption(false); onDismiss?.(); };
   const canEdit = root && !task.archivedAt && !task.remote && session?.kind === "main" && !session.archivedAt && session.writer !== "archived";
   return <>
-    <button type="button" className={`link-btn task-context-toggle${pending ? " context-pending" : ""}`} data-testid="task-context-toggle" onClick={() => setOpen(true)}>
+    {!onDismiss && <button type="button" className={`link-btn task-context-toggle${pending ? " context-pending" : ""}`} data-testid="task-context-toggle" onClick={() => setOpen(true)}>
       共同需求 · {error ? "暂不可读" : pending ? "待处理更新" : root ? "查看" : view.binding ? `要求第 ${version} 版` : "未绑定"}
-    </button>
-    {open && <Modal className="task-context-dialog" label="共同需求" testId="task-context" portal onClose={() => { setOpen(false); setEditing(false); }}>
-      <div className="context-heading"><div><span className="side-subheading">共同需求</span><h2>{view.context?.title || "由主控维护的共同需求"}</h2></div><button type="button" className="btn-ghost small" onClick={() => setOpen(false)}>关闭</button></div>
+    </button>}
+    {open && <Modal className="task-context-dialog" label="共同需求" testId="task-context" portal onClose={dismiss}>
+      <div className="context-heading"><div><span className="side-subheading">共同需求</span><h2>{view.context?.title || "由主控维护的共同需求"}</h2></div><button type="button" className="btn-ghost small" onClick={dismiss}>关闭</button></div>
       <p className="side-note">目标和变更继续告诉主控。主控负责整理、发布和安排任务，你无需逐项同步或确认已读。</p>
       {error ? <div role="alert" className="error">{error} <button type="button" className="link-btn" onClick={reload}>重试</button></div> : <>
         <div className="context-status" data-testid="context-status" data-pending={pending}>
@@ -49,7 +51,10 @@ export function TaskContext({ link, task, tasks, session }: { link: HostLink; ta
         {!view.binding && !root && <p className="side-note">保持原有任务与交付方式；同专题或画布引用不会自动绑定。</p>}
         {view.binding && <details className="context-section"><summary>会话接收与采用记录</summary><p className="side-note">排队、送入会话和声明采用分别记录。送入会话不代表理解；采用由执行者通过工具声明。</p><div className="context-table-wrap"><table><thead><tr><th>会话 / 版本</th><th>已排队</th><th>已送入</th><th>已声明采用</th></tr></thead><tbody>{view.receipts.map((r) => <tr key={`${r.sessionId}:${r.requirementId}`}><td>{r.sessionId === session?.id ? "当前会话" : r.sessionId} · 第 {r.version} 版{r.requirementId !== view.binding?.id && "（历史）"}</td><td>{r.queuedAt ? "是" : "—"}</td><td>{r.deliveredAt ? "是" : "—"}</td><td>{r.adoptedAt ? "是" : "—"}</td></tr>)}</tbody></table></div></details>}
         {view.context && <details className="context-section" data-testid="context-history"><summary>发布历史 · 当前发布第 {view.context.currentVersion ?? "尚未发布"} 版</summary><p className="side-note">发布不会自动升级任务。历史正文保持原样，回退也通过发布新版本表达。</p>{[...view.context.versions].reverse().map((v) => <details key={v.version} className="context-version"><summary>第 {v.version} 版 · {v.changeNote} <time>{new Date(v.publishedAt).toLocaleString()}</time></summary><p className="context-body">{v.body}</p><Sources sources={v.sources} /></details>)}</details>}
-        {root && <Adoption link={link} task={task} tasks={tasks} />}
+        {root && <details className="context-section" data-testid="context-adoption" onToggle={(event) => setShowAdoption(event.currentTarget.open)}>
+          <summary>任务采用情况 · 仅明确管理范围</summary>
+          {showAdoption && <Adoption link={link} task={task} tasks={tasks} />}
+        </details>}
         {canEdit && <details className="context-section" data-testid="context-editor" onToggle={(e) => setEditing(e.currentTarget.open)}><summary>高级 · 查看与维护草稿</summary><p className="side-note">日常由主控在会话中维护。这里提供可选编辑，保存、发布和指定受影响任务分别操作。</p>{editing && <ContextEditor link={link} task={task} tasks={tasks} sessionId={session!.id} context={view.context} onChange={reload} />}</details>}
         {root && !canEdit && <p className="side-note">打开本总主控的本地主会话后，可选查看与维护草稿。</p>}
       </>}
@@ -68,7 +73,7 @@ function Adoption({ link, task, tasks }: { link: HostLink; task: Task; tasks: re
     load: async () => { const rows: Array<{ task: Task; view: SharedContextView | null }> = []; for (const member of members) { try { rows.push({ task: member, view: await call(link, "GET /api/tasks/:id/context", { id: member.id }) }); } catch { rows.push({ task: member, view: null }); } } return rows; },
     initial: [], reset: true, reloadOn: (e) => e.type === "task.upserted", reloadDelay: 100,
   }, [link, JSON.stringify(members.map((m) => [m.id, m.column]))]);
-  return <details className="context-section" data-testid="context-adoption"><summary>任务采用情况 · 仅明确管理范围</summary><div className="context-table-wrap"><table><thead><tr><th>任务</th><th>要求版本</th><th>进展</th></tr></thead><tbody>{data.map(({ task: member, view }) => <tr key={member.id}><td>{member.title || "未命名任务"}{member.column === "done" && "（已完成）"}</td><td>{view?.binding ? `第 ${view.binding.version} 版` : "未绑定"}</td><td>{view ? contextStatus(view) : "暂不可读"}</td></tr>)}</tbody></table></div></details>;
+  return <div className="context-table-wrap"><table><thead><tr><th>任务</th><th>要求版本</th><th>进展</th></tr></thead><tbody>{data.map(({ task: member, view }) => <tr key={member.id}><td>{member.title || "未命名任务"}{member.column === "done" && "（已完成）"}</td><td>{view?.binding ? `第 ${view.binding.version} 版` : "未绑定"}</td><td>{view ? contextStatus(view) : "暂不可读"}</td></tr>)}</tbody></table></div>;
 }
 
 function ContextEditor({ link, task, tasks, sessionId, context, onChange }: { link: HostLink; task: Task; tasks: readonly Task[]; sessionId: string; context: SharedContext | null; onChange(): void }) {

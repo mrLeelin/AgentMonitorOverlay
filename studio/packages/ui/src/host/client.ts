@@ -146,7 +146,7 @@ export async function discoverHost(): Promise<HostLink | null> {
 }
 
 export class HostApiError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly details?: HostErrorBody["error"]["details"]) {
     super(message);
     this.name = "HostApiError";
   }
@@ -179,7 +179,7 @@ export async function request<T>(link: HostLink, method: string, path: string, b
     ...(body === undefined ? {} : { body: raw ? body : JSON.stringify(body) }),
   });
   const data = (await res.json().catch(() => undefined)) as (T & Partial<HostErrorBody>) | undefined;
-  if (!res.ok) throw new HostApiError(res.status, data?.error?.code ?? "internal", data?.error?.message ?? (res.statusText || `HTTP ${res.status}`));
+  if (!res.ok) throw new HostApiError(res.status, data?.error?.code ?? "internal", data?.error?.message ?? (res.statusText || `HTTP ${res.status}`), data?.error?.details);
   if (data === undefined) throw new HostApiError(res.status, "internal", "回应读不出来（不是 JSON）");
   return data;
 }

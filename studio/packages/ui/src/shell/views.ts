@@ -3,6 +3,7 @@ import type { ChecklistItem, DecisionRequest, ExperimentalFeature, MailMessage, 
 import type { HostLink, Passage } from "../host/client.js";
 import type { Scope } from "../board/Board.js";
 import type { ReadPlace } from "../task/readPlace.js";
+import type { LeadAttentionTarget } from "../bots/lead-navigation.js";
 
 // What a feature hands the shell (ui/src/features.ts lists them): its pages ("views"), the top-bar tab that opens
 // one, and panels it adds to other pages. The shell keeps the view in state and renders the one in front.
@@ -11,10 +12,10 @@ import type { ReadPlace } from "../task/readPlace.js";
 // `back`: the page the new-task or task page was opened from, where its "←" returns (the board when absent).
 export type View =
   | { kind: "board" }
-  | { kind: "bots"; botId?: string; groupId?: string }
+  | { kind: "bots"; botId?: string; groupId?: string; chat?: "empty-home" | "new"; initialText?: string; nav?: number }
   | { kind: "team"; configure?: boolean; originalUrl?: string }
   /** `callout`: a question on the canvas to open (from Focus, 画布审阅 2026-10-27); `nav` changes with each ask. */
-  | { kind: "canvas"; callout?: string; nav?: number }
+  | { kind: "canvas"; topicId?: string; taskId?: string; attention?: LeadAttentionTarget; callout?: string; nav?: number; back?: View }
   /** 全景 (设置 → 测试功能, 2026-11-01): the topic in scope as a tilted map, one lane per task. */
   | { kind: "panorama" }
   /** `remote` (远程创建, 2026-10-29): opened in 「在别的设备上」 with that device picked. */
@@ -23,7 +24,7 @@ export type View =
    * `created`: opened right after the task was made (its session list starts folded). `passage`: a bookmarked passage
    * of `sessionId` to scroll to and flash (书签). `scroll`: where its conversation was read (后退 back to it).
    */
-  | { kind: "task"; taskId: string; sessionId?: string; nav?: number; back?: View; created?: boolean; passage?: Passage; scroll?: ReadPlace };
+  | { kind: "task"; taskId: string; sessionId?: string; nav?: number; back?: View; created?: boolean; passage?: Passage; scroll?: ReadPlace; botWorkspace?: string };
 
 const BACK_LABEL: Partial<Record<View["kind"], string>> = { board: "看板", bots: "Bots", team: "团队任务", canvas: "画布", panorama: "全景" };
 
@@ -65,6 +66,7 @@ export interface ViewContext {
   experimental: readonly ExperimentalFeature[];
   teamTasksEnabled: boolean;
   botsEnabled: boolean;
+  online?: boolean;
   setView(view: View): void;
 }
 

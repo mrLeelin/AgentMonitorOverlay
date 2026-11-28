@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { projectWorkspaces, remoteHeldTasks, type Annotation, type ApprovalDecision, type ChecklistItem, type ModelProfile, type Session, type SessionOptions, type SubsessionSetup, type Task, type TaskColumn, type TodoView, type Topic, type Workspace } from "@amo-studio/protocol";
+import { isManagedBy, projectWorkspaces, remoteHeldTasks, type Annotation, type ApprovalDecision, type ChecklistItem, type ModelProfile, type Session, type SessionOptions, type SubsessionSetup, type Task, type TaskColumn, type TodoView, type Topic, type Workspace } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink, type Passage } from "../host/client.js";
 import { useSessionItems } from "../host/useSessionItems.js";
 import { useAnnotations } from "../review/useAnnotations.js";
@@ -63,14 +63,19 @@ import { TaskHeader } from "./TaskHeader.js";
 import { LocalTeamTask } from "../teamtasks/StudioTeamTasks.js";
 import { LocalTeamBoardTask } from "../teamtasks/StudioTeamBoard.js";
 import { PlaneBotTaskAction, usePlaneBotJob } from "../teamtasks/PlaneBot.js";
+import { planeBotNeedsAttention } from "../teamtasks/planeBotAttention.js";
 import { PlaneBotConversation } from "../teamtasks/PlaneBotConversation.js";
 import { LinkPlaneTaskDialog } from "../teamtasks/PlaneTaskDialogs.js";
 import { TaskWorkspaceDialog } from "./TaskWorkspaceDialog.js";
+import { LeadAppointment, openLeadReceipt, type LeadSeed } from "../bots/LeadAppointment.js";
+import { MessageLeadAction } from "../bots/LeadConversation.js";
+import { LeadRun } from "../bots/LeadWorkflow.js";
+import type { LeadAttentionTarget } from "../bots/lead-navigation.js";
 
 /** The right column starts open on 环境 and remembers the person's choices. */
 const SIDEBAR_KEY = "amo.taskSidebar";
 const SIDEBAR_VIEW_KEY = "amo.taskSidebarView";
-type SidebarView = "environment" | "activity";
+type SidebarView = "environment" | "activity" | "lead" | "description";
 /** Whether the session list is hidden (会话 in the head; the key is from when it folded to a strip). */
 const SESSIONS_KEY = "amo.sessionsFolded";
 const readFlag = (key: string): boolean => readStored(key) === "1";
@@ -94,17 +99,19 @@ interface TaskPageProps {
   restoreScroll?: ReadPlace;
   /** Opened right after the task was made: the session list starts folded (2026-10-15). */
   justCreated?: boolean;
+  inBotWorkspace?: boolean;
   /** What "←" says: where it returns (看板 or 画布). */
   backLabel?: string;
   onBack(): void;
   onOpenTask?(taskId: string, sessionId?: string): void;
+  onOpenCanvas?(topicId: string, taskId: string, attention?: LeadAttentionTarget, originatingSession?: string): void;
   onOpenPlaneOriginal?(url: string): void;
 }
 
 type Toast = { text: string; command?: string; error?: boolean } | null;
 
 /** Task page: session tree | conversation with composer. Annotations and the scratchpad join in stage 2. */
-export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, backLabel = "看板", onBack, onOpenTask, onOpenPlaneOriginal }: TaskPageProps) {
+export function TaskPage({ link, task, sessions, tasks = [task], workspaces, topics = [], profiles, checklist = [], initialSessionId, passage, restoreScroll, justCreated = false, inBotWorkspace = false, backLabel = "看板", onBack, onOpenTask, onOpenCanvas, onOpenPlaneOriginal }: TaskPageProps) {
   const bots = useBots(link, !task.remote);
   const ownerBot = bots.find((bot) => bot.taskId === task.id);
   useMarkReviewSeen(task);
@@ -117,6 +124,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const [busy, setBusy] = useState(false);
   // The quick look of a file named in the conversation (stage 12); it takes the right column while open.
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const [botTaskTools, showBotTaskTools] = useState(false);
 
   useEffect(() => {
     if (!selected || !own.some((s) => s.id === selected)) {
@@ -126,6 +134,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   }, [selected, own]);
 
   const session = own.find((s) => s.id === selected) ?? null;
+  const homeBot = session && ownerBot?.homeSessionId === session.id ? ownerBot : undefined;
   // The session looked at here, for coming back to this task after a restart (shell/lastPlace).
   useEffect(() => {
     if (session) rememberSession(task.id, session.id);
@@ -178,6 +187,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const [taskMenu, setTaskMenu] = useState<Anchor | null>(null);
   const [describing, setDescribing] = useState(false);
   const [managementOpen, setManagementOpen] = useState(false);
+  const [leadSeed, setLeadSeed] = useState<LeadSeed>();
+  const [preparingHandoff, setPreparingHandoff] = useState(false);
   const [managedDescription, setManagedDescription] = useState<Task | null>(null);
   /** 绑定到待办 (问题 #10): the 便签's 待办 to pick from, for the task or one of its sessions. */
   const [todoBind, setTodoBind] = useState<{ view: TodoView; target: TodoBindTarget } | null>(null);
@@ -190,22 +201,29 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   const teamSends = useTeamSends(link);
   const teamThreads = useTeamThreads(link);
   // 2026-11-18（用户定）：侧栏顶上有了「环境与上下文」，没手动开关过侧栏的人默认打开；开关过的照旧。
-  const [sidebar, setSidebarState] = useState(() => readStored(SIDEBAR_KEY) === null || readFlag(SIDEBAR_KEY));
+  const [sidebar, setSidebarState] = useState(() => !inBotWorkspace && (readStored(SIDEBAR_KEY) === null || readFlag(SIDEBAR_KEY)));
   const setSidebar = (on: boolean) => {
     setSidebarState(on);
-    writeFlag(SIDEBAR_KEY, on);
+    if (!inBotWorkspace) writeFlag(SIDEBAR_KEY, on);
   };
-  const [sidebarView, setSidebarViewState] = useState<SidebarView>(() => readStored(SIDEBAR_VIEW_KEY) === "activity" ? "activity" : "environment");
+  const [sidebarView, setSidebarViewState] = useState<SidebarView>(() => {
+    const stored = readStored(SIDEBAR_VIEW_KEY);
+    return stored === "activity" || stored === "lead" || stored === "description" ? stored : "environment";
+  });
   const setSidebarView = (view: SidebarView) => {
     setSidebarViewState(view);
     writeStored(SIDEBAR_VIEW_KEY, view);
   };
+  // Active Plane Bot tasks show their local description from the original-work-item menu.
+  const showDescriptionTab = !planeBotJob || !!task.archivedAt;
+  const showLeadTab = !copy && !!task.botLead;
+  const activeSidebarView = (sidebarView === "description" && !showDescriptionTab) || (sidebarView === "lead" && !showLeadTab) ? "environment" : sidebarView;
   // A task just made opens with its list hidden (it has one session: nothing to choose between); otherwise the list is
   // as the person last left it. The page is keyed by task, so this is read once per task opened.
-  const [sessionsHidden, setSessionsHiddenState] = useState(() => justCreated || readFlag(SESSIONS_KEY));
+  const [sessionsHidden, setSessionsHiddenState] = useState(() => inBotWorkspace || justCreated || readFlag(SESSIONS_KEY));
   const setSessionsHidden = (on: boolean) => {
     setSessionsHiddenState(on);
-    writeFlag(SESSIONS_KEY, on);
+    if (!inBotWorkspace) writeFlag(SESSIONS_KEY, on);
   };
   // The new-session form in the session list, opened from 新会话 in the head.
   const [creating, setCreating] = useState(false);
@@ -315,7 +333,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
     );
   const reclaim = (id: string) => run(() => call(link, "POST /api/sessions/:id/reclaim", { id }));
   const mail = useTaskMail(link, task, sessions);
-  const decisions = useOpenDecisions(link).filter((d) => decisionNeedsPerson(d, tasks));
+  const openDecisions = useOpenDecisions(link);
+  const decisions = openDecisions.filter((d) => decisionNeedsPerson(d, tasks));
   const notes = useTaskNotes(link, task.id);
   const unread = new Map<string, number>();
   for (const m of mail) if (m.state === "unread" && m.to.kind === "session") unread.set(m.to.sessionId, (unread.get(m.to.sessionId) ?? 0) + 1);
@@ -326,10 +345,14 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
     });
   const dismissMail = (m: { id: string }) => run(() => call(link, "PATCH /api/mail/:id", { id: m.id }, { state: "dismissed" }));
 
-  const readOnly = !session || session.writer === "archived" || session.writer === "terminal-handoff";
+  const appointedSession = task.botLead?.kind === "appointed" && task.botLead.term.state === "active" && task.botLead.term.sessionId === session?.id &&
+    (task.botLead.term.runState === "idle" || task.botLead.term.runState === "running");
+  const readOnly = !session || session.writer === "archived" || session.writer === "terminal-handoff" || (!!task.lead && !appointedSession);
   // Show what's waiting even when the activity view or the whole sidebar is hidden.
   const sideCount =
-    decisions.filter((d) => d.taskId === task.id).length + mail.filter((m) => m.state === "unread").length + annotations.filter((a) => !a.sentAt).length;
+    decisions.filter((d) => d.taskId === task.id).length + mail.filter((m) => m.state === "unread").length + annotations.filter((a) => !a.sentAt).length +
+    (planeBotJob && !task.archivedAt && planeBotNeedsAttention(planeBotJob) ? 1 : 0);
+  const showActivityBadge = activeSidebarView !== "activity" && sideCount > 0;
   // Shown on 会话 while the list is hidden, when there is more than the one in front to choose from.
   const liveCount = own.filter((s) => !s.archivedAt).length;
 
@@ -399,7 +422,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
     if (!session) return false;
     try {
       const referred = annotationRefs.list.map((a) => a.id);
-      await call(link, "POST /api/sessions/:id/messages", { id: session.id }, { text, ...(attachments.length ? { attachments } : {}), ...(referred.length ? { annotations: referred } : {}), ...(now ? { now: true } : {}), ...(afterTurn ? { afterTurn: true } : {}), ...(subsessions.length ? { subsessions } : {}) });
+      await call(link, "POST /api/sessions/:id/messages", { id: session.id }, { text, ...(session.botLeadTerm ? { purpose: "inquiry" } : {}), ...(attachments.length ? { attachments } : {}), ...(referred.length ? { annotations: referred } : {}), ...(now ? { now: true } : {}), ...(afterTurn ? { afterTurn: true } : {}), ...(subsessions.length ? { subsessions } : {}) });
       annotationRefs.sent();
       return true;
     } catch (err) {
@@ -418,10 +441,57 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
   };
   const workdir = session ? session.cwd ?? sessionWorkspace?.path : undefined;
   const showError = (text: string) => setToast({ text, error: true });
+  const openTask = (id: string, sessionId?: string) => {
+    if (id === task.id && sessionId) setSelected(sessionId);
+    else if (onOpenTask) onOpenTask(id, sessionId);
+    else void window.amo?.openInWorkbench?.({ taskId: id, ...(sessionId ? { sessionId } : {}) });
+  };
+  const openCanvas = (topicId: string, id: string, attention?: LeadAttentionTarget) => onOpenCanvas?.(topicId, id, attention, session?.id);
+  const directory = { link, tasks, topics, workspaces, profiles, bots, decisions, originTopicId: task.topicId ?? undefined, onCanvas: openCanvas, onTask: openTask };
+  const pendingLegacyUpgrade = !task.lead && task.botLead?.kind === "legacy" && task.botLead.state === "needs-bot" ? task.botLead : undefined;
+  const canUpgrade = botsEnabled && !task.lead && (!task.botLead || !!pendingLegacyUpgrade && !pendingLegacyUpgrade.issue) && !task.archivedAt && !task.remote && !task.botId && !ownerBot && !copy && !planeBotJob;
+  const appointed = task.botLead?.kind === "appointed";
+  const requiredCard = appointed || !!task.managerTaskId && tasks.some((item) => item.botLead?.kind === "appointed" && !item.archivedAt && item.topicId === task.topicId && isManagedBy(tasks, task.id, item.id));
+  const changingLead = task.lead || task.botLead?.kind === "pending-upgrade";
+  const topicIsLive = !!task.topicId && !!taskTopic && !taskTopic.archivedAt;
+  const beginUpgrade = async () => {
+    if (preparingHandoff || !canUpgrade) return;
+    setPreparingHandoff(true);
+    const original = items.filter((item) => item.sessionId === session?.id);
+    const lastUser = original.findLast((item) => item.type === "user" && item.fromPerson && !item.queueCancelled);
+    const lastReply = original.findLast((item) => item.type === "agent" && !item.streaming);
+    const unresolved = openDecisions.filter((decision) => decision.taskId === task.id);
+    const approvals = original.flatMap((item) => item.type === "approval" && item.state === "pending" ? [`- ${item.summary}（${item.approvalId}）`] : []);
+    const reports = [
+      pendingLegacyUpgrade?.summary,
+      task.description && `任务目标\n${task.description}`,
+      lastUser?.type === "user" && `原话\n${lastUser.text.slice(0, 3500)}`,
+      lastReply?.type === "agent" && `当前结论\n${lastReply.markdown.slice(0, 3500)}`,
+      unresolved.length && `未决问题\n${unresolved.map((item) => `- ${item.question}（${item.id}）`).join("\n")}`,
+      approvals.length && `原会话待处理审批\n${approvals.join("\n")}`,
+      session && `原会话：${session.title || session.id}（${session.id}）`,
+      workdir && `原工作目录：${workdir}`,
+    ].filter(Boolean);
+    try {
+      if (workdir) {
+        const evidence = await call(link, "GET /api/workspaces/:id/git/changes", { id: sessionWorkspaceId }, undefined, { range: "working", ...(session?.cwd ? { worktree: session.id } : {}) });
+        if (evidence.status.repo) reports.push(`当前未提交文件\n${evidence.files.slice(0, 40).map((file) => `- ${file.path}`).join("\n") || "无"}${evidence.truncated || evidence.files.length > 40 ? "\n更多文件见原会话的 Review" : ""}`);
+      }
+    } catch {
+      reports.push("未提交文件列表暂不可读，请在原会话的 Review 核对。");
+    } finally {
+      setLeadSeed({ source: { kind: "manual" }, intent: "upgrade", taskId: task.id, title: task.title, topicTitle: pendingLegacyUpgrade?.topicTitle, profileId: session?.profileId, summary: reports.join("\n\n").slice(0, 20000) || task.title || "沿用当前任务目标与原会话。" });
+      setPreparingHandoff(false);
+    }
+  };
 
   return (
-    <section className="taskpage" aria-label="任务">
-      <TaskHeader>
+    <section className="taskpage" aria-label="任务" data-bot-workspace={inBotWorkspace || undefined}>
+      {inBotWorkspace && !botTaskTools ? <div className="bot-workspace-conversation-bar">
+        <BackButton label={backLabel} onClick={onBack} />
+        <h1 className="bot-workspace-task-name" data-testid="task-title">{ownerBot?.name ?? task.title}</h1>
+        <button type="button" className="btn-ghost small" aria-expanded={false} onClick={() => showBotTaskTools(true)}>任务工具</button>
+      </div> : <TaskHeader>
       <div className="page-head task-head">
         <BackButton label={backLabel} onClick={onBack} />
         <div className="task-head-main">
@@ -455,6 +525,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           />
           <button type="button" className="link-btn" aria-expanded={managementOpen} onClick={() => setManagementOpen(!managementOpen)} data-testid="task-management-toggle">{task.lead && !task.managerTaskId ? "总主控 · 查看管理与交付" : <>直属主控：{tasks.find((t) => t.id === task.managerTaskId)?.title || "未分配"}{task.lead ? " · 查看管理与交付" : " · 设置归属"}</>}</button>
           {!copy && <TaskContext link={link} task={task} tasks={tasks} session={session} />}
+          {!copy && topicIsLive && !task.archivedAt && <button type="button" className="link-btn" onClick={() => openCanvas(task.topicId!, task.id)}>在专题画布定位</button>}
           {waitingOn.length > 0 && (
             <span className="task-waiting" data-testid="task-waiting" title={WAITING_HINT}>
               等待前置：{waitingOn.join("、")}
@@ -462,7 +533,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           )}
         </div>
         <div className="task-head-actions">
-          {!task.archivedAt && !(copy && copy.state === "revoked") && (
+          {!task.archivedAt && !changingLead && !(copy && copy.state === "revoked") && (
             <button
               type="button"
               className="btn-primary small with-icon"
@@ -536,6 +607,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             ⋯
           </button>
           <div className="task-head-panels" role="group" aria-label="显示面板">
+            {inBotWorkspace && <button type="button" className="btn-ghost small" aria-expanded onClick={() => showBotTaskTools(false)}>收起任务工具</button>}
             <button
               type="button"
               className="btn-ghost small sidebar-toggle"
@@ -555,7 +627,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               type="button"
               className="btn-ghost small sidebar-toggle"
               aria-pressed={sidebar}
-              title={sidebar ? "收起侧栏" : "显示侧栏：环境、进度和批注"}
+              title={sidebar ? "收起侧栏" : "显示任务侧栏"}
               onClick={() => setSidebar(!sidebar)}
               data-testid="sidebar-toggle"
             >
@@ -569,15 +641,17 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           </div>
         </div>
       </div>
-      </TaskHeader>
-      {teamTasksEnabled && botsEnabled && ownerBot && !copy && <PlaneBotConversation key={ownerBot.id} link={link} bot={ownerBot} session={session} sessions={own} tasks={tasks} onOpen={(id, sessionId) => onOpenTask?.(id, sessionId)} />}
-      {teamTasksEnabled && !copy && <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />}
-      {teamTasksEnabled && !copy && <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal}
-        onDescribe={planeBotJob && task.description && !task.archivedAt ? () => setDescribing(true) : undefined}
-        actions={planeBotJob && <PlaneBotTaskAction key={task.id} link={link} task={task} tasks={tasks} job={planeBotJob} setJob={setPlaneBotJob} onOpen={(id, sessionId) => onOpenTask?.(id, sessionId)} />} />}
+      </TaskHeader>}
+      {leadSeed && <LeadAppointment directory={directory} seed={leadSeed} onClose={() => setLeadSeed(undefined)} onReceipt={(receipt) => {
+        setLeadSeed(undefined);
+        if (receipt.action === "upgrade" && receipt.state.kind === "pending-upgrade") showToast("已登记任命，等待原会话安全交接。");
+        else openLeadReceipt(directory, receipt);
+      }} />}
       {teamTasksEnabled && linkingPlane && <LinkPlaneTaskDialog link={link} taskId={task.id} onClose={() => setLinkingPlane(false)} onDone={() => {
         setLinkingPlane(false);
         setLinkedRevision((value) => value + 1);
+        setSidebar(true);
+        setSidebarView("activity");
       }} />}
       {statusAt && <StatusMenu at={statusAt} value={task.column} onPick={(c) => void setColumn(c)} onClose={() => setStatusAt(null)} />}
       {picking === "workspace" && <TaskWorkspaceDialog link={link} task={task} workspaces={workspaces} hasSessions={own.length > 0} onClose={() => setPicking(null)} />}
@@ -587,6 +661,7 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
       {taskMenu && (
         <PopMenu at={taskMenu} label="任务" onClose={() => setTaskMenu(null)} testId="task-menu">
           {copy && <span className="menu-note">远程任务：名字、状态、说明在 {copy.name} 上改</span>}
+          {canUpgrade && <button type="button" role="menuitem" data-testid="task-lead-toggle" disabled={preparingHandoff} onClick={() => { setTaskMenu(null); void beginUpgrade(); }}>请机器人带队…</button>}
           {!task.archivedAt && !copy && (
             <button
               type="button"
@@ -652,21 +727,6 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           {!task.archivedAt && !copy && (
             <button
               type="button"
-              role="menuitem"
-              disabled={busy}
-              title="主控负责管理明确归属的下辖任务：分配工作、排画布、写专题文档"
-              onClick={() => {
-                setTaskMenu(null);
-                void run(() => call(link, "PATCH /api/tasks/:id", { id: task.id }, { lead: !task.lead }));
-              }}
-              data-testid="task-lead-toggle"
-            >
-              {task.lead ? "取消主控" : "设为主控"}
-            </button>
-          )}
-          {!task.archivedAt && !copy && (
-            <button
-              type="button"
               role="menuitemcheckbox"
               aria-checked={!!task.relayAuto}
               disabled={busy}
@@ -680,7 +740,8 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
               {task.relayAuto ? "✓ " : ""}主控传话不用确认
             </button>
           )}
-          {task.topicId && !copy && <OnCanvasToggle key={task.topicId} link={link} taskId={task.id} topicId={task.topicId} disabled={!!task.archivedAt} onError={(text) => setToast({ text, error: true })} />}
+          {task.topicId && !copy && (requiredCard && !task.archivedAt ? <button type="button" role="menuitem" onClick={() => { setTaskMenu(null); openCanvas(task.topicId!, task.id); }}>管理任务正式卡 · 在画布定位</button>
+            : <OnCanvasToggle key={task.topicId} link={link} taskId={task.id} topicId={task.topicId} disabled={!!task.archivedAt} onError={(text) => setToast({ text, error: true })} />)}
           {task.archivedAt && <span className="menu-note">任务已归档</span>}
         </PopMenu>
       )}
@@ -710,16 +771,6 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
         </div>
       )}
 
-      {task.description && (!planeBotJob || task.archivedAt) && (
-        <div className="task-desc" data-testid="task-description">
-          <p className="task-desc-text">{task.description}</p>
-          {!task.archivedAt && !copy && (
-            <button type="button" className="link-btn" onClick={() => setDescribing(true)}>
-              编辑
-            </button>
-          )}
-        </div>
-      )}
       {describing && <DescriptionDialog link={link} task={task} onClose={() => setDescribing(false)} />}
       {managedDescription && <DescriptionDialog link={link} task={managedDescription} onClose={() => setManagedDescription(null)} />}
       {managementOpen && <div className="task-management-panel"><TaskManagement link={link} task={task} tasks={tasks} onOpenTask={(id) => onOpenTask ? onOpenTask(id) : void window.amo?.openInWorkbench?.({ taskId: id })} onDescribe={(id) => setManagedDescription(tasks.find((t) => t.id === id) ?? null)} /></div>}
@@ -763,9 +814,16 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             {...(copy ? { remote: { name: copy.name, allowed: task.remote!.allowed, blocked: copy.blocked } } : {})}
           />
         )}
-        {sessionsHidden && <div className="session-list-rail"><button type="button" className="session-list-fold" aria-label="展开会话列表" aria-expanded={false} title="展开会话列表" onClick={() => setSessionsHidden(false)} data-testid="sessions-expand">›</button></div>}
+        {sessionsHidden && (!inBotWorkspace || botTaskTools) && <div className="session-list-rail"><button type="button" className="session-list-fold" aria-label="展开会话列表" aria-expanded={false} title="展开会话列表" onClick={() => setSessionsHidden(false)} data-testid="sessions-expand">›</button></div>}
         <div className="thread-col">
-          {session && (
+          {homeBot ? (
+            <div className="thread-head bot-chat-head" data-testid="thread-head">
+              <span className="bot-identity bot-chat-identity" title={homeBot.name}>
+                <BotAvatar name={homeBot.name} avatar={homeBot.avatar} size={20} />
+                <span className="bot-chat-name">{homeBot.name}</span>
+              </span>
+            </div>
+          ) : session && (
             <SessionHead
               link={link}
               session={session}
@@ -783,12 +841,18 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
             />
           )}
           {session && <SessionBanners session={session} taskArchived={!!task.archivedAt} busy={busy} onRestore={() => void restore(session.id)} onReclaim={() => void reclaim(session.id)} />}
+          {teamTasksEnabled && botsEnabled && ownerBot && !copy && <PlaneBotConversation key={ownerBot.id} link={link} bot={ownerBot} session={session} sessions={own} tasks={tasks} onOpen={(id, sessionId) => onOpenTask?.(id, sessionId)} />}
           <FileLinks link={link} workspaceId={session?.workspaceId ?? task.workspaceId} sessionId={session?.id ?? null} cwd={session?.cwd} onPreview={setPreview} onError={showError} {...(copy ? { remoteTask: task.id } : {})}>
             <Thread
+              leadReadOnly={!!task.lead && !appointedSession}
               link={link}
+              {...(!copy && botsEnabled && !task.archivedAt && !session?.archivedAt ? { leadDirectory: directory,
+                ...(ownerBot ? { messageAction: (item) => item.fromPerson && !item.botLetter && !item.queueCancelled && item.sessionId === session?.id ? <MessageLeadAction key={item.id} directory={directory} bot={ownerBot} item={item} conversation={items} /> : null } : {}),
+              } : {})}
               bots={bots}
               botsEnabled={botsEnabled}
               botBlock={botBlock || undefined}
+              emptyBot={inBotWorkspace && session && !session.endedAt && !session.archivedAt ? ownerBot : undefined}
               {...(copy ? { remote: { blocked: copy.blocked, revoked: copy.state === "revoked" } } : {})}
               presets={settings?.presets ?? []}
               session={session}
@@ -839,19 +903,28 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
           <aside className="task-sidebar" aria-label="任务侧栏">
             <div className="task-sidebar-head">
               <div className="task-sidebar-views" role="group" aria-label="侧栏内容">
-                <button type="button" className="btn-ghost small" aria-pressed={sidebarView === "environment"} aria-controls="task-sidebar-environment" onClick={() => setSidebarView("environment")} data-testid="sidebar-environment">环境</button>
-                <button type="button" className="btn-ghost small" aria-pressed={sidebarView === "activity"} aria-controls="task-sidebar-activity" aria-description={sidebarView === "environment" && sideCount > 0 ? `${sideCount} 项待处理` : undefined} onClick={() => setSidebarView("activity")} data-testid="sidebar-activity">
+                <button type="button" className="btn-ghost small" aria-pressed={activeSidebarView === "environment"} aria-controls="task-sidebar-environment" onClick={() => setSidebarView("environment")} data-testid="sidebar-environment">环境</button>
+                <button type="button" className="btn-ghost small" aria-pressed={activeSidebarView === "activity"} aria-controls="task-sidebar-activity" aria-description={showActivityBadge ? `${sideCount} 项待处理` : undefined} onClick={() => setSidebarView("activity")} data-testid="sidebar-activity">
                   进度和批注
-                  {sidebarView === "environment" && sideCount > 0 && <span className="sidebar-count" aria-hidden="true">{sideCount}</span>}
+                  {showActivityBadge && <span className="sidebar-count" aria-hidden="true">{sideCount}</span>}
                 </button>
+                {showLeadTab && <button type="button" className="btn-ghost small" aria-pressed={activeSidebarView === "lead"} aria-controls="task-sidebar-lead" onClick={() => setSidebarView("lead")} data-testid="sidebar-lead">主控</button>}
+                {showDescriptionTab && <button type="button" className="btn-ghost small" aria-pressed={activeSidebarView === "description"} aria-controls="task-sidebar-description" onClick={() => setSidebarView("description")} data-testid="sidebar-description">任务说明</button>}
               </div>
               <button type="button" className="session-list-fold" aria-label="折叠侧栏" aria-expanded={true} title="折叠侧栏" onClick={() => setSidebar(false)} data-testid="sidebar-collapse">›</button>
             </div>
-            {/* Keep both views mounted so switching preserves edits and the environment's refresh state. */}
-            <div id="task-sidebar-environment" className="task-sidebar-body" hidden={sidebarView !== "environment"}>
+            {/* Keep views mounted so switching preserves edits and the environment's refresh state. */}
+            <div id="task-sidebar-environment" className="task-sidebar-body" hidden={activeSidebarView !== "environment"}>
               <EnvPanel link={link} session={session} items={items} workspace={sessionWorkspace} branch={sessionBranch} machine={remote?.device?.name ?? null} />
             </div>
-            <div id="task-sidebar-activity" className="task-sidebar-body" hidden={sidebarView !== "activity"}>
+            <div id="task-sidebar-activity" className="task-sidebar-body" hidden={activeSidebarView !== "activity"}>
+              {teamTasksEnabled && !copy && <>
+                <LocalTeamTask link={link} taskId={task.id} archived={!!task.archivedAt} />
+                <LocalTeamBoardTask key={`${task.id}:${linkedRevision}`} link={link} taskId={task.id} archived={!!task.archivedAt} onOpenPlaneOriginal={onOpenPlaneOriginal}
+                  onDescribe={planeBotJob && task.description && !task.archivedAt ? () => setDescribing(true) : undefined}
+                  actions={planeBotJob ? (openOriginal) => <PlaneBotTaskAction key={task.id} link={link} task={task} tasks={tasks} job={planeBotJob} setJob={setPlaneBotJob}
+                    openOriginal={openOriginal} onOpen={openTask} /> : undefined} />
+              </>}
               <DecisionPanel decisions={decisions} task={task} current={session?.id ?? null} sessionTitle={(id) => sessions.find((s) => s.id === id)?.title || "会话"} onOpen={setSelected} />
               <MailPanel
                 mail={mail}
@@ -875,9 +948,24 @@ export function TaskPage({ link, task, sessions, tasks = [task], workspaces, top
                 refs={annotationRefs}
               />
             </div>
+            {showLeadTab && <div id="task-sidebar-lead" className="task-sidebar-body" hidden={activeSidebarView !== "lead"}>
+              <LeadRun sidebar link={link} task={task} sessions={sessions} directory={directory} botsEnabled={botsEnabled}
+                onChooseUpgrade={canUpgrade ? () => void beginUpgrade() : undefined} onRepair={() => setManagementOpen(true)} onOpen={openTask}
+                onAppendWork={appointed && !task.managerTaskId && topicIsLive && botsEnabled && !task.archivedAt ? () => setLeadSeed({
+                  source: { kind: "manual" }, intent: "continue", taskId: task.id, topicId: task.topicId!, workspaceId: task.workspaceId, title: task.title, fixedTarget: true,
+                }) : undefined} />
+            </div>}
+            {showDescriptionTab && <section id="task-sidebar-description" className="task-sidebar-description" aria-label="任务说明" hidden={activeSidebarView !== "description"}>
+              {!task.archivedAt && !copy && <div className="task-sidebar-description-actions">
+                <button type="button" className="btn-ghost small" onClick={() => setDescribing(true)}>{task.description ? "编辑" : "添加说明"}</button>
+              </div>}
+              <div className="task-sidebar-body" tabIndex={0}>
+                {task.description ? <p className="task-sidebar-description-text" data-testid="task-description">{task.description}</p> : <p className="side-note">还没有说明。</p>}
+              </div>
+            </section>}
           </aside>
         )}
-        {!sidebar && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title="展开侧栏：环境、进度和批注" onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
+        {!sidebar && (!inBotWorkspace || botTaskTools || showLeadTab || planeBotJob) && <div className="session-list-rail sidebar-rail"><button type="button" className="session-list-fold" aria-label="展开侧栏" aria-expanded={false} title={sideCount ? `展开任务侧栏 · ${sideCount} 项待处理` : "展开任务侧栏"} onClick={() => setSidebar(true)} data-testid="sidebar-expand">‹</button></div>}
       </div>
       {early && (
         <ConfirmDialog

@@ -10,7 +10,7 @@ const SESSIONS_KEY = "amo.lastSessions";
 const MAX_SESSIONS = 100;
 
 type Back = Extract<View, { kind: "bots" }> | { kind: "board" | "team" | "canvas" | "panorama" };
-type SavedView = Back | { kind: "new" } | { kind: "task"; taskId: string; back?: Back };
+type SavedView = Back | { kind: "new" } | { kind: "task"; taskId: string; back?: Back; botWorkspace?: string };
 
 function backPlace(value: unknown): Back | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -42,7 +42,8 @@ export function readPlace(): { view: View; scope: Scope } {
   if (v?.kind === "task" && typeof v.taskId === "string") {
     const sessionId = lastSessions()[v.taskId];
     const back = backPlace(v.back);
-    return { view: { kind: "task", taskId: v.taskId, ...(typeof sessionId === "string" ? { sessionId } : {}), ...(back ? { back } : {}) }, scope };
+    const botWorkspace = typeof v.botWorkspace === "string" ? v.botWorkspace : undefined;
+    return { view: { kind: "task", taskId: v.taskId, ...(typeof sessionId === "string" ? { sessionId } : {}), ...(back ? { back } : {}), ...(botWorkspace ? { botWorkspace } : {}) }, scope };
   }
   return { view: v?.kind === "new" ? { kind: "new" } : backPlace(v) ?? { kind: "board" }, scope };
 }
@@ -52,7 +53,7 @@ export function savePlace(view: View, scope: Scope): void {
   const back = view.kind === "task" ? backPlace(view.back) : undefined;
   const saved: SavedView =
     view.kind === "task"
-      ? { kind: "task", taskId: view.taskId, ...(back ? { back } : {}) }
+      ? { kind: "task", taskId: view.taskId, ...(back ? { back } : {}), ...(view.botWorkspace ? { botWorkspace: view.botWorkspace } : {}) }
       : view.kind === "new" ? { kind: "new" } : backPlace(view) ?? { kind: "board" };
   writeJson(PLACE_KEY, { view: saved, scope });
 }

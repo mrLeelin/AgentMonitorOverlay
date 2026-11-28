@@ -7,7 +7,7 @@ export interface TaskFlow {
 }
 
 /** Delivery records, rather than an idle/completed session, establish acceptance. */
-export function managementFlow(task: Task, status: SessionStatus | null, result?: TaskResult, hasQuestion = false): TaskFlow | null {
+export function managementFlow(task: Task, status: SessionStatus | null, result?: Pick<TaskResult, "managerTaskId" | "state">, hasQuestion = false): TaskFlow | null {
   if (task.archivedAt) return null;
   if (hasQuestion) return { state: "waiting", label: "待主控答复" };
   if (status === "awaiting-approval" || status === "awaiting-answer" || status === "awaiting-review") return { state: "waiting", label: status === "awaiting-approval" ? "待批准" : status === "awaiting-answer" ? "等待回答" : "待审阅" };

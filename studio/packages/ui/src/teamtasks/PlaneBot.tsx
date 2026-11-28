@@ -1,5 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import type { HostEvent, PlaneBotJob, StudioBot, Task, Workspace } from "@amo-studio/protocol";
+import type { HostEvent, PlaneBotExecutionChoice, PlaneBotJob, StudioBot, Task, Workspace } from "@amo-studio/protocol";
+import { focusCanvasTarget } from "../bots/lead-navigation.js";
 import { openReview } from "../gitreview/open.js";
 import { call, type HostLink } from "../host/client.js";
 import { useLiveResource } from "../host/live.js";
@@ -7,6 +8,7 @@ import { Modal } from "../lib/Modal.js";
 import { Markdown } from "../lib/markdown.js";
 import { TaskWorkflow } from "../task/TaskWorkflow.js";
 import { teamBoardMessage } from "./SharedTeamBoard.js";
+import { PlaneBotPlan, PlaneBotReplanControl } from "./PlaneBotPlan.js";
 import "./plane-bot.css";
 
 const status: Record<PlaneBotJob["state"], string> = {
@@ -19,8 +21,30 @@ function writebackFailed(job: Pick<PlaneBotJob, "state" | "error" | "failureStag
   return job.state === "failed" && (job.failureStage === "writeback" || !job.failureStage && (taskDone || job.error === "不支持的工作项操作"));
 }
 
-export function planeBotStatus(job: Pick<PlaneBotJob, "state" | "error" | "failureStage">, taskDone = false): string {
-  return writebackFailed(job, taskDone) ? "交付已验收，Plane 回写失败" : status[job.state];
+export function planeBotStatus(job: Pick<PlaneBotJob, "state" | "error" | "failureStage" | "mode" | "baseDrift">, taskDone = false): string {
+  if (writebackFailed(job, taskDone)) return job.mode === "managed" ? "已验收，回写待处理" : "交付已验收，Plane 回写失败";
+  if (job.mode === "managed" && job.state === "executing") return job.baseDrift ? "基准已变化，等待重新批准" : "机器人带队";
+  return status[job.state];
+}
+
+export function PlaneBotRootLinks({ job, onOpen }: { job: PlaneBotJob; onOpen(id: string): void }) {
+  if (!job.rootTaskId) return null;
+  const rootId = job.rootTaskId, topicId = job.topicId;
+  return <div className="plane-bot-card-actions">
+    <button type="button" className="btn-ghost small" onClick={() => onOpen(rootId)}>打开主控任务</button>
+    {topicId && window.amo?.openInWorkbench && <button type="button" className="btn-ghost small" onClick={() => void window.amo?.openInWorkbench?.(focusCanvasTarget(topicId, rootId,
+      job.state === "review" && job.delivery ? { resultId: job.delivery.resultId } : undefined))}>打开专题画布</button>}
+  </div>;
+}
+
+export function PlaneBotWritebackHistory({ job }: { job: PlaneBotJob }) {
+  return !!job.writebackHistory?.length && <details className="plane-bot-writeback">
+    <summary>Plane 回写记录 · {job.writebackHistory.length} 项</summary>
+    <ul>{job.writebackHistory.map((receipt) => <li key={receipt.resultId}>
+      <code>{receipt.resultId}</code> · {receipt.state === "sent" ? <>评论 <code>{receipt.commentId}</code></> : "回执待核对"}
+      {receipt.state === "sent" && receipt.sentAt && <> · <time dateTime={receipt.sentAt}>{new Date(receipt.sentAt).toLocaleString()}</time></>}
+    </li>)}</ul>
+  </details>;
 }
 
 function checkActive(check: PlaneBotJob["check"]): boolean {
@@ -39,12 +63,17 @@ export function PlaneBotDeliveryCard({ link, job, onJobChange, onReload, onOpen,
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const { delivery, taskId } = job;
+  const { delivery } = job;
+  const taskId = job.rootTaskId ?? job.taskId;
   if (!delivery) return null;
   const check = job.check?.resultId === delivery.resultId ? job.check : undefined;
   const active = checkActive(check);
   const canCheck = !!taskId && job.state === "review" && delivery.state === "submitted" && !active && !check?.opinion;
   const verificationLong = delivery.verification.length > 240 || delivery.verification.split("\n").length > 3;
+  const managed = job.mode === "managed" ? job.delivery : undefined;
+  const reviewTree = (tree: NonNullable<typeof managed>["worktrees"][number]) => openReview({
+    workspaceId: job.workspaceId, worktreeSessionId: tree.sessionId, base: tree.baseCommit, baseLabel: "批准的基准",
+  });
   const start = async () => {
     if (!taskId) return;
     setBusy(true); setError("");
@@ -79,6 +108,25 @@ export function PlaneBotDeliveryCard({ link, job, onJobChange, onReload, onOpen,
     {check?.status === "completed" && !check.opinion && <p className="side-note">Bot 没有给出意见</p>}
     {canCheck && !check && <p className="side-note">Bot 只读对照计划里的完成标准给意见，不会改变验收状态。</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
+    {managed && <div className="plane-bot-worktrees">
+      {managed.integratedWorktree && <button type="button" className="btn-ghost small" onClick={() => reviewTree(managed.integratedWorktree!)}>查看集成工作树差异</button>}
+      <details open><summary>执行工作树 · {managed.worktrees.length} 项</summary>
+        <ul>{managed.worktrees.map((tree) => <li key={tree.taskId}>
+          <button type="button" className="link-btn" onClick={() => onOpen(tree.taskId, tree.sessionId)}>{tree.title || "打开执行会话"}</button>
+          <button type="button" className="btn-ghost small" onClick={() => reviewTree(tree)}>查看改动</button>
+          <span className="side-note">{tree.changedPaths?.length ?? 0} 个改动路径 · {tree.integrations?.length ?? 0} 项前置接入</span>
+          <div className="side-note" title={tree.cwd}>{tree.cwd}</div>
+          <details className="side-note"><summary>核对执行证据</summary>
+            {tree.resultId && <div>交付 <code>{tree.resultId}</code></div>}
+            {tree.headCommit && <div>实际提交 <code>{tree.headCommit}</code>{tree.workingTreeDirty ? " · 含未提交改动" : ""}</div>}
+            {tree.changeDigest && <div>改动校验值 <code>{tree.changeDigest}</code></div>}
+            {tree.integrations?.map((receipt) => <div key={receipt.operationId}>
+              接入前置 <code>{receipt.prerequisiteResultId}</code> · {receipt.verification === "git" ? "Git 已核对" : "已人工核对"}
+            </div>)}
+          </details>
+        </li>)}</ul>
+      </details>
+    </div>}
     {(delivery.sessionId || canCheck || check?.taskId && check.sessionId) && <div className="plane-bot-card-actions">
       {delivery.sessionId && <button className="btn-ghost small" type="button" onClick={() => openReview({
         workspaceId: job.workspaceId, worktreeSessionId: delivery.sessionId!,
@@ -102,7 +150,7 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
     load: () => call(link, "GET /api/team-board/plane/work-items/:id/bot", { id: item.id }),
     initial: null, reset: true, reloadDelay: 80,
     reloadOn: (event): boolean => event.type === "plane.bot.changed" && event.itemId === item.id
-      || (event.type === "data.purged" && !!job?.taskId && event.taskIds.includes(job.taskId)) || planeBotCheckChanged(job, event),
+      || (event.type === "data.purged" && !!(job?.taskId ?? job?.rootTaskId) && event.taskIds.includes((job?.taskId ?? job?.rootTaskId)!)) || planeBotCheckChanged(job, event),
     onError: (cause) => setError(teamBoardMessage(cause)),
   }, [link, item.id, source, viewerId]);
   const [bots] = useLiveResource<StudioBot[] | null>({
@@ -110,7 +158,7 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
     onError: (cause) => setError(teamBoardMessage(cause)),
   }, [link]);
   const available = bots?.filter((bot) => bot.enabled && (bot.permission == null || bot.permission === "plan" || bot.permission === "read-only")) ?? [];
-  const declined = job?.state === "declined" ? job : null;
+  const declined = job?.state === "declined" && !job.rootTaskId ? job : null;
   const choosing = !job || !!declined;
   const botId = available.find((bot) => bot.id === (selectedBotId ?? declined?.botId))?.id ?? "";
   const defaultWorkspaceId = declined ? declined.workspaceId : projectId ?? (projects.length === 1 ? projects[0]!.id : undefined);
@@ -124,13 +172,13 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
     finally { setBusy(false); reloadJob(); }
   };
   const start = () => update(() => call(link, "POST /api/team-board/plane/work-items/:id/bot", { id: item.id }, { source, viewerId, botId, workspaceId, topicId }));
-  const approve = (planHash: string) => update(() => call(link, "POST /api/team-board/plane/work-items/:id/bot/approve", { id: item.id }, { source, viewerId, planHash }));
+  const approve = (planHash: string, execution?: PlaneBotExecutionChoice) => update(() => call(link, "POST /api/team-board/plane/work-items/:id/bot/approve", { id: item.id }, { source, viewerId, planHash, ...(execution ? { execution } : {}) }));
   const decline = (planHash: string) => update(() => call(link, "POST /api/team-board/plane/work-items/:id/bot/decline", { id: item.id }, { source, viewerId, planHash }));
   return <Modal portal label="交给 Bot" className={`team-return-modal${pending || job?.delivery ? " plane-bot-intake-plan" : ""}`} onClose={onClose}>
     <h2 className="modal-title">交给 Bot</h2>
     <p>{item.number} · {item.title}</p>
     {choosing && <>
-      <p className="side-note">Bot 先分析，等你确认开工后再到独立工作树执行。你验收通过后，Studio 会把交付摘要和验证记录写成 Plane 原单评论。</p>
+      <p className="side-note">Bot 先分析。确认计划时可选独立执行或机器人带队。人工验收后，Studio 会把交付写成原单评论。</p>
       <label className="stack-field">只读 Bot<select value={botId} disabled={busy} onChange={(event) => setSelectedBotId(event.target.value)}>
         <option value="">请选择 Bot</option>
         {available.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
@@ -142,25 +190,22 @@ export function PlaneBotIntakeDialog({ link, item, source, viewerId, projects, p
     </>}
     {job && <p role="status">{planeBotStatus(job)}</p>}
     {job?.state === "awaiting-user" && <p className="side-note">可在「待你处理」或执行任务内查看问题。</p>}
-    {pending && <>
-      {pending.baseCommit && <p className="side-note">基准提交 <code title={pending.baseCommit}>{pending.baseCommit.slice(0, 7)}</code></p>}
-      {(pending.behind ?? 0) > 0 && <p className="side-note">分析后项目有 {pending.behind} 个新提交。开工会从分析时的提交开始改；想用最新代码，请放弃后重新交给 Bot。</p>}
-      {pending.plan && <section className="plane-bot-plan" aria-label="Bot 计划"><Markdown source={pending.plan} /></section>}
-      {(pending.plan?.length ?? 0) >= 4000 && <p className="side-note">{longReplyHint}</p>}
-    </>}
+    {pending && <PlaneBotPlan key={planHash} link={link} job={pending} busy={busy}
+      approve={(execution) => { if (planHash) void approve(planHash, execution); }}
+      decline={() => { if (planHash) void decline(planHash); }} />}
+    {job && <PlaneBotReplanControl link={link} job={job} busy={busy} replan={(workspaceId) => void update(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/replan", { id: job.botId, jobId: job.jobId! }, { planHash: job.planHash!, workspaceId }))} />}
     {job?.delivery && <PlaneBotDeliveryCard key={job.delivery.resultId} link={link} job={job} onJobChange={setJob} onReload={reloadJob} onOpen={onOpen} />}
+    {job && <PlaneBotWritebackHistory job={job} />}
     {(error || job?.error) && <p className="team-return-error" role="alert">{error || job?.error}</p>}
     <div className="settings-row end">
       <button type="button" className="btn-ghost small" onClick={onClose}>{job ? "关闭" : "取消"}</button>
       {job?.taskId && <button type="button" className="btn-primary small" onClick={() => onOpen(job.taskId!)}>打开执行任务</button>}
+      {job && <PlaneBotRootLinks job={job} onOpen={(id) => { onClose(); onOpen(id); }} />}
       {job?.botTaskId && job.botSessionId && <button type="button" className="btn-ghost small" onClick={() => onOpen(job.botTaskId!, job.botSessionId!)}>{job.jobId ? "打开 Bot 对话" : "查看 Bot 分析"}</button>}
       {choosing && <button type="button" className="btn-primary small" disabled={busy || !botId || !workspaceId} onClick={() => void start()}>{busy ? "正在接单…" : job?.state === "declined" ? "重新交给 Bot" : "开始接单"}</button>}
-      {job?.canRetry && !job.taskId && <button type="button" className="btn-primary small" disabled={busy} onClick={() => void start()}>重试接单</button>}
+      {job?.canRetry && !job.taskId && !job.rootTaskId && <button type="button" className="btn-primary small" disabled={busy} onClick={() => void start()}>重试接单</button>}
+      {job?.canRetry && job.rootTaskId && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void update(() => call(link, "POST /api/team-board/plane/bots/:id/jobs/:jobId/retry", { id: job.botId, jobId: job.jobId! }))}>{job.failureStage === "writeback" ? "核对并重试回写" : "重试分析"}</button>}
       {job?.canRetry && job.taskId && job.failureStage === "execution" && <button type="button" className="btn-ghost small" disabled={busy} onClick={() => void update(() => call(link, "POST /api/team-board/local/:id/bot/retry", { id: job.taskId! }))}>重试执行</button>}
-      {pending && <>
-        <button type="button" className="btn-ghost small" disabled={busy || !planHash} onClick={() => { if (planHash) void decline(planHash); }}>放弃</button>
-        <button type="button" className="btn-primary small" disabled={busy || !planHash} onClick={() => { if (planHash) void approve(planHash); }}>开工</button>
-      </>}
     </div>
   </Modal>;
 }
@@ -169,7 +214,7 @@ export function usePlaneBotJob(link: HostLink, taskId: string | null) {
   const resource = useLiveResource<PlaneBotJob | null>({
     load: taskId ? () => call(link, "GET /api/team-board/local/:id/bot", { id: taskId }) : null,
     initial: null, reset: true, reloadDelay: 80,
-    reloadOn: (event): boolean => event.type === "plane.bot.changed" && event.taskId === taskId || event.type === "task.upserted" && event.task.id === taskId || planeBotCheckChanged(resource[0], event),
+    reloadOn: (event): boolean => event.type === "plane.bot.changed" && (event.taskId === taskId || event.rootTaskId === taskId) || event.type === "task.upserted" && event.task.id === taskId || planeBotCheckChanged(resource[0], event),
   }, [link, taskId]);
   return resource;
 }
@@ -208,7 +253,8 @@ export function PlaneBotTaskAction({ link, task, tasks, job, setJob, onOpen }: {
       <div className="plane-bot-review-body">
         {job.delivery && <PlaneBotDeliveryCard key={job.delivery.resultId} link={link} job={job} onJobChange={setJob} onOpen={onOpen} compact />}
         {issue && <p className="form-error" role="alert">{issue}</p>}
-        {!task.lead && !task.managerTaskId && <TaskWorkflow link={link} task={task} tasks={tasks} onOpenTask={onOpen} planeBot />}
+        <PlaneBotWritebackHistory job={job} />
+        {!task.managerTaskId && <TaskWorkflow link={link} task={task} tasks={tasks} onOpenTask={(id) => onOpen(id)} planeBot />}
       </div>
       <footer className="plane-bot-review-footer">
         {job.canRetry && <button type="button" className="btn-primary small" disabled={busy} onClick={() => void retry()}>{busy ? "正在处理…" : failedWriteback ? "重试回写" : "重试执行"}</button>}

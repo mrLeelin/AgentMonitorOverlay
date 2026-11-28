@@ -4,6 +4,7 @@ import { call, HostApiError, type HostLink } from "../host/client.js";
 import { upsertById, useLiveResource } from "../host/live.js";
 import { effortLabel } from "../lib/choices.js";
 import { Modal } from "../lib/Modal.js";
+import { useBots } from "../bots/roster.js";
 
 // 拆任务提案 (stage 16, from the stage 15 design): a 主控 proposes tasks; the person looks at them here, changes what
 // they want, and accepts (立刻开跑 or 放进待办) or dismisses. Shown on the topic's canvas and on the 主控's task page.
@@ -30,7 +31,8 @@ export function PlanBanner({ link, plans, tasks, workspaces, profiles }: { link:
           <div key={p.id} className="plan-banner-row">
             <span className="plan-banner-mark">拆任务提案</span>
             <span className="plan-banner-text">
-              主控「{tasks.find((t) => t.id === p.fromTaskId)?.title || "主控"}」提了 {p.tasks.length} 个任务：{p.summary.split("\n")[0]}
+              {p.fromTaskId ? `主控「${tasks.find((t) => t.id === p.fromTaskId)?.title || "原主控"}」` : "专题会话"}提了 {p.tasks.length} 个任务：{p.summary.split("\n")[0]}
+              {p.tasks.some((task) => task.lead && !task.leadBotId) ? " · 待选机器人" : ""}
             </span>
             <button type="button" className="btn-primary small" onClick={() => setOpen(p.id)} data-testid="plan-open">
               查看
@@ -53,10 +55,21 @@ export function PlanDialog({ link, plan, tasks = [], workspaces, profiles, onClo
   const [dismissing, setDismissing] = useState<string | null>(null);
   const projects = workspaces.filter((w) => !w.archivedAt);
   const models = profiles.filter((p) => !p.hidden && !p.unavailable);
+  const bots = useBots(link).filter((bot) => bot.enabled && models.some((profile) => profile.id === bot.profileId && ["codex", "claude", "dsh"].includes(profile.runtime)));
+  const ancestorBots = new Set<string>();
+  const seen = new Set<string>();
+  for (let id = plan.fromTaskId; id && !seen.has(id);) {
+    seen.add(id);
+    const owner = tasks.find((task) => task.id === id);
+    if (owner?.botLead?.kind === "appointed") ancestorBots.add(owner.botLead.term.botId);
+    id = owner?.managerTaskId ?? null;
+  }
+  const candidates = bots.filter((bot) => !ancestorBots.has(bot.id));
   const change = (key: string, patch: Partial<Draft>) => setDrafts((cur) => cur.map((d) => (d.key === key ? { ...d, ...patch } : d)));
   // A task of this proposal, or (2026-11-17) one the topic has already.
   const titleOf = (key: string) => drafts.find((d) => d.key === key)?.title ?? tasks.find((t) => t.id === key)?.title ?? key;
   const kept = drafts.filter((d) => d.include).length;
+  const missingBot = drafts.some((draft) => draft.include && draft.lead && !candidates.some((bot) => bot.id === draft.leadBotId));
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -91,16 +104,16 @@ export function PlanDialog({ link, plan, tasks = [], workspaces, profiles, onClo
                   </option>
                 ))}
               </select>
-              <select className="field plan-select" aria-label="模型" value={d.profileId ?? ""} disabled={!d.include} onChange={(e) => change(d.key, { profileId: e.target.value })}>
+              {!d.lead && <select className="field plan-select" aria-label="模型" value={d.profileId ?? ""} disabled={!d.include} onChange={(e) => change(d.key, { profileId: e.target.value })}>
                 {models.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </select>}
             </div>
             {/* The proposed model and effort, while the proposed account stays (another account: its defaults). */}
-            {d.options && d.profileId === plan.tasks.find((t) => t.key === d.key)?.profileId && (
+            {!d.lead && d.options && d.profileId === plan.tasks.find((t) => t.key === d.key)?.profileId && (
               <span className="plan-deps" data-testid="plan-options">
                 {[d.options.model ? `型号 ${d.options.model}` : "", d.options.effort ? `思考强度 ${effortLabel(d.options.effort)}` : ""].filter(Boolean).join(" · ")}
               </span>
@@ -108,6 +121,17 @@ export function PlanDialog({ link, plan, tasks = [], workspaces, profiles, onClo
             {d.dependsOn.length > 0 && <span className="plan-deps">依赖：{d.dependsOn.map(titleOf).join("、")}</span>}
             {d.include && (
               <>
+                <label className="plan-field"><span className="plan-lab">职责</span>
+                  <select className="field" aria-label="任务职责" value={d.lead ? "lead" : "worker"} onChange={(e) => change(d.key, { lead: e.target.value === "lead", leadBotId: "" })}>
+                    <option value="worker">执行任务</option><option value="lead">{plan.fromTaskId ? "中控" : "总主控"}</option>
+                  </select>
+                </label>
+                {d.lead && <label className="plan-field"><span className="plan-lab">机器人</span>
+                  <select className="field" aria-label="负责机器人" value={d.leadBotId ?? ""} onChange={(e) => change(d.key, { leadBotId: e.target.value })}>
+                    <option value="">待选机器人</option>
+                    {candidates.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                  </select>
+                </label>}
                 <label className="plan-field">
                   <span className="plan-lab">说明</span>
                   <textarea className="side-textarea plan-text" aria-label="说明" rows={2} placeholder="显示在画布卡片上" value={d.description ?? ""} onChange={(e) => change(d.key, { description: e.target.value })} />
@@ -143,10 +167,10 @@ export function PlanDialog({ link, plan, tasks = [], workspaces, profiles, onClo
           </button>
           <span className="spacer" />
           <span className="settings-hint">建 {kept} 个任务，放上画布并连好依赖</span>
-          <button type="button" className="btn-ghost" disabled={busy || !kept} title="建好任务，放在待办里，等你开始" onClick={() => void accept(false)} data-testid="plan-accept-todo">
+          <button type="button" className="btn-ghost" disabled={busy || !kept || missingBot} title="建好任务，放在待办里，等你开始" onClick={() => void accept(false)} data-testid="plan-accept-todo">
             放进待办
           </button>
-          <button type="button" className="btn-primary" disabled={busy || !kept} title="建好任务就开跑：没有前置的马上用第一句话开始，有前置的等前置完成（有主控的要验收）后自动开始" onClick={() => void accept(true)} data-testid="plan-accept-run">
+          <button type="button" className="btn-primary" disabled={busy || !kept || missingBot} title="建好任务就开跑：没有前置的马上用第一句话开始，有前置的等前置完成（有主控的要验收）后自动开始" onClick={() => void accept(true)} data-testid="plan-accept-run">
             立刻开跑
           </button>
         </div>

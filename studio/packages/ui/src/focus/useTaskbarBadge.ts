@@ -15,6 +15,7 @@ import { useStoredIds } from "../lib/storedIds.js";
 import { ALSO_MINE_KEY } from "./pins.js";
 import { decisionNeedsPerson, replyNeedsPerson } from "./managedAttention.js";
 import { planeBotNeedsAttention } from "../teamtasks/planeBotAttention.js";
+import { useLeadAttention } from "./leadAttention.js";
 
 const NO_LINK = { url: "", token: "" };
 
@@ -24,6 +25,7 @@ export function useTaskbarBadge(host: HostState, planeJobs: readonly PlaneBotAtt
   const link = host.kind === "ready" ? host.link : null;
   const noLink = link ?? NO_LINK;
   const decisions = useOpenDecisions(noLink);
+  const leadReviews = useLeadAttention(noLink, live);
   const proposals = usePendingProposals(noLink);
   const plans = useTaskPlans(noLink);
   const relays = useRelays(noLink);
@@ -46,8 +48,9 @@ export function useTaskbarBadge(host: HostState, planeJobs: readonly PlaneBotAtt
   const waiting = live?.sessions.filter((s) => !s.archivedAt && needsPerson(s.status) && mine(s) && !planeWorkers.has(s.taskId ?? "")) ?? [];
   const finished = live ? unseenSessions(live.sessions, seen).filter((s) => !waiting.includes(s) && mine(s) && !planeWorkers.has(s.taskId ?? "") && replyNeedsPerson(s, live.tasks, live.sessions)) : [];
   const count = live ? waiting.length + finished.length
+    + leadReviews.filter((item) => mine({ taskId: item.task.id })).length
     + decisions.filter((d) => !planeWorkers.has(d.taskId ?? "") && decisionNeedsPerson(d, live.tasks) && live.sessions.some((s) => s.id === d.sessionId && !s.archivedAt)).length
-    + planeJobs.filter(planeBotNeedsAttention).length
+    + planeJobs.filter((job) => planeBotNeedsAttention(job) && !(job.rootTaskId && job.state === "review")).length
     + (settings?.disabledFeatures.includes("planning") ? 0 : proposals.length)
     + plans.filter((p) => p.state === "open").length + relays.filter((r) => r.state === "pending").length
     + sends.filter((s) => s.state === "pending").length

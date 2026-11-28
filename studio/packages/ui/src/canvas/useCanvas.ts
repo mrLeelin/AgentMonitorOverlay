@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasDoc } from "@amo-studio/protocol";
 import { call, HostApiError, type HostLink } from "../host/client.js";
 import { onHostEvent, onHostReconnect } from "../host/events.js";
+import { rebaseCanvas } from "./rebase.js";
 
 /**
  * A topic's canvas document with optimistic saves.
  *
- * Saves from this window are queued, and an edit based on a version this window itself just replaced is rebased onto
- * the newer version (quick successive edits must not conflict with each other). A version written by another window
- * is never rebased over: that save gets a 409, the latest copy is reloaded and the conflict is reported.
+ * Saves are queued. A newer Host version can include independent edits, so retain those and reapply fields that are
+ * still valid against the version edited here. A competing edit to the same field stays as saved on the Host.
  */
 export function useCanvas(link: HostLink, topicId: string) {
   const [doc, setDoc] = useState<CanvasDoc | null>(null);
@@ -18,51 +18,68 @@ export function useCanvas(link: HostLink, topicId: string) {
   const latest = useRef<CanvasDoc | null>(null);
   latest.current = doc;
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  /** version this window saved from → version the server assigned. */
-  const ownSaves = useRef(new Map<number, number>());
+  const server = useRef<CanvasDoc | null>(null);
+  const pending = useRef(0);
 
-  const load = useCallback(() => call(link, "GET /api/topics/:id/canvas", { id: topicId }).then((d) => setDoc(d)), [link, topicId]);
+  const adopt = useCallback((doc: CanvasDoc) => {
+    if (server.current?.id !== doc.id || server.current.version <= doc.version) server.current = doc;
+    if (!pending.current) { latest.current = server.current; setDoc(server.current); }
+    return server.current;
+  }, []);
+  const load = useCallback(() => call(link, "GET /api/topics/:id/canvas", { id: topicId }).then(adopt), [link.url, link.token, topicId, adopt]);
 
   useEffect(() => {
     // Another topic: start from its own document, not the previous one's versions.
     setDoc(null);
-    ownSaves.current.clear();
-    void load();
+    server.current = null;
+    const loadCurrent = () => void load().catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    loadCurrent();
     const off = onHostEvent((e) => {
-      if (e.type === "canvas.updated" && e.canvas.id === topicId && (!latest.current || latest.current.id !== topicId || e.canvas.version > latest.current.version)) setDoc(e.canvas);
+      if (e.type === "canvas.updated" && e.canvas.id === topicId) adopt(e.canvas);
     });
-    const offReconnect = onHostReconnect(() => void load());
+    const offReconnect = onHostReconnect(loadCurrent);
     return () => {
       off();
       offReconnect();
     };
-  }, [load, topicId]);
+  }, [load, topicId, adopt]);
 
   const save = useCallback(
-    (next: CanvasDoc): Promise<CanvasDoc> => {
-      setDoc(next); // optimistic
+    (next: CanvasDoc, basedOn?: CanvasDoc): Promise<CanvasDoc> => {
+      const base = basedOn ?? latest.current ?? next;
+      pending.current++;
+      latest.current = next;
+      setDoc(next);
       const run = async () => {
-        let version = next.version;
-        while (ownSaves.current.has(version)) version = ownSaves.current.get(version)!;
+        const put = (doc: CanvasDoc) => call(link, "PUT /api/topics/:id/canvas", { id: topicId }, doc);
+        const commit = async (current: CanvasDoc) => {
+          const edit = rebaseCanvas(base, next, current);
+          setConflict(edit.skipped);
+          return edit.doc === current ? current : adopt(await put(edit.doc));
+        };
         try {
-          const saved = await call(link, "PUT /api/topics/:id/canvas", { id: topicId }, { ...next, version });
-          ownSaves.current.set(version, saved.version);
-          setDoc((cur) => (!cur || saved.version >= cur.version ? saved : cur));
-          setConflict(false);
+          const current = server.current ?? base;
+          const saved = await commit(current).catch(async (err: unknown) => {
+            if (err instanceof HostApiError && err.status === 409 && !err.details) return await commit(await load());
+            throw err;
+          });
           setError("");
           return saved;
         } catch (err) {
-          if (err instanceof HostApiError && err.status === 409) setConflict(true);
+          if (err instanceof HostApiError && err.status === 409 && !err.details) setConflict(true);
           else setError(err instanceof Error ? err.message : String(err));
-          await load();
+          await load().catch(() => undefined);
           throw err;
+        } finally {
+          pending.current--;
+          if (!pending.current) { latest.current = server.current; setDoc(server.current); }
         }
       };
       const result = queue.current.then(run, run);
       queue.current = result.catch(() => undefined);
       return result;
     },
-    [link, load, topicId],
+    [link.url, link.token, load, topicId, adopt],
   );
 
   return { doc, save, conflict, dismissConflict: () => setConflict(false), error, dismissError: () => setError("") };

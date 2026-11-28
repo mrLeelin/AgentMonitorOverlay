@@ -15,7 +15,7 @@ import { inlineMessage } from "../attach/InlineMessage.js";
 import { copySentMessage } from "../attach/messageClipboard.js";
 import { useFileLinks } from "../files/FileLinks.js";
 import { BotAvatar, TranscriptBots } from "../bots/BotAvatar.js";
-import { BotReply } from "../bots/BotRequests.js";
+import { BotConversation, BotReply } from "../bots/BotRequests.js";
 
 /** The line under a message whose @ names were explained to the model (2026-11-05: sub-session setups named too). */
 function mentionBrief(blocks: string): string {
@@ -350,6 +350,7 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
   // Its @ names (快速提交 among them) coloured as in the composer; what the message told the model of them on hover.
   const letter = item.botLetter;
   const roster = useContext(TranscriptBots);
+  const { messageAction } = useContext(BotConversation);
   if (letter?.kind === "reply" || item.id.startsWith("bot-reply:")) return <>
     <BotReply item={item} />
     {item.delivery && <DeliveryLine item={item} />}
@@ -404,6 +405,7 @@ function UserBubble({ item }: { item: Extract<SessionItem, { type: "user" }> }) 
         )}
       </div>
       {item.delivery && <DeliveryLine item={item} />}
+      {messageAction?.(item)}
     </div>
   );
 }
