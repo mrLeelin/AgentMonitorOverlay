@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>AMO Studio · 输入框快捷项原型</title>
+<style>
+  :root {
+    color-scheme: dark;
+    font: 14px/1.5 "Microsoft YaHei UI", "Noto Sans SC", "Segoe UI", sans-serif;
+    --bg: #131313; --panel: #1a1a1a; --nav: #181817; --raised: #20201f;
+    --hover: #282a25; --selected: #30342b; --line: #383834; --strong: #58594f;
+    --text: #f1efe9; --dim: #bab9af; --muted: #a4a298; --accent: #c9ee97; --on-accent: #191f12;
+    --danger: #ef9b90; --overlay: #0009;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #fafbf6; --panel: #fff; --nav: #f2f4ec; --raised: #f1f4ea;
+    --hover: #ebefe4; --selected: #e2edcf; --line: #d4dacb; --strong: #a4b297;
+    --text: #252d23; --dim: #505e47; --muted: #5d6a54; --accent: #406521; --on-accent: #fff;
+    --danger: #9a342a; --overlay: #232c1c66;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  ::selection { background: var(--accent); color: var(--on-accent); }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; background: transparent; border: 0; border-radius: 6px; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select, .field { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background-color: var(--raised); }
+  textarea { resize: vertical; caret-color: var(--accent); }
+  textarea::placeholder { color: var(--muted); }
+  h1, h2, h3, p, pre { margin: 0; }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
+  .control, .primary, .quiet, .danger { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 5px 10px; white-space: nowrap; font-size: 12px; }
+  .control { border: 1px solid var(--line); background: var(--raised); }
+  .control:hover:not(:disabled), .quiet:hover, .danger:hover { background: var(--hover); }
+  .primary { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .quiet { color: var(--dim); }
+  .danger { color: var(--danger); }
+  .toolbar { border-bottom: 1px solid var(--line); background: var(--nav); }
+  .toolbar-inner { max-width: 1360px; min-height: 53px; margin-inline: auto; padding-inline: 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 13px; }
+  .brand strong { font-size: 14px; }
+  .brand span { color: var(--muted); font-size: 12px; padding-left: 13px; border-left: 1px solid var(--line); }
+  .layout { max-width: 1360px; margin: 0 auto; padding: 26px 24px; display: grid; grid-template-columns: minmax(0, 1.07fr) minmax(0, 1fr); align-items: stretch; gap: 18px; }
+  .surface { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .surface-head { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .surface-head h1, .surface-head h2 { font-size: 16px; font-weight: 650; }
+  .context-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .context-select select { width: auto; min-width: 112px; color: var(--text); }
+  .conversation { display: flex; flex-direction: column; }
+  .thread { flex: 1; min-height: 97px; display: grid; align-content: start; gap: 13px; padding: 17px 16px 10px; }
+  .message { max-width: min(90%, 460px); margin-left: auto; padding: 9px 13px; background: var(--raised); border-radius: 9px 9px 3px 9px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+  .compose-area { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px; }
+  .palette { border: 1px solid var(--strong); border-radius: 9px; background: var(--panel); overflow: hidden; }
+  .commands { max-height: min(295px, 48vh); overflow: auto; padding: 4px 5px; scrollbar-color: var(--strong) var(--panel); }
+  .command-group + .command-group { margin-top: 4px; border-top: 1px solid var(--line); padding-top: 3px; }
+  .command-group h3 { padding: 4px 8px 3px; color: var(--muted); font-size: 11px; font-weight: 650; }
+  .command { display: grid; grid-template-columns: minmax(0, 41%) minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; min-height: 33px; padding: 4px 8px; text-align: left; font-size: 12px; }
+  .command .name, .command .description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .command .name { font-size: 13px; }
+  .command .description { color: var(--dim); }
+  .command:hover { background: var(--hover); }
+  .command[aria-selected="true"] { background: var(--selected); }
+  .palette-foot { min-height: 38px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 3px 7px 3px 12px; border-top: 1px solid var(--line); }
+  kbd { color: var(--muted); font: inherit; }
+  .key-hints { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--muted); }
+  .key-hints kbd { margin-right: 3px; }
+  .composer { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--raised); }
+  .composer:focus-within { border-color: var(--strong); }
+  .composer textarea { display: block; width: 100%; padding: 11px 12px 3px; min-height: 72px; border: 0; background: transparent; outline: 0; }
+  .composer textarea:focus-visible { outline: 0; }
+  .composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px 8px; }
+  .composer-actions .slash-trigger { min-width: 32px; font-size: 15px; }
+  .composer-actions .shortcut-help { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+  .settings .surface-head { align-items: end; }
+  .settings-path { color: var(--muted); font-size: 11px; line-height: 1.5; margin-bottom: 2px; }
+  .settings-body { padding: 14px 16px 16px; }
+  .scope-bar { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; }
+  .tabs { padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); display: flex; gap: 2px; }
+  .tabs button { min-width: 65px; padding: 4px 8px; color: var(--dim); font-size: 13px; }
+  .tabs button:hover { background: var(--hover); }
+  .tabs button[aria-pressed="true"] { background: var(--selected); color: var(--accent); font-weight: 650; }
+  #settings-project { width: auto; max-width: 100%; font-size: 12px; }
+  .scope-hint { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+  .list { border-block: 1px solid var(--line); }
+  .list-columns, .list-item { display: grid; grid-template-columns: minmax(0, 1fr) 88px 44px; align-items: center; gap: 8px; padding-inline: 9px; }
+  .list-columns { padding-block: 6px; color: var(--muted); font-size: 11px; background: var(--nav); }
+  .list-item { min-height: 43px; }
+  .list-item + .list-item { border-top: 1px solid var(--line); }
+  .list-item.active { background: var(--selected); }
+  .list-item:hover:not(.active) { background: var(--hover); }
+  .item-name { min-width: 0; text-align: left; padding: 7px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .item-kind { color: var(--dim); font-size: 12px; }
+  .switch { display: inline-grid; align-content: center; justify-content: start; width: 31px; height: 18px; border: 1px solid var(--strong); border-radius: 9px; padding: 2px; background: var(--raised); }
+  .switch::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+  .switch[aria-checked="true"] { justify-content: end; border-color: var(--accent); background: var(--accent); }
+  .switch[aria-checked="true"]::before { background: var(--on-accent); }
+  .empty { padding: 12px 9px; color: var(--dim); font-size: 12px; }
+  .detail { margin-top: 16px; }
+  .detail-head, .detail-actions, .form-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; }
+  .detail-head h3 { font-size: 14px; overflow-wrap: anywhere; }
+  .preview-label { margin: 7px 0 4px; color: var(--muted); font-size: 11px; }
+  .preview { min-height: 64px; padding: 9px 11px; border-radius: 6px; background: var(--raised); color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.7; }
+  .detail-actions { margin-top: 10px; }
+  .order { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+  .order span { padding-right: 2px; }
+  .edit-form { display: grid; gap: 10px; }
+  .edit-form h3 { font-size: 14px; }
+  .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+  .fields label, .stack { display: grid; gap: 4px; color: var(--dim); font-size: 12px; }
+  .fields .wide { grid-column: 1 / -1; }
+  .edit-form .field, .edit-form select, dialog .field, dialog select { color: var(--text); }
+  .form-actions { justify-content: flex-end; }
+  .status { min-height: 19px; margin-top: 8px; color: var(--muted); font-size: 11px; }
+  .error { color: var(--danger); font-size: 12px; }
+  dialog { width: min(486px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 16px; border: 1px solid var(--strong); border-radius: 12px; background: var(--panel); color: var(--text); }
+  dialog::backdrop { background: var(--overlay); }
+  dialog h2 { padding-bottom: 6px; font-size: 16px; }
+  dialog p { margin-bottom: 10px; color: var(--dim); font-size: 12px; }
+  dialog .form-actions { margin-top: 12px; }
+  dialog .preview { margin-top: 10px; }
+  @media (max-width: 850px) {
+    .layout { grid-template-columns: minmax(0, 1fr); padding: 14px; gap: 14px; }
+    .toolbar-inner { padding-inline: 14px; }
+  }
+  @media (max-width: 400px) {
+    .surface-head, .settings-body { padding-inline: 11px; }
+    .compose-area { padding-inline: 9px; }
+    .list-columns, .list-item { grid-template-columns: minmax(0, 1fr) 64px 36px; }
+    .key-hints { display: none; }
+    .palette-foot { justify-content: flex-end; }
+    .command { grid-template-columns: minmax(0, 47%) minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-inner">
+      <div class="brand"><strong>AMO Studio</strong><span>交互原型</span></div>
+      <button class="control" type="button" id="theme">切换浅色</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="surface conversation" aria-labelledby="conversation-title">
+      <header class="surface-head">
+        <h2 id="conversation-title">会话预览</h2>
+        <label class="context-select">当前项目<select id="current-project"><option value="amo">AmoStudio</option><option value="unity">JellybeanUnity</option><option value="">公共工作区</option></select></label>
+      </header>
+      <div class="thread" id="thread" aria-live="polite">
+        <p class="message">先检查一下这次改动。</p>
+      </div>
+      <div class="compose-area">
+        <div class="palette" id="palette">
+          <div class="commands" id="commands" role="listbox" aria-label="快捷项"></div>
+          <div class="palette-foot">
+            <span class="key-hints"><span><kbd>↑↓</kbd>选择</span><span><kbd>Enter</kbd>确认</span><span><kbd>Esc</kbd>关闭</span></span>
+            <button class="quiet" type="button" id="manage">管理快捷项…</button>
+          </div>
+        </div>
+        <div class="composer">
+          <textarea id="draft" aria-label="会话草稿" aria-controls="commands" spellcheck="false" placeholder="写消息，输入 / 打开快捷项">/</textarea>
+          <div class="composer-actions">
+            <span class="shortcut-help"><button class="control slash-trigger" type="button" id="slash" aria-label="打开快捷项菜单" aria-controls="palette" aria-expanded="true">/</button>快捷项</span>
+            <button class="primary" type="button" id="send">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="surface settings" id="settings" aria-labelledby="settings-title">
+      <header class="surface-head">
+        <div><p class="settings-path">设置 / 工具与自动化</p><h1 id="settings-title" tabindex="-1">输入框快捷项</h1></div>
+        <button class="primary" id="new-item" type="button">新建快捷项</button>
+      </header>
+      <div class="settings-body">
+        <div class="scope-bar">
+          <div class="tabs" role="group" aria-label="适用范围">
+            <button type="button" data-scope="shared" aria-pressed="false">公用</button>
+            <button type="button" data-scope="project" aria-pressed="true">项目</button>
+          </div>
+          <select id="settings-project" aria-label="管理的项目"><option value="amo">AmoStudio</option><option value="unity">JellybeanUnity</option></select>
+        </div>
+        <p class="scope-hint" id="scope-hint"></p>
+        <div class="list">
+          <div class="list-columns" aria-hidden="true"><span>名称</span><span>类型</span><span>显示</span></div>
+          <div id="item-list"></div>
+        </div>
+        <div id="detail" class="detail"></div>
+        <p id="status" class="status" role="status">示例配置在刷新后重置。</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="action-dialog" aria-labelledby="dialog-title"></dialog>
+
+<script>
+  const byId = (id) => document.getElementById(id);
+  const draft = byId("draft");
+  const commands = byId("commands");
+  const settings = byId("settings");
+  const itemList = byId("item-list");
+  const detail = byId("detail");
+  const dialog = byId("action-dialog");
+  const currentProject = byId("current-project");
+  const settingsProject = byId("settings-project");
+  const projectNames = { amo: "AmoStudio", unity: "JellybeanUnity" };
+  const templates = [
+    { id: "review", scope: "amo", title: "验收改动", body: "核对本次改动是否符合任务要求。请列出实际验证过的路径、结果和待复核项。" },
+    { id: "progress", scope: "", title: "总结进度", body: "简要总结已完成的工作、当前阻塞和下一步。每条补上可核对的证据。" },
+    { id: "unity-check", scope: "unity", title: "检查编译和运行", body: "先核对 Unity 的编译结果，再记录实际运行中已验证的行为。" },
+    { id: "plan", scope: "", title: "列出执行计划", body: "列出目标、涉及的范围和每一步的验证方式。" },
+  ];
+  const subDefaults = { model: "Codex", effort: "高", permission: "只读", extra: "核对本次改动，列出需要复验的问题。" };
+  const items = [
+    { id: "a1", name: "验收改动", scope: "amo", type: "prompt", template: "review", enabled: true },
+    { id: "a2", name: "只读复核", scope: "amo", type: "sub", setup: { ...subDefaults }, enabled: true },
+    { id: "p1", name: "总结进度", scope: "", type: "prompt", template: "progress", enabled: true },
+    { id: "u1", name: "检查编译", scope: "unity", type: "prompt", template: "unity-check", enabled: true },
+  ];
+  const builtins = [
+    { id: "builtin-sub", name: "开子会话…", description: "选模型、强度，补充这轮的话" },
+    { id: "builtin-prompt", name: "提示词模板…", description: "浏览和选择模板" },
+  ];
+
+  let scopeTab = "project";
+  let selectedId = "a1";
+  let editing = null;
+  let nextId = 1;
+  let tokenOptions = [];
+  let highlighted = 0;
+  let dismissed = false;
+  let lastQuery = null;
+  let dialogCaret = 0;
+  let settingsCaret = null;
+
+  const html = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  const lookupTemplate = (id) => templates.find((t) => t.id === id);
+  const availableTemplates = (scope) => templates.filter((t) => !t.scope || t.scope === scope);
+  const scopeOfSettings = () => scopeTab === "project" ? settingsProject.value : "";
+  const scopedItems = () => items.filter((item) => item.scope === scopeOfSettings());
+  const options = (values, selected) => values.map(([value, label]) => `<option value="${html(value)}"${value === selected ? " selected" : ""}>${html(label)}</option>`).join("");
+  const status = (text) => { byId("status").textContent = text; };
+  const focusDraft = (caret) => { draft.focus({ preventScroll: true }); draft.setSelectionRange(caret, caret); };
+
+  function tokenAtCaret() {
+    const caret = draft.selectionStart;
+    if (caret !== draft.selectionEnd) return null;
+    const left = draft.value.slice(0, caret);
+    const match = /(?:^|\s)\/([^\s/]*)$/.exec(left);
+    if (!match) return null;
+    return { start: caret - match[1].length - 1, end: caret + (/^[^\s/]*/.exec(draft.value.slice(caret))?.[0].length ?? 0), query: match[1] };
+  }
+
+  function renderMenu() {
+    const token = tokenAtCaret();
+    const visible = !!token && !dismissed && !dialog.open;
+    byId("palette").hidden = !visible;
+    byId("slash").setAttribute("aria-expanded", String(visible));
+    byId("send").disabled = !draft.value.trim() || draft.value.trim() === "/";
+    draft.removeAttribute("aria-activedescendant");
+    if (!visible) { lastQuery = null; return; }
+    const project = currentProject.value;
+    const query = token.query.toLocaleLowerCase();
+    const enabled = items.filter((item) => item.enabled && (item.type === "sub" || availableTemplates(item.scope).some((t) => t.id === item.template)));
+    if (query !== lastQuery) highlighted = 0;
+    lastQuery = query;
+    const groups = [
+      [project ? `项目 · ${projectNames[project]}` : "", project ? enabled.filter((item) => item.scope === project) : []],
+      ["公用", enabled.filter((item) => !item.scope)],
+      ["AMO 扩展功能", builtins],
+    ].map(([label, group]) => [label, group.filter((item) => item.name.toLocaleLowerCase().includes(query))]).filter(([, group]) => group.length);
+    tokenOptions = groups.flatMap(([, group]) => group);
+    highlighted = Math.min(highlighted, Math.max(0, tokenOptions.length - 1));
+    let index = 0;
+    commands.innerHTML = groups.map(([label, group]) => `<div class="command-group" role="group" aria-label="${html(label)}"><h3 aria-hidden="true">${html(label)}</h3>${group.map((item) => {
+      const currentIndex = index++;
+      const description = item.description ?? (item.type === "prompt" ? "插入提示词" : `打开子会话设定 · ${item.setup.model}`);
+      return `<button type="button" id="command-${html(item.id)}" class="command" data-command="${html(item.id)}" role="option" tabindex="-1" aria-selected="${currentIndex === highlighted}" title="${html(description)}"><span class="name">/${html(item.name)}</span><span class="description">${html(description)}</span></button>`;
+    }).join("")}</div>`).join("") || '<p class="empty">没有匹配的快捷项。</p>';
+    if (tokenOptions[highlighted]) draft.setAttribute("aria-activedescendant", `command-${tokenOptions[highlighted].id}`);
+  }
+
+  function replaceToken(token, text) {
+    if (!token) return;
+    draft.setRangeText(text, token.start, token.end, "end");
+    dismissed = true;
+    settingsCaret = null;
+    focusDraft(token.start + text.length);
+    renderMenu();
+  }
+
+  function openMenu() {
+    const caret = draft.selectionStart;
+    if (!tokenAtCaret()) {
+      const prefix = draft.value.slice(0, caret);
+      const suffix = draft.value.slice(draft.selectionEnd);
+      const inserted = `${prefix && !/\s$/.test(prefix) ? " " : ""}/`;
+      draft.setRangeText(inserted + (suffix && !/^\s/.test(suffix) ? " " : ""), caret, draft.selectionEnd, "end");
+      focusDraft(caret + inserted.length);
+    } else focusDraft(caret);
+    dismissed = false;
+    highlighted = 0;
+    renderMenu();
+  }
+
+  function renderSettings() {
+    const scope = scopeOfSettings();
+    const scoped = scopedItems();
+    const picked = scoped.find((item) => item.id === selectedId) ?? scoped[0];
+    selectedId = picked?.id ?? null;
+    settings.querySelectorAll("[data-scope]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.scope === scopeTab)));
+    settingsProject.hidden = scopeTab !== "project";
+    byId("scope-hint").textContent = scope ? `仅在 ${projectNames[scope]} 的会话和新建任务中显示。` : "在本机的所有项目和公共工作区中显示。";
+    itemList.innerHTML = scoped.map((item) => `<div class="list-item${item.id === selectedId ? " active" : ""}"><button class="item-name" type="button" data-select="${item.id}" aria-pressed="${item.id === selectedId}">/${html(item.name)}</button><span class="item-kind">${item.type === "prompt" ? "提示词" : "子会话设定"}</span><button class="switch" type="button" role="switch" data-toggle="${item.id}" aria-label="在菜单中显示 ${html(item.name)}" aria-checked="${item.enabled}"></button></div>`).join("") || '<p class="empty">还没有快捷项。选择「新建快捷项」添加。</p>';
+    if (editing) { renderEditor(); return; }
+    if (!picked) { detail.innerHTML = ""; return; }
+    const isPrompt = picked.type === "prompt";
+    const template = lookupTemplate(picked.template);
+    const contents = isPrompt ? template?.body : `${picked.setup.model} · ${picked.setup.effort}强度 · ${picked.setup.permission}${picked.setup.extra ? `\n${picked.setup.extra}` : ""}`;
+    const place = scoped.indexOf(picked);
+    detail.innerHTML = `<div class="detail-head"><h3>/${html(picked.name)}</h3><button type="button" class="control" data-action="edit">编辑</button></div><p class="preview-label">${isPrompt ? `提示词模板 · ${html(template?.title)}` : "子会话预填内容"}</p><pre class="preview">${html(contents)}</pre><div class="detail-actions"><div class="order"><span>菜单顺序</span><button type="button" class="control" data-action="up"${place === 0 ? " disabled" : ""}>上移</button><button type="button" class="control" data-action="down"${place === scoped.length - 1 ? " disabled" : ""}>下移</button></div><button type="button" class="danger" data-action="delete">删除快捷项</button></div>`;
+  }
+
+  function setupFields(setup) {
+    return `<label>模型<select name="model">${options([["Codex", "Codex"], ["Claude", "Claude"], ["DeepSeek", "DeepSeek"]], setup.model)}</select></label><label>思考强度<select name="effort">${options([["默认", "默认"], ["中", "中"], ["高", "高"]], setup.effort)}</select></label><label class="wide">权限<select name="permission">${options([["默认", "默认"], ["只读", "只读"], ["可写", "可写"]], setup.permission)}</select></label><label class="wide">补充说明<textarea class="field" name="extra" rows="2">${html(setup.extra)}</textarea></label>`;
+  }
+
+  function renderEditor() {
+    const scoped = availableTemplates(editing.scope);
+    const template = scoped.find((item) => item.id === editing.template) ?? scoped[0];
+    editing.template = template?.id ?? "";
+    detail.innerHTML = `<form class="edit-form" id="edit-form"><h3>${editing.id ? "编辑快捷项" : "新建快捷项"}</h3><div class="fields"><label class="wide">名称<input class="field" name="name" required maxlength="28" placeholder="例如：总结进度" value="${html(editing.name)}"></label><label>适用范围<select name="scope">${options([["", "公用"], ...Object.entries(projectNames).map(([id, label]) => [id, `项目 · ${label}`])], editing.scope)}</select></label><label>类型<select name="type">${options([["prompt", "提示词"], ["sub", "子会话设定"]], editing.type)}</select></label>${editing.type === "prompt" ? `<label class="wide">提示词模板<select name="template">${options(scoped.map((t) => [t.id, t.title]), editing.template)}</select></label><pre class="preview wide" id="template-preview">${html(template?.body)}</pre>` : setupFields(editing.setup)}</div><p class="error" id="edit-error" role="alert" hidden></p><div class="form-actions"><button type="button" class="quiet" data-action="cancel">取消</button><button type="submit" class="primary">保存</button></div></form>`;
+  }
+
+  function openEditor(seed = {}) {
+    editing = { id: null, name: "", scope: scopeOfSettings(), type: "prompt", template: "", setup: { ...subDefaults }, enabled: true, ...seed };
+    renderSettings();
+    detail.querySelector('[name="name"]').focus();
+  }
+
+  function captureEditor(form) {
+    const values = Object.fromEntries(new FormData(form));
+    editing.name = values.name;
+    editing.scope = values.scope;
+    editing.type = values.type;
+    if (values.template !== undefined) editing.template = values.template;
+    if (values.model !== undefined) editing.setup = { model: values.model, effort: values.effort, permission: values.permission, extra: values.extra };
+  }
+
+  function refresh() { renderSettings(); renderMenu(); }
+
+  function manageFromMenu() {
+    settingsCaret = draft.selectionStart;
+    editing = null;
+    scopeTab = currentProject.value ? "project" : "shared";
+    if (currentProject.value) settingsProject.value = currentProject.value;
+    dismissed = true;
+    refresh();
+    byId("settings-title").focus();
+  }
+
+  function cancelDialog() {
+    dialog.close();
+    dismissed = true;
+    focusDraft(dialogCaret);
+    renderMenu();
+  }
+
+  function showSubsession(item, token) {
+    dialogCaret = draft.selectionStart;
+    dialog.innerHTML = `<h2 id="dialog-title">开子会话</h2><p>确认后，把这套设定作为 @子会话 标签放进草稿。</p><form><div class="fields">${setupFields(item.setup ?? { ...subDefaults, effort: "默认", permission: "默认", extra: "" })}</div><div class="form-actions"><button type="button" class="quiet" data-dialog-action="save">另存为快捷项</button><button type="button" class="quiet" data-dialog-action="close">取消</button><button class="primary" type="submit">插入标签</button></div></form>`;
+    const form = dialog.querySelector("form");
+    const readSetup = () => Object.fromEntries(new FormData(form));
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const setup = readSetup();
+      dialog.close("insert");
+      replaceToken(token, `@子会话·${setup.model}${setup.effort === "默认" ? "" : `·${setup.effort}`}`);
+    });
+    dialog.querySelector('[data-dialog-action="save"]').onclick = () => {
+      const setup = readSetup();
+      dialog.close("manage");
+      manageFromMenu();
+      openEditor({ name: item.id === "builtin-sub" ? "" : item.name, type: "sub", setup });
+    };
+    dialog.querySelector('[data-dialog-action="close"]').onclick = cancelDialog;
+    dialog.showModal();
+    renderMenu();
+  }
+
+  function showTemplates(token) {
+    dialogCaret = draft.selectionStart;
+    const choices = availableTemplates(currentProject.value);
+    dialog.innerHTML = `<h2 id="dialog-title">提示词模板</h2><label class="stack">模板<select id="dialog-template">${options(choices.map((t) => [t.id, t.title]), choices[0]?.id)}</select></label><pre class="preview" id="dialog-body"></pre><div class="form-actions"><button type="button" class="quiet" id="dialog-pin">加入 / 菜单</button><button type="button" class="quiet" id="dialog-cancel">取消</button><button type="button" class="primary" id="dialog-insert">粘进输入框</button></div>`;
+    const choice = () => lookupTemplate(byId("dialog-template").value);
+    const preview = () => { byId("dialog-body").textContent = choice().body; };
+    byId("dialog-template").onchange = preview;
+    byId("dialog-cancel").onclick = cancelDialog;
+    byId("dialog-insert").onclick = () => { const body = choice().body; dialog.close("insert"); replaceToken(token, body); };
+    byId("dialog-pin").onclick = () => {
+      const picked = choice();
+      dialog.close("manage");
+      manageFromMenu();
+      openEditor({ name: picked.title, scope: picked.scope || scopeOfSettings(), type: "prompt", template: picked.id });
+    };
+    preview();
+    dialog.showModal();
+    renderMenu();
+  }
+
+  function choose(item) {
+    const token = tokenAtCaret();
+    if (!item || !token) return;
+    if (item.type === "prompt") replaceToken(token, lookupTemplate(item.template).body);
+    else if (item.id === "builtin-prompt") showTemplates(token);
+    else showSubsession(item, token);
+  }
+
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); cancelDialog(); });
+  commands.addEventListener("mousedown", (event) => { if (event.target.closest("[data-command]")) event.preventDefault(); });
+  commands.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-command]");
+    if (button) choose(tokenOptions.find((item) => item.id === button.dataset.command));
+  });
+  draft.addEventListener("input", () => { dismissed = false; renderMenu(); });
+  draft.addEventListener("click", () => { dismissed = false; renderMenu(); });
+  draft.addEventListener("keyup", (event) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) renderMenu(); });
+  draft.addEventListener("keydown", (event) => {
+    if (byId("palette").hidden || event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") { event.preventDefault(); dismissed = true; renderMenu(); return; }
+    if (!tokenOptions.length) return;
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      highlighted = (highlighted + (event.key === "ArrowDown" ? 1 : -1) + tokenOptions.length) % tokenOptions.length;
+      renderMenu();
+      commands.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) { event.preventDefault(); choose(tokenOptions[highlighted]); }
+  });
+  byId("slash").onclick = openMenu;
+  byId("manage").onclick = manageFromMenu;
+  byId("theme").onclick = (event) => {
+    const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    event.currentTarget.textContent = theme === "dark" ? "切换浅色" : "切换深色";
+  };
+  byId("send").onclick = () => {
+    if (!draft.value.trim() || draft.value.trim() === "/") return;
+    const bubble = document.createElement("p");
+    bubble.className = "message";
+    bubble.textContent = draft.value;
+    byId("thread").append(bubble);
+    draft.value = "";
+    focusDraft(0);
+    renderMenu();
+  };
+  currentProject.onchange = () => {
+    highlighted = 0;
+    if (!editing) {
+      scopeTab = currentProject.value ? "project" : "shared";
+      if (currentProject.value) settingsProject.value = currentProject.value;
+    }
+    refresh();
+  };
+  settingsProject.onchange = () => { editing = null; renderSettings(); };
+  settings.querySelectorAll("[data-scope]").forEach((button) => { button.onclick = () => { scopeTab = button.dataset.scope; editing = null; renderSettings(); }; });
+  byId("new-item").onclick = () => openEditor();
+
+  itemList.addEventListener("click", (event) => {
+    const select = event.target.closest("[data-select]");
+    const toggle = event.target.closest("[data-toggle]");
+    if (select) { selectedId = select.dataset.select; editing = null; renderSettings(); itemList.querySelector(`[data-select="${selectedId}"]`)?.focus(); }
+    if (toggle) {
+      const item = items.find((entry) => entry.id === toggle.dataset.toggle);
+      item.enabled = !item.enabled;
+      toggle.setAttribute("aria-checked", String(item.enabled));
+      status(item.enabled ? `已显示 /${item.name}` : `已停用 /${item.name}`);
+      renderMenu();
+    }
+  });
+
+  detail.addEventListener("change", (event) => {
+    const form = event.target.closest("#edit-form");
+    if (!form || !["type", "scope", "template"].includes(event.target.name)) return;
+    const name = event.target.name;
+    captureEditor(form);
+    renderEditor();
+    detail.querySelector(`[name="${name}"]`).focus();
+  });
+  detail.addEventListener("submit", (event) => {
+    event.preventDefault();
+    captureEditor(event.target);
+    const name = editing.name.trim().replace(/^\/+/, "").trim();
+    const duplicate = items.some((item) => item.id !== editing.id && item.scope === editing.scope && item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (!name || duplicate) {
+      const error = byId("edit-error");
+      error.hidden = false;
+      error.textContent = name ? "这个范围里已有同名快捷项。" : "请填写快捷项名称。";
+      return;
+    }
+    const saved = { ...editing, id: editing.id ?? `new-${nextId++}`, name };
+    const index = items.findIndex((item) => item.id === saved.id);
+    if (index === -1) items.push(saved);
+    else items[index] = saved;
+    scopeTab = saved.scope ? "project" : "shared";
+    if (saved.scope) settingsProject.value = saved.scope;
+    selectedId = saved.id;
+    editing = null;
+    status(`已保存 /${name}`);
+    refresh();
+    itemList.querySelector(`[data-select="${selectedId}"]`)?.focus();
+  });
+  detail.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-action]")?.dataset.action;
+    if (!action) return;
+    const item = items.find((entry) => entry.id === selectedId);
+    if (action === "edit") { openEditor(item); return; }
+    if (action === "cancel") { editing = null; renderSettings(); byId("new-item").focus(); return; }
+    const index = items.indexOf(item);
+    if (action === "delete") {
+      if (!window.confirm(`删除快捷项「${item.name}」？`)) return;
+      items.splice(index, 1);
+      status(`已删除 /${item.name}`);
+    } else {
+      const list = scopedItems();
+      const other = list[list.indexOf(item) + (action === "up" ? -1 : 1)];
+      if (other) { const otherIndex = items.indexOf(other); [items[index], items[otherIndex]] = [items[otherIndex], items[index]]; }
+    }
+    refresh();
+    itemList.querySelector(`[data-select="${selectedId}"]`)?.focus();
+  });
+  settings.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (editing) { editing = null; renderSettings(); byId("new-item").focus(); }
+    else if (settingsCaret !== null) { focusDraft(settingsCaret); settingsCaret = null; }
+  });
+
+  focusDraft(1);
+  refresh();
+</script>
+</body>
+</html>
